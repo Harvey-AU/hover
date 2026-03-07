@@ -11,28 +11,109 @@
     <main class="app-shell">
       <!-- ═══ UNAUTH STATE ═══ -->
       <section class="panel" id="unauthState">
-        <header class="header">
-          <div class="top-brand">
-            <span class="brand-text">Adapt</span>
-          </div>
-        </header>
-
-        <div class="section">
-          <p class="section-title">
-            Run your Webflow site checks without leaving Designer.
+        <div class="section unauth-body">
+          <p class="unauth-headline">
+            Run your Webflow site checks<br>without leaving Designer
           </p>
           <ul class="benefits-list">
-            <li>Broken links and slow pages</li>
-            <li>Exports and status from one screen</li>
-            <li>Organisation-aware usage and plan visibility</li>
+            <li class="benefit-item">
+              <span class="benefit-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M5.49609 8.11597L5.49512 8.18042L5.48633 9.10229L5.48535 9.16479H4.57324L4.57031 9.16577C4.56836 9.29655 4.57053 9.42317 4.57227 9.55347C4.57426 9.70361 4.57391 9.8575 4.55859 10.0212L4.55273 10.0779H3.53223V9.05249L3.59473 9.05151L4.44434 9.03979L4.44531 9.03784H4.44629V8.12671L4.50977 8.12573L5.43066 8.11597H5.49609Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M10.0723 3.5376V4.56396L10.0098 4.56494L9.15918 4.57568V4.57861H9.1582V5.48779L9.0957 5.48877L8.1748 5.49951L8.17383 5.43701H8.11035V5.37451L8.11133 5.37354L8.11914 4.51514L8.12012 4.45166H9.03125V4.45068L9.03418 4.44971C9.0361 4.31935 9.03395 4.19296 9.03223 4.06299C9.03023 3.91281 9.03157 3.7592 9.04688 3.59521L9.05176 3.5376H10.0723Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M8.23975 6.34741V6.41089H8.17627L7.32568 6.41382L7.32275 7.26538V7.32886H7.26025L6.40771 7.33179L6.40479 8.18237V8.24487H6.34131L5.43115 8.24292L5.36865 8.24194V8.17944L5.36572 7.26929V7.20581H5.4292L6.27881 7.2019L6.28174 6.35034L6.28271 6.28784H6.34521L7.19678 6.28394L7.19971 5.43237L7.20068 5.3689H7.26416L8.17432 5.37378H8.23682V5.43726L8.23975 6.34741Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M3.66357 3.60547L3.6626 3.66895H3.59912L2.73779 3.66406L2.67529 3.66309L2.67432 3.60059L2.66943 2.80371L1.86865 2.79492L1.80615 2.79395L1.80518 2.73242L1.79932 1.86328V1.7998H1.86377L2.73389 1.80664L2.79639 1.80762L2.79736 1.86914L2.80322 2.66797L3.60596 2.67969L3.66943 2.68066L3.66846 2.74316L3.66357 3.60547Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M1.92969 4.41211V5.40918H0.0634766V4.41211H1.92969Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M5.41357 0.0632324V0.126709L5.40479 1.86597L5.40381 1.92944L5.34131 1.92847L4.4751 1.92651H4.41162V1.86304L4.42041 0.126709V0.0632324H5.41357Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M1.92676 0.934326V0.997803L1.92578 1.86304V1.92651H1.8623L1.00195 1.92749H0.939453L0.938477 1.86499L0.933594 0.997803V0.934326H1.92676Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M11.7559 11.627L11.7568 11.6914L11.6924 11.6904L10.8213 11.6836L10.7588 11.6826V11.6201L10.751 10.8213L9.94922 10.8115L9.88672 10.8105V10.7471L9.89258 9.88477V9.82129H9.95605L10.8184 9.82715H10.8809L10.8818 9.88965L10.8857 10.6855L11.6875 10.6953L11.749 10.6963L11.75 10.7588L11.7559 11.627Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M11.626 9.07788V8.08081H13.4922V9.07788H11.626Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M9.13574 13.3643L9.13477 13.4268H8.14258V13.3633L8.15137 11.624V11.5605H8.21484L9.08105 11.5635H9.14453L9.14355 11.627L9.13574 13.3643Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <path d="M12.6162 11.5618L12.6172 11.6252L12.6221 12.4915V12.5549H12.5586L11.6924 12.5559H11.6289V12.4924L11.6299 11.6272V11.5637H11.6924L12.5537 11.5618H12.6162Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="4.34375" y="10.9192" width="0.987378" height="0.987378" transform="rotate(45 4.34375 10.9192)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="9.4585" y="2.32591" width="0.987378" height="0.987378" transform="rotate(-135 9.4585 2.32591)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="0.0895781" width="0.987378" height="0.987378" transform="matrix(-0.707107 -0.707107 -0.707107 0.707107 2.67099 9.24645)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="-0.0895781" y="-7.55087e-09" width="0.987378" height="0.987378" transform="matrix(0.707107 0.707107 0.707107 -0.707107 11.2584 4.1256)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="7.38672" y="9.09353" width="0.987378" height="3.56946" transform="rotate(45 7.38672 9.09353)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="6.21289" y="4.35447" width="0.987378" height="3.85636" transform="rotate(-135 6.21289 4.35447)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="0.0895781" width="0.987378" height="3.56946" transform="matrix(-0.707107 -0.707107 -0.707107 0.707107 4.49667 6.20348)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="-0.0895781" y="-7.55087e-09" width="0.987377" height="3.85636" transform="matrix(0.707107 0.707107 0.707107 -0.707107 9.22962 7.37145)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="3.82493" y="11.6177" width="0.987378" height="2.70877" transform="rotate(135 3.82493 11.6177)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                  <rect x="9.9778" y="1.62793" width="0.987378" height="2.70877" transform="rotate(-45 9.9778 1.62793)" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.126683"/>
+                </svg>
+              </span>
+              <span>Broken links and slow pages</span>
+            </li>
+            <li class="benefit-item">
+              <span class="benefit-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="13" viewBox="0 0 15 13" fill="none">
+                  <path d="M12.8369 10.8821H1.4751V12.1205H12.8369V10.8821Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                  <path d="M14.3304 8.40552H12.9102V10.8823H14.3304V8.40552Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                  <path d="M1.54132 8.24438H0.121094V10.7211H1.54132V8.24438Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                  <path d="M5.26447 4.51245H3.84424V5.75082H5.26447V4.51245Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                  <path d="M10.9456 4.51245H9.52539V5.75082H10.9456V4.51245Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                  <path d="M9.45893 5.75107H8.0387L8.07539 0.120605H6.61847V5.75107H5.19824V6.98944H6.61847V8.22781H8.0387V6.98944H9.45893V5.75107Z" fill="#B1B1B1" stroke="#B1B1B1" stroke-width="0.241439" stroke-miterlimit="10"/>
+                </svg>
+              </span>
+              <span>Exports and status from one screen</span>
+            </li>
+            <li class="benefit-item">
+              <span class="benefit-icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="14" viewBox="0 0 12 14" fill="none">
+                  <g clip-path="url(#clip0_4474_1399)">
+                    <path d="M10.501 10.5V11.6655V12.8328H9.33368H8.16632H7.00069H5.83333H4.6677H3.50035H2.33299H1.16736V11.6655V10.5H0V11.6655V12.8328V14H1.16736H2.33299H3.50035H4.6677H5.83333H7.00069H8.16632H9.33368H10.501H11.6667V12.8328V11.6655V10.5H10.501Z" fill="#B1B1B1"/>
+                    <path d="M10.5009 9.33301H9.3335V10.5003H10.5009V9.33301Z" fill="#B1B1B1"/>
+                    <path d="M9.33337 8.16699H8.16602V9.33424H9.33337V8.16699Z" fill="#B1B1B1"/>
+                    <path d="M5.83299 8.16725H7.00035H8.16597V7.00001H7.00035V5.83276H5.83299H4.66736V7.00001H3.5V8.16725H4.66736H5.83299Z" fill="#B1B1B1"/>
+                    <path d="M2.33435 9.33301H1.16699V10.5003H2.33435V9.33301Z" fill="#B1B1B1"/>
+                    <path d="M3.50037 8.16699H2.33301V9.33424H3.50037V8.16699Z" fill="#B1B1B1"/>
+                    <path d="M4.66736 4.66724H3.5V5.83448H4.66736V4.66724Z" fill="#B1B1B1"/>
+                    <path d="M3.50037 2.33276H2.33301V3.50001V4.66725H3.50037V3.50001V2.33276Z" fill="#B1B1B1"/>
+                    <path d="M4.66736 1.16699H3.5V2.33424H4.66736V1.16699Z" fill="#B1B1B1"/>
+                    <path d="M7.00047 1.16724V0H5.83311H4.66748V1.16724H5.83311H7.00047Z" fill="#B1B1B1"/>
+                    <path d="M8.16785 1.16699H7.00049V2.33424H8.16785V1.16699Z" fill="#B1B1B1"/>
+                    <path d="M8.16602 4.66725H9.33337V3.50001V2.33276H8.16602V3.50001V4.66725Z" fill="#B1B1B1"/>
+                    <path d="M8.16785 4.66724H7.00049V5.83448H8.16785V4.66724Z" fill="#B1B1B1"/>
+                  </g>
+                  <defs>
+                    <clipPath id="clip0_4474_1399">
+                      <rect width="11.6655" height="14" fill="white"/>
+                    </clipPath>
+                  </defs>
+                </svg>
+              </span>
+              <span>Organisation-aware usage and plan visibility</span>
+            </li>
           </ul>
 
-          <div class="actions">
-            <button id="checkSiteButton" type="button" class="primary">
-              CHECK SITE &rarr;
+          <div class="unauth-primary-action">
+            <button id="checkSiteButton" type="button" class="btn-unauth-primary">
+              Connect your site
+              <svg class="btn-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true" overflow="visible">
+                <rect y="9.84375" width="3.48028" height="3.48028" transform="rotate(-45 0 9.84375)" fill="currentColor"/>
+                <rect x="4.92188" y="9.84387" width="3.48028" height="3.48028" transform="rotate(-45 4.92188 9.84387)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 14.7656 9.84351)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 12.3047 12.3044)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 12.3047 2.46106)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 14.7651 4.92151)" fill="currentColor"/>
+                <rect x="14.7656" y="9.84351" width="3.48028" height="3.48028" transform="rotate(-45 14.7656 9.84351)" fill="currentColor"/>
+              </svg>
             </button>
-            <button id="signInButton" type="button" class="secondary">
-              SIGN IN
+          </div>
+
+          <div class="unauth-login">
+            <p class="unauth-login-prompt">Already have an account?</p>
+            <button id="signInButton" type="button" class="btn-unauth-secondary">
+              Login
+              <svg class="btn-arrow" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true" overflow="visible">
+                <rect y="9.84375" width="3.48028" height="3.48028" transform="rotate(-45 0 9.84375)" fill="currentColor"/>
+                <rect x="4.92188" y="9.84387" width="3.48028" height="3.48028" transform="rotate(-45 4.92188 9.84387)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 14.7656 9.84351)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 12.3047 12.3044)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 12.3047 2.46106)" fill="currentColor"/>
+                <rect width="3.48028" height="3.48028" transform="matrix(-0.707107 0.707107 0.707107 0.707107 14.7651 4.92151)" fill="currentColor"/>
+                <rect x="14.7656" y="9.84351" width="3.48028" height="3.48028" transform="rotate(-45 14.7656 9.84351)" fill="currentColor"/>
+              </svg>
             </button>
           </div>
         </div>

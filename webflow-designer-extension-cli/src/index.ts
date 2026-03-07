@@ -295,8 +295,6 @@ const ui = {
   jobIssuePills: document.getElementById("jobIssuePills"),
   viewReportButton: document.getElementById("viewReportButton"),
   jobCardActions: document.querySelector("#jobSection .job-card-actions"),
-  checkSiteAuthButton: document.getElementById("checkSiteAuthButton"),
-
   // Recent results
   latestResultsList: document.getElementById("latestResultsList"),
   recentResultsList: document.getElementById("recentResultsList"),
@@ -2147,7 +2145,6 @@ function setLoading(element: Element | null, disabled: boolean): void {
 function setDisabledAll(disabled: boolean): void {
   const controls: (Element | null)[] = [
     ui.checkSiteButton,
-    ui.checkSiteAuthButton,
     ui.signInButton,
     ui.runNowButton,
     ui.viewReportButton,
@@ -2711,15 +2708,6 @@ function initEventHandlers(): void {
 
   // Auth: run now (action bar)
   ui.runNowButton?.addEventListener("click", async () => {
-    try {
-      await runScanForCurrentSite();
-    } catch (error) {
-      await handleAuthError(error);
-    }
-  });
-
-  // Auth: check site (no-job state)
-  ui.checkSiteAuthButton?.addEventListener("click", async () => {
     try {
       await runScanForCurrentSite();
     } catch (error) {
