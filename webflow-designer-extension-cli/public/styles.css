@@ -1218,7 +1218,8 @@ select {
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--motion-duration--fast) var(--motion-easing--standard);
+  transition: background var(--motion-duration--fast)
+    var(--motion-easing--standard);
 }
 
 .btn-unauth-primary:hover {
@@ -1262,7 +1263,8 @@ select {
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--motion-duration--fast) var(--motion-easing--standard);
+  transition: background var(--motion-duration--fast)
+    var(--motion-easing--standard);
 }
 
 .btn-unauth-secondary:hover {
