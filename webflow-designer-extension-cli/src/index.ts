@@ -50,6 +50,7 @@ const APP_ROUTES = {
   changePlan: "/settings/plans",
   manageTeam: "/settings/team",
 } as const;
+const UNAUTHENTICATED_EXTENSION_SIZE = { width: 240, height: 407 } as const;
 const AUTHENTICATED_EXTENSION_SIZE = { width: 450, height: 500 } as const;
 type ExtensionPanelSize =
   | "default"
@@ -1046,7 +1047,7 @@ function setStatus(message: string, detail = "") {
 async function setExtensionSizeForAuthState(isAuthed: boolean): Promise<void> {
   try {
     await webflow.setExtensionSize(
-      isAuthed ? AUTHENTICATED_EXTENSION_SIZE : "default"
+      isAuthed ? AUTHENTICATED_EXTENSION_SIZE : UNAUTHENTICATED_EXTENSION_SIZE
     );
   } catch (error) {
     console.warn("Unable to set extension size", error);
@@ -1143,16 +1144,16 @@ function renderIssuePillsInto(
   if (brokenLinks > 0) {
     container.appendChild(
       makePill(
-        "dot-danger",
+        "dot--danger",
         `${brokenLinks} broken link${brokenLinks !== 1 ? "s" : ""}`
       )
     );
   }
   if (verySlow > 0) {
-    container.appendChild(makePill("dot-danger", `${verySlow} very slow`));
+    container.appendChild(makePill("dot--danger", `${verySlow} very slow`));
   }
   if (slow > 0) {
-    container.appendChild(makePill("dot-warn", `${slow} slow`));
+    container.appendChild(makePill("dot--warning", `${slow} slow`));
   }
 }
 
@@ -1351,17 +1352,17 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const dateStr = formatShortDate(job.completed_at || job.created_at);
 
   const normalisedStatus = normalizeJobStatus(job.status);
-  let outcomeDotClass = "dot-success";
+  let outcomeDotClass = "dot--success";
   let outcomeLabel = "Completed";
 
   if (normalisedStatus === "cancelled") {
-    outcomeDotClass = "dot-neutral";
+    outcomeDotClass = "dot--neutral";
     outcomeLabel = "Cancelled";
   } else if (isActiveJobStatus(normalisedStatus)) {
-    outcomeDotClass = "dot-warn";
+    outcomeDotClass = "dot--warning";
     outcomeLabel = "In progress";
   } else if (normalisedStatus !== "completed") {
-    outcomeDotClass = "dot-danger";
+    outcomeDotClass = "dot--danger";
     outcomeLabel = "Error";
   }
 
@@ -1371,9 +1372,9 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   header.innerHTML = `
     <div class="result-card-success">
       <span class="result-card-total">${job.total_tasks} pages: </span>
-      <span class="result-card-count"><span class="dot dot-success"></span> ${successCount} good</span>
-      <span class="result-card-count"><span class="dot dot-warn"></span> ${warnCount} ok</span>
-      <span class="result-card-count"><span class="dot dot-danger"></span> ${failCount} error</span>
+      <span class="result-card-count"><span class="dot dot--success"></span> ${successCount} good</span>
+      <span class="result-card-count"><span class="dot dot--warning"></span> ${warnCount} ok</span>
+      <span class="result-card-count"><span class="dot dot--danger"></span> ${failCount} error</span>
     </div>
     <span class="result-card-count"><span class="dot ${outcomeDotClass}"></span> ${outcomeLabel}</span>`;
   card.appendChild(header);
@@ -1418,18 +1419,18 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   type TabDef = { dotClass: string; label: string; count: number; key: string };
   const tabDefs: TabDef[] = [
     {
-      dotClass: "dot-danger",
+      dotClass: "dot--danger",
       label: "broken link",
       count: brokenLinks,
       key: "broken",
     },
     {
-      dotClass: "dot-danger",
+      dotClass: "dot--danger",
       label: "very slow",
       count: verySlow,
       key: "veryslow",
     },
-    { dotClass: "dot-warn", label: "slow", count: slow, key: "slow" },
+    { dotClass: "dot--warning", label: "slow", count: slow, key: "slow" },
   ];
 
   // Detail table panel (hidden by default, shown on tab click)
@@ -1447,10 +1448,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     activeTabKey = tabKey;
 
     for (const t of tabElements) {
-      t.classList.remove("active");
+      t.classList.remove("issues-tab--active");
     }
 
-    tab.classList.add("active");
+    tab.classList.add("issues-tab--active");
     show(tablePanel);
     void renderIssuesTable(tablePanel, job, tabKey, issueRowsCache, () => {
       return activeTabKey === tabKey;
@@ -1471,10 +1472,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
     tab.addEventListener("click", () => {
       // Toggle: if already active, collapse
-      const wasActive = tab.classList.contains("active");
+      const wasActive = tab.classList.contains("issues-tab--active");
 
       for (const t of tabElements) {
-        t.classList.remove("active");
+        t.classList.remove("issues-tab--active");
       }
 
       if (wasActive) {
@@ -1512,7 +1513,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   // CSV export button
   const csvBtn = document.createElement("button");
   csvBtn.type = "button";
-  csvBtn.className = "btn-sm";
+  csvBtn.className = "btn btn--ghost btn--small";
   csvBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 18v2h16v-2"/></svg> Export Results`;
   csvBtn.addEventListener("click", () => {
     void exportJob(job.id);
@@ -1521,7 +1522,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   const viewFullResultsBtn = document.createElement("button");
   viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn-sm";
+  viewFullResultsBtn.className = "btn btn--ghost btn--small";
   viewFullResultsBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Detailed Results`;
   viewFullResultsBtn.addEventListener("click", () => {
     const detailPath = job.id
@@ -1831,7 +1832,7 @@ async function renderIssuesTable(
   footer.className = "issues-table-footer";
   const viewAllBtn = document.createElement("button");
   viewAllBtn.type = "button";
-  viewAllBtn.className = "btn-secondary";
+  viewAllBtn.className = "btn btn--panel btn--compact";
   viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
   viewAllBtn.addEventListener("click", () => {
     const detailPath = job.id
@@ -2023,7 +2024,7 @@ function renderMiniChart(jobs: JobItem[]): void {
 
     if (row.okCount > 0) {
       const seg = document.createElement("div");
-      seg.className = "chart-bar-warn";
+      seg.className = "chart-bar--warning";
       const okHeight = Math.max(
         minSegmentHeightPercent,
         Math.min((row.okCount / maxIssues) * 100, 100)
@@ -2034,7 +2035,7 @@ function renderMiniChart(jobs: JobItem[]): void {
 
     if (row.errorCount > 0) {
       const seg = document.createElement("div");
-      seg.className = "chart-bar-danger";
+      seg.className = "chart-bar--danger";
       const errorHeight = Math.max(
         minSegmentHeightPercent,
         Math.min((row.errorCount / maxIssues) * 100, 100)
