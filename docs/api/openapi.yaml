@@ -9,10 +9,10 @@ info:
     The spec documents implemented behaviour from the Go handlers rather than
     idealised REST shapes.
 servers:
-  - url: http://localhost:8080
-    description: Local development
   - url: https://adapt.app.goodnative.co
     description: Production application
+  - url: http://localhost:8080
+    description: Local development
 security:
   - bearerAuth: []
 tags:
