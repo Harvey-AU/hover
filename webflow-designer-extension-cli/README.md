@@ -9,7 +9,7 @@ Webflow Designer before wiring OAuth/API calls.
 npm run dev
 ```
 
-The command does three things:
+The command does four things:
 
 - Updates the local Webflow CLI when a newer allowed version is available
 - Watches `src/index.ts` and compiles to `public/index.js`
