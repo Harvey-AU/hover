@@ -6,8 +6,8 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "webflow:update": "npm update @webflow/webflow-cli",
-    "build": "npm install && npm run compile && npm exec -- webflow extension bundle --skip-update-check",
-    "dev": "npm install && concurrently -r \"npm exec -- webflow extension serve --skip-update-check\" \"npm run compile -- --watch --preserveWatchOutput\"",
+    "build": "npm run compile && npm exec -- webflow extension bundle --skip-update-check",
+    "dev": "concurrently -r \"npm exec -- webflow extension serve --skip-update-check\" \"npm run compile -- --watch --preserveWatchOutput\"",
     "lint": "eslint --no-config-lookup -c eslint.config.mjs \"src/**/*.ts\"",
     "format:check": "prettier --check \"./**/*.{ts,json,md,html,css,yml,yaml}\"",
     "format:write": "prettier --write \"./**/*.{ts,json,md,html,css,yml,yaml}\""
