@@ -294,8 +294,6 @@ const ui = {
   jobStatusLabel: document.getElementById("jobStatusLabel"),
   jobProgressText: document.getElementById("jobProgressText"),
   jobIssuePills: document.getElementById("jobIssuePills"),
-  viewReportButton: document.getElementById("viewReportButton"),
-  jobCardActions: document.querySelector("#jobSection .job-card-actions"),
   checkSiteAuthButton: document.getElementById("checkSiteAuthButton"),
 
   // Recent results
@@ -1090,8 +1088,6 @@ function renderJobState(job: JobItem | null): void {
   if (!job || !isActiveJobStatus(job.status)) {
     stopJobStatusPolling();
     hide(asNode(ui.jobSection));
-    show(asNode(ui.viewReportButton));
-    show(asNode(ui.jobCardActions));
     show(asNode(ui.jobIssuePills));
     // Show no-job placeholder only when there are zero jobs at all
     // (if there are completed jobs, recent results will fill the space)
@@ -1099,8 +1095,6 @@ function renderJobState(job: JobItem | null): void {
   }
 
   show(asNode(ui.jobSection));
-  hide(asNode(ui.viewReportButton));
-  hide(asNode(ui.jobCardActions));
 
   // Status dot
   if (ui.jobStatusIcon) {
@@ -1832,7 +1826,7 @@ async function renderIssuesTable(
   footer.className = "issues-table-footer";
   const viewAllBtn = document.createElement("button");
   viewAllBtn.type = "button";
-  viewAllBtn.className = "btn btn--panel btn--sm";
+  viewAllBtn.className = "btn btn--tertiary btn--sm";
   viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
   viewAllBtn.addEventListener("click", () => {
     const detailPath = job.id
@@ -2151,7 +2145,6 @@ function setDisabledAll(disabled: boolean): void {
     ui.checkSiteAuthButton,
     ui.signInButton,
     ui.runNowButton,
-    ui.viewReportButton,
     ui.scheduleSelect,
     ui.orgSelect,
     ui.webflowPublishToggle,
@@ -2726,14 +2719,6 @@ function initEventHandlers(): void {
     } catch (error) {
       await handleAuthError(error);
     }
-  });
-
-  // Auth: view full report
-  ui.viewReportButton?.addEventListener("click", () => {
-    const detailPath = state.currentJob?.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(state.currentJob.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
   });
 
   // Auth: settings gear

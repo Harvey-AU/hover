@@ -246,7 +246,7 @@ body {
   font-size: 14px;
   line-height: 1.35;
   font-weight: 700;
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
 }
 
 .auth-wrapper {
@@ -495,7 +495,7 @@ body {
 
 .btn--secondary {
   background: rgba(97, 208, 239, 0.35);
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
   border-color: var(--background-colour--brand);
 }
 
@@ -504,16 +504,16 @@ body {
   border-color: var(--border-colour--strong);
 }
 
-.btn--panel {
+.btn--tertiary {
   background-color: var(--background-colour--canvas);
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
   border-color: var(--background-colour--brand);
 }
 
-.btn--panel:not(:disabled):hover {
+.btn--tertiary:not(:disabled):hover {
   background-color: var(--background-colour--canvas);
   border-color: var(--background-colour--brand);
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
 }
 
 .btn--ghost {
@@ -684,13 +684,13 @@ body {
   background-size: 8px 5px;
 }
 
-.btn--panel.btn--select:not(:disabled):hover,
-.btn--panel.btn--select:focus,
-.btn--panel.btn--select:focus-visible,
-.btn--panel.btn--select:active {
+.btn--tertiary.btn--select:not(:disabled):hover,
+.btn--tertiary.btn--select:focus,
+.btn--tertiary.btn--select:focus-visible,
+.btn--tertiary.btn--select:active {
   background-color: var(--background-colour--canvas);
   border-color: var(--background-colour--brand);
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
 }
 
 .btn--outline svg,
@@ -732,7 +732,7 @@ body {
 
 .control-label {
   font-size: var(--font-size--label);
-  color: var(--background-colour--brand);
+  color: var(--colour--brand-primary);
   white-space: nowrap;
 }
 
@@ -820,6 +820,7 @@ body {
   flex-shrink: 0;
   opacity: 1;
   transition: opacity 0.5s var(--motion-easing--standard);
+  background: var(--background-colour--hover-subtle);
 }
 
 .status-block:not(:has(p:not(:empty))) {
@@ -834,16 +835,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--spacing--2xs);
-  padding: var(--spacing--lg) var(--spacing--xl);
+  padding: var(--spacing--md) var(--spacing--xl);
 }
 
 .status {
   margin: 0;
   font-size: var(--font-size--label);
-  color: var(--text-colour--primary);
-  border: var(--border-size--default) solid var(--border-colour--active);
-  border-radius: var(--radius--control);
-  padding: var(--spacing--md) var(--spacing--xl);
+  font-weight: 700;
+  color: var(--colour--brand-primary);
+}
+
+.status-block .detail {
+  color: var(--background-colour--canvas);
 }
 
 .detail {
@@ -936,27 +939,40 @@ body {
 
 /* ─── Components: Active Job Card ────────────────────────────────────────── */
 
-.job-card {
-  background: var(--background-colour--surface);
-  border-radius: var(--radius--control);
-  box-shadow: var(--shadow--surface);
-  padding: var(--spacing--sm) var(--spacing--md);
+.job-band {
   display: flex;
   flex-direction: column;
+  gap: var(--spacing--lg);
+  width: calc(100% + (2 * var(--section-gutter)));
+  margin: calc(var(--section-padding) * -1) calc(var(--section-gutter) * -1) 0;
+  padding: var(--section-padding) var(--section-gutter);
+  background: var(--background-colour--hover-subtle);
+}
+
+.job-band:not(:has(#jobSection:not(.hidden))) {
+  display: none;
+}
+
+.result-card--active {
+  width: 100%;
+  background: var(--background-colour--canvas);
+  border-color: var(--border-colour--active);
+}
+
+.result-card--active .result-card-header,
+.result-card--active .result-card-stats {
+  cursor: default;
+}
+
+.job-status,
+.job-progress {
+  display: flex;
+  align-items: center;
   gap: var(--spacing--xs);
 }
 
-.job-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--font-size--caption);
-}
-
-.job-status-left {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing--xs);
+.result-card-stats--active {
+  justify-content: flex-start;
 }
 
 .job-status-label {
@@ -964,21 +980,9 @@ body {
   color: var(--text-colour--primary);
 }
 
-.job-progress-right {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing--xs);
-}
-
 .job-progress-text {
-  font-size: var(--font-size--label);
+  font-size: var(--font-size--body);
   color: var(--text-colour--primary);
-}
-
-.job-card-actions {
-  display: flex;
-  justify-content: flex-start;
-  padding-top: var(--spacing--2xs);
 }
 
 /* ─── Components: Issue Pills ────────────────────────────────────────────── */
@@ -1028,14 +1032,6 @@ body {
   font-size: var(--font-size--title);
   font-weight: 400;
   color: var(--text-colour--heading);
-}
-
-#jobSectionHeading {
-  display: none;
-}
-
-.content-scroll:has(#jobSection:not(.hidden)) #jobSectionHeading {
-  display: block;
 }
 
 .results-list {
