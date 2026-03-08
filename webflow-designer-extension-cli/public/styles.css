@@ -452,7 +452,8 @@ select {
 /* ─── Objects: Buttons ───────────────────────────────────────────────────── */
 
 .btn {
-  appearance: button;
+  appearance: none;
+  -webkit-appearance: none;
   border: 2px solid transparent;
   border-radius: var(--radius--control);
   font-family: var(--font-family--primary);
