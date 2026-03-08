@@ -1,0 +1,3346 @@
+openapi: 3.0.3
+info:
+  title: Adapt API
+  version: 0.4.1
+  description: |
+    Lean OpenAPI coverage for Adapt's current backend API surface, optimised for
+    Postman import, backend testing, and API exploration.
+
+    The spec documents implemented behaviour from the Go handlers rather than
+    idealised REST shapes.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://adapt.app.goodnative.co
+    description: Production application
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+  - name: Dashboard
+  - name: Auth
+  - name: Jobs
+  - name: Organisations
+  - name: Integrations
+  - name: Notifications
+  - name: Admin
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase bearer token sent in the `Authorization` header.
+  parameters:
+    JobId:
+      name: id
+      in: path
+      required: true
+      description: Job UUID.
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      description: Result size. Invalid values fall back to the handler default.
+      schema:
+        type: integer
+        minimum: 1
+    Offset:
+      name: offset
+      in: query
+      description: Result offset.
+      schema:
+        type: integer
+        minimum: 0
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: Invalid JSON request body
+        code:
+          type: string
+          example: BAD_REQUEST
+        request_id:
+          type: string
+          example: req_123abc
+    HealthResponse:
+      type: object
+      required: [status, timestamp, service]
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        service:
+          type: string
+          example: adapt
+        version:
+          type: string
+          example: 0.4.1
+    UnhealthyResponse:
+      type: object
+      required: [status, timestamp, service, error]
+      properties:
+        status:
+          type: string
+          example: unhealthy
+        timestamp:
+          type: string
+          format: date-time
+        service:
+          type: string
+          example: postgresql
+        error:
+          type: string
+          example: "dial tcp 127.0.0.1:5432: connect: connection refused"
+        request_id:
+          type: string
+          example: req_123abc
+    SuccessEnvelope:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: success
+        data:
+          nullable: true
+        message:
+          type: string
+        request_id:
+          type: string
+          example: req_123abc
+    User:
+      type: object
+      required: [id, email, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+          nullable: true
+        organisation_id:
+          type: string
+          nullable: true
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OrganisationSummary:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AuthMethods:
+      type: array
+      items:
+        type: string
+      example: [google, email]
+    AuthRegisterRequest:
+      type: object
+      required: [user_id, email]
+      properties:
+        user_id:
+          type: string
+          description: Supabase user ID.
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          maxLength: 80
+        last_name:
+          type: string
+          maxLength: 80
+        full_name:
+          type: string
+          maxLength: 120
+        org_name:
+          type: string
+      example:
+        user_id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+        email: simon@example.com
+        first_name: Simon
+        last_name: Small
+        org_name: Good Native
+    RegisterData:
+      type: object
+      required: [user, organisation]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        organisation:
+          $ref: "#/components/schemas/OrganisationSummary"
+    SessionRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+      example:
+        token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+    SessionInfo:
+      type: object
+      required: [is_valid, refresh_needed]
+      properties:
+        is_valid:
+          type: boolean
+        expires_at:
+          type: integer
+          format: int64
+          nullable: true
+        refresh_needed:
+          type: boolean
+        user_id:
+          type: string
+        email:
+          type: string
+          format: email
+    ProfileData:
+      type: object
+      required: [user, auth_methods]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        auth_methods:
+          $ref: "#/components/schemas/AuthMethods"
+        organisation:
+          $ref: "#/components/schemas/OrganisationSummary"
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          nullable: true
+          maxLength: 80
+        last_name:
+          type: string
+          nullable: true
+          maxLength: 80
+        full_name:
+          type: string
+          nullable: true
+          maxLength: 120
+      example:
+        first_name: Simon
+        last_name: Small
+        full_name: Simon Small
+    Pagination:
+      type: object
+      required: [limit, offset, total, has_next, has_prev]
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+    Job:
+      type: object
+      required:
+        - id
+        - domain_id
+        - domain
+        - status
+        - total_tasks
+        - completed_tasks
+        - failed_tasks
+        - skipped_tasks
+        - progress
+        - created_at
+        - concurrency
+        - max_pages
+        - adaptive_delay_seconds
+      properties:
+        id:
+          type: string
+          format: uuid
+        domain_id:
+          type: integer
+        domain:
+          type: string
+        status:
+          type: string
+          example: running
+        total_tasks:
+          type: integer
+        completed_tasks:
+          type: integer
+        failed_tasks:
+          type: integer
+        skipped_tasks:
+          type: integer
+        progress:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: integer
+          nullable: true
+        avg_time_per_task_seconds:
+          type: number
+          format: float
+          nullable: true
+        stats:
+          type: object
+          additionalProperties: true
+          nullable: true
+        scheduler_id:
+          type: string
+          format: uuid
+          nullable: true
+        concurrency:
+          type: integer
+        max_pages:
+          type: integer
+        source_type:
+          type: string
+          nullable: true
+        crawl_delay_seconds:
+          type: integer
+          nullable: true
+        adaptive_delay_seconds:
+          type: integer
+    CreateJobRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+        use_sitemap:
+          type: boolean
+        find_links:
+          type: boolean
+        allow_cross_subdomain_links:
+          type: boolean
+        concurrency:
+          type: integer
+        max_pages:
+          type: integer
+        source_type:
+          type: string
+        source_detail:
+          type: string
+        source_info:
+          type: string
+          description: JSON string stored for provenance.
+      example:
+        domain: example.com
+        use_sitemap: true
+        find_links: true
+        concurrency: 20
+        max_pages: 250
+    JobsListData:
+      type: object
+      required: [jobs, pagination]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+        include:
+          type: string
+          description: Echoed include string when provided.
+    JobActionRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [cancel]
+      example:
+        action: cancel
+    Task:
+      type: object
+      required: [id, job_id, path, url, status, created_at, retry_count]
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+        status_code:
+          type: integer
+          nullable: true
+        response_time:
+          type: integer
+          nullable: true
+        cache_status:
+          type: string
+          nullable: true
+        second_response_time:
+          type: integer
+          nullable: true
+        second_cache_status:
+          type: string
+          nullable: true
+        content_type:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        source_type:
+          type: string
+          nullable: true
+        source_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        retry_count:
+          type: integer
+        page_views_7d:
+          type: integer
+          nullable: true
+        page_views_28d:
+          type: integer
+          nullable: true
+        page_views_180d:
+          type: integer
+          nullable: true
+    TasksListData:
+      type: object
+      required: [tasks, pagination]
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    ExportColumn:
+      type: object
+      required: [key, label]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+    JobExportData:
+      type: object
+      required:
+        - job_id
+        - domain
+        - status
+        - created_at
+        - export_type
+        - export_time
+        - total_tasks
+        - columns
+        - tasks
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        export_type:
+          type: string
+          enum: [job, broken-links, slow-pages]
+        export_time:
+          type: string
+          format: date-time
+        total_tasks:
+          type: integer
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportColumn"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+    Scheduler:
+      type: object
+      required:
+        - id
+        - domain
+        - schedule_interval_hours
+        - next_run_at
+        - is_enabled
+        - concurrency
+        - find_links
+        - max_pages
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+        next_run_at:
+          type: string
+          format: date-time
+        is_enabled:
+          type: boolean
+        concurrency:
+          type: integer
+        find_links:
+          type: boolean
+        max_pages:
+          type: integer
+        include_paths:
+          type: array
+          items:
+            type: string
+        exclude_paths:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SchedulerRequest:
+      type: object
+      properties:
+        domain:
+          type: string
+          description: Required on create, ignored on update.
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+        concurrency:
+          type: integer
+        find_links:
+          type: boolean
+        max_pages:
+          type: integer
+        include_paths:
+          type: array
+          items:
+            type: string
+        exclude_paths:
+          type: array
+          items:
+            type: string
+        is_enabled:
+          type: boolean
+        expected_is_enabled:
+          type: boolean
+          description: Optional optimistic concurrency hint on update.
+    DashboardStatsData:
+      type: object
+      required:
+        - total_jobs
+        - running_jobs
+        - completed_jobs
+        - failed_jobs
+        - total_tasks
+        - avg_completion_time
+        - date_range
+      properties:
+        total_jobs:
+          type: integer
+        running_jobs:
+          type: integer
+        completed_jobs:
+          type: integer
+        failed_jobs:
+          type: integer
+        total_tasks:
+          type: integer
+        avg_completion_time:
+          type: number
+          format: float
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+    ActivityPoint:
+      type: object
+      required: [timestamp, jobs_count, tasks_count]
+      properties:
+        timestamp:
+          type: string
+        jobs_count:
+          type: integer
+        tasks_count:
+          type: integer
+    DashboardActivityData:
+      type: object
+      required: [activity, date_range]
+      properties:
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityPoint"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+    SlowPage:
+      type: object
+      required: [url, domain, path, second_response_time, job_id, completed_at]
+      properties:
+        url:
+          type: string
+          format: uri
+        domain:
+          type: string
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        second_response_time:
+          type: integer
+        job_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+    SlowPagesData:
+      type: object
+      required: [slow_pages, date_range, count]
+      properties:
+        slow_pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlowPage"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        count:
+          type: integer
+    ExternalRedirect:
+      type: object
+      required: [url, domain, path, redirect_url, job_id, completed_at]
+      properties:
+        url:
+          type: string
+          format: uri
+        domain:
+          type: string
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        redirect_url:
+          type: string
+          format: uri
+        job_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+    ExternalRedirectsData:
+      type: object
+      required: [external_redirects, date_range, count]
+      properties:
+        external_redirects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExternalRedirect"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        count:
+          type: integer
+    MetricInfo:
+      type: object
+      required: [name, description, info_html]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        info_html:
+          type: string
+    OrganisationBasic:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OrganisationsListData:
+      type: object
+      required: [organisations]
+      properties:
+        organisations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationBasic"
+        active_organisation_id:
+          type: string
+          format: uuid
+          nullable: true
+    CreateOrganisationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+      example:
+        name: Good Native
+    SwitchOrganisationRequest:
+      type: object
+      required: [organisation_id]
+      properties:
+        organisation_id:
+          type: string
+          format: uuid
+    OrganisationMember:
+      type: object
+      required: [id, email, full_name, role, created_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+        created_at:
+          type: string
+          format: date-time
+    OrganisationMembersData:
+      type: object
+      required: [members, current_user_id, current_user_role]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationMember"
+        current_user_id:
+          type: string
+        current_user_role:
+          type: string
+          enum: [admin, member]
+    UpdateOrganisationMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member]
+    InvitePreviewData:
+      type: object
+      required: [invite]
+      properties:
+        invite:
+          type: object
+          required:
+            [
+              email,
+              role,
+              organisation_id,
+              organisation_name,
+              inviter_name,
+              expires_at,
+            ]
+          properties:
+            email:
+              type: string
+              format: email
+            role:
+              type: string
+            organisation_id:
+              type: string
+              format: uuid
+            organisation_name:
+              type: string
+            inviter_name:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
+    OrganisationInvite:
+      type: object
+      required: [id, email, role, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member]
+        invite_link:
+          type: string
+          format: uri
+        email_delivery:
+          type: string
+          enum: [sent, skipped, failed]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    OrganisationInvitesData:
+      type: object
+      required: [invites]
+      properties:
+        invites:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationInvite"
+    CreateOrganisationInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member]
+      example:
+        email: teammate@example.com
+        role: member
+    AcceptOrganisationInviteRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+    UpdateOrganisationPlanRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+    UsageStats:
+      type: object
+      required:
+        - daily_limit
+        - daily_used
+        - daily_remaining
+        - usage_percentage
+        - plan_id
+        - plan_name
+        - plan_display_name
+        - resets_at
+      properties:
+        daily_limit:
+          type: integer
+        daily_used:
+          type: integer
+        daily_remaining:
+          type: integer
+        usage_percentage:
+          type: number
+          format: float
+        plan_id:
+          type: string
+        plan_name:
+          type: string
+        plan_display_name:
+          type: string
+        resets_at:
+          type: string
+          format: date-time
+    DailyUsage:
+      type: object
+      required: [usage_date, pages_processed, jobs_created]
+      properties:
+        usage_date:
+          type: string
+          example: "2026-03-08"
+        pages_processed:
+          type: integer
+        jobs_created:
+          type: integer
+    UsageHistoryData:
+      type: object
+      required: [days, usage]
+      properties:
+        days:
+          type: integer
+        usage:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyUsage"
+    CreateDomainRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+      example:
+        domain: example.com
+    DomainRegistration:
+      type: object
+      required: [domain_id, domain]
+      properties:
+        domain_id:
+          type: integer
+        domain:
+          type: string
+    PublicPlan:
+      type: object
+      required: [id, name, display_name, daily_page_limit, monthly_price_cents]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        display_name:
+          type: string
+        daily_page_limit:
+          type: integer
+        monthly_price_cents:
+          type: integer
+    WebflowWebhookPayload:
+      type: object
+      required: [triggerType, payload]
+      properties:
+        triggerType:
+          type: string
+          example: site_publish
+        siteId:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          required: [domains, publishedBy]
+          properties:
+            domains:
+              type: array
+              items:
+                type: string
+            publishedBy:
+              type: object
+              properties:
+                displayName:
+                  type: string
+    SlackConnection:
+      type: object
+      required: [id, workspace_id, workspace_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SlackUserLink:
+      type: object
+      required: [id, slack_user_id, dm_notifications, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slack_user_id:
+          type: string
+        dm_notifications:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    OAuthRedirectResponse:
+      type: object
+      required: [auth_url]
+      properties:
+        auth_url:
+          type: string
+          format: uri
+    SlackConnectionDetail:
+      type: object
+      required: [connection]
+      properties:
+        connection:
+          $ref: "#/components/schemas/SlackConnection"
+        user_link:
+          $ref: "#/components/schemas/SlackUserLink"
+    WebflowConnection:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        webflow_workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    WebflowSiteSetting:
+      type: object
+      required:
+        [webflow_site_id, site_name, primary_domain, auto_publish_enabled]
+      properties:
+        webflow_site_id:
+          type: string
+        site_name:
+          type: string
+        primary_domain:
+          type: string
+        last_published:
+          type: string
+        schedule_interval_hours:
+          type: integer
+          nullable: true
+        auto_publish_enabled:
+          type: boolean
+        scheduler_id:
+          type: string
+          format: uuid
+          nullable: true
+    WebflowSitesListData:
+      type: object
+      required: [sites, pagination]
+      properties:
+        sites:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebflowSiteSetting"
+        pagination:
+          type: object
+          required: [total, page, limit, has_next]
+          properties:
+            total:
+              type: integer
+            page:
+              type: integer
+            limit:
+              type: integer
+            has_next:
+              type: boolean
+    UpdateWebflowSiteScheduleRequest:
+      type: object
+      required: [connection_id]
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+          nullable: true
+          description: Send `null` to remove the schedule.
+    UpdateWebflowAutoPublishRequest:
+      type: object
+      required: [connection_id, enabled]
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+    GoogleConnection:
+      type: object
+      required: [id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ga4_property_id:
+          type: string
+        ga4_property_name:
+          type: string
+        google_account_name:
+          type: string
+        google_email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, inactive]
+        domain_ids:
+          type: array
+          items:
+            type: integer
+        created_at:
+          type: string
+          format: date-time
+    UpdateGoogleConnectionDomainsRequest:
+      type: object
+      required: [domain_ids]
+      properties:
+        domain_ids:
+          type: array
+          items:
+            type: integer
+    UpdateGoogleConnectionStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, inactive]
+    SaveGooglePropertyRequest:
+      type: object
+      required: [property_id, refresh_token]
+      properties:
+        property_id:
+          type: string
+        property_name:
+          type: string
+        refresh_token:
+          type: string
+        access_token:
+          type: string
+        google_email:
+          type: string
+          format: email
+        google_user_id:
+          type: string
+    Notification:
+      type: object
+      required: [id, type, subject, preview, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [job_complete, job_failed, scheduler_run, scheduler_error]
+        subject:
+          type: string
+        preview:
+          type: string
+        message:
+          type: string
+        link:
+          type: string
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorised:
+      description: Authentication failed or token missing
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Check service health
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+                timestamp: "2026-03-08T12:00:00Z"
+                service: adapt
+                version: 0.4.1
+        "405":
+          $ref: "#/components/responses/BadRequest"
+  /health/db:
+    get:
+      tags: [System]
+      summary: Check database health
+      security: []
+      responses:
+        "200":
+          description: Database is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+                timestamp: "2026-03-08T12:00:00Z"
+                service: postgresql
+                version: ""
+        "503":
+          description: Database is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnhealthyResponse"
+        "405":
+          $ref: "#/components/responses/BadRequest"
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user and starter organisation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRegisterRequest"
+      responses:
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RegisterData"
+              example:
+                status: success
+                message: User registered successfully
+                request_id: req_123abc
+                data:
+                  user:
+                    id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+                    email: simon@example.com
+                    first_name: Simon
+                    last_name: Small
+                    full_name: Simon Small
+                    organisation_id: e9f33c4c-e3cc-4ed4-b7d9-b9b2b3bd8fe9
+                    created_at: "2026-03-08T12:00:00Z"
+                    updated_at: "2026-03-08T12:00:00Z"
+                  organisation:
+                    id: e9f33c4c-e3cc-4ed4-b7d9-b9b2b3bd8fe9
+                    name: Good Native
+                    created_at: "2026-03-08T12:00:00Z"
+                    updated_at: "2026-03-08T12:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/auth/session:
+    post:
+      tags: [Auth]
+      summary: Validate a bearer token out of band
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionRequest"
+      responses:
+        "200":
+          description: Session validity result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SessionInfo"
+              example:
+                status: success
+                message: Session validated
+                request_id: req_123abc
+                data:
+                  is_valid: true
+                  expires_at: 1772971200
+                  refresh_needed: false
+                  user_id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+                  email: simon@example.com
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/auth/profile:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user profile
+      responses:
+        "200":
+          description: Profile details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProfileData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Auth]
+      summary: Update the authenticated user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated profile details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProfileData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs:
+    get:
+      tags: [Jobs]
+      summary: List jobs for the active organisation
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Optional job status filter.
+        - name: range
+          in: query
+          schema:
+            type: string
+          description: Optional date range filter passed to the handler.
+        - name: tzOffset
+          in: query
+          schema:
+            type: integer
+          description: Timezone offset in minutes.
+        - name: include
+          in: query
+          schema:
+            type: string
+          description:
+            Comma-separated includes. Only `stats` changes current behaviour.
+      responses:
+        "200":
+          description: Jobs list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/JobsListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Jobs]
+      summary: Create a job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+              example:
+                status: success
+                message: Job created successfully
+                request_id: req_123abc
+                data:
+                  id: d64bb2a1-5c7a-410d-b59d-9a440b3fc1ef
+                  domain_id: 42
+                  domain: example.com
+                  status: pending
+                  total_tasks: 0
+                  completed_tasks: 0
+                  failed_tasks: 0
+                  skipped_tasks: 0
+                  progress: 0
+                  created_at: "2026-03-08T12:00:00Z"
+                  concurrency: 0
+                  max_pages: 0
+                  adaptive_delay_seconds: 0
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Jobs]
+      summary: Apply a job action
+      description: The current implementation only supports the `cancel` action.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobActionRequest"
+      responses:
+        "200":
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Jobs]
+      summary: Cancel a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [id, status]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          status:
+                            type: string
+                            example: cancelled
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}/tasks:
+    get:
+      tags: [Jobs]
+      summary: List tasks for a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Task status filter.
+        - name: cache
+          in: query
+          schema:
+            type: string
+            enum: [hit, miss]
+          description: Maps to grouped cache status filters in SQL.
+        - name: path
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive path fragment filter.
+        - name: sort
+          in: query
+          schema:
+            type: string
+          description: Sort key, optionally prefixed with `-` for descending.
+      responses:
+        "200":
+          description: Tasks list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TasksListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}/export:
+    get:
+      tags: [Jobs]
+      summary: Export job task data as JSON
+      description: |
+        Despite the endpoint name, the current implementation returns JSON data
+        rather than a streamed CSV download.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [job, broken-links, slow-pages]
+            default: job
+          description: Export preset. Defaults to `job`.
+      responses:
+        "200":
+          description: Export payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/JobExportData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/schedulers:
+    get:
+      tags: [Jobs]
+      summary: List schedulers for the active organisation
+      responses:
+        "200":
+          description: Scheduler list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Scheduler"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Jobs]
+      summary: Create a scheduler
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchedulerRequest"
+            example:
+              domain: example.com
+              schedule_interval_hours: 24
+              concurrency: 20
+              find_links: true
+              max_pages: 0
+              include_paths: [/blog/*]
+              exclude_paths: [/admin/*]
+      responses:
+        "201":
+          description: Scheduler created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/schedulers/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scheduler details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Jobs]
+      summary: Update a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchedulerRequest"
+      responses:
+        "200":
+          description: Scheduler updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Scheduler state conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Jobs]
+      summary: Delete a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scheduler deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [id, status]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          status:
+                            type: string
+                            example: deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/shared/jobs/{token}:
+    get:
+      tags: [Jobs]
+      summary: Get a shared job without authentication
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Share link token.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Shared job details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard job statistics
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+          description: Date range keyword.
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+          description: IANA timezone or supported alias.
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardStatsData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard activity series
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: Activity series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardActivityData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/slow-pages:
+    get:
+      tags: [Dashboard]
+      summary: Get slow pages analysis
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: Slow pages
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SlowPagesData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/external-redirects:
+    get:
+      tags: [Dashboard]
+      summary: Get external redirects analysis
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: External redirects
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ExternalRedirectsData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/metadata/metrics:
+    get:
+      tags: [Dashboard]
+      summary: Get metric metadata used by the dashboard
+      responses:
+        "200":
+          description: Metrics metadata map
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties:
+                          $ref: "#/components/schemas/MetricInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+  /v1/organisations/invites/preview:
+    get:
+      tags: [Organisations]
+      summary: Preview an organisation invite without authentication
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invite preview
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/InvitePreviewData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations:
+    get:
+      tags: [Organisations]
+      summary: List organisations for the authenticated user
+      responses:
+        "200":
+          description: Organisation list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationsListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Organisations]
+      summary: Create an organisation and make it active
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganisationRequest"
+      responses:
+        "200":
+          description: Organisation created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [organisation]
+                        properties:
+                          organisation:
+                            $ref: "#/components/schemas/OrganisationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/switch:
+    post:
+      tags: [Organisations]
+      summary: Switch the active organisation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchOrganisationRequest"
+      responses:
+        "200":
+          description: Active organisation changed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [organisation]
+                        properties:
+                          organisation:
+                            $ref: "#/components/schemas/OrganisationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: User is not a member of the requested organisation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/members:
+    get:
+      tags: [Organisations]
+      summary: List members of the active organisation
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationMembersData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: User is not a member of the active organisation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/members/{id}:
+    patch:
+      tags: [Organisations]
+      summary: Update an organisation member role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Member user ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganisationMemberRoleRequest"
+      responses:
+        "200":
+          description: Member role updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [member_id, role]
+                        properties:
+                          member_id:
+                            type: string
+                          role:
+                            type: string
+                            enum: [admin, member]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required or action blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Organisations]
+      summary: Remove an organisation member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Member user ID.
+      responses:
+        "200":
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [member_id]
+                        properties:
+                          member_id:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required or action blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites/accept:
+    post:
+      tags: [Organisations]
+      summary: Accept an organisation invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptOrganisationInviteRequest"
+      responses:
+        "200":
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          - organisation_id
+                          - role
+                          - active_organisation_set
+                          - active_organisation_attempts
+                        properties:
+                          organisation_id:
+                            type: string
+                            format: uuid
+                          role:
+                            type: string
+                          active_organisation_set:
+                            type: boolean
+                          active_organisation_attempts:
+                            type: integer
+                          active_organisation_error:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites:
+    get:
+      tags: [Organisations]
+      summary: List pending organisation invites
+      responses:
+        "200":
+          description: Invite list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationInvitesData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Organisations]
+      summary: Create an organisation invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganisationInviteRequest"
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [invite]
+                        properties:
+                          invite:
+                            $ref: "#/components/schemas/OrganisationInvite"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites/{id}:
+    delete:
+      tags: [Organisations]
+      summary: Revoke an organisation invite
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Invite UUID.
+      responses:
+        "200":
+          description: Invite revoked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [invite_id]
+                        properties:
+                          invite_id:
+                            type: string
+                            format: uuid
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/plan:
+    put:
+      tags: [Organisations]
+      summary: Update the active organisation plan
+      description:
+        The requested `GET /v1/organisations/plan` route is not currently
+        implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganisationPlanRequest"
+      responses:
+        "200":
+          description: Plan updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [plan_id]
+                        properties:
+                          plan_id:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/domains:
+    post:
+      tags: [Organisations]
+      summary: Register a domain for the active organisation
+      description:
+        The requested `GET /v1/domains` route is not currently implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainRequest"
+      responses:
+        "201":
+          description: Domain registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DomainRegistration"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/usage:
+    get:
+      tags: [Organisations]
+      summary: Get usage statistics for the active organisation
+      responses:
+        "200":
+          description: Usage summary
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [usage]
+                        properties:
+                          usage:
+                            $ref: "#/components/schemas/UsageStats"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/usage/history:
+    get:
+      tags: [Organisations]
+      summary: Get daily usage history for the active organisation
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Usage history
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UsageHistoryData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/plans:
+    get:
+      tags: [Organisations]
+      summary: List public subscription plans
+      security: []
+      responses:
+        "200":
+          description: Public plan list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [plans]
+                        properties:
+                          plans:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PublicPlan"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks/webflow/{token}:
+    post:
+      tags: [Integrations]
+      summary: Receive a legacy token-scoped Webflow publish webhook
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: concurrency
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Optional override for job concurrency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebflowWebhookPayload"
+      responses:
+        "200":
+          description: Webhook processed or intentionally ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks/webflow/workspaces/{workspaceId}:
+    post:
+      tags: [Integrations]
+      summary: Receive a workspace-scoped Webflow publish webhook
+      security: []
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: concurrency
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Optional override for job concurrency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebflowWebhookPayload"
+      responses:
+        "200":
+          description: Webhook processed or intentionally ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack:
+    get:
+      tags: [Integrations]
+      summary: List Slack workspace connections
+      responses:
+        "200":
+          description: Slack connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SlackConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Slack OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OAuthRedirectResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack/{id}:
+    get:
+      tags: [Integrations]
+      summary: Get a Slack connection and current user link
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Slack connection detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SlackConnectionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Integrations]
+      summary: Delete a Slack connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Slack connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Slack OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirects back to settings with success or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/webflow:
+    get:
+      tags: [Integrations]
+      summary: List Webflow connections
+      responses:
+        "200":
+          description: Webflow connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WebflowConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Webflow OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [auth_url]
+                        properties:
+                          auth_url:
+                            type: string
+                            format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/{id}/sites:
+    get:
+      tags: [Integrations]
+      summary: List Webflow sites for a connection
+      description:
+        Corrected from the requested `GET /v1/integrations/webflow/{id}` route,
+        which is not implemented.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Paginated Webflow sites
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSitesListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/{id}:
+    delete:
+      tags: [Integrations]
+      summary: Delete a Webflow connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Webflow connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Webflow OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirects back to settings with success or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/webflow/sites/{site_id}/schedule:
+    put:
+      tags: [Integrations]
+      summary: Create, update, or remove a Webflow site schedule
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebflowSiteScheduleRequest"
+      responses:
+        "200":
+          description: Site schedule updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSiteSetting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/sites/{site_id}/auto-publish:
+    put:
+      tags: [Integrations]
+      summary: Toggle Webflow auto-publish for a site
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebflowAutoPublishRequest"
+      responses:
+        "200":
+          description: Auto-publish updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSiteSetting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google:
+    get:
+      tags: [Integrations]
+      summary: List Google Analytics connections
+      responses:
+        "200":
+          description: Google Analytics connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GoogleConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Google Analytics OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [auth_url]
+                        properties:
+                          auth_url:
+                            type: string
+                            format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google/{id}:
+    patch:
+      tags: [Integrations]
+      summary: Update a Google Analytics connection
+      description: |
+        Corrected from the requested `GET /v1/integrations/google/{id}` route,
+        which is not implemented. The live per-connection handler accepts `PATCH`
+        requests for either domain mapping or status updates.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/UpdateGoogleConnectionDomainsRequest"
+                - $ref: "#/components/schemas/UpdateGoogleConnectionStatusRequest"
+      responses:
+        "200":
+          description: Google Analytics connection updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: "#/components/schemas/GoogleConnection"
+                          - type: object
+                            required: [connection_id, status]
+                            properties:
+                              connection_id:
+                                type: string
+                                format: uuid
+                              status:
+                                type: string
+                                enum: [active, inactive]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Access denied or invalid organisation domain mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Integrations]
+      summary: Delete a Google Analytics connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Google Analytics connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Google Analytics OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description:
+            Redirects back to settings with a pending GA session or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/google/save-property:
+    post:
+      tags: [Integrations]
+      summary: Persist a selected Google Analytics property
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveGooglePropertyRequest"
+      responses:
+        "200":
+          description: Google Analytics connection saved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [connection_id, property_id, property_name]
+                        properties:
+                          connection_id:
+                            type: string
+                            format: uuid
+                          property_id:
+                            type: string
+                          property_name:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for the active organisation
+      description: |
+        This endpoint does not use the standard success envelope. It returns a
+        plain JSON object with notifications, total count, and unread count.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: unread
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, total, unread_count]
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+                  total:
+                    type: integer
+                  unread_count:
+                    type: integer
+              example:
+                notifications:
+                  - id: 72a8c657-1408-45e8-955e-0bf75643f0c0
+                    type: job_complete
+                    subject: "Job completed: example.com"
+                    preview: Cache warming finished successfully.
+                    message:
+                      Job completed with 145 successful tasks and 2 failures.
+                    link: /jobs/72a8c657-1408-45e8-955e-0bf75643f0c0
+                    read_at: null
+                    created_at: "2026-03-08T12:00:00Z"
+                total: 1
+                unread_count: 1
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      responses:
+        "204":
+          description: All notifications marked as read
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      description:
+        Corrected from the requested `PATCH /v1/notifications/{id}` route.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Notification marked as read
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/admin/reset-db:
+    post:
+      tags: [Admin]
+      summary: Reset the database schema
+      description: |
+        Requires bearer authentication, `system_role=system_admin`, and
+        `ALLOW_DB_RESET=true`. Intended for development or controlled
+        environments only.
+      responses:
+        "200":
+          description: Schema reset triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                status: success
+                data: null
+                message:
+                  Database schema reset successfully - Supabase will rebuild
+                  from migrations
+                request_id: req_123abc
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Reset disabled or system administrator role missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/admin/reset-data:
+    post:
+      tags: [Admin]
+      summary: Clear data while preserving schema
+      description: |
+        Requires bearer authentication, `system_role=system_admin`, and
+        `ALLOW_DB_RESET=true`. Intended for development or controlled
+        environments only.
+      responses:
+        "200":
+          description: Data reset completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                status: success
+                data: null
+                message: Data cleared successfully - schema preserved
+                request_id: req_123abc
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Reset disabled or system administrator role missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
