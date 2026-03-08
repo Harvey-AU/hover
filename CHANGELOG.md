@@ -28,6 +28,13 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Added
+
+- **Postman-ready OpenAPI spec**: Added `docs/api/openapi.yaml` covering the
+  current API surface for backend testing and exploration, including auth,
+  request bodies, core response shapes, and documented corrections where live
+  handlers differ from requested route assumptions.
+
 ## [0.27.0] – 2026-02-23
 
 ### Added
