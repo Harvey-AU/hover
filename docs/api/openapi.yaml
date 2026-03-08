@@ -17,8 +17,10 @@ security:
   - bearerAuth: []
 tags:
   - name: System
+  - name: Dashboard
   - name: Auth
   - name: Jobs
+  - name: Organisations
 components:
   securitySchemes:
     bearerAuth:
@@ -633,6 +635,246 @@ components:
           type: string
           format: date-time
           nullable: true
+    ActivityPoint:
+      type: object
+      required: [timestamp, jobs_count, tasks_count]
+      properties:
+        timestamp:
+          type: string
+        jobs_count:
+          type: integer
+        tasks_count:
+          type: integer
+    DashboardActivityData:
+      type: object
+      required: [activity, date_range]
+      properties:
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityPoint"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+    SlowPage:
+      type: object
+      required: [url, domain, path, second_response_time, job_id, completed_at]
+      properties:
+        url:
+          type: string
+          format: uri
+        domain:
+          type: string
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        second_response_time:
+          type: integer
+        job_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+    SlowPagesData:
+      type: object
+      required: [slow_pages, date_range, count]
+      properties:
+        slow_pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlowPage"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        count:
+          type: integer
+    ExternalRedirect:
+      type: object
+      required: [url, domain, path, redirect_url, job_id, completed_at]
+      properties:
+        url:
+          type: string
+          format: uri
+        domain:
+          type: string
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        redirect_url:
+          type: string
+          format: uri
+        job_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+    ExternalRedirectsData:
+      type: object
+      required: [external_redirects, date_range, count]
+      properties:
+        external_redirects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExternalRedirect"
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
+        count:
+          type: integer
+    MetricInfo:
+      type: object
+      required: [name, description, info_html]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        info_html:
+          type: string
+    OrganisationBasic:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OrganisationsListData:
+      type: object
+      required: [organisations]
+      properties:
+        organisations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationBasic"
+        active_organisation_id:
+          type: string
+          format: uuid
+          nullable: true
+    CreateOrganisationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 100
+      example:
+        name: Good Native
+    SwitchOrganisationRequest:
+      type: object
+      required: [organisation_id]
+      properties:
+        organisation_id:
+          type: string
+          format: uuid
+    OrganisationMember:
+      type: object
+      required: [id, email, full_name, role, created_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+        created_at:
+          type: string
+          format: date-time
+    OrganisationMembersData:
+      type: object
+      required: [members, current_user_id, current_user_role]
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationMember"
+        current_user_id:
+          type: string
+        current_user_role:
+          type: string
+          enum: [admin, member]
+    UpdateOrganisationMemberRoleRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [admin, member]
+    InvitePreviewData:
+      type: object
+      required: [invite]
+      properties:
+        invite:
+          type: object
+          required:
+            [
+              email,
+              role,
+              organisation_id,
+              organisation_name,
+              inviter_name,
+              expires_at,
+            ]
+          properties:
+            email:
+              type: string
+              format: email
+            role:
+              type: string
+            organisation_id:
+              type: string
+              format: uuid
+            organisation_name:
+              type: string
+            inviter_name:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
   responses:
     BadRequest:
       description: Bad request
@@ -1315,7 +1557,7 @@ paths:
           $ref: "#/components/responses/InternalError"
   /v1/dashboard/stats:
     get:
-      tags: [System]
+      tags: [Dashboard]
       summary: Get dashboard job statistics
       parameters:
         - name: range
@@ -1346,6 +1588,311 @@ paths:
           $ref: "#/components/responses/Unauthorised"
         "429":
           description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      summary: Get dashboard activity series
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: Activity series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardActivityData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/slow-pages:
+    get:
+      tags: [Dashboard]
+      summary: Get slow pages analysis
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: Slow pages
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SlowPagesData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/external-redirects:
+    get:
+      tags: [Dashboard]
+      summary: Get external redirects analysis
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+      responses:
+        "200":
+          description: External redirects
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ExternalRedirectsData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/metadata/metrics:
+    get:
+      tags: [Dashboard]
+      summary: Get metric metadata used by the dashboard
+      responses:
+        "200":
+          description: Metrics metadata map
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties:
+                          $ref: "#/components/schemas/MetricInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+  /v1/organisations/invites/preview:
+    get:
+      tags: [Organisations]
+      summary: Preview an organisation invite without authentication
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invite preview
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/InvitePreviewData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations:
+    get:
+      tags: [Organisations]
+      summary: List organisations for the authenticated user
+      responses:
+        "200":
+          description: Organisation list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationsListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Organisations]
+      summary: Create an organisation and make it active
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganisationRequest"
+      responses:
+        "200":
+          description: Organisation created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [organisation]
+                        properties:
+                          organisation:
+                            $ref: "#/components/schemas/OrganisationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/switch:
+    post:
+      tags: [Organisations]
+      summary: Switch the active organisation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchOrganisationRequest"
+      responses:
+        "200":
+          description: Active organisation changed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [organisation]
+                        properties:
+                          organisation:
+                            $ref: "#/components/schemas/OrganisationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: User is not a member of the requested organisation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/members:
+    get:
+      tags: [Organisations]
+      summary: List members of the active organisation
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationMembersData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: User is not a member of the active organisation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/members/{id}:
+    patch:
+      tags: [Organisations]
+      summary: Update an organisation member role
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Member user ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganisationMemberRoleRequest"
+      responses:
+        "200":
+          description: Member role updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [member_id, role]
+                        properties:
+                          member_id:
+                            type: string
+                          role:
+                            type: string
+                            enum: [admin, member]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required or action blocked
           content:
             application/json:
               schema:

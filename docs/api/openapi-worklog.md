@@ -45,18 +45,18 @@ backend testing.
 19. `GET /v1/shared/jobs/{token}` - done
 20. `GET /v1/dashboard/stats` - done
 
-## Chunk 3 - pending
+## Chunk 3 - done
 
-21. `GET /v1/dashboard/activity` - pending
-22. `GET /v1/dashboard/slow-pages` - pending
-23. `GET /v1/dashboard/external-redirects` - pending
-24. `GET /v1/metadata/metrics` - pending
-25. `GET /v1/organisations/invites/preview` - pending
-26. `GET /v1/organisations` - pending
-27. `POST /v1/organisations` - pending
-28. `POST /v1/organisations/switch` - pending
-29. `GET /v1/organisations/members` - pending
-30. `PATCH /v1/organisations/members/{id}` - pending
+21. `GET /v1/dashboard/activity` - done
+22. `GET /v1/dashboard/slow-pages` - done
+23. `GET /v1/dashboard/external-redirects` - done
+24. `GET /v1/metadata/metrics` - done
+25. `GET /v1/organisations/invites/preview` - done
+26. `GET /v1/organisations` - done
+27. `POST /v1/organisations` - done
+28. `POST /v1/organisations/switch` - done
+29. `GET /v1/organisations/members` - done
+30. `PATCH /v1/organisations/members/{id}` - done
 
 ## Chunk 4 - pending
 
