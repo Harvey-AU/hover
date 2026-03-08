@@ -1,0 +1,756 @@
+openapi: 3.0.3
+info:
+  title: Adapt API
+  version: 0.4.1
+  description: |
+    Lean OpenAPI coverage for Adapt's current backend API surface, optimised for
+    Postman import, backend testing, and API exploration.
+
+    The spec documents implemented behaviour from the Go handlers rather than
+    idealised REST shapes.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://adapt.app.goodnative.co
+    description: Production application
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+  - name: Auth
+  - name: Jobs
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase bearer token sent in the `Authorization` header.
+  parameters:
+    JobId:
+      name: id
+      in: path
+      required: true
+      description: Job UUID.
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      description: Result size. Invalid values fall back to the handler default.
+      schema:
+        type: integer
+        minimum: 1
+    Offset:
+      name: offset
+      in: query
+      description: Result offset.
+      schema:
+        type: integer
+        minimum: 0
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: Invalid JSON request body
+        code:
+          type: string
+          example: BAD_REQUEST
+        request_id:
+          type: string
+          example: req_123abc
+    HealthResponse:
+      type: object
+      required: [status, timestamp, service]
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+        service:
+          type: string
+          example: adapt
+        version:
+          type: string
+          example: 0.4.1
+    UnhealthyResponse:
+      type: object
+      required: [status, timestamp, service, error]
+      properties:
+        status:
+          type: string
+          example: unhealthy
+        timestamp:
+          type: string
+          format: date-time
+        service:
+          type: string
+          example: postgresql
+        error:
+          type: string
+          example: "dial tcp 127.0.0.1:5432: connect: connection refused"
+        request_id:
+          type: string
+          example: req_123abc
+    SuccessEnvelope:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: success
+        data:
+          nullable: true
+        message:
+          type: string
+        request_id:
+          type: string
+          example: req_123abc
+    User:
+      type: object
+      required: [id, email, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          nullable: true
+        last_name:
+          type: string
+          nullable: true
+        full_name:
+          type: string
+          nullable: true
+        organisation_id:
+          type: string
+          nullable: true
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OrganisationSummary:
+      type: object
+      required: [id, name, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AuthMethods:
+      type: array
+      items:
+        type: string
+      example: [google, email]
+    AuthRegisterRequest:
+      type: object
+      required: [user_id, email]
+      properties:
+        user_id:
+          type: string
+          description: Supabase user ID.
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+          maxLength: 80
+        last_name:
+          type: string
+          maxLength: 80
+        full_name:
+          type: string
+          maxLength: 120
+        org_name:
+          type: string
+      example:
+        user_id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+        email: simon@example.com
+        first_name: Simon
+        last_name: Small
+        org_name: Good Native
+    RegisterData:
+      type: object
+      required: [user, organisation]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        organisation:
+          $ref: "#/components/schemas/OrganisationSummary"
+    SessionRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+      example:
+        token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+    SessionInfo:
+      type: object
+      required: [is_valid, refresh_needed]
+      properties:
+        is_valid:
+          type: boolean
+        expires_at:
+          type: integer
+          format: int64
+          nullable: true
+        refresh_needed:
+          type: boolean
+        user_id:
+          type: string
+        email:
+          type: string
+          format: email
+    ProfileData:
+      type: object
+      required: [user, auth_methods]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        auth_methods:
+          $ref: "#/components/schemas/AuthMethods"
+        organisation:
+          $ref: "#/components/schemas/OrganisationSummary"
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          nullable: true
+          maxLength: 80
+        last_name:
+          type: string
+          nullable: true
+          maxLength: 80
+        full_name:
+          type: string
+          nullable: true
+          maxLength: 120
+      example:
+        first_name: Simon
+        last_name: Small
+        full_name: Simon Small
+    Pagination:
+      type: object
+      required: [limit, offset, total, has_next, has_prev]
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+        has_next:
+          type: boolean
+        has_prev:
+          type: boolean
+    Job:
+      type: object
+      required:
+        - id
+        - domain_id
+        - domain
+        - status
+        - total_tasks
+        - completed_tasks
+        - failed_tasks
+        - skipped_tasks
+        - progress
+        - created_at
+        - concurrency
+        - max_pages
+        - adaptive_delay_seconds
+      properties:
+        id:
+          type: string
+          format: uuid
+        domain_id:
+          type: integer
+        domain:
+          type: string
+        status:
+          type: string
+          example: running
+        total_tasks:
+          type: integer
+        completed_tasks:
+          type: integer
+        failed_tasks:
+          type: integer
+        skipped_tasks:
+          type: integer
+        progress:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: integer
+          nullable: true
+        avg_time_per_task_seconds:
+          type: number
+          format: float
+          nullable: true
+        stats:
+          type: object
+          additionalProperties: true
+          nullable: true
+        scheduler_id:
+          type: string
+          format: uuid
+          nullable: true
+        concurrency:
+          type: integer
+        max_pages:
+          type: integer
+        source_type:
+          type: string
+          nullable: true
+        crawl_delay_seconds:
+          type: integer
+          nullable: true
+        adaptive_delay_seconds:
+          type: integer
+    CreateJobRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+        use_sitemap:
+          type: boolean
+        find_links:
+          type: boolean
+        allow_cross_subdomain_links:
+          type: boolean
+        concurrency:
+          type: integer
+        max_pages:
+          type: integer
+        source_type:
+          type: string
+        source_detail:
+          type: string
+        source_info:
+          type: string
+          description: JSON string stored for provenance.
+      example:
+        domain: example.com
+        use_sitemap: true
+        find_links: true
+        concurrency: 20
+        max_pages: 250
+    JobsListData:
+      type: object
+      required: [jobs, pagination]
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+        include:
+          type: string
+          description: Echoed include string when provided.
+    JobActionRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [cancel]
+      example:
+        action: cancel
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorised:
+      description: Authentication failed or token missing
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Check service health
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+                timestamp: "2026-03-08T12:00:00Z"
+                service: adapt
+                version: 0.4.1
+        "405":
+          $ref: "#/components/responses/BadRequest"
+  /health/db:
+    get:
+      tags: [System]
+      summary: Check database health
+      security: []
+      responses:
+        "200":
+          description: Database is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: healthy
+                timestamp: "2026-03-08T12:00:00Z"
+                service: postgresql
+                version: ""
+        "503":
+          description: Database is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnhealthyResponse"
+        "405":
+          $ref: "#/components/responses/BadRequest"
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a user and starter organisation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthRegisterRequest"
+      responses:
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RegisterData"
+              example:
+                status: success
+                message: User registered successfully
+                request_id: req_123abc
+                data:
+                  user:
+                    id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+                    email: simon@example.com
+                    first_name: Simon
+                    last_name: Small
+                    full_name: Simon Small
+                    organisation_id: e9f33c4c-e3cc-4ed4-b7d9-b9b2b3bd8fe9
+                    created_at: "2026-03-08T12:00:00Z"
+                    updated_at: "2026-03-08T12:00:00Z"
+                  organisation:
+                    id: e9f33c4c-e3cc-4ed4-b7d9-b9b2b3bd8fe9
+                    name: Good Native
+                    created_at: "2026-03-08T12:00:00Z"
+                    updated_at: "2026-03-08T12:00:00Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/auth/session:
+    post:
+      tags: [Auth]
+      summary: Validate a bearer token out of band
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionRequest"
+      responses:
+        "200":
+          description: Session validity result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SessionInfo"
+              example:
+                status: success
+                message: Session validated
+                request_id: req_123abc
+                data:
+                  is_valid: true
+                  expires_at: 1772971200
+                  refresh_needed: false
+                  user_id: 87b9df5c-6b62-49a1-8d6b-4b4dcb0a0b8c
+                  email: simon@example.com
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/auth/profile:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user profile
+      responses:
+        "200":
+          description: Profile details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProfileData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags: [Auth]
+      summary: Update the authenticated user profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: Updated profile details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProfileData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs:
+    get:
+      tags: [Jobs]
+      summary: List jobs for the active organisation
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Optional job status filter.
+        - name: range
+          in: query
+          schema:
+            type: string
+          description: Optional date range filter passed to the handler.
+        - name: tzOffset
+          in: query
+          schema:
+            type: integer
+          description: Timezone offset in minutes.
+        - name: include
+          in: query
+          schema:
+            type: string
+          description:
+            Comma-separated includes. Only `stats` changes current behaviour.
+      responses:
+        "200":
+          description: Jobs list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/JobsListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Jobs]
+      summary: Create a job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+              example:
+                status: success
+                message: Job created successfully
+                request_id: req_123abc
+                data:
+                  id: d64bb2a1-5c7a-410d-b59d-9a440b3fc1ef
+                  domain_id: 42
+                  domain: example.com
+                  status: pending
+                  total_tasks: 0
+                  completed_tasks: 0
+                  failed_tasks: 0
+                  skipped_tasks: 0
+                  progress: 0
+                  created_at: "2026-03-08T12:00:00Z"
+                  concurrency: 0
+                  max_pages: 0
+                  adaptive_delay_seconds: 0
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Jobs]
+      summary: Apply a job action
+      description: The current implementation only supports the `cancel` action.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobActionRequest"
+      responses:
+        "200":
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"

@@ -1,0 +1,123 @@
+# OpenAPI worklog
+
+Tracking the practical OpenAPI spec for Adapt, optimised for Postman import and
+backend testing.
+
+## Scope notes
+
+- Source of truth is the Go handler implementation under `internal/api/` plus
+  auth middleware and supporting docs.
+- Non-API HTML routes are excluded.
+- Where a requested method or path does not match the implementation, the spec
+  documents the implemented behaviour and this worklog notes the correction.
+
+## Progress legend
+
+- `done` - documented, validated, committed, and pushed
+- `in progress` - currently being worked on
+- `pending` - not yet documented
+- `corrected` - requested method/path differed from implementation
+- `not implemented` - requested route does not currently exist in handlers
+
+## Chunk 1 - done
+
+1. `GET /health` - done
+2. `GET /health/db` - done
+3. `POST /v1/auth/register` - done
+4. `POST /v1/auth/session` - done
+5. `GET /v1/auth/profile` - done
+6. `PATCH /v1/auth/profile` - done
+7. `GET /v1/jobs` - done
+8. `POST /v1/jobs` - done
+9. `GET /v1/jobs/{id}` - done
+10. `PUT /v1/jobs/{id}` - done
+
+## Chunk 2 - pending
+
+11. `DELETE /v1/jobs/{id}` - pending
+12. `GET /v1/jobs/{id}/tasks` - pending
+13. `GET /v1/jobs/{id}/export` - pending
+14. `GET /v1/schedulers` - pending
+15. `POST /v1/schedulers` - pending
+16. `GET /v1/schedulers/{id}` - pending
+17. `PUT /v1/schedulers/{id}` - pending
+18. `DELETE /v1/schedulers/{id}` - pending
+19. `GET /v1/shared/jobs/{token}` - pending
+20. `GET /v1/dashboard/stats` - pending
+
+## Chunk 3 - pending
+
+21. `GET /v1/dashboard/activity` - pending
+22. `GET /v1/dashboard/slow-pages` - pending
+23. `GET /v1/dashboard/external-redirects` - pending
+24. `GET /v1/metadata/metrics` - pending
+25. `GET /v1/organisations/invites/preview` - pending
+26. `GET /v1/organisations` - pending
+27. `POST /v1/organisations` - pending
+28. `POST /v1/organisations/switch` - pending
+29. `GET /v1/organisations/members` - pending
+30. `PATCH /v1/organisations/members/{id}` - pending
+
+## Chunk 4 - pending
+
+31. `DELETE /v1/organisations/members/{id}` - pending
+32. `POST /v1/organisations/invites/accept` - pending
+33. `GET /v1/organisations/invites` - pending
+34. `POST /v1/organisations/invites` - pending
+35. `DELETE /v1/organisations/invites/{id}` - pending
+36. `GET /v1/organisations/plan` - corrected, not implemented as `GET`; handler
+    currently exposes `PUT /v1/organisations/plan`
+37. `PUT /v1/organisations/plan` - pending
+38. `GET /v1/domains` - corrected to implemented `POST /v1/domains`
+39. `GET /v1/usage` - pending
+40. `GET /v1/usage/history` - pending
+
+## Chunk 5 - pending
+
+41. `GET /v1/plans` - pending
+42. `POST /v1/webhooks/webflow/{tokenOrWorkspace}` - corrected; handlers expose
+    both `POST /v1/webhooks/webflow/{token}` and
+    `POST /v1/webhooks/webflow/workspaces/{workspaceId}`
+43. `GET /v1/integrations/slack` - pending
+44. `POST /v1/integrations/slack` - pending
+45. `GET /v1/integrations/slack/{id}` - pending
+46. `DELETE /v1/integrations/slack/{id}` - pending
+47. `GET /v1/integrations/slack/callback` - pending
+48. `GET /v1/integrations/webflow` - pending
+49. `POST /v1/integrations/webflow` - pending
+50. `GET /v1/integrations/webflow/{id}` - corrected, not implemented; nearest
+    implemented read route is `GET /v1/integrations/webflow/{id}/sites`
+
+## Chunk 6 - pending
+
+51. `DELETE /v1/integrations/webflow/{id}` - pending
+52. `GET /v1/integrations/webflow/callback` - pending
+53. `PUT /v1/integrations/webflow/sites/{site_id}/schedule` - pending
+54. `PUT /v1/integrations/webflow/sites/{site_id}/auto-publish` - pending
+55. `GET /v1/integrations/google` - pending
+56. `POST /v1/integrations/google` - pending
+57. `GET /v1/integrations/google/{id}` - corrected, not implemented as `GET`;
+    per-connection handler currently exposes `PATCH` and `DELETE`
+58. `DELETE /v1/integrations/google/{id}` - pending
+59. `GET /v1/integrations/google/callback` - pending
+60. `POST /v1/integrations/google/save-property` - pending
+
+## Chunk 7 - pending
+
+61. `GET /v1/notifications` - pending
+62. `POST /v1/notifications/read-all` - pending
+63. `PATCH /v1/notifications/{id}` - corrected to implemented
+    `POST /v1/notifications/{id}/read`
+64. `DELETE /v1/notifications/{id}` - not implemented in current handlers
+65. `POST /v1/admin/reset-db` - pending
+66. `POST /v1/admin/reset-data` - pending
+
+## Ambiguities and follow-ups
+
+- `GET /v1/integrations/webflow/{id}` and `GET /v1/integrations/google/{id}` are
+  listed in the request but do not exist in the current handler implementations.
+- Notification item `64` is also not implemented; only list, read-all, and
+  per-notification `POST /read` are currently wired.
+- Webflow webhook support currently spans two real path shapes; both will be
+  documented for Postman usability.
+- Chunk 1 validation: YAML parsed successfully via Python `yaml.safe_load`.
