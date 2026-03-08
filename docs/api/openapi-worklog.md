@@ -102,15 +102,15 @@ backend testing.
 59. `GET /v1/integrations/google/callback` - done
 60. `POST /v1/integrations/google/save-property` - done
 
-## Chunk 7 - pending
+## Chunk 7 - done
 
-61. `GET /v1/notifications` - pending
-62. `POST /v1/notifications/read-all` - pending
-63. `PATCH /v1/notifications/{id}` - corrected to implemented
+61. `GET /v1/notifications` - done
+62. `POST /v1/notifications/read-all` - done
+63. `PATCH /v1/notifications/{id}` - corrected to documented
     `POST /v1/notifications/{id}/read`
 64. `DELETE /v1/notifications/{id}` - not implemented in current handlers
-65. `POST /v1/admin/reset-db` - pending
-66. `POST /v1/admin/reset-data` - pending
+65. `POST /v1/admin/reset-db` - done
+66. `POST /v1/admin/reset-data` - done
 
 ## Ambiguities and follow-ups
 

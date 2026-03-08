@@ -22,6 +22,8 @@ tags:
   - name: Jobs
   - name: Organisations
   - name: Integrations
+  - name: Notifications
+  - name: Admin
 components:
   securitySchemes:
     bearerAuth:
@@ -1216,6 +1218,31 @@ components:
           format: email
         google_user_id:
           type: string
+    Notification:
+      type: object
+      required: [id, type, subject, preview, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [job_complete, job_failed, scheduler_run, scheduler_error]
+        subject:
+          type: string
+        preview:
+          type: string
+        message:
+          type: string
+        link:
+          type: string
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
   responses:
     BadRequest:
       description: Bad request
@@ -3160,5 +3187,160 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for the active organisation
+      description: |
+        This endpoint does not use the standard success envelope. It returns a
+        plain JSON object with notifications, total count, and unread count.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: unread
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notifications list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, total, unread_count]
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+                  total:
+                    type: integer
+                  unread_count:
+                    type: integer
+              example:
+                notifications:
+                  - id: 72a8c657-1408-45e8-955e-0bf75643f0c0
+                    type: job_complete
+                    subject: "Job completed: example.com"
+                    preview: Cache warming finished successfully.
+                    message:
+                      Job completed with 145 successful tasks and 2 failures.
+                    link: /jobs/72a8c657-1408-45e8-955e-0bf75643f0c0
+                    read_at: null
+                    created_at: "2026-03-08T12:00:00Z"
+                total: 1
+                unread_count: 1
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read
+      responses:
+        "204":
+          description: All notifications marked as read
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a notification as read
+      description:
+        Corrected from the requested `PATCH /v1/notifications/{id}` route.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Notification marked as read
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/admin/reset-db:
+    post:
+      tags: [Admin]
+      summary: Reset the database schema
+      description: |
+        Requires bearer authentication, `system_role=system_admin`, and
+        `ALLOW_DB_RESET=true`. Intended for development or controlled
+        environments only.
+      responses:
+        "200":
+          description: Schema reset triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                status: success
+                data: null
+                message:
+                  Database schema reset successfully - Supabase will rebuild
+                  from migrations
+                request_id: req_123abc
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Reset disabled or system administrator role missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/admin/reset-data:
+    post:
+      tags: [Admin]
+      summary: Clear data while preserving schema
+      description: |
+        Requires bearer authentication, `system_role=system_admin`, and
+        `ALLOW_DB_RESET=true`. Intended for development or controlled
+        environments only.
+      responses:
+        "200":
+          description: Data reset completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+              example:
+                status: success
+                data: null
+                message: Data cleared successfully - schema preserved
+                request_id: req_123abc
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Reset disabled or system administrator role missing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"
