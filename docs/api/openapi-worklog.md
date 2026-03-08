@@ -88,19 +88,19 @@ backend testing.
 50. `GET /v1/integrations/webflow/{id}` - corrected to documented
     `GET /v1/integrations/webflow/{id}/sites`
 
-## Chunk 6 - pending
+## Chunk 6 - done
 
-51. `DELETE /v1/integrations/webflow/{id}` - pending
-52. `GET /v1/integrations/webflow/callback` - pending
-53. `PUT /v1/integrations/webflow/sites/{site_id}/schedule` - pending
-54. `PUT /v1/integrations/webflow/sites/{site_id}/auto-publish` - pending
-55. `GET /v1/integrations/google` - pending
-56. `POST /v1/integrations/google` - pending
-57. `GET /v1/integrations/google/{id}` - corrected, not implemented as `GET`;
-    per-connection handler currently exposes `PATCH` and `DELETE`
-58. `DELETE /v1/integrations/google/{id}` - pending
-59. `GET /v1/integrations/google/callback` - pending
-60. `POST /v1/integrations/google/save-property` - pending
+51. `DELETE /v1/integrations/webflow/{id}` - done
+52. `GET /v1/integrations/webflow/callback` - done
+53. `PUT /v1/integrations/webflow/sites/{site_id}/schedule` - done
+54. `PUT /v1/integrations/webflow/sites/{site_id}/auto-publish` - done
+55. `GET /v1/integrations/google` - done
+56. `POST /v1/integrations/google` - done
+57. `GET /v1/integrations/google/{id}` - corrected to documented
+    `PATCH /v1/integrations/google/{id}`
+58. `DELETE /v1/integrations/google/{id}` - done
+59. `GET /v1/integrations/google/callback` - done
+60. `POST /v1/integrations/google/save-property` - done
 
 ## Chunk 7 - pending
 

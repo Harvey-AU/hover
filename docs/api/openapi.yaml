@@ -1137,6 +1137,85 @@ components:
               type: integer
             has_next:
               type: boolean
+    UpdateWebflowSiteScheduleRequest:
+      type: object
+      required: [connection_id]
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+          nullable: true
+          description: Send `null` to remove the schedule.
+    UpdateWebflowAutoPublishRequest:
+      type: object
+      required: [connection_id, enabled]
+      properties:
+        connection_id:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+    GoogleConnection:
+      type: object
+      required: [id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ga4_property_id:
+          type: string
+        ga4_property_name:
+          type: string
+        google_account_name:
+          type: string
+        google_email:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [active, inactive]
+        domain_ids:
+          type: array
+          items:
+            type: integer
+        created_at:
+          type: string
+          format: date-time
+    UpdateGoogleConnectionDomainsRequest:
+      type: object
+      required: [domain_ids]
+      properties:
+        domain_ids:
+          type: array
+          items:
+            type: integer
+    UpdateGoogleConnectionStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, inactive]
+    SaveGooglePropertyRequest:
+      type: object
+      required: [property_id, refresh_token]
+      properties:
+        property_id:
+          type: string
+        property_name:
+          type: string
+        refresh_token:
+          type: string
+        access_token:
+          type: string
+        google_email:
+          type: string
+          format: email
+        google_user_id:
+          type: string
   responses:
     BadRequest:
       description: Bad request
@@ -2781,5 +2860,305 @@ paths:
           $ref: "#/components/responses/Unauthorised"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/{id}:
+    delete:
+      tags: [Integrations]
+      summary: Delete a Webflow connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Webflow connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Webflow OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirects back to settings with success or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/webflow/sites/{site_id}/schedule:
+    put:
+      tags: [Integrations]
+      summary: Create, update, or remove a Webflow site schedule
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebflowSiteScheduleRequest"
+      responses:
+        "200":
+          description: Site schedule updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSiteSetting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/sites/{site_id}/auto-publish:
+    put:
+      tags: [Integrations]
+      summary: Toggle Webflow auto-publish for a site
+      parameters:
+        - name: site_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebflowAutoPublishRequest"
+      responses:
+        "200":
+          description: Auto-publish updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSiteSetting"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google:
+    get:
+      tags: [Integrations]
+      summary: List Google Analytics connections
+      responses:
+        "200":
+          description: Google Analytics connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GoogleConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Google Analytics OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [auth_url]
+                        properties:
+                          auth_url:
+                            type: string
+                            format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google/{id}:
+    patch:
+      tags: [Integrations]
+      summary: Update a Google Analytics connection
+      description: |
+        Corrected from the requested `GET /v1/integrations/google/{id}` route,
+        which is not implemented. The live per-connection handler accepts `PATCH`
+        requests for either domain mapping or status updates.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/UpdateGoogleConnectionDomainsRequest"
+                - $ref: "#/components/schemas/UpdateGoogleConnectionStatusRequest"
+      responses:
+        "200":
+          description: Google Analytics connection updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: "#/components/schemas/GoogleConnection"
+                          - type: object
+                            required: [connection_id, status]
+                            properties:
+                              connection_id:
+                                type: string
+                                format: uuid
+                              status:
+                                type: string
+                                enum: [active, inactive]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Access denied or invalid organisation domain mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Integrations]
+      summary: Delete a Google Analytics connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Google Analytics connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/google/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Google Analytics OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description:
+            Redirects back to settings with a pending GA session or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/google/save-property:
+    post:
+      tags: [Integrations]
+      summary: Persist a selected Google Analytics property
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveGooglePropertyRequest"
+      responses:
+        "200":
+          description: Google Analytics connection saved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [connection_id, property_id, property_name]
+                        properties:
+                          connection_id:
+                            type: string
+                            format: uuid
+                          property_id:
+                            type: string
+                          property_name:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
         "500":
           $ref: "#/components/responses/InternalError"
