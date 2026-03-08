@@ -72,21 +72,21 @@ backend testing.
 39. `GET /v1/usage` - done
 40. `GET /v1/usage/history` - done
 
-## Chunk 5 - pending
+## Chunk 5 - done
 
-41. `GET /v1/plans` - pending
+41. `GET /v1/plans` - done
 42. `POST /v1/webhooks/webflow/{tokenOrWorkspace}` - corrected; handlers expose
     both `POST /v1/webhooks/webflow/{token}` and
     `POST /v1/webhooks/webflow/workspaces/{workspaceId}`
-43. `GET /v1/integrations/slack` - pending
-44. `POST /v1/integrations/slack` - pending
-45. `GET /v1/integrations/slack/{id}` - pending
-46. `DELETE /v1/integrations/slack/{id}` - pending
-47. `GET /v1/integrations/slack/callback` - pending
-48. `GET /v1/integrations/webflow` - pending
-49. `POST /v1/integrations/webflow` - pending
-50. `GET /v1/integrations/webflow/{id}` - corrected, not implemented; nearest
-    implemented read route is `GET /v1/integrations/webflow/{id}/sites`
+43. `GET /v1/integrations/slack` - done
+44. `POST /v1/integrations/slack` - done
+45. `GET /v1/integrations/slack/{id}` - done
+46. `DELETE /v1/integrations/slack/{id}` - done
+47. `GET /v1/integrations/slack/callback` - done
+48. `GET /v1/integrations/webflow` - done
+49. `POST /v1/integrations/webflow` - done
+50. `GET /v1/integrations/webflow/{id}` - corrected to documented
+    `GET /v1/integrations/webflow/{id}/sites`
 
 ## Chunk 6 - pending
 

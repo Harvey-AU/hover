@@ -21,6 +21,7 @@ tags:
   - name: Auth
   - name: Jobs
   - name: Organisations
+  - name: Integrations
 components:
   securitySchemes:
     bearerAuth:
@@ -1000,6 +1001,142 @@ components:
           type: integer
         domain:
           type: string
+    PublicPlan:
+      type: object
+      required: [id, name, display_name, daily_page_limit, monthly_price_cents]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        display_name:
+          type: string
+        daily_page_limit:
+          type: integer
+        monthly_price_cents:
+          type: integer
+    WebflowWebhookPayload:
+      type: object
+      required: [triggerType, payload]
+      properties:
+        triggerType:
+          type: string
+          example: site_publish
+        siteId:
+          type: string
+          nullable: true
+        payload:
+          type: object
+          required: [domains, publishedBy]
+          properties:
+            domains:
+              type: array
+              items:
+                type: string
+            publishedBy:
+              type: object
+              properties:
+                displayName:
+                  type: string
+    SlackConnection:
+      type: object
+      required: [id, workspace_id, workspace_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SlackUserLink:
+      type: object
+      required: [id, slack_user_id, dm_notifications, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slack_user_id:
+          type: string
+        dm_notifications:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    OAuthRedirectResponse:
+      type: object
+      required: [auth_url]
+      properties:
+        auth_url:
+          type: string
+          format: uri
+    SlackConnectionDetail:
+      type: object
+      required: [connection]
+      properties:
+        connection:
+          $ref: "#/components/schemas/SlackConnection"
+        user_link:
+          $ref: "#/components/schemas/SlackUserLink"
+    WebflowConnection:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        webflow_workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    WebflowSiteSetting:
+      type: object
+      required:
+        [webflow_site_id, site_name, primary_domain, auto_publish_enabled]
+      properties:
+        webflow_site_id:
+          type: string
+        site_name:
+          type: string
+        primary_domain:
+          type: string
+        last_published:
+          type: string
+        schedule_interval_hours:
+          type: integer
+          nullable: true
+        auto_publish_enabled:
+          type: boolean
+        scheduler_id:
+          type: string
+          format: uuid
+          nullable: true
+    WebflowSitesListData:
+      type: object
+      required: [sites, pagination]
+      properties:
+        sites:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebflowSiteSetting"
+        pagination:
+          type: object
+          required: [total, page, limit, has_next]
+          properties:
+            total:
+              type: integer
+            page:
+              type: integer
+            limit:
+              type: integer
+            has_next:
+              type: boolean
   responses:
     BadRequest:
       description: Bad request
@@ -2332,5 +2469,317 @@ paths:
                         $ref: "#/components/schemas/UsageHistoryData"
         "401":
           $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/plans:
+    get:
+      tags: [Organisations]
+      summary: List public subscription plans
+      security: []
+      responses:
+        "200":
+          description: Public plan list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [plans]
+                        properties:
+                          plans:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PublicPlan"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks/webflow/{token}:
+    post:
+      tags: [Integrations]
+      summary: Receive a legacy token-scoped Webflow publish webhook
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: concurrency
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Optional override for job concurrency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebflowWebhookPayload"
+      responses:
+        "200":
+          description: Webhook processed or intentionally ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks/webflow/workspaces/{workspaceId}:
+    post:
+      tags: [Integrations]
+      summary: Receive a workspace-scoped Webflow publish webhook
+      security: []
+      parameters:
+        - name: workspaceId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: concurrency
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Optional override for job concurrency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebflowWebhookPayload"
+      responses:
+        "200":
+          description: Webhook processed or intentionally ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack:
+    get:
+      tags: [Integrations]
+      summary: List Slack workspace connections
+      responses:
+        "200":
+          description: Slack connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SlackConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Slack OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OAuthRedirectResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack/{id}:
+    get:
+      tags: [Integrations]
+      summary: Get a Slack connection and current user link
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Slack connection detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SlackConnectionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Access denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Integrations]
+      summary: Delete a Slack connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Slack connection deleted
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/slack/callback:
+    get:
+      tags: [Integrations]
+      summary: Complete Slack OAuth
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Redirects back to settings with success or error state
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/integrations/webflow:
+    get:
+      tags: [Integrations]
+      summary: List Webflow connections
+      responses:
+        "200":
+          description: Webflow connections
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WebflowConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Integrations]
+      summary: Start Webflow OAuth
+      responses:
+        "200":
+          description: OAuth URL payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [auth_url]
+                        properties:
+                          auth_url:
+                            type: string
+                            format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/integrations/webflow/{id}/sites:
+    get:
+      tags: [Integrations]
+      summary: List Webflow sites for a connection
+      description:
+        Corrected from the requested `GET /v1/integrations/webflow/{id}` route,
+        which is not implemented.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Paginated Webflow sites
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/WebflowSitesListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
