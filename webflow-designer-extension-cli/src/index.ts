@@ -1513,7 +1513,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   // CSV export button
   const csvBtn = document.createElement("button");
   csvBtn.type = "button";
-  csvBtn.className = "btn btn--ghost btn--small";
+  csvBtn.className = "btn btn--ghost btn--xs";
   csvBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 18v2h16v-2"/></svg> Export Results`;
   csvBtn.addEventListener("click", () => {
     void exportJob(job.id);
@@ -1522,7 +1522,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   const viewFullResultsBtn = document.createElement("button");
   viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn btn--ghost btn--small";
+  viewFullResultsBtn.className = "btn btn--ghost btn--xs";
   viewFullResultsBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Detailed Results`;
   viewFullResultsBtn.addEventListener("click", () => {
     const detailPath = job.id
@@ -1832,7 +1832,7 @@ async function renderIssuesTable(
   footer.className = "issues-table-footer";
   const viewAllBtn = document.createElement("button");
   viewAllBtn.type = "button";
-  viewAllBtn.className = "btn btn--panel btn--compact";
+  viewAllBtn.className = "btn btn--panel btn--sm";
   viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
   viewAllBtn.addEventListener("click", () => {
     const detailPath = job.id

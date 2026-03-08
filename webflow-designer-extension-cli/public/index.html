@@ -66,7 +66,7 @@
             <button
               id="checkSiteButton"
               type="button"
-              class="btn btn--primary btn--large corners--right"
+              class="btn btn--primary btn--lg corners--right"
             >
               <span>Connect your site</span>
               <span
@@ -81,7 +81,7 @@
             <button
               id="signInButton"
               type="button"
-              class="btn btn--secondary btn--large corners--right"
+              class="btn btn--secondary btn--lg corners--right"
             >
               <span>Login</span>
               <span
@@ -97,12 +97,19 @@
       <section class="panel hidden" id="authState">
         <!-- ─── Top bar: org + plan + settings ─── -->
         <header class="topbar section">
-          <!-- TODO: placeholder avatar / dark-mode toggle -->
-          <div class="topbar-avatar" id="avatarPlaceholder"></div>
-          <div class="topbar-left">
+          <button
+            id="settingsButton"
+            type="button"
+            class="btn btn--primary btn--icon-square corners--top-left topbar-profile"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <span class="topbar-profile-avatar" aria-hidden="true"></span>
+          </button>
+          <div class="topbar-content">
             <select
               id="orgSelect"
-              class="btn btn--panel btn--compact btn--select"
+              class="btn btn--panel btn--sm btn--border-thin btn--square btn--select topbar-org-select"
             ></select>
             <div class="topbar-plan">
               <div class="plan-badge">
@@ -114,68 +121,43 @@
                   <span id="planRemainingValue">—</span>
                 </p>
               </div>
-              <!-- TODO: wire up settings gear to open settings page -->
-              <button
-                id="settingsButton"
-                type="button"
-                class="btn btn--icon"
-                title="Settings"
-              >
-                &#9881;
-              </button>
             </div>
           </div>
         </header>
 
         <!-- ─── Action bar: run + schedule + auto-publish ─── -->
         <div class="action-bar section">
+          <div class="action-bar-controls">
+            <div class="control-group control-group--schedule">
+              <label class="control-label" for="scheduleSelect"
+                >Run every:</label
+              >
+              <select
+                id="scheduleSelect"
+                class="btn btn--panel btn--sm btn--border-thin btn--square btn--select action-bar-select"
+              >
+                <option value="off">Off</option>
+                <option value="6">6 hrs</option>
+                <option value="12">12 hrs</option>
+                <option value="24">24 hrs</option>
+                <option value="48">48 hrs</option>
+              </select>
+            </div>
+            <div class="control-group auto-publish-control">
+              <span class="control-label auto-publish-label"
+                >Run on publish</span
+              >
+              <input id="runPublishToggle" type="checkbox" class="toggle" />
+            </div>
+          </div>
           <button
             id="runNowButton"
             type="button"
-            class="btn btn--primary btn--compact"
+            class="btn btn--primary btn--sm corners--right"
           >
-            Run now
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <g clip-path="url(#clip0_4104_48093)">
-                <path
-                  d="M7.5 8.5V13.5H8.5V8.5H13.5V7.5H8.5V2.5H7.5V7.5H2.5V8.5H7.5Z"
-                  fill="white"
-                  fill-opacity="0.67"
-                ></path>
-              </g>
-              <defs>
-                <clipPath id="clip0_4104_48093">
-                  <path
-                    d="M0 2C0 0.895431 0.895431 0 2 0H14C15.1046 0 16 0.895431 16 2V14C16 15.1046 15.1046 16 14 16H2C0.895431 16 0 15.1046 0 14V2Z"
-                    fill="white"
-                  ></path>
-                </clipPath>
-              </defs>
-            </svg>
+            <span class="icon icon--small icon--bee" aria-hidden="true"></span>
+            <span>Run now</span>
           </button>
-          <div class="display-flex">
-            <label for="scheduleSelect">Run every:</label>
-            <select
-              id="scheduleSelect"
-              class="btn btn--panel btn--compact btn--select"
-            >
-              <option value="off">Off</option>
-              <option value="6">6 hrs</option>
-              <option value="12">12 hrs</option>
-              <option value="24">24 hrs</option>
-              <option value="48">48 hrs</option>
-            </select>
-          </div>
-          <div class="auto-publish-control">
-            <span class="auto-publish-label">Run on publish</span>
-            <input id="runPublishToggle" type="checkbox" class="toggle" />
-          </div>
         </div>
 
         <!-- ─── Status messages ─── -->
@@ -215,7 +197,7 @@
               <button
                 id="viewReportButton"
                 type="button"
-                class="btn btn--primary btn--small"
+                class="btn btn--primary btn--xs"
               >
                 View full report
               </button>
