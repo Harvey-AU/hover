@@ -393,6 +393,246 @@ components:
           enum: [cancel]
       example:
         action: cancel
+    Task:
+      type: object
+      required: [id, job_id, path, url, status, created_at, retry_count]
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        host:
+          type: string
+          nullable: true
+        path:
+          type: string
+        url:
+          type: string
+          format: uri
+        status:
+          type: string
+        status_code:
+          type: integer
+          nullable: true
+        response_time:
+          type: integer
+          nullable: true
+        cache_status:
+          type: string
+          nullable: true
+        second_response_time:
+          type: integer
+          nullable: true
+        second_cache_status:
+          type: string
+          nullable: true
+        content_type:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        source_type:
+          type: string
+          nullable: true
+        source_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        retry_count:
+          type: integer
+        page_views_7d:
+          type: integer
+          nullable: true
+        page_views_28d:
+          type: integer
+          nullable: true
+        page_views_180d:
+          type: integer
+          nullable: true
+    TasksListData:
+      type: object
+      required: [tasks, pagination]
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    ExportColumn:
+      type: object
+      required: [key, label]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+    JobExportData:
+      type: object
+      required:
+        - job_id
+        - domain
+        - status
+        - created_at
+        - export_type
+        - export_time
+        - total_tasks
+        - columns
+        - tasks
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        export_type:
+          type: string
+          enum: [job, broken-links, slow-pages]
+        export_time:
+          type: string
+          format: date-time
+        total_tasks:
+          type: integer
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportColumn"
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+    Scheduler:
+      type: object
+      required:
+        - id
+        - domain
+        - schedule_interval_hours
+        - next_run_at
+        - is_enabled
+        - concurrency
+        - find_links
+        - max_pages
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+        next_run_at:
+          type: string
+          format: date-time
+        is_enabled:
+          type: boolean
+        concurrency:
+          type: integer
+        find_links:
+          type: boolean
+        max_pages:
+          type: integer
+        include_paths:
+          type: array
+          items:
+            type: string
+        exclude_paths:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SchedulerRequest:
+      type: object
+      properties:
+        domain:
+          type: string
+          description: Required on create, ignored on update.
+        schedule_interval_hours:
+          type: integer
+          enum: [6, 12, 24, 48]
+        concurrency:
+          type: integer
+        find_links:
+          type: boolean
+        max_pages:
+          type: integer
+        include_paths:
+          type: array
+          items:
+            type: string
+        exclude_paths:
+          type: array
+          items:
+            type: string
+        is_enabled:
+          type: boolean
+        expected_is_enabled:
+          type: boolean
+          description: Optional optimistic concurrency hint on update.
+    DashboardStatsData:
+      type: object
+      required:
+        - total_jobs
+        - running_jobs
+        - completed_jobs
+        - failed_jobs
+        - total_tasks
+        - avg_completion_time
+        - date_range
+      properties:
+        total_jobs:
+          type: integer
+        running_jobs:
+          type: integer
+        completed_jobs:
+          type: integer
+        failed_jobs:
+          type: integer
+        total_tasks:
+          type: integer
+        avg_completion_time:
+          type: number
+          format: float
+        date_range:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+          nullable: true
+        period_end:
+          type: string
+          format: date-time
+          nullable: true
   responses:
     BadRequest:
       description: Bad request
@@ -752,5 +992,363 @@ paths:
           $ref: "#/components/responses/Unauthorised"
         "404":
           $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Jobs]
+      summary: Cancel a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [id, status]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          status:
+                            type: string
+                            example: cancelled
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}/tasks:
+    get:
+      tags: [Jobs]
+      summary: List tasks for a job
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Task status filter.
+        - name: cache
+          in: query
+          schema:
+            type: string
+            enum: [hit, miss]
+          description: Maps to grouped cache status filters in SQL.
+        - name: path
+          in: query
+          schema:
+            type: string
+          description: Case-insensitive path fragment filter.
+        - name: sort
+          in: query
+          schema:
+            type: string
+          description: Sort key, optionally prefixed with `-` for descending.
+      responses:
+        "200":
+          description: Tasks list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TasksListData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{id}/export:
+    get:
+      tags: [Jobs]
+      summary: Export job task data as JSON
+      description: |
+        Despite the endpoint name, the current implementation returns JSON data
+        rather than a streamed CSV download.
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [job, broken-links, slow-pages]
+            default: job
+          description: Export preset. Defaults to `job`.
+      responses:
+        "200":
+          description: Export payload
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/JobExportData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/schedulers:
+    get:
+      tags: [Jobs]
+      summary: List schedulers for the active organisation
+      responses:
+        "200":
+          description: Scheduler list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Scheduler"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Jobs]
+      summary: Create a scheduler
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchedulerRequest"
+            example:
+              domain: example.com
+              schedule_interval_hours: 24
+              concurrency: 20
+              find_links: true
+              max_pages: 0
+              include_paths: [/blog/*]
+              exclude_paths: [/admin/*]
+      responses:
+        "201":
+          description: Scheduler created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/schedulers/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scheduler details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [Jobs]
+      summary: Update a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchedulerRequest"
+      responses:
+        "200":
+          description: Scheduler updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Scheduler"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Scheduler state conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Jobs]
+      summary: Delete a scheduler
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Scheduler UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scheduler deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [id, status]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          status:
+                            type: string
+                            example: deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/shared/jobs/{token}:
+    get:
+      tags: [Jobs]
+      summary: Get a shared job without authentication
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: Share link token.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Shared job details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/dashboard/stats:
+    get:
+      tags: [System]
+      summary: Get dashboard job statistics
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            default: last7
+          description: Date range keyword.
+        - name: tz
+          in: query
+          schema:
+            type: string
+            default: UTC
+          description: IANA timezone or supported alias.
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DashboardStatsData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "429":
+          description: Database pool is saturated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalError"

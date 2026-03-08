@@ -32,18 +32,18 @@ backend testing.
 9. `GET /v1/jobs/{id}` - done
 10. `PUT /v1/jobs/{id}` - done
 
-## Chunk 2 - pending
+## Chunk 2 - done
 
-11. `DELETE /v1/jobs/{id}` - pending
-12. `GET /v1/jobs/{id}/tasks` - pending
-13. `GET /v1/jobs/{id}/export` - pending
-14. `GET /v1/schedulers` - pending
-15. `POST /v1/schedulers` - pending
-16. `GET /v1/schedulers/{id}` - pending
-17. `PUT /v1/schedulers/{id}` - pending
-18. `DELETE /v1/schedulers/{id}` - pending
-19. `GET /v1/shared/jobs/{token}` - pending
-20. `GET /v1/dashboard/stats` - pending
+11. `DELETE /v1/jobs/{id}` - done
+12. `GET /v1/jobs/{id}/tasks` - done
+13. `GET /v1/jobs/{id}/export` - done
+14. `GET /v1/schedulers` - done
+15. `POST /v1/schedulers` - done
+16. `GET /v1/schedulers/{id}` - done
+17. `PUT /v1/schedulers/{id}` - done
+18. `DELETE /v1/schedulers/{id}` - done
+19. `GET /v1/shared/jobs/{token}` - done
+20. `GET /v1/dashboard/stats` - done
 
 ## Chunk 3 - pending
 
@@ -121,3 +121,5 @@ backend testing.
 - Webflow webhook support currently spans two real path shapes; both will be
   documented for Postman usability.
 - Chunk 1 validation: YAML parsed successfully via Python `yaml.safe_load`.
+- Chunk 2 note: `GET /v1/jobs/{id}/export` currently returns JSON rather than a
+  CSV download.
