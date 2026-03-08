@@ -875,6 +875,131 @@ components:
             expires_at:
               type: string
               format: date-time
+    OrganisationInvite:
+      type: object
+      required: [id, email, role, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member]
+        invite_link:
+          type: string
+          format: uri
+        email_delivery:
+          type: string
+          enum: [sent, skipped, failed]
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    OrganisationInvitesData:
+      type: object
+      required: [invites]
+      properties:
+        invites:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganisationInvite"
+    CreateOrganisationInviteRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, member]
+      example:
+        email: teammate@example.com
+        role: member
+    AcceptOrganisationInviteRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+    UpdateOrganisationPlanRequest:
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id:
+          type: string
+    UsageStats:
+      type: object
+      required:
+        - daily_limit
+        - daily_used
+        - daily_remaining
+        - usage_percentage
+        - plan_id
+        - plan_name
+        - plan_display_name
+        - resets_at
+      properties:
+        daily_limit:
+          type: integer
+        daily_used:
+          type: integer
+        daily_remaining:
+          type: integer
+        usage_percentage:
+          type: number
+          format: float
+        plan_id:
+          type: string
+        plan_name:
+          type: string
+        plan_display_name:
+          type: string
+        resets_at:
+          type: string
+          format: date-time
+    DailyUsage:
+      type: object
+      required: [usage_date, pages_processed, jobs_created]
+      properties:
+        usage_date:
+          type: string
+          example: "2026-03-08"
+        pages_processed:
+          type: integer
+        jobs_created:
+          type: integer
+    UsageHistoryData:
+      type: object
+      required: [days, usage]
+      properties:
+        days:
+          type: integer
+        usage:
+          type: array
+          items:
+            $ref: "#/components/schemas/DailyUsage"
+    CreateDomainRequest:
+      type: object
+      required: [domain]
+      properties:
+        domain:
+          type: string
+      example:
+        domain: example.com
+    DomainRegistration:
+      type: object
+      required: [domain_id, domain]
+      properties:
+        domain_id:
+          type: integer
+        domain:
+          type: string
   responses:
     BadRequest:
       description: Bad request
@@ -1897,5 +2022,315 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Organisations]
+      summary: Remove an organisation member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Member user ID.
+      responses:
+        "200":
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [member_id]
+                        properties:
+                          member_id:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required or action blocked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites/accept:
+    post:
+      tags: [Organisations]
+      summary: Accept an organisation invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptOrganisationInviteRequest"
+      responses:
+        "200":
+          description: Invite accepted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          - organisation_id
+                          - role
+                          - active_organisation_set
+                          - active_organisation_attempts
+                        properties:
+                          organisation_id:
+                            type: string
+                            format: uuid
+                          role:
+                            type: string
+                          active_organisation_set:
+                            type: boolean
+                          active_organisation_attempts:
+                            type: integer
+                          active_organisation_error:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites:
+    get:
+      tags: [Organisations]
+      summary: List pending organisation invites
+      responses:
+        "200":
+          description: Invite list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrganisationInvitesData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Organisations]
+      summary: Create an organisation invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganisationInviteRequest"
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [invite]
+                        properties:
+                          invite:
+                            $ref: "#/components/schemas/OrganisationInvite"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/invites/{id}:
+    delete:
+      tags: [Organisations]
+      summary: Revoke an organisation invite
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Invite UUID.
+      responses:
+        "200":
+          description: Invite revoked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [invite_id]
+                        properties:
+                          invite_id:
+                            type: string
+                            format: uuid
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/organisations/plan:
+    put:
+      tags: [Organisations]
+      summary: Update the active organisation plan
+      description:
+        The requested `GET /v1/organisations/plan` route is not currently
+        implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganisationPlanRequest"
+      responses:
+        "200":
+          description: Plan updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [plan_id]
+                        properties:
+                          plan_id:
+                            type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "403":
+          description: Organisation admin access required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/domains:
+    post:
+      tags: [Organisations]
+      summary: Register a domain for the active organisation
+      description:
+        The requested `GET /v1/domains` route is not currently implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainRequest"
+      responses:
+        "201":
+          description: Domain registered
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DomainRegistration"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/usage:
+    get:
+      tags: [Organisations]
+      summary: Get usage statistics for the active organisation
+      responses:
+        "200":
+          description: Usage summary
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [usage]
+                        properties:
+                          usage:
+                            $ref: "#/components/schemas/UsageStats"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/usage/history:
+    get:
+      tags: [Organisations]
+      summary: Get daily usage history for the active organisation
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Usage history
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UsageHistoryData"
+        "401":
+          $ref: "#/components/responses/Unauthorised"
         "500":
           $ref: "#/components/responses/InternalError"

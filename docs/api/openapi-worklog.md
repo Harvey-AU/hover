@@ -58,19 +58,19 @@ backend testing.
 29. `GET /v1/organisations/members` - done
 30. `PATCH /v1/organisations/members/{id}` - done
 
-## Chunk 4 - pending
+## Chunk 4 - done
 
-31. `DELETE /v1/organisations/members/{id}` - pending
-32. `POST /v1/organisations/invites/accept` - pending
-33. `GET /v1/organisations/invites` - pending
-34. `POST /v1/organisations/invites` - pending
-35. `DELETE /v1/organisations/invites/{id}` - pending
+31. `DELETE /v1/organisations/members/{id}` - done
+32. `POST /v1/organisations/invites/accept` - done
+33. `GET /v1/organisations/invites` - done
+34. `POST /v1/organisations/invites` - done
+35. `DELETE /v1/organisations/invites/{id}` - done
 36. `GET /v1/organisations/plan` - corrected, not implemented as `GET`; handler
     currently exposes `PUT /v1/organisations/plan`
-37. `PUT /v1/organisations/plan` - pending
-38. `GET /v1/domains` - corrected to implemented `POST /v1/domains`
-39. `GET /v1/usage` - pending
-40. `GET /v1/usage/history` - pending
+37. `PUT /v1/organisations/plan` - done
+38. `GET /v1/domains` - corrected to implemented `POST /v1/domains`, documented
+39. `GET /v1/usage` - done
+40. `GET /v1/usage/history` - done
 
 ## Chunk 5 - pending
 
