@@ -1099,7 +1099,7 @@ body {
 
 .result-card-header {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
+  grid-template-columns: 135px minmax(0, 1fr);
   align-items: start;
   column-gap: 14px;
   row-gap: 0;
