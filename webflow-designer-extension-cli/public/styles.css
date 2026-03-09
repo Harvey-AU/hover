@@ -9,6 +9,8 @@
   /* Primitive typography */
   --font-family--primary:
     "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family--mono:
+    "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
   --font-size--label: 11.5px;
   --font-size--caption: 12px;
   --font-size--body: 14px;
@@ -328,6 +330,21 @@ body {
   mask-image: url("./icons/Icon_Bee.svg");
 }
 
+.icon--tick {
+  -webkit-mask-image: url("./icons/Icon_Tick.svg");
+  mask-image: url("./icons/Icon_Tick.svg");
+}
+
+.icon--spark {
+  -webkit-mask-image: url("./icons/Icon_Spark.svg");
+  mask-image: url("./icons/Icon_Spark.svg");
+}
+
+.icon--open {
+  -webkit-mask-image: url("./icons/Icon_Open.svg");
+  mask-image: url("./icons/Icon_Open.svg");
+}
+
 .icon-list li:last-child {
   margin-bottom: 0;
 }
@@ -524,6 +541,21 @@ body {
 
 .btn--ghost:not(:disabled):hover {
   color: var(--text-colour--secondary);
+}
+
+.btn--text {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-size: var(--font-size--body);
+  font-weight: 400;
+  line-height: 1;
+  border-radius: 0;
+}
+
+.btn--text:not(:disabled):hover {
+  color: var(--text-colour--primary);
 }
 
 .btn--subtle {
@@ -1058,53 +1090,101 @@ body {
   gap: var(--spacing--sm);
 }
 
-.result-card-header {
+.result-card-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  height: var(--font-size--caption);
-  gap: var(--spacing--lg);
-  cursor: pointer;
+  gap: var(--spacing--xl);
 }
 
-.result-card-date {
-  font-size: var(--font-size--body);
-  color: var(--text-colour--primary);
+.result-card-header {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 14px;
+  row-gap: 0;
+  width: 100%;
+}
+
+.result-card-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  width: 118px;
+}
+
+.result-card-status-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.result-card-status-icon {
+  color: var(--status-colour--success);
+}
+
+.result-card-status-dot {
+  width: var(--size--dot-default);
+  height: var(--size--dot-default);
+}
+
+.result-card-status-label {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--status-colour--success);
+}
+
+.result-card-timestamp {
   margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--colour--brand-primary);
+  white-space: nowrap;
 }
 
-.result-card-success {
+.result-card-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.result-card-summary-row,
+.result-card-summary-meta {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.result-card-summary-stat,
+.result-card-summary-meta-item {
+  font-size: 12px;
+  color: var(--colour--brand-primary);
   display: flex;
   align-items: center;
-  gap: var(--spacing--2xl);
-}
-
-.result-card-count {
-  font-size: var(--font-size--body);
-  color: var(--text-colour--primary);
-  display: flex;
-  align-items: center;
-  gap: var(--spacing--md);
-}
-
-.result-card-success-total {
-  font-size: var(--font-size--label);
-  color: var(--text-colour--primary);
+  gap: 5px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .result-card-stats {
   display: flex;
-  justify-content: space-between;
-  gap: var(--spacing--3xl);
   align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing--3xl);
   font-size: var(--font-size--caption);
   color: var(--text-colour--primary);
-  cursor: pointer;
 }
 
 .result-card-stats-left {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--spacing--3xl);
 }
 
@@ -1112,8 +1192,68 @@ body {
   margin-left: auto;
 }
 
-.result-card-stats span {
-  white-space: nowrap;
+.result-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.result-card-issues {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  min-width: 0;
+}
+
+.result-card-issues .btn {
+  color: var(--colour--brand-primary);
+  font-family: var(--font-family--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  gap: 5px;
+}
+
+.result-card-issues .btn[aria-pressed="true"] {
+  color: var(--colour--neutral-0);
+}
+
+.result-card-issues .dot {
+  width: 10.5px;
+  height: 10.5px;
+}
+
+.result-card-issues .icon {
+  color: currentcolor;
+  width: 11px;
+  height: 11px;
+}
+
+.result-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.result-card-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing--sm);
+  padding: var(--spacing--2xs) var(--spacing--sm);
+  border: var(--border-size--default) solid var(--border-colour--surface);
+  border-radius: var(--radius--control);
+  background: var(--background-colour--surface);
+}
+
+.result-card-metric-label {
+  font-size: var(--font-size--label);
+  color: var(--text-colour--secondary);
+}
+
+.result-card-metric-value {
+  font-size: var(--font-size--label);
+  color: var(--text-colour--primary);
 }
 
 .result-card-pills {
@@ -1121,6 +1261,56 @@ body {
   flex-wrap: wrap;
   gap: var(--spacing--3xl);
   align-items: center;
+}
+
+.result-card--complete {
+  padding: 0;
+  background: #2e4a73;
+  border-color: var(--colour--brand-primary);
+  overflow: hidden;
+  border-radius: 0;
+  font-family: var(--font-family--mono);
+}
+
+.result-card--complete .result-card-main {
+  padding: 8px 9px 8px;
+}
+
+.result-card--complete .result-card-footer {
+  padding: 6px 8px 8px;
+  border-top: 1px solid rgba(142, 218, 239, 0.4);
+}
+
+.result-card--complete .result-card-actions .btn {
+  font-family: var(--font-family--primary);
+  border-radius: 0;
+  min-height: 21px;
+  padding: 0 8px;
+  gap: 3px;
+  box-shadow: none;
+}
+
+.result-card--complete .result-card-actions .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.result-card--complete .result-card-details {
+  padding: 0 9px 8px;
+}
+
+.result-card--complete .issues-table {
+  border-color: rgba(142, 218, 239, 0.4);
+}
+
+.result-card--complete .issues-tab--active {
+  border-color: rgba(142, 218, 239, 0.4);
+}
+
+.result-card--complete .result-card-status-dot,
+.result-card--complete .result-card-summary .dot {
+  width: 10.5px;
+  height: 10.5px;
 }
 
 /* ─── Components: Issues Detail Table ────────────────────────────────────── */

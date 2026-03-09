@@ -32,7 +32,10 @@ const API_BASE_STORAGE_KEY = "bbb_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
-const DEFAULT_BBB_APP_ORIGIN = "https://adapt-pr-255.fly.dev";
+const DEFAULT_BBB_APP_ORIGIN = "https://adapt.app.goodnative.co";
+const LEGACY_EXTENSION_APP_ORIGINS = new Set([
+  "https://adapt-pr-255.fly.dev",
+]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
@@ -360,7 +363,16 @@ let isRealtimeRefreshing = false;
 let cleanupHandlerRegistered = false;
 
 function getStoredBaseUrl(): string {
-  return localStorage.getItem(API_BASE_STORAGE_KEY) || DEFAULT_BBB_APP_ORIGIN;
+  const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
+  if (!storedBaseUrl) {
+    return DEFAULT_BBB_APP_ORIGIN;
+  }
+
+  if (LEGACY_EXTENSION_APP_ORIGINS.has(storedBaseUrl)) {
+    return DEFAULT_BBB_APP_ORIGIN;
+  }
+
+  return storedBaseUrl;
 }
 
 function getStoredToken(): string | null {
@@ -1263,6 +1275,38 @@ function formatShortDate(value?: string): string {
   return `${day}${suffix} ${month} ${h}:${minutes}${ampm}`;
 }
 
+function formatMetricMilliseconds(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return `${Math.max(0, Math.round(value)).toLocaleString()}ms`;
+}
+
+function getCompletedCardMetrics(
+  job: JobItem
+): Array<{ label: string; value: string }> {
+  const metrics: Array<{ label: string; value: string }> = [];
+
+  if (
+    typeof job.avg_time_per_task_seconds === "number" &&
+    Number.isFinite(job.avg_time_per_task_seconds) &&
+    job.avg_time_per_task_seconds > 0
+  ) {
+    metrics.push({
+      label: "Avg",
+      value: `${Math.round(job.avg_time_per_task_seconds * 1000).toLocaleString()}ms`,
+    });
+  }
+
+  const savedMs = formatMetricMilliseconds(getSavedTimeMs(job));
+  if (savedMs) {
+    metrics.push({ label: "Saved", value: savedMs });
+  }
+
+  return metrics;
+}
+
 // ---------------------------------------------------------------------------
 // Recent results list (completed jobs only)
 // ---------------------------------------------------------------------------
@@ -1333,70 +1377,115 @@ function renderRecentResults(jobs: JobItem[]): void {
 
 function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const card = document.createElement("div");
-  card.className = "result-card";
+  card.className = "result-card result-card--complete";
 
   const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-  // Summary row buckets:
-  // - error: broken links
-  // - ok: slow + very slow
-  // - good: everything else
   const failCount = brokenLinks;
   const warnCount = verySlow + slow;
   const successCount = Math.max(0, job.total_tasks - failCount - warnCount);
   const dateStr = formatShortDate(job.completed_at || job.created_at);
+  const metrics = getCompletedCardMetrics(job);
 
   const normalisedStatus = normalizeJobStatus(job.status);
   let outcomeDotClass = "dot--success";
   let outcomeLabel = "Completed";
+  let statusColour = "var(--status-colour--success)";
 
   if (normalisedStatus === "cancelled") {
     outcomeDotClass = "dot--neutral";
     outcomeLabel = "Cancelled";
+    statusColour = "var(--status-colour--neutral)";
   } else if (isActiveJobStatus(normalisedStatus)) {
     outcomeDotClass = "dot--warning";
     outcomeLabel = "In progress";
+    statusColour = "var(--status-colour--warning)";
   } else if (normalisedStatus !== "completed") {
     outcomeDotClass = "dot--danger";
     outcomeLabel = "Error";
+    statusColour = "var(--status-colour--danger)";
   }
 
-  // ── Row 1: date + success / total ──
+  const main = document.createElement("div");
+  main.className = "result-card-main";
+
   const header = document.createElement("div");
   header.className = "result-card-header";
-  header.innerHTML = `
-    <div class="result-card-success">
-      <span class="result-card-total">${job.total_tasks} pages: </span>
-      <span class="result-card-count"><span class="dot dot--success"></span> ${successCount} good</span>
-      <span class="result-card-count"><span class="dot dot--warning"></span> ${warnCount} ok</span>
-      <span class="result-card-count"><span class="dot dot--danger"></span> ${failCount} error</span>
-    </div>
-    <span class="result-card-count"><span class="dot ${outcomeDotClass}"></span> ${outcomeLabel}</span>`;
-  card.appendChild(header);
+  const status = document.createElement("div");
+  status.className = "result-card-status";
 
-  // ── Row 2: speed stats ──
-  const stats = document.createElement("div");
-  stats.className = "result-card-stats";
-  const statsLeft = document.createElement("div");
-  statsLeft.className = "result-card-stats-left";
+  const statusLine = document.createElement("div");
+  statusLine.className = "result-card-status-line";
 
-  if (job.avg_time_per_task_seconds) {
-    const avgMs = Math.round(job.avg_time_per_task_seconds * 1000);
-    statsLeft.innerHTML += `<span>Avg: ${avgMs.toLocaleString()}ms</span>`;
+  const statusIcon = document.createElement("span");
+  statusIcon.setAttribute("aria-hidden", "true");
+  statusIcon.style.color = statusColour;
+
+  if (normalisedStatus === "completed") {
+    statusIcon.className = "icon icon--small icon--tick result-card-status-icon";
+  } else {
+    statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
   }
-  // TODO: connect slowest, saved, cached when per-job timing stats available
-  // Placeholder values shown to match Figma layout
-  const savedMs = getSavedTimeMs(job);
-  if (savedMs !== null) {
-    statsLeft.innerHTML += `<span>Saved: ${savedMs.toLocaleString()}ms</span>`;
-  }
-  const statsDate = document.createElement("span");
-  statsDate.className = "result-card-stats-date";
-  statsDate.textContent = dateStr;
 
-  stats.appendChild(statsLeft);
-  stats.appendChild(statsDate);
-  // TODO: "Cached: XX%" needs cache-hit data from API
-  card.appendChild(stats);
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "result-card-status-label";
+  statusLabel.textContent = outcomeLabel;
+  statusLabel.style.color = statusColour;
+
+  statusLine.appendChild(statusIcon);
+  statusLine.appendChild(statusLabel);
+
+  const timestamp = document.createElement("p");
+  timestamp.className = "result-card-timestamp";
+  timestamp.textContent = dateStr;
+
+  status.appendChild(statusLine);
+  status.appendChild(timestamp);
+  header.appendChild(status);
+
+  const summary = document.createElement("div");
+  summary.className = "result-card-summary";
+
+  const summaryRow = document.createElement("div");
+  summaryRow.className = "result-card-summary-row";
+
+  const summaryItems: Array<{ dotClass: string; label: string; value: number }> = [
+    { dotClass: "dot--success", label: "good", value: successCount },
+    { dotClass: "dot--warning", label: "ok", value: warnCount },
+    { dotClass: "dot--danger", label: "error", value: failCount },
+  ];
+
+  for (const item of summaryItems) {
+    const summaryItem = document.createElement("span");
+    summaryItem.className = "result-card-summary-stat";
+    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
+    summaryRow.appendChild(summaryItem);
+  }
+
+  summary.appendChild(summaryRow);
+
+  if (metrics.length > 0) {
+    const metaRow = document.createElement("div");
+    metaRow.className = "result-card-summary-meta";
+
+    for (const metric of metrics) {
+      const metricItem = document.createElement("span");
+      metricItem.className = "result-card-summary-meta-item";
+      metricItem.textContent = `${metric.label}: ${metric.value}`;
+      metaRow.appendChild(metricItem);
+    }
+
+    summary.appendChild(metaRow);
+  }
+
+  header.appendChild(summary);
+  main.appendChild(header);
+  card.appendChild(main);
+
+  const footer = document.createElement("div");
+  footer.className = "result-card-footer";
+
+  const issuesRow = document.createElement("div");
+  issuesRow.className = "result-card-issues";
 
   const details = document.createElement("div");
   details.className = `result-card-details${startExpanded ? "" : " hidden"}`;
@@ -1406,15 +1495,11 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const issuesContainer = document.createElement("div");
   issuesContainer.className = "issues-detail";
 
-  // Tab row
-  const tabs = document.createElement("div");
-  tabs.className = "issues-tabs";
-
   type TabDef = { dotClass: string; label: string; count: number; key: string };
   const tabDefs: TabDef[] = [
     {
       dotClass: "dot--danger",
-      label: "broken link",
+      label: "missing",
       count: brokenLinks,
       key: "broken",
     },
@@ -1442,10 +1527,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     activeTabKey = tabKey;
 
     for (const t of tabElements) {
-      t.classList.remove("issues-tab--active");
+      t.setAttribute("aria-pressed", "false");
     }
 
-    tab.classList.add("issues-tab--active");
+    tab.setAttribute("aria-pressed", "true");
     show(tablePanel);
     void renderIssuesTable(tablePanel, job, tabKey, issueRowsCache, () => {
       return activeTabKey === tabKey;
@@ -1460,27 +1545,33 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
     const tab = document.createElement("button");
     tab.type = "button";
-    tab.className = "issues-tab";
+    tab.className = "btn btn--text";
     tab.dataset.tabKey = def.key;
-    tab.innerHTML = `<span class="dot ${def.dotClass}"></span> ${def.count} ${def.label}${def.count !== 1 && def.label === "broken link" ? "s" : ""}`;
+    tab.setAttribute("aria-pressed", "false");
+    const label = `${def.count} ${def.label}`;
+    tab.innerHTML = `<span class="dot ${def.dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
 
     tab.addEventListener("click", () => {
-      // Toggle: if already active, collapse
-      const wasActive = tab.classList.contains("issues-tab--active");
+      const wasActive = tab.getAttribute("aria-pressed") === "true";
 
       for (const t of tabElements) {
-        t.classList.remove("issues-tab--active");
+        t.setAttribute("aria-pressed", "false");
       }
 
       if (wasActive) {
         hide(tablePanel);
+        details.classList.add("hidden");
+        card.classList.remove("result-card-expanded");
+        activeTabKey = null;
         return;
       }
 
+      details.classList.remove("hidden");
+      card.classList.add("result-card-expanded");
       activateIssueTab(tab, def.key);
     });
 
-    tabs.appendChild(tab);
+    issuesRow.appendChild(tab);
     tabElements.push(tab);
 
     if (!firstTab) {
@@ -1490,21 +1581,29 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   }
 
   if (hasAnyIssues) {
-    issuesContainer.appendChild(tabs);
     issuesContainer.appendChild(tablePanel);
     details.appendChild(issuesContainer);
   }
 
-  // ── Row 4: pills row (for non-tab display) + CSV button ──
-  const pillsRow = document.createElement("div");
-  pillsRow.className = "result-card-pills";
+  footer.appendChild(issuesRow);
 
-  // If no issues, still show the pill row for CSV button
-  if (!hasAnyIssues) {
-    // No issue tabs needed
-  }
+  const actions = document.createElement("div");
+  actions.className = "result-card-actions";
 
-  // CSV export button
+  const viewFullResultsBtn = document.createElement("button");
+  viewFullResultsBtn.type = "button";
+  viewFullResultsBtn.className = "btn btn--primary btn--sm btn--square";
+  viewFullResultsBtn.innerHTML = `<span>All</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
+  viewFullResultsBtn.addEventListener("click", () => {
+    const detailPath = job.id
+      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
+      : APP_ROUTES.dashboard;
+    openSettingsPage(detailPath);
+  });
+  actions.appendChild(viewFullResultsBtn);
+  footer.appendChild(actions);
+  card.appendChild(footer);
+
   const csvBtn = document.createElement("button");
   csvBtn.type = "button";
   csvBtn.className = "btn btn--ghost btn--xs";
@@ -1512,46 +1611,20 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   csvBtn.addEventListener("click", () => {
     void exportJob(job.id);
   });
-  pillsRow.appendChild(csvBtn);
 
-  const viewFullResultsBtn = document.createElement("button");
-  viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn btn--ghost btn--xs";
-  viewFullResultsBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Detailed Results`;
-  viewFullResultsBtn.addEventListener("click", () => {
-    const detailPath = job.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
-  });
-  pillsRow.appendChild(viewFullResultsBtn);
-
-  details.appendChild(pillsRow);
+  const detailActions = document.createElement("div");
+  detailActions.className = "result-card-pills";
+  detailActions.appendChild(csvBtn);
+  details.appendChild(detailActions);
   card.appendChild(details);
-
-  const toggleDetails = (): void => {
-    if (details.classList.contains("hidden")) {
-      details.classList.remove("hidden");
-      card.classList.add("result-card-expanded");
-
-      if (hasAnyIssues && firstTab && firstTabKey) {
-        activateIssueTab(firstTab, firstTabKey);
-      }
-      return;
-    }
-    details.classList.add("hidden");
-    card.classList.remove("result-card-expanded");
-  };
 
   if (startExpanded) {
     card.classList.add("result-card-expanded");
+    details.classList.remove("hidden");
     if (hasAnyIssues && firstTab && firstTabKey) {
       activateIssueTab(firstTab, firstTabKey);
     }
   }
-
-  header.addEventListener("click", toggleDetails);
-  stats.addEventListener("click", toggleDetails);
 
   return card;
 }
