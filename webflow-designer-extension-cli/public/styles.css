@@ -986,35 +986,14 @@ body {
 }
 
 .result-card--active {
-  width: 100%;
-  background: var(--background-colour--canvas);
+  /* Inherits dark-blue surface from result-card--complete;
+     override border to active green */
   border-color: var(--border-colour--active);
 }
 
-.result-card--active .result-card-header,
-.result-card--active .result-card-stats {
-  cursor: default;
-}
-
-.job-status,
-.job-progress {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing--xs);
-}
-
-.result-card-stats--active {
-  justify-content: flex-start;
-}
-
-.job-status-label {
-  font-size: var(--font-size--body);
-  color: var(--text-colour--primary);
-}
-
 .job-progress-text {
-  font-size: var(--font-size--body);
-  color: var(--text-colour--primary);
+  /* Progress stat: "N / M pages" — inherits mono + cyan from result-card-summary-stat */
+  white-space: nowrap;
 }
 
 /* ─── Components: Issue Pills ────────────────────────────────────────────── */

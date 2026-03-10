@@ -294,6 +294,8 @@ const ui = {
   jobStatusIcon: document.getElementById("jobStatusIcon"),
   jobStatusLabel: document.getElementById("jobStatusLabel"),
   jobProgressText: document.getElementById("jobProgressText"),
+  jobMetaRow: document.getElementById("jobMetaRow"),
+  jobFooter: document.getElementById("jobFooter"),
   jobIssuePills: document.getElementById("jobIssuePills"),
   checkSiteAuthButton: document.getElementById("checkSiteAuthButton"),
 
@@ -1106,13 +1108,20 @@ function renderJobState(job: JobItem | null): void {
 
   show(asNode(ui.jobSection));
 
-  // Status dot
+  // Spinning status icon
   if (ui.jobStatusIcon) {
     ui.jobStatusIcon.className = iconClassForJob(job.status);
   }
 
-  // Status label
+  // Status label + colour (warning = pending/starting, success = running)
+  const isRunning = job.status === "running" || job.status === "initializing";
+  const labelColour = isRunning
+    ? "var(--status-colour--success)"
+    : "var(--status-colour--warning)";
   setText(ui.jobStatusLabel, statusLabelForJob(job.status));
+  if (ui.jobStatusLabel) {
+    (ui.jobStatusLabel as HTMLElement).style.color = labelColour;
+  }
 
   // Progress: "218 / 372 pages"
   setText(
@@ -1120,13 +1129,25 @@ function renderJobState(job: JobItem | null): void {
     `${job.completed_tasks} / ${job.total_tasks} pages`
   );
 
-  // Issue pills on the in-progress card
+  // Avg / Saved meta row
+  if (ui.jobMetaRow) {
+    ui.jobMetaRow.innerHTML = "";
+    const metrics = getCompletedCardMetrics(job);
+    for (const m of metrics) {
+      const span = document.createElement("span");
+      span.className = "result-card-summary-meta-item";
+      span.textContent = `${m.label}: ${m.value}`;
+      ui.jobMetaRow.appendChild(span);
+    }
+  }
+
+  // Issue pills on the in-progress card (reuse btn--text style from completed card)
   renderIssuePillsInto(ui.jobIssuePills, job);
 
   if ((ui.jobIssuePills?.childElementCount || 0) > 0) {
-    show(asNode(ui.jobIssuePills));
+    show(asNode(ui.jobFooter));
   } else {
-    hide(asNode(ui.jobIssuePills));
+    hide(asNode(ui.jobFooter));
   }
 }
 
@@ -1221,8 +1242,8 @@ function getSavedTimeMs(job: JobItem): number | null {
 
 function makePill(dotClass: string, label: string): HTMLSpanElement {
   const pill = document.createElement("span");
-  pill.className = "issue-pill";
-  pill.innerHTML = `<span class="dot ${dotClass}"></span> ${label}`;
+  pill.className = "btn btn--text";
+  pill.innerHTML = `<span class="dot ${dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
   return pill;
 }
 
