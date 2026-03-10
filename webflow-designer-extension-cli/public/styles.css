@@ -1090,7 +1090,6 @@ body {
   flex-direction: column;
   gap: 0;
   min-width: 0;
-  width: 118px;
 }
 
 .result-card-status-line {
