@@ -1318,13 +1318,18 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   card.className = "result-card result-card--complete";
 
   const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-  const failCount = brokenLinks;
-  const warnCount = verySlow + slow;
-  const successCount = Math.max(0, job.total_tasks - failCount - warnCount);
+  const normalisedStatus = normalizeJobStatus(job.status);
+  const isActive = isActiveJobStatus(normalisedStatus);
+
+  // For active jobs use live task counters; for completed use issue-bucket counts.
+  const failCount = isActive ? job.failed_tasks : brokenLinks;
+  const warnCount = isActive ? 0 : verySlow + slow;
+  const successCount = isActive
+    ? Math.max(0, job.completed_tasks - job.failed_tasks)
+    : Math.max(0, job.total_tasks - brokenLinks - verySlow - slow);
   const dateStr = formatShortDate(job.completed_at || job.created_at);
   const metrics = getCompletedCardMetrics(job);
 
-  const normalisedStatus = normalizeJobStatus(job.status);
   let outcomeDotClass = "dot--success";
   let outcomeLabel = "Completed";
   let statusColour = "var(--status-colour--success)";
@@ -1333,7 +1338,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     outcomeDotClass = "dot--neutral";
     outcomeLabel = "Cancelled";
     statusColour = "var(--status-colour--neutral)";
-  } else if (isActiveJobStatus(normalisedStatus)) {
+  } else if (isActive) {
     outcomeDotClass = "dot--warning";
     outcomeLabel = statusLabelForJob(normalisedStatus);
     statusColour =
@@ -1344,6 +1349,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     outcomeDotClass = "dot--danger";
     outcomeLabel = "Error";
     statusColour = "var(--status-colour--danger)";
+  }
+
+  if (job.total_tasks > 0) {
+    outcomeLabel += ` (${job.total_tasks} pages)`;
   }
 
   const main = document.createElement("div");
