@@ -1352,7 +1352,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   }
 
   if (job.total_tasks > 0) {
-    outcomeLabel += `: ${job.total_tasks}`;
+    outcomeLabel = `${job.total_tasks} ${outcomeLabel}`;
   }
 
   const main = document.createElement("div");
