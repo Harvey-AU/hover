@@ -1265,6 +1265,7 @@ body {
 
 .result-card--complete {
   padding: 0;
+  gap: 0;
   background: #2e4a73;
   border-color: var(--colour--brand-primary);
   overflow: hidden;

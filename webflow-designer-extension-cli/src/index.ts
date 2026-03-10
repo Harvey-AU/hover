@@ -33,9 +33,7 @@ const API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
 const DEFAULT_BBB_APP_ORIGIN = "https://adapt.app.goodnative.co";
-const LEGACY_EXTENSION_APP_ORIGINS = new Set([
-  "https://adapt-pr-255.fly.dev",
-]);
+const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://adapt-pr-255.fly.dev"]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
@@ -1421,7 +1419,8 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   statusIcon.style.color = statusColour;
 
   if (normalisedStatus === "completed") {
-    statusIcon.className = "icon icon--small icon--tick result-card-status-icon";
+    statusIcon.className =
+      "icon icon--small icon--tick result-card-status-icon";
   } else {
     statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
   }
@@ -1448,7 +1447,11 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const summaryRow = document.createElement("div");
   summaryRow.className = "result-card-summary-row";
 
-  const summaryItems: Array<{ dotClass: string; label: string; value: number }> = [
+  const summaryItems: Array<{
+    dotClass: string;
+    label: string;
+    value: number;
+  }> = [
     { dotClass: "dot--success", label: "good", value: successCount },
     { dotClass: "dot--warning", label: "ok", value: warnCount },
     { dotClass: "dot--danger", label: "error", value: failCount },
@@ -1592,8 +1595,8 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   const viewFullResultsBtn = document.createElement("button");
   viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn btn--primary btn--sm btn--square";
-  viewFullResultsBtn.innerHTML = `<span>All</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
+  viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
+  viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
   viewFullResultsBtn.addEventListener("click", () => {
     const detailPath = job.id
       ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
