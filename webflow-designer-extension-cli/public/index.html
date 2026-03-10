@@ -172,48 +172,8 @@
         <div class="content-scroll section">
           <section class="job-band">
             <p id="jobSectionHeading" class="section-heading">In progress</p>
-            <!-- Active / current job card -->
-            <div
-              id="jobSection"
-              class="result-card result-card--active result-card--complete"
-            >
-              <!-- Main: status (left) + progress summary (right) -->
-              <div class="result-card-main">
-                <div class="result-card-header">
-                  <div class="result-card-status">
-                    <div class="result-card-status-line">
-                      <span
-                        id="jobStatusIcon"
-                        class="job-status-icon"
-                        aria-hidden="true"
-                      ></span>
-                      <span id="jobStatusLabel" class="result-card-status-label"
-                        >Loading&hellip;</span
-                      >
-                    </div>
-                    <p class="result-card-timestamp"></p>
-                  </div>
-                  <div class="result-card-summary">
-                    <div class="result-card-summary-row">
-                      <span
-                        id="jobProgressText"
-                        class="result-card-summary-stat job-progress-text"
-                        >&mdash;</span
-                      >
-                    </div>
-                    <div id="jobMetaRow" class="result-card-summary-meta">
-                      <!-- Avg / Saved populated by JS -->
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <!-- Footer: issue pills (hidden when empty) -->
-              <div id="jobFooter" class="result-card-footer hidden">
-                <div class="issue-pills result-card-issues" id="jobIssuePills">
-                  <!-- Populated by JS: broken links, very slow, slow pills -->
-                </div>
-              </div>
-            </div>
+            <!-- Active / current job card — populated by renderJobState() -->
+            <div id="jobSection" class="hidden"></div>
           </section>
 
           <!-- No job placeholder -->

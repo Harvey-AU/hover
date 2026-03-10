@@ -291,12 +291,6 @@ const ui = {
   // Job card
   jobSection: document.getElementById("jobSection"),
   noJobState: document.getElementById("noJobState"),
-  jobStatusIcon: document.getElementById("jobStatusIcon"),
-  jobStatusLabel: document.getElementById("jobStatusLabel"),
-  jobProgressText: document.getElementById("jobProgressText"),
-  jobMetaRow: document.getElementById("jobMetaRow"),
-  jobFooter: document.getElementById("jobFooter"),
-  jobIssuePills: document.getElementById("jobIssuePills"),
   checkSiteAuthButton: document.getElementById("checkSiteAuthButton"),
 
   // Recent results
@@ -1097,88 +1091,20 @@ function iconClassForJob(status: string): string {
 
 /** Show the in-progress card only for active jobs; hide for completed/none. */
 function renderJobState(job: JobItem | null): void {
+  const section = asNode(ui.jobSection);
   if (!job || !isActiveJobStatus(job.status)) {
     stopJobStatusPolling();
-    hide(asNode(ui.jobSection));
-    show(asNode(ui.jobIssuePills));
-    // Show no-job placeholder only when there are zero jobs at all
-    // (if there are completed jobs, recent results will fill the space)
+    hide(section);
     return;
   }
 
-  show(asNode(ui.jobSection));
-
-  // Spinning status icon
-  if (ui.jobStatusIcon) {
-    ui.jobStatusIcon.className = iconClassForJob(job.status);
-  }
-
-  // Status label + colour (warning = pending/starting, success = running)
-  const isRunning = job.status === "running" || job.status === "initializing";
-  const labelColour = isRunning
-    ? "var(--status-colour--success)"
-    : "var(--status-colour--warning)";
-  setText(ui.jobStatusLabel, statusLabelForJob(job.status));
-  if (ui.jobStatusLabel) {
-    (ui.jobStatusLabel as HTMLElement).style.color = labelColour;
-  }
-
-  // Progress: "218 / 372 pages"
-  setText(
-    ui.jobProgressText,
-    `${job.completed_tasks} / ${job.total_tasks} pages`
-  );
-
-  // Avg / Saved meta row
-  if (ui.jobMetaRow) {
-    ui.jobMetaRow.innerHTML = "";
-    const metrics = getCompletedCardMetrics(job);
-    for (const m of metrics) {
-      const span = document.createElement("span");
-      span.className = "result-card-summary-meta-item";
-      span.textContent = `${m.label}: ${m.value}`;
-      ui.jobMetaRow.appendChild(span);
-    }
-  }
-
-  // Issue pills on the in-progress card (reuse btn--text style from completed card)
-  renderIssuePillsInto(ui.jobIssuePills, job);
-
-  if ((ui.jobIssuePills?.childElementCount || 0) > 0) {
-    show(asNode(ui.jobFooter));
-  } else {
-    hide(asNode(ui.jobFooter));
-  }
-}
-
-/** Render issue-category pills into a container. */
-function renderIssuePillsInto(
-  container: HTMLElement | null,
-  job: JobItem
-): void {
-  if (!container) {
-    return;
-  }
-
-  while (container.firstChild) {
-    container.removeChild(container.firstChild);
-  }
-
-  const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-
-  if (brokenLinks > 0) {
-    container.appendChild(
-      makePill(
-        "dot--danger",
-        `${brokenLinks} broken link${brokenLinks !== 1 ? "s" : ""}`
-      )
-    );
-  }
-  if (verySlow > 0) {
-    container.appendChild(makePill("dot--danger", `${verySlow} very slow`));
-  }
-  if (slow > 0) {
-    container.appendChild(makePill("dot--warning", `${slow} slow`));
+  // Build the card using the same function as completed cards.
+  // buildResultCard handles active status: spinner icon, "In progress" / "Starting up" label.
+  const card = buildResultCard(job);
+  if (section) {
+    section.innerHTML = "";
+    section.appendChild(card);
+    show(section);
   }
 }
 
@@ -1238,13 +1164,6 @@ function getSavedTimeMs(job: JobItem): number | null {
   }
 
   return null;
-}
-
-function makePill(dotClass: string, label: string): HTMLSpanElement {
-  const pill = document.createElement("span");
-  pill.className = "btn btn--text";
-  pill.innerHTML = `<span class="dot ${dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
-  return pill;
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,8 +1335,11 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     statusColour = "var(--status-colour--neutral)";
   } else if (isActiveJobStatus(normalisedStatus)) {
     outcomeDotClass = "dot--warning";
-    outcomeLabel = "In progress";
-    statusColour = "var(--status-colour--warning)";
+    outcomeLabel = statusLabelForJob(normalisedStatus);
+    statusColour =
+      normalisedStatus === "running" || normalisedStatus === "initializing"
+        ? "var(--status-colour--success)"
+        : "var(--status-colour--warning)";
   } else if (normalisedStatus !== "completed") {
     outcomeDotClass = "dot--danger";
     outcomeLabel = "Error";
@@ -1442,6 +1364,8 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   if (normalisedStatus === "completed") {
     statusIcon.className =
       "icon icon--small icon--tick result-card-status-icon";
+  } else if (isActiveJobStatus(normalisedStatus)) {
+    statusIcon.className = iconClassForJob(normalisedStatus);
   } else {
     statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
   }
@@ -1456,7 +1380,9 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   const timestamp = document.createElement("p");
   timestamp.className = "result-card-timestamp";
-  timestamp.textContent = dateStr;
+  if (!isActiveJobStatus(normalisedStatus)) {
+    timestamp.textContent = dateStr;
+  }
 
   status.appendChild(statusLine);
   status.appendChild(timestamp);
@@ -1468,21 +1394,29 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const summaryRow = document.createElement("div");
   summaryRow.className = "result-card-summary-row";
 
-  const summaryItems: Array<{
-    dotClass: string;
-    label: string;
-    value: number;
-  }> = [
-    { dotClass: "dot--success", label: "good", value: successCount },
-    { dotClass: "dot--warning", label: "ok", value: warnCount },
-    { dotClass: "dot--danger", label: "error", value: failCount },
-  ];
+  if (isActiveJobStatus(normalisedStatus)) {
+    // Active job: show progress count instead of good/ok/error dots
+    const progressStat = document.createElement("span");
+    progressStat.className = "result-card-summary-stat";
+    progressStat.textContent = `${job.completed_tasks} / ${job.total_tasks} pages`;
+    summaryRow.appendChild(progressStat);
+  } else {
+    const summaryItems: Array<{
+      dotClass: string;
+      label: string;
+      value: number;
+    }> = [
+      { dotClass: "dot--success", label: "good", value: successCount },
+      { dotClass: "dot--warning", label: "ok", value: warnCount },
+      { dotClass: "dot--danger", label: "error", value: failCount },
+    ];
 
-  for (const item of summaryItems) {
-    const summaryItem = document.createElement("span");
-    summaryItem.className = "result-card-summary-stat";
-    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
-    summaryRow.appendChild(summaryItem);
+    for (const item of summaryItems) {
+      const summaryItem = document.createElement("span");
+      summaryItem.className = "result-card-summary-stat";
+      summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
+      summaryRow.appendChild(summaryItem);
+    }
   }
 
   summary.appendChild(summaryRow);
@@ -1611,22 +1545,28 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   footer.appendChild(issuesRow);
 
-  const actions = document.createElement("div");
-  actions.className = "result-card-actions";
+  if (!isActiveJobStatus(normalisedStatus)) {
+    const actions = document.createElement("div");
+    actions.className = "result-card-actions";
 
-  const viewFullResultsBtn = document.createElement("button");
-  viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
-  viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
-  viewFullResultsBtn.addEventListener("click", () => {
-    const detailPath = job.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
-  });
-  actions.appendChild(viewFullResultsBtn);
-  footer.appendChild(actions);
-  card.appendChild(footer);
+    const viewFullResultsBtn = document.createElement("button");
+    viewFullResultsBtn.type = "button";
+    viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
+    viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
+    viewFullResultsBtn.addEventListener("click", () => {
+      const detailPath = job.id
+        ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
+        : APP_ROUTES.dashboard;
+      openSettingsPage(detailPath);
+    });
+    actions.appendChild(viewFullResultsBtn);
+    footer.appendChild(actions);
+  }
+
+  // Only append footer if it has content
+  if (hasAnyIssues || !isActiveJobStatus(normalisedStatus)) {
+    card.appendChild(footer);
+  }
 
   const csvBtn = document.createElement("button");
   csvBtn.type = "button";
