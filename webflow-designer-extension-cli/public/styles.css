@@ -1130,7 +1130,7 @@ body {
 }
 
 .result-card-status-label {
-  font-size: 14px;
+  font-size: var(--font-size--body);
   font-weight: 700;
   line-height: 1.4;
   color: var(--status-colour--success);
@@ -1284,7 +1284,6 @@ body {
 
 .result-card--complete .result-card-actions .btn {
   font-family: var(--font-family--primary);
-  border-radius: 0;
   min-height: 21px;
   padding: 0 8px;
   gap: 3px;
