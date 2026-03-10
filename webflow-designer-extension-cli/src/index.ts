@@ -1380,9 +1380,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   const timestamp = document.createElement("p");
   timestamp.className = "result-card-timestamp";
-  if (!isActiveJobStatus(normalisedStatus)) {
-    timestamp.textContent = dateStr;
-  }
+  timestamp.textContent = dateStr;
 
   status.appendChild(statusLine);
   status.appendChild(timestamp);
@@ -1394,29 +1392,21 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const summaryRow = document.createElement("div");
   summaryRow.className = "result-card-summary-row";
 
-  if (isActiveJobStatus(normalisedStatus)) {
-    // Active job: show progress count instead of good/ok/error dots
-    const progressStat = document.createElement("span");
-    progressStat.className = "result-card-summary-stat";
-    progressStat.textContent = `${job.completed_tasks} / ${job.total_tasks} pages`;
-    summaryRow.appendChild(progressStat);
-  } else {
-    const summaryItems: Array<{
-      dotClass: string;
-      label: string;
-      value: number;
-    }> = [
-      { dotClass: "dot--success", label: "good", value: successCount },
-      { dotClass: "dot--warning", label: "ok", value: warnCount },
-      { dotClass: "dot--danger", label: "error", value: failCount },
-    ];
+  const summaryItems: Array<{
+    dotClass: string;
+    label: string;
+    value: number;
+  }> = [
+    { dotClass: "dot--success", label: "good", value: successCount },
+    { dotClass: "dot--warning", label: "ok", value: warnCount },
+    { dotClass: "dot--danger", label: "error", value: failCount },
+  ];
 
-    for (const item of summaryItems) {
-      const summaryItem = document.createElement("span");
-      summaryItem.className = "result-card-summary-stat";
-      summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
-      summaryRow.appendChild(summaryItem);
-    }
+  for (const item of summaryItems) {
+    const summaryItem = document.createElement("span");
+    summaryItem.className = "result-card-summary-stat";
+    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
+    summaryRow.appendChild(summaryItem);
   }
 
   summary.appendChild(summaryRow);
