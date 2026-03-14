@@ -1,373 +1,332 @@
-# Unified Frontend ES Modules Plan
+# Unified Frontend: ES Modules and Naming Convention
 
 Date: 2026-03-15 Status: Proposed Scope: Webflow extension screens,
 `/dashboard`, job details, and settings screens
 
 ## Summary
 
-Adapt should standardise on one no-build frontend architecture now, before
-active users arrive and before more pages are added to both the Webflow
-extension and the main app.
+Hover should standardise on one no-build frontend architecture now, before
+active users arrive and before more pages are added to either the Webflow
+extension or the main app.
 
-The recommended direction is:
+The two changes covered in this plan are:
 
-- use native ES modules as the default frontend architecture
-- keep the no-build approach
-- use Web Components selectively for shared UI primitives, not as the whole app
-- rebuild the Webflow extension screens first, then apply the same patterns into
-  `/dashboard`, job details, and settings as each screen is refactored
-- keep both surfaces aligned so design, behaviour, and maintenance costs do not
-  drift apart
+1. **ES modules migration** — adopt native `type="module"` as the default
+   frontend architecture across both surfaces, replacing the current
+   global-script model
+2. **Legacy naming migration** — retire `bb`, `BB`, `BBB`, and `bbb` prefixes
+   inherited from the original Blue Banded Bee product name, replacing them with
+   generic internal names and `hover-*` for browser-facing contracts
 
-This plan assumes we are comfortable with short-term breakage while the new UI
-system is being established, because there are currently no active users.
+These run in parallel but are not equal. The ES modules migration leads. The
+naming migration rides along with it, screen by screen.
+
+Short-term breakage is acceptable because there are no active users.
+
+---
+
+## Quick-reference decisions
+
+| Topic                          | Decision                                             |
+| ------------------------------ | ---------------------------------------------------- |
+| JavaScript architecture        | Native ES modules, no build tool                     |
+| Web Components                 | Selectively, for shared UI primitives only           |
+| Build tool                     | No                                                   |
+| Framework                      | No                                                   |
+| Internal module names          | Generic and descriptive                              |
+| Browser-facing component names | `hover-*` prefix                                     |
+| Company prefix in UI code      | Avoid — `Good Native` is for org-level concerns only |
+| Legacy `bb` names              | Retire screen-by-screen, never extend                |
+| Migration order                | Webflow screens first, dashboard follows each time   |
+| Rename timing                  | During migration, not before                         |
+
+---
 
 ## Source references
 
 This plan is informed by:
 
-- the current frontend architecture in `web/static/js/core.js`,
+- current frontend architecture in `web/static/js/core.js`,
   `web/static/js/auth.js`, `web/static/js/bb-data-binder.js`,
   `web/static/js/bb-settings.js`, `web/static/js/bb-dashboard-actions.js`, and
   `web/static/js/job-page.js`
-- the current HTML loading patterns in `dashboard.html`, `settings.html`,
+- current HTML loading patterns in `dashboard.html`, `settings.html`,
   `homepage.html`, `welcome.html`, `invite-welcome.html`, `cli-login.html`,
   `auth-callback.html`, and `web/templates/job-details.html`
-- the Webflow extension implementation in `webflow-designer-extension-cli/`
+- Webflow extension implementation in `webflow-designer-extension-cli/`
 - `docs/plans/modern-javascript-opportunities.md`
 - `docs/plans/ui-implementation.md`
-- the external reference article:
+- external reference:
   [16 Modern JavaScript Features That Might Blow Your Mind](https://dev.to/sylwia-lask/16-modern-javascript-features-that-might-blow-your-mind-4h5e)
 
-## Naming note: `bb`, `BBB`, and `bbb`
-
-The existing `bb`, `BB`, `BBB`, and `bbb` prefixes are legacy naming from Blue
-Banded Bee, the original product name.
-
-Examples in the current codebase include:
-
-- file prefixes such as `bb-settings.js` and `bb-webflow.js`
-- globals such as `window.BB_APP` and `window.BBB_CONFIG`
-- HTML attributes such as `bbb-action` and `bbb-template`
-
-As Adapt is being renamed to Hover, new frontend modules, components, CSS
-classes, and browser globals created through this migration should move away
-from the Blue Banded Bee prefixes.
-
-## Naming convention decision
-
-We should use a layered naming convention:
-
-- use generic, capability-based names wherever the code does not need product
-  branding
-- use `hover-` where the name is browser-facing and needs a stable app-level
-  namespace
-- reserve `goodnative` or `gn-` only for company-level or multi-product
-  concerns, not ordinary app UI code
-
-This gives us the best long-term balance:
-
-- generic names keep the codebase cleaner and easier to reuse
-- `hover-*` gives us a safe namespace for custom elements, CSS hooks, and
-  browser-exposed assets
-- we avoid coupling ordinary UI implementation to the company name when the app
-  name is the user-facing product
-
-### Recommended naming rules
-
-Use generic names for internal modules and utilities:
-
-- `api-client.js`
-- `auth-session.js`
-- `format-date.js`
-- `organisation-store.js`
-- `error-normaliser.js`
-
-Use `hover-*` for browser-facing primitives and assets:
-
-- custom elements such as `hover-status-pill`
-- component files such as `hover-status-pill.js`
-- CSS utility hooks only where a namespace is needed
-- page-level assets that are clearly app-facing
-
-Use `Good Native` naming only where the concern is organisational rather than
-product-facing, for example:
-
-- shared internal tooling
-- multi-product platform utilities
-- company-level documentation or asset ownership
-
-### Migration guidance
-
-When replacing legacy `bb` names:
-
-- prefer a generic rename if the code is internal-only
-- prefer a `hover-*` rename if the code is rendered into the browser as a public
-  contract
-- avoid introducing `gn-*` or `goodnative-*` in normal page UI unless there is a
-  clear multi-product need
-
-Examples:
-
-- do not create new `bb-*`, `BB_*`, `BBB_*`, or `bbb-*` names unless required as
-  temporary compatibility bridges
-- prefer generic names for internal modules and `hover-*` for browser-facing
-  contracts
-- document any temporary bridges clearly and remove them as old screens are
-  retired
-
-## `bb` to new convention migration
-
-The `bb` family should be treated as legacy and removed incrementally as screens
-move onto the new architecture.
-
-### Migration targets
-
-Legacy patterns to retire over time:
-
-- file names such as `bb-settings.js`, `bb-webflow.js`, and `bb-data-binder.js`
-- globals such as `window.BB_APP`, `window.BBAuth`, `window.BB_ORG_READY`, and
-  `window.BBB_CONFIG`
-- attributes such as `bbb-action`, `bbb-template`, `bbb-text`, and related
-  `data-bb-*` or `bbb-*` bindings
-- CSS classes and identifiers that are only preserving the Blue Banded Bee name
-
-### Replacement rules
-
-#### File names
-
-- `bb-settings.js` -> `settings-page.js` or `hover-settings-panel.js`
-- `bb-webflow.js` -> `webflow-page.js` or `hover-webflow-panel.js`
-- `bb-dashboard-actions.js` -> `dashboard-actions.js`
-- `bb-data-binder.js` -> `template-binder.js` or `view-binder.js`
-
-Rule:
-
-- internal logic files should become generic
-- browser-facing reusable component files should become `hover-*`
-
-#### Browser globals
-
-Preferred direction is to remove globals altogether in favour of imports.
-
-Where a temporary browser global is still required during migration:
-
-- `window.BB_APP` -> `window.HoverApp`
-- `window.BBB_CONFIG` -> `window.HoverConfig`
-- `window.BBAuth` -> `window.HoverAuth`
-
-Rule:
-
-- do not create new `BB*` or `BBB*` globals
-- use `Hover*` only as a temporary bridge until imports fully replace globals
-
-#### HTML attributes
-
-Legacy:
-
-- `bbb-action`
-- `bbb-template`
-- `bbb-text`
-
-Recommended replacements:
-
-- generic attributes such as `data-action`, `data-template`, `data-bind`
-- if a namespace is required, use `data-hover-*`
-
-Rule:
-
-- default to generic `data-*` attributes for internal page wiring
-- use `data-hover-*` only if collision risk or public component API clarity
-  makes it useful
-
-#### Custom elements
-
-Custom elements must be namespaced and should use the app name:
-
-- `hover-status-pill`
-- `hover-card`
-- `hover-tabs`
-
-Rule:
-
-- use `hover-*` for all new custom element names
-- do not create custom elements with generic single-word names
-
-### Screen-by-screen migration approach
-
-For each migrated screen:
-
-1. build the new screen on ES modules
-2. use generic internal module names plus `hover-*` browser-facing names
-3. add a temporary bridge to old `bb` hooks only if needed for transition
-4. remove the old `bb` hook once the screen replacement is stable
-
-### End-state naming goal
-
-At the end of this migration:
-
-- internal modules are mostly generic and descriptive
-- browser-facing UI primitives use `hover-*`
-- legacy `bb`, `BB`, `BBB`, and `bbb` names are removed from active frontend
-  paths
-- `Good Native` remains the company identity, but not the default prefix for app
-  UI implementation
+---
 
 ## Why now
 
-We currently have two frontend surfaces that are both in motion:
+Two frontend surfaces are both actively being refactored:
 
 - the Webflow extension interface and job list screens
-- the main app surfaces including `/dashboard`, job details, and settings
+- the main app surfaces: `/dashboard`, job details, and settings
 
-If we continue refactoring each surface with different JavaScript patterns,
-different loading contracts, or different UI abstractions, we will create a
+Continuing to refactor each surface in different JavaScript styles creates a
 launch-stage maintenance problem:
 
 - duplicated UI work
-- inconsistent behaviours between surfaces
-- shared auth and data logic split across styles
-- harder bug fixes during launch
-- slower onboarding for future pages and contributors
+- inconsistent behaviour between surfaces
+- shared auth and data logic split across incompatible patterns
+- harder debugging at launch
+- slower onboarding as more pages are added
 
-Because the app has no active users yet, this is the best time to unify the
-frontend direction even if some existing pages temporarily break.
+Because there are no active users, this is the right time to unify the frontend
+direction even if some existing pages temporarily break.
+
+---
 
 ## Goals
 
 - establish one frontend method for all new and refactored screens
-- avoid introducing a build tool at this stage
 - make Webflow and main app screens feel like the same product
-- create a reusable UI layer that can be applied screen-by-screen
-- reduce dependence on large `window.*` global contracts over time
-- improve maintainability, page startup clarity, and UI consistency
+- create a reusable UI layer that compounds screen by screen
+- reduce dependence on `window.*` global contracts over time
+- retire legacy Blue Banded Bee naming as screens are migrated
+- avoid introducing a build tool
 
 ## Non-goals
 
 - full SPA conversion
-- introducing React, Vue, Svelte, or another framework
-- introducing bundling, transpilation, or a build pipeline for frontend assets
+- introducing React, Vue, Svelte, or any other framework
+- bundling, transpilation, or a build pipeline for web app assets
 - rewriting every existing page in one release
-- replacing working backend APIs as part of this effort
+- replacing working backend APIs as part of this work
+
+---
 
 ## Decision
 
-### Chosen direction
+### Primary: native ES modules
 
-Use native ES modules as the shared frontend architecture across both the
-Webflow extension and the main app.
+Use native `type="module"` as the shared frontend architecture across both the
+Webflow extension web pages and the main app.
 
-### Supporting direction
+This means:
 
-Use Web Components only where they provide strong reuse or encapsulation value,
-for example:
+- each page has one explicit module entrypoint
+- dependencies are imported, not globally injected
+- shared logic lives in `lib/` modules
+- startup order is explicit, not implicit through script ordering
 
-- buttons and icon buttons
-- cards and panels
-- tabs
-- modals
-- toast messages
-- status pills and badges
-- reusable data tables or list shells
-- auth panels and empty states
+### Supporting: selective Web Components
 
-### Explicitly not chosen
+Use Web Components only where they provide strong reuse or clear encapsulation
+value across multiple screens. Good candidates are listed in the architecture
+section below.
 
-Do not make Web Components the only architecture for entire pages.
+Do not make Web Components the architecture for entire pages. Page orchestration
+should live in plain ES modules. Web Components are view primitives inside that
+system.
 
-Page logic should primarily live in plain ES modules. Web Components should sit
-inside that module system as reusable view primitives.
+### Not chosen
 
-## Principles
+- build tools, bundlers, transpilers
+- React, Vue, Svelte, or equivalent
+- Web Components as the primary page abstraction
 
-### 1. One architecture across both surfaces
+### Extension CLI note
 
-The Webflow extension and the main app should use the same structure, naming,
-state patterns, and UI primitives.
+The `webflow-designer-extension-cli/` directory already uses TypeScript with a
+build step, as required by the Webflow Designer Extension SDK. That is a
+separate constraint and is not affected by this plan. The plan applies to the
+Hover web app pages, including the Webflow extension auth and login screens
+served by the Go backend.
 
-### 2. Webflow leads, dashboard follows
+---
 
-The Webflow extension screens are the first proving ground. As each Webflow
-screen is modernised, the same patterns should then be applied into the
-equivalent or adjacent dashboard screens.
+## Naming conventions
 
-### 3. Screen-by-screen rollout
+### Background: `bb`, `BB`, `BBB`, and `bbb`
 
-We should refactor incrementally by screen, not by theoretical layer only. Every
-new screen should leave behind reusable tokens, modules, components, and
-interaction patterns for the next screen.
+The existing `bb` family of prefixes is legacy naming from Blue Banded Bee, the
+original product name before Adapt and Hover.
 
-### 4. No-build discipline
+Examples throughout the current codebase:
 
-Everything must run directly in the browser via native HTML, CSS, and JS.
-Anything that depends on bundling, transpiling, or code generation should be
-avoided.
+| Type            | Examples                                                 |
+| --------------- | -------------------------------------------------------- |
+| File names      | `bb-settings.js`, `bb-webflow.js`, `bb-data-binder.js`   |
+| Browser globals | `window.BB_APP`, `window.BBAuth`, `window.BBB_CONFIG`    |
+| HTML attributes | `bbb-action`, `bbb-template`, `bbb-text`, `data-bb-bind` |
+| CSS identifiers | `.bb-*` class names and data attributes                  |
 
-### 5. Shared UI language
+These should be treated as legacy. Do not extend them. Retire them as each
+screen migrates.
 
-Both surfaces should draw from the same design tokens, layout rules, spacing,
-typography, feedback states, and interaction patterns.
+### Convention: three tiers
 
-### 6. Keep business logic outside components where possible
+| Tier          | When to use                                                                       | Examples                                            |
+| ------------- | --------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Generic       | Internal modules and utilities with no need for product branding                  | `api-client.js`, `auth-session.js`, `formatters.js` |
+| `hover-*`     | Browser-facing contracts: custom elements, component files, namespaced attributes | `hover-status-pill`, `hover-toast.js`               |
+| `Good Native` | Company-level or multi-product concerns only                                      | Documentation ownership, shared platform tooling    |
 
-Fetching, auth, formatting, and orchestration logic should live in plain
-modules. Components should focus on presentation and well-defined interactions.
+The default should be generic. Use `hover-*` when a stable browser-level
+namespace is needed, primarily for custom element names and their source files.
+Avoid reaching for the company name in ordinary UI code.
+
+### Specific replacement rules
+
+#### File names
+
+| Legacy                    | Replacement                                    |
+| ------------------------- | ---------------------------------------------- |
+| `bb-settings.js`          | `settings-page.js` (internal)                  |
+| `bb-webflow.js`           | `webflow-page.js` (internal)                   |
+| `bb-dashboard-actions.js` | `dashboard-actions.js` (internal)              |
+| `bb-data-binder.js`       | `template-binder.js` (internal)                |
+| `bb-global-nav.js`        | `global-nav.js` (internal)                     |
+| `bb-bootstrap.js`         | removed — replaced by ES module entrypoints    |
+| Component files           | `hover-status-pill.js`, `hover-toast.js`, etc. |
+
+Rule: internal logic files become generic. Browser-facing reusable component
+files become `hover-*`.
+
+#### Browser globals
+
+The preferred direction is to remove globals entirely in favour of imports. For
+the period when a temporary bridge global is still required:
+
+| Legacy                | Temporary bridge       | Final state         |
+| --------------------- | ---------------------- | ------------------- |
+| `window.BB_APP`       | `window.HoverApp`      | removed via imports |
+| `window.BBB_CONFIG`   | `window.HoverConfig`   | removed via imports |
+| `window.BBAuth`       | `window.HoverAuth`     | removed via imports |
+| `window.BB_ORG_READY` | `window.HoverOrgReady` | removed via imports |
+
+Do not create new `BB*` or `BBB*` globals. Use `Hover*` only as a short-lived
+migration bridge.
+
+#### HTML attributes
+
+| Legacy         | Replacement     |
+| -------------- | --------------- |
+| `bbb-action`   | `data-action`   |
+| `bbb-template` | `data-template` |
+| `bbb-text`     | `data-bind`     |
+| `data-bb-bind` | `data-bind`     |
+| `bbb-id`       | `data-id`       |
+
+Default to generic `data-*` attributes for internal page wiring. Use
+`data-hover-*` only where collision risk or a component's public API makes a
+namespace necessary.
+
+#### Custom elements
+
+Custom elements require a namespace by the HTML spec (single-word names are
+reserved). Use `hover-*` for all new custom element names:
+
+```js
+customElements.define("hover-status-pill", HoverStatusPill);
+customElements.define("hover-toast", HoverToast);
+customElements.define("hover-tabs", HoverTabs);
+```
+
+Do not register custom elements with generic hyphenated names that lack the app
+namespace (for example `status-pill` or `app-toast`).
+
+### Migration rule of thumb
+
+- **New code**: never use `bb`
+- **Migrated code**: rename while migrating
+- **Untouched legacy code**: leave it until its turn
+
+---
+
+## ES modules migration and `bb` renaming: phasing
+
+These two changes run in parallel but are not equal tracks.
+
+### Why ES modules leads
+
+The ES modules migration solves the structural problem first:
+
+- removes implicit script ordering and fragile startup timing
+- eliminates most of the reason browser globals exist
+- creates proper dependency boundaries
+- gives a natural moment to rename every touched file correctly
+
+Renaming inside the legacy architecture without migrating the architecture first
+creates churn without improving the underlying problem.
+
+### Why renaming does not happen first
+
+A repo-wide rename-first pass would:
+
+- touch every active file and create merge conflicts
+- leave the structural problems exactly as they were
+- require a second major pass to migrate the architecture anyway
+
+### The correct sequence
+
+1. Establish the ES module structure and naming rules (Phase 0)
+2. Migrate each screen to ES modules
+3. Rename `bb` artefacts in the same touched screen at the same time
+4. Remove compatibility bridges once the screen replacement is stable
+5. Repeat until no active frontend paths use `bb` names
+
+---
 
 ## Target architecture
 
-## Directory structure
-
-Suggested browser-native structure under `web/static/`:
+### Directory structure
 
 ```text
 web/static/
   app/
     lib/
-      api.js
-      auth.js
+      api-client.js
+      auth-session.js
       config.js
       events.js
       formatters.js
-      state.js
+      org-store.js
       urls.js
     components/
       hover-button.js
       hover-card.js
+      hover-data-table.js
+      hover-empty-state.js
       hover-modal.js
       hover-status-pill.js
       hover-tabs.js
       hover-toast.js
-      hover-data-table.js
-      hover-empty-state.js
     pages/
-      webflow-login.js
-      webflow-jobs.js
       dashboard.js
       job-details.js
       settings-account.js
-      settings-team.js
       settings-billing.js
       settings-integrations.js
+      settings-team.js
+      webflow-jobs.js
+      webflow-login.js
     styles/
-      tokens.css
       base.css
-      layout.css
       components.css
+      layout.css
+      tokens.css
       utilities.css
 ```
 
-This structure can evolve, but the separation should stay stable:
+Structural rules that should not change:
 
-- `lib/` for shared logic
-- `components/` for reusable UI primitives
-- `pages/` for page orchestration
-- `styles/` for shared styling foundations
+| Directory     | Purpose                                          |
+| ------------- | ------------------------------------------------ |
+| `lib/`        | Shared logic with no page or UI dependency       |
+| `components/` | Reusable UI primitives with a stable public API  |
+| `pages/`      | Per-page orchestration modules                   |
+| `styles/`     | Shared tokens, base styles, and component styles |
 
-## Loading model
+### Page loading pattern
 
-Each page should have a small, explicit module entrypoint.
-
-Example pattern:
+Each page uses one explicit module entrypoint:
 
 ```html
 <link rel="stylesheet" href="/app/styles/tokens.css" />
@@ -376,415 +335,394 @@ Example pattern:
 <script type="module" src="/app/pages/dashboard.js"></script>
 ```
 
-This replaces implicit script ordering and sprawling global readiness
-dependencies with:
+This replaces the current pattern of multiple ordered `<script defer>` tags,
+`bb-bootstrap.js` polling, and `window.BB_APP.whenReady()` chains.
 
-- explicit imports
-- explicit startup order
-- page-local orchestration
-- smaller failure surfaces
+### Third-party dependencies (Supabase and others)
 
-## Module responsibilities
+The current architecture loads Supabase from a CDN with SRI hashes via a
+dynamically injected `<script>` tag in `core.js`. ES module `import` statements
+do not mix with CDN UMD bundles in the same way.
 
-### `lib/`
+Options during migration:
 
-Shared logic that should not be tied to any single page:
+- continue loading Supabase via a `<script>` tag before the module entrypoint,
+  then access `window.supabase` inside the module
+- switch to the Supabase ESM build from a CDN (`esm.sh` or similar) and import
+  it directly inside the module
 
-- API wrappers
-- auth/session helpers
-- organisation switching logic
+The recommended approach for Phase 0 is the first option (keep Supabase as a
+pre-loaded script) and then evaluate the ESM import option once the module
+structure is established and the SRI/CDN policy is reviewed.
+
+### `lib/` responsibilities
+
+Shared logic that should have no page or UI dependency:
+
+- API request wrappers and response normalisation
+- auth and session helpers
+- organisation state and switching logic
 - URL and query parameter helpers
-- error normalisation
-- formatting helpers
+- error normalisation and `Error.cause` wrapping
+- formatting helpers: dates, durations, counts, status labels
 - shared event bus or pub/sub helpers
-- local storage/session storage helpers
+- storage helpers: `localStorage` and `sessionStorage` with error boundaries
 
-### `components/`
+### `components/` responsibilities
 
-Reusable interface primitives with a stable public API.
+Reusable UI primitives with a defined attribute and event API:
 
-Good component candidates:
-
-- status pill
-- card shell
-- empty state
-- toast container
-- modal/dialog shell
-- tabs
-- data table shell
+- `hover-status-pill` — job and task status badges
+- `hover-card` — surface container with standard padding and shadow
+- `hover-toast` — feedback toasts (success, warning, error)
+- `hover-modal` — modal/dialog shell
+- `hover-tabs` — tabbed panel switching
+- `hover-empty-state` — empty and error placeholders
+- `hover-data-table` — sortable, filterable table shell
 - progress indicator
-- settings section header
 
-### `pages/`
+### `pages/` responsibilities
 
-Each page module should:
+Each page module:
 
-- import only what it needs
-- initialise screen state
-- wire page-specific events
-- fetch screen data
-- render or hydrate the page
-- own screen-specific behaviour only
+- imports only what it needs from `lib/` and `components/`
+- initialises screen-level state
+- wires page-specific event handlers
+- fetches and renders screen data
+- owns only behaviour specific to that screen
 
-## When to use Web Components
+### When to use Web Components
 
 Use Web Components when all of the following are true:
 
 - the UI is reused across multiple screens
-- the component has a clear input/output contract
-- encapsulation improves maintainability
-- the component can still be styled within our shared design system
-
-Examples that likely justify Web Components:
-
-- `hover-status-pill`
-- `hover-card`
-- `hover-toast`
-- `hover-modal`
-- `hover-tabs`
-- `hover-empty-state`
-- `hover-data-table`
+- it has a clear attribute/property input and event output contract
+- encapsulation makes it easier to maintain and test in isolation
+- it can be styled within the shared token system
 
 Do not use Web Components for:
 
-- one-off page wrappers
-- complex business workflows that need heavy orchestration
-- every form or layout block by default
+- one-off page layout or wrappers
+- complex business workflows that require heavy orchestration
+- every form, card, or list by default
+
+---
 
 ## Styling strategy
 
-This migration should also become the foundation for UI quality improvements.
+### Rules
 
-### Shared styling rules
+- define CSS custom property tokens before any component styling
+- use tokens for colour, spacing, type scale, radius, and shadow — not
+  hard-coded values
+- create shared layout primitives rather than per-page hacks
+- avoid inline `element.style.cssText` construction for new work
+- mobile and desktop behaviour should be intentional from the start, not
+  retrofitted
 
-- define design tokens first
-- use CSS custom properties for colour, spacing, type scale, radius, and shadow
-- create shared layout primitives rather than page-specific hacks
-- avoid inline style-heavy UI construction for new work
-- keep desktop and mobile behaviour intentional from the start
+### Token categories
 
-### Design token examples
+| Category     | Examples                                                                                                                                                          |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Colour roles | `--color-bg`, `--color-surface`, `--color-text`, `--color-text-muted`, `--color-border`, `--color-accent`, `--color-danger`, `--color-success`, `--color-warning` |
+| Spacing      | `--space-1` through `--space-8`                                                                                                                                   |
+| Type scale   | `--text-heading`, `--text-body`, `--text-caption`, `--text-label`                                                                                                 |
+| Radius       | `--radius-sm`, `--radius-md`, `--radius-lg`                                                                                                                       |
+| Shadow       | `--shadow-sm`, `--shadow-md`                                                                                                                                      |
 
-- colour roles: background, surface, surface-muted, text, text-muted, border,
-  accent, danger, warning, success
-- spacing scale: `--space-1` through `--space-8`
-- type scale: heading, body, caption, label
-- radius scale and shadow scale
+### UI objective
 
-### Immediate UI objective
+The Webflow extension screens define the cleaner visual language. The dashboard
+and settings surfaces inherit it — not the other way around.
 
-The new Webflow extension screens should define the cleaner visual language that
-the dashboard and settings surfaces inherit.
+---
 
 ## Migration strategy
 
-## Overarching rollout model
+### Overarching loop
 
-The migration should follow this repeating loop:
+The migration follows a repeating cycle:
 
-1. update an existing Webflow extension screen
-2. extract reusable modules, styles, and components from that work
-3. apply the same concepts to the relevant dashboard or settings screen
-4. carry those shared assets into the next Webflow screen
-5. repeat until both surfaces are operating from the same frontend system
+1. Modernise a Webflow extension screen using ES modules and new naming
+2. Extract any reusable modules, styles, and components from that work
+3. Apply the same patterns to the equivalent or adjacent dashboard screen
+4. Carry the shared assets forward into the next Webflow screen
+5. Repeat until both surfaces operate from the same system
 
-This keeps the Webflow interface and the main app aligned while still allowing
-incremental delivery.
+This keeps both surfaces aligned while delivering incrementally.
 
-## Relationship between ES modules migration and `bb` renaming
+### Bridging during migration
 
-These two changes should run in parallel, but they are not equal tracks.
+**Acceptable temporary bridges:**
 
-### Primary track: ES modules and unified frontend structure
+- small compatibility wrappers for existing auth and session calls
+- adapting current API response shapes into new page modules
+- temporary re-exports from old globals into new modules while a screen is being
+  replaced
 
-The ES modules migration is the main architectural change. It should lead the
-work because it solves the bigger problem:
+**Not acceptable as long-term patterns:**
 
-- inconsistent startup patterns
-- too many browser globals
-- weak dependency boundaries
-- duplicated UI logic across surfaces
+- adding new `window.*` dependencies to new screens
+- mixing old and new loading models on the same screen across releases
+- copying UI code across surfaces instead of extracting it to shared modules
 
-### Secondary track: `bb` to new naming migration
+---
 
-The `bb` renaming should happen as part of each screen migration, not as a
-separate repo-wide rename first.
+## Phases
 
-This means:
+### Phase 0 — Foundations
 
-- new code must not introduce new `bb` names
-- migrated screens should adopt the new naming convention as they move to ES
-  modules
-- untouched legacy screens can keep existing `bb` names until their migration
-  starts
-
-### Why this order matters
-
-If we rename first inside the legacy architecture, we create churn without
-solving the underlying structural problem.
-
-If we move to ES modules but keep introducing `bb` names in new code, we miss
-the clean break we are trying to create.
-
-The correct approach is therefore:
-
-1. establish the ES module architecture and naming rules
-2. migrate screens onto the new architecture
-3. rename `bb` to the new convention in the same touched screens
-4. remove compatibility bridges once those screens are stable
-
-### Practical rule of thumb
-
-- new code: never use `bb`
-- migrated code: rename while migrating
-- untouched legacy code: leave it alone until its turn
-
-## Phase 0 - Foundations
-
-Objective: establish the shared frontend base before major screen rebuilds.
+Objective: establish the shared frontend base before screen rebuilds begin.
 
 Tasks:
 
-- create the new `web/static/app/` structure
-- define the initial CSS token files and base styles
-- create baseline `lib/` utilities for API, auth, config, and error handling
-- agree naming conventions for modules and components
-- define one HTML loading pattern using `type="module"`
-- document screen state conventions and component contracts
+- create the `web/static/app/` directory structure
+- define `tokens.css` and `base.css`
+- create baseline `lib/` utilities: `api-client.js`, `auth-session.js`,
+  `config.js`, `formatters.js`
+- define the HTML loading pattern using `type="module"`
+- document the component contract format (attributes, events, slots)
+- decide Supabase loading approach for module context (see third-party note
+  above)
 
 Validation:
 
-- a trivial page can load from the new module structure without any global
-  bootstrap chain
-- shared styles apply consistently in both the Webflow and dashboard contexts
+- a simple page loads from the new module structure with no `bb-bootstrap.js`
+  polling chain
+- shared styles render consistently in both Webflow extension and dashboard
+  contexts
 
-Rollback point:
+Rollback point: old pages remain untouched until Phase 1 is ready.
 
-- old pages can remain untouched until the first migrated screen is ready
+---
 
-## Phase 1 - Rebuild the Webflow login/auth flow
+### Phase 1 — Webflow login and auth flow
 
-Objective: use the Webflow login flow as the first real module-first screen.
+Objective: migrate the Webflow login/auth screens as the first module-first
+surface.
 
 Tasks:
 
-- move page orchestration into a dedicated module entrypoint
-- isolate shared auth/session logic into `lib/auth.js`
-- create reusable auth UI primitives
-- standardise loading, error states, and feedback patterns
-- reduce direct reliance on page-local globals where practical
+- create `pages/webflow-login.js` as the module entrypoint
+- move auth and session logic into `lib/auth-session.js`
+- create initial reusable auth UI primitives
+- standardise loading states, error feedback, and toast patterns
+- apply new naming conventions; retire `bb` names in all touched files
 
-Expected reusable outputs:
+Reusable outputs from this phase:
 
-- auth shell
-- form field patterns
-- button and loading states
-- toast/feedback system
+- `lib/auth-session.js`
+- `hover-toast` component
+- form field and button patterns
 - shared error presentation
 
-Dashboard application after this phase:
+Dashboard follow-through:
 
-- apply auth shell and feedback patterns to dashboard entry and gated screens
-- reuse the same auth/session helpers instead of separate page logic
+- apply auth feedback and session helpers to dashboard entry and gated screens
+- reuse `lib/auth-session.js` instead of page-local globals
 
 Validation:
 
-- login, logout, session restore, and redirect handling still work
-- visual and interaction patterns can be reused in dashboard/settings screens
+- login, logout, session restore, and OAuth redirect handling all work
+- no `BB_APP`, `BBAuth`, or `bbb-*` attributes remain in migrated files
 
-## Phase 2 - Rebuild the Webflow job list screen
+---
 
-Objective: establish the list/detail language for operational screens.
+### Phase 2 — Webflow job list screen
+
+Objective: establish the list and status language for operational screens.
 
 Tasks:
 
-- create a shared data table or list-shell pattern
-- create reusable status pills, filters, empty states, and action bars
-- centralise formatting helpers for status, counts, dates, and durations
-- normalise loading, refreshing, and polling/realtime indicators
+- create `pages/webflow-jobs.js` as the module entrypoint
+- create `hover-data-table`, `hover-status-pill`, and filter bar patterns
+- centralise formatting helpers for status, counts, dates, and durations in
+  `lib/formatters.js`
+- normalise loading, polling, and realtime indicator patterns
 
-Expected reusable outputs:
+Reusable outputs from this phase:
 
 - `hover-data-table`
 - `hover-status-pill`
-- filter bar patterns
-- skeleton/loading states
-- empty/error states
+- filter bar pattern
+- skeleton and loading states
+- empty and error states
 
-Dashboard application after this phase:
+Dashboard follow-through:
 
-- apply the same table/list language to `/dashboard`
-- use the same card and status components in job summaries
-- reduce one-off HTML/DOM logic in dashboard lists
+- apply the same list and table language to `/dashboard`
+- use the same status and card components in job summaries
 
 Validation:
 
 - Webflow job list and dashboard job listing feel like the same product surface
-- state transitions are visually consistent across both screens
+- state transitions are visually consistent
 
-## Phase 3 - Apply to `/dashboard`
+---
 
-Objective: rebuild the main dashboard using the Webflow-proven system.
+### Phase 3 — `/dashboard`
+
+Objective: rebuild the main dashboard using the system established in Phases 1
+and 2.
 
 Tasks:
 
-- replace ad hoc dashboard-specific UI with shared layout and component patterns
-- refactor dashboard entrypoint into `app/pages/dashboard.js`
-- migrate dashboard stats, cards, jobs list, and actions to shared modules
-- simplify page startup and remove dependence on fragile script order
+- create `pages/dashboard.js` as the module entrypoint
+- replace ad hoc dashboard UI with shared layout and component patterns
+- migrate stats cards, jobs list, and actions to shared modules
+- remove `bb-bootstrap.js`, `bb-dashboard-actions.js`, and fragile script
+  ordering
 
 Validation:
 
-- dashboard renders from the new module entrypoint
-- primary dashboard actions still work
-- dashboard styling now matches the Webflow surface
+- dashboard renders from `pages/dashboard.js`
+- primary dashboard actions (run scan, restart job, cancel job) still work
+- dashboard styling matches the Webflow surface
 
-## Phase 4 - Apply to job details
+---
 
-Objective: bring detail views onto the same visual and structural system.
+### Phase 4 — Job details
+
+Objective: bring the detail view onto the same visual and structural system.
 
 Tasks:
 
-- create shared detail-page primitives
-- reuse the table/list shell for task rows and issue groupings
-- reuse badges, tabs, summary cards, and action patterns
+- create `pages/job-details.js` as the module entrypoint
+- reuse `hover-data-table` for task rows and issue groups
+- reuse `hover-tabs`, `hover-status-pill`, and summary card patterns
 - standardise detail loading and error states
 
 Validation:
 
-- job details uses the same language as dashboard and Webflow job list
-- shared table/status/tab components work in both contexts
+- job details uses the same design language as dashboard and Webflow job list
+- shared table, status, and tab components work in both contexts
 
-## Phase 5 - Apply to settings
+---
+
+### Phase 5 — Settings
 
 Objective: make settings feel like part of the same product, not a separate UI.
 
 Tasks:
 
-- create settings navigation and panel primitives
-- standardise section headers, form spacing, field messaging, and success/error
-  feedback
-- split settings by screen-level page modules instead of one large script over
-  time
-- reuse the auth, card, tabs, toast, and modal primitives already established
+- create per-section page modules: `settings-account.js`, `settings-team.js`,
+  `settings-billing.js`, `settings-integrations.js`
+- create settings navigation and section primitives
+- standardise form spacing, field messaging, and feedback patterns
+- reuse `hover-modal`, `hover-tabs`, `hover-toast`, and card primitives already
+  established
+- retire `bb-settings.js` once all sections are migrated
 
 Validation:
 
-- account, team, billing, and integrations use one shared design system
-- settings interactions follow the same feedback and loading conventions as the
-  rest of the product
+- account, team, billing, and integrations sections use one shared design system
+- settings feedback and loading patterns are consistent with the rest of the
+  product
 
-## Phase 6 - Continue screen-by-screen convergence
+---
 
-Objective: ensure every new screen extends the same system rather than creating
-new local patterns.
+### Ongoing — New screens
 
-Rules for future screens:
+Any screen added after Phase 5 must use the ES module architecture and new
+naming conventions. This is not a phase with a completion date; it is a standing
+rule.
 
-- new Webflow screens must use the shared module architecture
-- new dashboard screens must use the same shared module architecture
-- any new reusable pattern must be extracted before the third repeated use
-- old global-script patterns should not be expanded unless needed as a temporary
-  bridge
+Standing rules:
+
+- new Webflow screens use the shared module architecture from day one
+- new dashboard screens use the same shared module architecture from day one
+- any pattern repeated a third time must be extracted to `lib/` or `components/`
+  before that third use is merged
+- the legacy global-script model must not be expanded for new screens
+
+---
 
 ## Implementation order by surface
 
 ### Webflow-first path
 
-1. Webflow login/auth flow
-2. Webflow job list
-3. next Webflow operational screens as they are introduced
+1. Webflow login/auth flow (Phase 1)
+2. Webflow job list (Phase 2)
+3. Future Webflow operational screens — apply the same system at the start, not
+   at the end
 
-### Dashboard/main app follow-through
+### Dashboard and main app follow-through
 
-1. `/dashboard`
-2. job details
-3. settings navigation and top-level settings shells
-4. each settings subsection incrementally
+1. `/dashboard` (Phase 3)
+2. Job details (Phase 4)
+3. Settings — navigation shell first, then each subsection (Phase 5)
 
-This order allows the smaller, newer Webflow screens to establish the system,
-then uses that system to clean up the larger dashboard surfaces.
+The smaller, fresher Webflow screens establish the system. The larger dashboard
+surfaces then use that proven system rather than starting from scratch.
 
-## Bridging strategy during migration
-
-While the migration is in progress, we may need temporary bridges.
-
-Acceptable temporary bridges:
-
-- small compatibility wrappers for existing auth/session calls
-- adapting current API response shapes into the new page modules
-- temporary exports from old globals into new modules while screens are being
-  replaced
-
-Not acceptable as a long-term pattern:
-
-- adding more page-specific `window.*` dependencies to new screens
-- mixing old and new loading models repeatedly on the same screen
-- copying UI code across surfaces instead of extracting it
+---
 
 ## Risks
 
 ### 1. Mixed-architecture drift
 
-Risk: old and new patterns coexist for too long.
+Risk: old and new patterns coexist for too long as new features keep landing in
+the legacy model.
 
 Mitigation:
 
-- stop adding new major functionality to old page patterns
-- use the new module structure for all new screen work
+- new major functionality must not be added to the old pattern
+- all new screen work starts on the new module structure
 
 ### 2. Styling divergence between surfaces
 
-Risk: Webflow and dashboard refactors still look unrelated.
+Risk: Webflow and dashboard screens are refactored independently and end up
+looking unrelated.
 
 Mitigation:
 
-- create tokens and shared component styling before broad UI rollout
-- review new screen work against both surfaces, not in isolation
+- tokens and shared component styles must exist before broad UI rollout
+- new screen work should be reviewed against both surfaces, not in isolation
 
 ### 3. Overusing Web Components
 
-Risk: too much logic gets hidden inside custom elements, making debugging and
-styling harder.
+Risk: too much orchestration logic ends up inside custom elements, making
+debugging harder and styling more constrained.
 
 Mitigation:
 
-- keep components small and composable
-- keep business logic in modules
+- keep components small, composable, and presentation-focused
+- keep business logic in `lib/` modules, not inside component classes
 
-### 4. Migration stalls after the first few screens
+### 4. Migration stalls after the Webflow screens
 
-Risk: the app ends up with a shiny new Webflow surface and an old dashboard.
+Risk: the Webflow surfaces are modernised but the dashboard remains on the old
+system because it is more complex.
 
 Mitigation:
 
-- treat dashboard follow-through as part of the same work, not a later optional
-  tidy-up
-- require each Webflow refactor to identify what is immediately reusable in the
-  dashboard
+- dashboard follow-through is part of each phase's definition of done, not a
+  separate optional tidy-up
+- each Webflow phase must identify and hand off what is immediately reusable in
+  the dashboard
+
+### 5. Supabase CDN loading conflicts with ES modules
+
+Risk: the current Supabase SDK is loaded as a UMD CDN bundle, which does not
+import cleanly into a native module context.
+
+Mitigation:
+
+- resolve the Supabase loading approach in Phase 0 before any screen migration
+  begins (see third-party dependencies note in the architecture section)
+
+---
 
 ## Delivery checkpoints
 
-### Checkpoint A - foundation ready
+| Checkpoint            | Criteria                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| A — Foundation ready  | `app/` structure exists, tokens and base styles in place, first page module loads without `bb-bootstrap.js`              |
+| B — Webflow aligned   | Webflow auth and job list run on the new architecture, core reusable components exist                                    |
+| C — Dashboard aligned | `/dashboard` uses the new module loading model and matches the Webflow surface visually                                  |
+| D — Full coverage     | Job details and all settings sections use the shared system, legacy `bb` names are absent from all active frontend paths |
 
-- `app/` structure exists
-- tokens and base styles exist
-- first page module loads successfully
-
-### Checkpoint B - Webflow auth and jobs aligned
-
-- Webflow auth and job list run on the new architecture
-- core reusable components exist
-
-### Checkpoint C - dashboard aligned
-
-- `/dashboard` uses the same design language and module loading model
-- dashboard and Webflow job views share common primitives
-
-### Checkpoint D - detail and settings aligned
-
-- job details and settings use the same shared system
-- old page-global patterns are shrinking rather than expanding
+---
 
 ## Definition of done
 
@@ -792,26 +730,33 @@ This initiative is complete when:
 
 - all new and refactored screens use native ES module entrypoints
 - the Webflow extension and main app share one visible design language
-- the main reusable UI primitives live in shared modules/components
-- settings, dashboard, and job details no longer depend on ad hoc legacy page
-  patterns for new work
+- main reusable UI primitives live in `components/` as `hover-*` elements
+- internal modules are generic and descriptive
+- no active frontend page entrypoint depends on `bb-bootstrap.js`, `BB_APP`,
+  `BBAuth`, `BBB_CONFIG`, or `bbb-*` attributes for new work
 - future screens can be added without inventing a third frontend style
+
+---
 
 ## Immediate next actions
 
-1. create the `web/static/app/` structure
-2. define tokens, base styles, and shared utility modules
-3. choose the first Webflow screen to migrate fully
-4. identify the first dashboard screen that should directly inherit that work
-5. stop adding new major UI work to the legacy script model except as a
-   migration bridge
+1. Resolve the Supabase loading approach for a module context
+2. Create `web/static/app/` with the directory structure defined above
+3. Write `tokens.css`, `base.css`, and the baseline `lib/` modules
+4. Migrate the Webflow login screen as the first complete Phase 1 screen
+5. Identify which dashboard screen directly inherits Phase 1 work and plan it
+   concurrently
 
-## Notes for implementation
+---
 
-- preserve the existing auth redirect contract while refactoring auth-related
-  screens
-- if new top-level HTML pages are introduced, follow the Dockerfile
-  triple-surface rule
-- keep changes incremental by screen, but directional at the architecture level
-- prefer deletion of old patterns once replacement screens are stable, rather
-  than maintaining dual systems indefinitely
+## Implementation notes
+
+- Preserve the existing auth redirect contract (`web/static/js/auth.js` —
+  `handleSocialLogin`) while refactoring auth-related screens. Deep-link URLs
+  must return to the originating URL. Invite acceptance routes to `/welcome`.
+- Any new top-level HTML page must follow the Dockerfile triple-surface rule:
+  HTTP route in `internal/api/handlers.go`, the file on disk, and a `COPY` line
+  in `Dockerfile`.
+- Keep changes incremental by screen but directional at the architecture level.
+- Delete old patterns once replacement screens are stable. Do not maintain
+  parallel systems indefinitely.
