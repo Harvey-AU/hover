@@ -12,6 +12,8 @@ Future features, implementation strategies, and technical planning documents.
   messaging strategy
 - **[platform-auth-architecture.md](./platform-auth-architecture.md)** -
   Platform authentication design
+- **[unified-frontend-es-modules-plan.md](./unified-frontend-es-modules-plan.md)** -
+  Unified no-build frontend migration plan
 - **[ui-implementation.md](./ui-implementation.md)** - Frontend development
   strategy
 - **[webflow-integration.md](./webflow-integration.md)** - Webflow marketplace
