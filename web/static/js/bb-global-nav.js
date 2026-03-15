@@ -36,166 +36,23 @@
     return;
   }
 
-  const navHtml = `
-    <div class="global-nav">
-      <header class="header">
-        <div class="container">
-          <div class="header-content">
-            <div class="header-brand">
-              <a href="/dashboard" class="logo">
-                <span>🐝</span>
-                Adapt
-              </a>
-              <span class="nav-separator" id="globalNavSeparator">|</span>
-              <span class="nav-title" id="globalNavTitle"></span>
-            </div>
-            <div class="user-menu">
-              <div bbb-auth="guest" class="auth-buttons">
-                <button
-                  id="loginBtn"
-                  class="bb-button bb-button-primary"
-                  aria-label="Sign in to your account"
-                >
-                  Sign In
-                </button>
-              </div>
+  const mountNav = async () => {
+    let navElement;
 
-              <div bbb-auth="required" class="user-info">
-                <div class="bb-org-switcher" id="orgSwitcher">
-                  <button
-                    class="bb-org-switcher-btn"
-                    id="orgSwitcherBtn"
-                    aria-label="Switch organisation"
-                    aria-expanded="false"
-                    aria-haspopup="true"
-                  >
-                    <span class="bb-org-name" id="currentOrgName">Loading...</span>
-                    <span class="bb-org-chevron">▼</span>
-                  </button>
-                  <div class="bb-org-dropdown" id="orgDropdown">
-                    <div class="bb-org-dropdown-header">Switch Organisation</div>
-                    <div class="bb-org-list" id="orgList"></div>
-                    <div class="bb-org-dropdown-footer">
-                      <button
-                        class="bb-org-create-btn"
-                        id="createOrgBtn"
-                        aria-label="Create a new organisation"
-                      >
-                        + Create Organisation
-                      </button>
-                    </div>
-                  </div>
-                </div>
+    try {
+      const res = await fetch("/web/partials/global-nav.html");
+      if (!res.ok)
+        throw new Error(`Failed to fetch nav partial: ${res.status}`);
+      const html = await res.text();
+      const navWrapper = document.createElement("div");
+      navWrapper.innerHTML = html.trim();
+      navElement = navWrapper.firstElementChild;
+    } catch (err) {
+      console.error("[bb-global-nav] Could not load nav partial:", err);
+      finishNavReady();
+      return;
+    }
 
-                <div class="bb-dropdown" id="userMenu">
-                  <button
-                    type="button"
-                    class="user-avatar"
-                    id="userAvatar"
-                    aria-label="Open user menu"
-                    aria-haspopup="true"
-                    aria-expanded="false"
-                  >
-                    ?
-                  </button>
-                  <div class="bb-dropdown-menu" id="userMenuDropdown">
-                    <div class="bb-dropdown-item" style="cursor: default">
-                      <strong id="userEmail">Loading...</strong>
-                    </div>
-                    <a class="bb-dropdown-item" href="/settings/account">
-                      Your account
-                    </a>
-                    <div class="bb-dropdown-divider"></div>
-                    <div class="bb-dropdown-item" style="cursor: default">
-                      <span id="userMenuOrgName">Organisation</span> settings
-                    </div>
-                    <div class="bb-dropdown-item" style="cursor: default">
-                      <div class="bb-quota-display" id="quotaDisplay" style="display: none">
-                        <span class="bb-quota-plan" id="quotaPlan">Free</span>
-                        <span class="bb-quota-usage">
-                          <span class="bb-quota-usage-count" id="quotaUsage">0/1000</span>
-                        </span>
-                        <span class="bb-quota-reset" id="quotaReset">Resets in 12h</span>
-                      </div>
-                    </div>
-                    <a class="bb-dropdown-item" href="/settings/billing">Billing</a>
-                    <a class="bb-dropdown-item" href="/settings/plans">Plans</a>
-                    <a class="bb-dropdown-item" href="/settings/notifications">Notifications</a>
-                    <a class="bb-dropdown-item" href="/settings/analytics">Analytics</a>
-                    <a class="bb-dropdown-item" href="/settings/automated-jobs">Automated jobs</a>
-                    <a class="bb-dropdown-item" href="/settings/team">Team</a>
-                    <div class="bb-dropdown-divider"></div>
-                    <button
-                      id="logoutBtn"
-                      class="bb-dropdown-item"
-                      aria-label="Sign out of your account"
-                      type="button"
-                    >
-                      Sign Out
-                    </button>
-                    <div class="bb-dropdown-divider"></div>
-                    <button
-                      id="resetDbBtn"
-                      class="bb-dropdown-item"
-                      style="display: none; color: #dc2626"
-                      title="Delete all jobs and tasks - USE WITH CAUTION"
-                      aria-label="Reset database - delete all jobs and tasks"
-                      type="button"
-                    >
-                      Reset DB
-                    </button>
-                  </div>
-                </div>
-
-                <div class="bb-notifications-container" id="notificationsContainer">
-                  <button
-                    id="notificationsBtn"
-                    class="bb-button bb-button-outline bb-notifications-btn"
-                    aria-label="View notifications"
-                  >
-                    🔔
-                    <span class="bb-notifications-badge" id="notificationsBadge">0</span>
-                  </button>
-                  <div class="bb-notifications-dropdown" id="notificationsDropdown">
-                    <div class="bb-notifications-header">
-                      <span class="bb-notifications-title">Notifications</span>
-                      <button
-                        id="markAllReadBtn"
-                        class="bb-notifications-mark-read"
-                        aria-label="Mark all as read"
-                      >
-                        Mark all read
-                      </button>
-                    </div>
-                    <div class="bb-notifications-list" id="notificationsList">
-                      <div class="bb-notifications-empty">
-                        <div class="bb-notifications-empty-icon">🔔</div>
-                        <div>No notifications yet</div>
-                      </div>
-                    </div>
-                    <div class="bb-notifications-footer">
-                      <a
-                        class="bb-notifications-footer-btn bb-notifications-settings-btn"
-                        id="notificationsSettingsBtn"
-                        href="/settings/notifications"
-                      >
-                        ⚙️ Notification Settings
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
-    </div>
-  `;
-
-  const mountNav = () => {
-    const navWrapper = document.createElement("div");
-    navWrapper.innerHTML = navHtml.trim();
-    const navElement = navWrapper.firstElementChild;
     if (!navElement || !document.body) {
       finishNavReady();
       return;
@@ -350,19 +207,12 @@
         });
       }
 
-      // Listen for org switches (from anywhere)
+      // Listen for org switches (from anywhere) — re-render full list so newly
+      // created orgs appear without a page reload.
       document.addEventListener("bb:org-switched", (e) => {
         const newOrg = e.detail?.organisation;
         if (newOrg) {
-          currentOrgName.textContent = newOrg.name || "Organisation";
-          if (orgListEl) {
-            orgListEl.querySelectorAll(".bb-org-item").forEach((el) => {
-              el.classList.toggle(
-                "active",
-                el.dataset.orgId === String(newOrg.id)
-              );
-            });
-          }
+          updateNavOrgDisplay(newOrg, window.BB_ORGANISATIONS);
         }
       });
 

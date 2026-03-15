@@ -104,23 +104,15 @@ func (h *Handler) createOrganisation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create the organisation
-	org, err := h.DB.CreateOrganisation(name)
+	// Create the organisation atomically (duplicate-name check, member insert, and
+	// active-org update are all performed inside a single transaction to prevent
+	// TOCTOU races when concurrent requests arrive for the same user).
+	org, err := h.DB.CreateOrganisationForUser(userClaims.UserID, name)
 	if err != nil {
-		InternalError(w, r, err)
-		return
-	}
-
-	// Add user as admin member
-	err = h.DB.AddOrganisationMember(userClaims.UserID, org.ID, "admin")
-	if err != nil {
-		InternalError(w, r, err)
-		return
-	}
-
-	// Set as active organisation
-	err = h.DB.SetActiveOrganisation(userClaims.UserID, org.ID)
-	if err != nil {
+		if errors.Is(err, db.ErrDuplicateOrganisationName) {
+			BadRequest(w, r, "An organisation with that name already exists")
+			return
+		}
 		InternalError(w, r, err)
 		return
 	}

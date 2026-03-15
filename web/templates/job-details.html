@@ -40,18 +40,21 @@
             >
               Generate Link
             </button>
+            <!-- Visibility controlled by job-page.js updateJobActionButtons() -->
             <button
               id="restartJobBtn"
+              type="button"
               class="bb-btn bb-btn-primary"
-              bbb-show="job.can_restart=true"
+              style="display: none"
               aria-label="Restart job"
             >
               Restart Job
             </button>
             <button
               id="cancelJobBtn"
+              type="button"
               class="bb-btn bb-btn-primary"
-              bbb-show="job.can_cancel=true"
+              style="display: none"
               aria-label="Cancel job"
             >
               Cancel Job

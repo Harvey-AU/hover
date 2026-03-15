@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,6 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
+
+// ErrDuplicateOrganisationName is returned when a user already has an organisation
+// with the same name (case-insensitive).
+var ErrDuplicateOrganisationName = errors.New("an organisation with that name already exists")
 
 // User represents a user in the system
 type User struct {
@@ -275,6 +280,85 @@ func (db *DB) CreateOrganisation(name string) (*Organisation, error) {
 		Str("organisation_id", org.ID).
 		Str("name", org.Name).
 		Msg("Created new organisation")
+
+	return org, nil
+}
+
+// CreateOrganisationForUser atomically checks for a duplicate name, creates the
+// organisation, adds the user as admin, and sets it as their active organisation.
+// Returns ErrDuplicateOrganisationName if the user already owns an organisation
+// with the same name (case-insensitive).
+func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, error) {
+	tx, err := db.client.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Lock the user row to serialise concurrent create requests for the same user.
+	lockQuery := `SELECT id FROM users WHERE id = $1 FOR UPDATE`
+	var lockedID string
+	if err := tx.QueryRow(lockQuery, userID).Scan(&lockedID); err != nil {
+		return nil, fmt.Errorf("failed to lock user row: %w", err)
+	}
+
+	// Check for duplicate name within this user's existing organisations.
+	dupQuery := `
+		SELECT EXISTS (
+			SELECT 1
+			FROM organisations o
+			JOIN organisation_members om ON om.organisation_id = o.id
+			WHERE om.user_id = $1
+			  AND lower(o.name) = lower($2)
+		)
+	`
+	var exists bool
+	if err := tx.QueryRow(dupQuery, userID, name).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("failed to check duplicate organisation name: %w", err)
+	}
+	if exists {
+		return nil, ErrDuplicateOrganisationName
+	}
+
+	// Create the organisation.
+	org := &Organisation{
+		ID:   uuid.New().String(),
+		Name: name,
+	}
+	insertOrg := `
+		INSERT INTO organisations (id, name, created_at, updated_at)
+		VALUES ($1, $2, NOW(), NOW())
+		RETURNING created_at, updated_at
+	`
+	if err := tx.QueryRow(insertOrg, org.ID, org.Name).Scan(&org.CreatedAt, &org.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("failed to create organisation: %w", err)
+	}
+
+	// Add user as admin member.
+	insertMember := `
+		INSERT INTO organisation_members (user_id, organisation_id, role, created_at)
+		VALUES ($1, $2, 'admin', NOW())
+		ON CONFLICT (user_id, organisation_id) DO UPDATE SET role = EXCLUDED.role
+	`
+	if _, err := tx.Exec(insertMember, userID, org.ID); err != nil {
+		return nil, fmt.Errorf("failed to add organisation member: %w", err)
+	}
+
+	// Set as active organisation.
+	updateActive := `UPDATE users SET active_organisation_id = $2, updated_at = NOW() WHERE id = $1`
+	if _, err := tx.Exec(updateActive, userID, org.ID); err != nil {
+		return nil, fmt.Errorf("failed to set active organisation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit organisation creation: %w", err)
+	}
+
+	log.Info().
+		Str("organisation_id", org.ID).
+		Str("user_id", userID).
+		Str("name", org.Name).
+		Msg("Created new organisation for user")
 
 	return org, nil
 }

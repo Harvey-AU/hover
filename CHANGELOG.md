@@ -28,6 +28,35 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.27.2] – 2026-03-15
+
+### Changed
+
+- **Nav HTML moved to partial**: `bb-global-nav.js` now fetches
+  `/web/partials/global-nav.html` at runtime instead of embedding the nav markup
+  as an inline string — `global-nav.html` is the single source of truth
+- **Binding convention gaps resolved**: Removed duplicate quota and notification
+  logic from `dashboard.html` (canonical in `bb-global-nav.js`); create-org
+  modal now uses `bbb-form="create-organisation"`; `bbb-show` on top-level
+  elements in `job-details.html` replaced with explicit `style="display:none"`
+  controlled by `job-page.js`; `settings.html` now loads `bb-bootstrap.js`
+- **Avatar/email selectors scoped**: `auth.js updateUserInfo()` uses
+  `.global-nav`-scoped `querySelector` instead of global `getElementById`
+
+### Fixed
+
+- **Org switcher after create**: Creating a new organisation now re-renders the
+  full org list in the switcher so the new org appears immediately
+- **Duplicate org names**: Creating an organisation with a name that already
+  exists in the user's orgs now returns a 400 error
+- **Seed idempotency**: All seed inserts use `ON CONFLICT DO NOTHING`;
+  `auth.identities` uses correct composite key `(provider, id)`
+
+### Security
+
+- **Seed PII removed**: Real email addresses and provider IDs replaced with
+  synthetic fixtures (`seed-admin@example.com`, `seed-member@example.com`)
+
 ## [0.27.1] – 2026-03-08
 
 ### Added
