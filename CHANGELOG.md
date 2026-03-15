@@ -26,7 +26,47 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:minor]
+
+### Added
+
+- **ES module frontend foundation (Phase 0)**: Established the new
+  `web/static/app/` architecture for all future Hover frontend work, replacing
+  the legacy global-script model
+  - `web/static/app/styles/tokens.css` — full dark-theme design token set
+    (primitive + semantic layers) mirroring the Webflow Designer extension
+    visual language; double-dash naming convention (`--colour--*`,
+    `--spacing--*`, `--font-family--*`)
+  - `web/static/app/styles/base.css` — box-model reset, scrollbar styling
+    (WebKit and Firefox), body base, core layout primitives, and utility classes
+    (`.hidden`, `.sr-only`, `.truncate`); all values reference semantic tokens
+    only
+  - `web/static/app/lib/config.js` — single import point for runtime config;
+    reads `window.BBB_CONFIG` and exports named values so new modules never
+    reference globals directly
+  - `web/static/app/lib/api-client.js` — `get/post/put/patch/del` fetch wrappers
+    with automatic JWT injection (same-origin only), correct `Content-Type`
+    handling for JSON vs FormData/Blob bodies, typed `ApiError` class
+  - `web/static/app/lib/auth-session.js` — `getSession`, `getUser`,
+    `getAccessToken`, `isAuthenticated`, `onAuthStateChange`, `signOut` wrappers
+    over `window.supabase.auth`; `onAuthStateChange` returns a plain unsubscribe
+    function
+  - `web/static/app/lib/formatters.js` — pure display formatting utilities with
+    no DOM dependency: `formatDate`, `formatDateTime`, `formatRelativeTime`
+    (sign-aware rounding, weeks branch), `formatDuration`, `formatCount`,
+    `formatPercent`, `formatStatus`, `statusCategory`, `formatUrl`
+  - `web/static/app/test-module.html` — Phase 0 validation page confirming
+    modules load with no `bb-bootstrap.js`, `core.js`, or `BB_APP.whenReady()`
+    dependency; accessible at `/app/test-module.html`
+  - `/app/` static route registered in `internal/api/handlers.go` alongside
+    existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
+    required
+
+### Fixed
+
+- **Seed idempotency**: `auth.identities` `ON CONFLICT` column corrected from
+  `(provider, id)` to `(id)` — the row primary key — resolving a batch insert
+  error on preview branch seed runs
 
 ## [0.27.2] – 2026-03-15
 
