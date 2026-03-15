@@ -112,20 +112,31 @@ async function buildHeaders(path, extra, body) {
 }
 
 /**
- * Core fetch wrapper. Handles auth headers, JSON parsing, and error
- * normalisation. All public helpers delegate here.
+ * Core fetch wrapper. Handles auth headers, serialisation, JSON parsing,
+ * and error normalisation. All public helpers delegate here.
+ *
+ * The body is serialised inside this function so that buildHeaders always
+ * receives the original (pre-serialisation) value and can correctly decide
+ * whether to set Content-Type: application/json.
  *
  * @param {string} path - API path, e.g. "/v1/jobs"
- * @param {RequestInit} [init] - standard fetch options
+ * @param {RequestInit & { rawBody?: unknown }} [init] - standard fetch options;
+ *   pass `rawBody` instead of `body` when calling from post/put/patch so
+ *   serialisation and header decisions happen in one place.
  * @returns {Promise<unknown>} parsed JSON response body
  * @throws {ApiError} on non-2xx responses
  */
 export async function request(path, init = {}) {
-  const headers = await buildHeaders(path, init.headers, init.body);
+  const { rawBody, ...fetchInit } = init;
+  const bodyToSend =
+    rawBody !== undefined ? serialiseBody(rawBody) : fetchInit.body;
+
+  const headers = await buildHeaders(path, fetchInit.headers, rawBody);
 
   const response = await fetch(path, {
-    ...init,
+    ...fetchInit,
     headers,
+    body: bodyToSend,
   });
 
   let body;
@@ -168,7 +179,7 @@ export function post(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "POST",
-    body: body !== undefined ? serialiseBody(body) : undefined,
+    rawBody: body,
   });
 }
 
@@ -184,7 +195,7 @@ export function put(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "PUT",
-    body: body !== undefined ? serialiseBody(body) : undefined,
+    rawBody: body,
   });
 }
 
@@ -200,7 +211,7 @@ export function patch(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "PATCH",
-    body: body !== undefined ? serialiseBody(body) : undefined,
+    rawBody: body,
   });
 }
 
