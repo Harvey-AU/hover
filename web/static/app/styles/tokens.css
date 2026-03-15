@@ -125,7 +125,7 @@
   --background-colour--brand: var(--colour--brand-primary);
   --background-colour--brand-hover: var(--colour--brand-primary-hover);
   --background-colour--thumb: var(--colour--white);
-  --background-colour--thumb-hover: var(--text-colour--disabled);
+  --background-colour--thumb-hover: var(--colour--white-40);
   --background-colour--toggle-track: var(--colour--white-12);
   --background-colour--hover-subtle: rgba(142, 218, 239, 0.3);
 
