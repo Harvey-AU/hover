@@ -151,24 +151,37 @@ async function refreshJobs() {
   const container = document.querySelector(".bb-jobs-list");
   if (!container) return;
 
-  // Show loading state on the existing table if present
-  const existingTable = container.querySelector("hover-data-table");
-  if (existingTable) existingTable.setAttribute("loading", "");
+  // Show loading skeleton on first render
+  let table = container.querySelector("hover-data-table");
+  if (!table) {
+    table = createDataTable({ columns: [], rows: [] });
+    table.setAttribute("loading", "");
+    container.appendChild(table);
+  } else {
+    table.setAttribute("loading", "");
+  }
+
+  // Wait for a valid Supabase session before fetching — the module may run
+  // before core.js has called initialiseSupabase() and signed in.
+  const token = await waitForSession();
+  if (!token) {
+    table.removeAttribute("loading");
+    table.setAttribute("error", "Not signed in.");
+    return;
+  }
 
   try {
-    const tzOffset = new Date().getTimezoneOffset();
     const jobs = await fetchJobs({
       limit: 10,
       range: currentRange,
       include: "stats",
     });
-
     renderJobsTable(container, jobs);
   } catch (err) {
-    const existingTable = container.querySelector("hover-data-table");
-    if (existingTable) {
-      existingTable.removeAttribute("loading");
-      existingTable.setAttribute("error", "Failed to load jobs.");
+    table = container.querySelector("hover-data-table");
+    if (table) {
+      table.removeAttribute("loading");
+      table.setAttribute("error", "Failed to load jobs.");
     }
   }
 }
@@ -328,6 +341,36 @@ async function cancelJob(jobId) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Wait for window.supabase to be initialised and have an active session.
+ * Returns the access token, or null if no session within the timeout.
+ * @param {number} [timeoutMs=8000]
+ * @returns {Promise<string|null>}
+ */
+function waitForSession(timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = async () => {
+      try {
+        const { data } = await window.supabase?.auth?.getSession();
+        const token = data?.session?.access_token;
+        if (token) {
+          resolve(token);
+          return;
+        }
+      } catch {
+        /* not ready yet */
+      }
+      if (Date.now() - start > timeoutMs) {
+        resolve(null);
+        return;
+      }
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
 
 /** Get auth headers from the active Supabase session. */
 async function authHeaders() {
