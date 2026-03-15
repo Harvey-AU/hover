@@ -416,14 +416,17 @@ body {
 
 .topbar-profile {
   justify-content: center;
-  background: var(--background-colour--brand);
-  border-color: var(--background-colour--brand);
+  background: transparent;
+  border-color: var(--border-colour--default);
   box-shadow: none;
+  padding: 0;
+  overflow: hidden;
 }
 
 .topbar-profile:not(:disabled):hover {
-  background: var(--background-colour--brand-hover);
-  border-color: var(--background-colour--brand-hover);
+  background: transparent;
+  border-color: var(--border-colour--default);
+  opacity: 0.85;
 }
 
 .topbar-profile-avatar {
@@ -432,13 +435,14 @@ body {
   justify-content: center;
   width: 100%;
   height: 100%;
-  background: var(--background-colour--avatar);
-  font-size: 0.65rem;
+  background: var(--colour--brand-primary);
+  font-size: 0.6rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--text-colour--primary);
+  letter-spacing: 0.03em;
+  color: #fff;
   overflow: hidden;
   border-radius: inherit;
+  user-select: none;
 }
 
 .topbar-profile-avatar img {
