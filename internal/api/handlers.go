@@ -134,6 +134,7 @@ type DBClient interface {
 	CountOrganisationAdmins(ctx context.Context, organisationID string) (int, error)
 	// Organisation management methods
 	CreateOrganisation(name string) (*db.Organisation, error)
+	CreateOrganisationForUser(userID, name string) (*db.Organisation, error)
 	AddOrganisationMember(userID, organisationID, role string) error
 	CreateOrganisationInvite(ctx context.Context, invite *db.OrganisationInvite) (*db.OrganisationInvite, error)
 	ListOrganisationInvites(ctx context.Context, organisationID string) ([]db.OrganisationInvite, error)
