@@ -27,7 +27,7 @@
  */
 
 import { get, post, put } from "/app/lib/api-client.js";
-import { fetchJobs } from "/app/pages/webflow-jobs.js";
+import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
 import { createStatusPill } from "/app/components/hover-status-pill.js";
 import { createDataTable } from "/app/components/hover-data-table.js";
 import { showToast } from "/app/components/hover-toast.js";
@@ -96,12 +96,21 @@ async function init() {
   // Initial render
   await refresh();
 
-  // Poll every 10 s to pick up job status changes (Supabase realtime is
-  // disabled on preview branches — polling is the fallback).
-  setInterval(() => refresh(), 10_000);
+  // Subscribe to realtime job updates (falls back to 10 s polling when
+  // Supabase realtime is unavailable, e.g. on preview branches).
+  let unsubscribe = null;
+  function startSubscription() {
+    if (unsubscribe) unsubscribe();
+    const orgId = window.BB_ACTIVE_ORG?.id;
+    unsubscribe = subscribeToJobUpdates(orgId, () => refresh());
+  }
+  startSubscription();
 
-  // Re-render jobs on org switch (binder handles realtime; we just re-render)
-  document.addEventListener("bb:org-switched", () => refresh());
+  // Re-subscribe and refresh when the active org changes.
+  document.addEventListener("bb:org-switched", () => {
+    refresh();
+    startSubscription();
+  });
 }
 
 // ── Refresh ────────────────────────────────────────────────────────────────────
@@ -146,18 +155,109 @@ function setStatCard(key, value) {
 
 // ── Jobs list ──────────────────────────────────────────────────────────────────
 
+// Column definitions are stable — defined once so the table header is never
+// rebuilt on refresh. Only rows are swapped in place via table.rows = [...].
+const JOB_COLUMNS = [
+  {
+    key: "domain",
+    label: "Domain",
+    render: (val, row) => {
+      const name = val || row.domains?.name || "—";
+      const span = document.createElement("span");
+      span.textContent = name;
+      return span;
+    },
+  },
+  {
+    key: "status",
+    label: "Status",
+    render: (val) => createStatusPill(String(val || "")),
+  },
+  {
+    key: "progress",
+    label: "Progress",
+    render: (val, row) => {
+      const pct = Math.round(Number(val) || 0);
+      const done = formatCount(row.completed_tasks);
+      const total = formatCount(row.total_tasks);
+      const span = document.createElement("span");
+      span.textContent = `${done} / ${total} (${pct}%)`;
+      return span;
+    },
+  },
+  {
+    key: "started_at",
+    label: "Started",
+    render: (val) => (val ? formatRelativeTime(String(val)) : "—"),
+  },
+  {
+    key: "duration_seconds",
+    label: "Duration",
+    render: (val) => (val != null ? formatDuration(Number(val) * 1000) : "—"),
+  },
+  {
+    key: "id",
+    label: "Actions",
+    render: (val, row) => {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "display:flex;gap:8px;align-items:center";
+
+      const status = String(row.status || "");
+      const isActive = [
+        "pending",
+        "running",
+        "queued",
+        "initializing",
+        "processing",
+        "cancelling",
+      ].includes(status);
+      const isDone = ["completed", "failed", "cancelled"].includes(status);
+
+      const view = document.createElement("a");
+      view.href = `/jobs/${val}`;
+      view.className = "bb-job-link";
+      view.textContent = "View";
+      view.setAttribute("aria-label", "View job details");
+      wrap.appendChild(view);
+
+      if (isDone) {
+        const restart = document.createElement("button");
+        restart.className = "bb-job-link";
+        restart.textContent = "Restart";
+        restart.setAttribute("aria-label", "Restart this job");
+        restart.addEventListener("click", () => restartJob(row));
+        wrap.appendChild(restart);
+      }
+
+      if (isActive) {
+        const cancel = document.createElement("button");
+        cancel.className = "bb-job-link";
+        cancel.textContent = "Cancel";
+        cancel.setAttribute("aria-label", "Cancel this job");
+        cancel.addEventListener("click", () => cancelJob(String(val)));
+        wrap.appendChild(cancel);
+      }
+
+      return wrap;
+    },
+  },
+];
+
 async function refreshJobs() {
   const container = document.querySelector(".bb-jobs-list");
   if (!container) return;
 
-  // Show loading skeleton on first render
+  // Create the table once — subsequent calls update rows in place to avoid
+  // tearing down and rebuilding the DOM (which causes visible flicker).
   let table = container.querySelector("hover-data-table");
   if (!table) {
-    table = createDataTable({ columns: [], rows: [] });
+    table = createDataTable({
+      columns: JOB_COLUMNS,
+      rows: [],
+      emptyMessage: "No jobs found.",
+    });
     table.setAttribute("loading", "");
     container.appendChild(table);
-  } else {
-    table.setAttribute("loading", "");
   }
 
   // Wait for a valid Supabase session before fetching — the module may run
@@ -175,17 +275,14 @@ async function refreshJobs() {
       range: currentRange,
       include: "stats",
     });
-    renderJobsTable(container, jobs);
-  } catch (err) {
-    table = container.querySelector("hover-data-table");
-    if (table) {
-      table.removeAttribute("loading");
-      table.setAttribute("error", "Failed to load jobs.");
-    }
+    renderJobsTable(container, table, jobs);
+  } catch {
+    table.removeAttribute("loading");
+    table.setAttribute("error", "Failed to load jobs.");
   }
 }
 
-function renderJobsTable(container, jobs) {
+function renderJobsTable(container, table, jobs) {
   // Hide legacy bbb-template cards — the binder may re-insert clones but
   // they will also be hidden because they inherit style="display:none" from
   // the template element.
@@ -193,120 +290,15 @@ function renderJobsTable(container, jobs) {
     .querySelectorAll("[bbb-template='job']")
     .forEach((el) => (el.style.display = "none"));
 
-  // Remove empty state if present
-  container
-    .querySelectorAll(".bb-jobs-empty-state")
-    .forEach((el) => el.remove());
+  table.removeAttribute("loading");
+  table.removeAttribute("error");
 
-  // Remove existing hover table before re-render
-  container.querySelectorAll("hover-data-table").forEach((el) => el.remove());
-
-  if (!jobs.length) {
-    const empty = document.createElement("div");
-    empty.className = "bb-jobs-empty-state";
-    empty.style.cssText =
-      "text-align:center;padding:40px 20px;color:var(--text-colour--secondary,#6b7280)";
-    empty.textContent = "No jobs yet. Use the form above to start a crawl.";
-    container.appendChild(empty);
-    return;
-  }
-
-  const table = createDataTable({
-    columns: [
-      {
-        key: "domain",
-        label: "Domain",
-        render: (val, row) => {
-          const name = val || row.domains?.name || "—";
-          const span = document.createElement("span");
-          span.textContent = name;
-          return span;
-        },
-      },
-      {
-        key: "status",
-        label: "Status",
-        render: (val) => createStatusPill(String(val || "")),
-      },
-      {
-        key: "progress",
-        label: "Progress",
-        render: (val, row) => {
-          const pct = Math.round(Number(val) || 0);
-          const done = formatCount(row.completed_tasks);
-          const total = formatCount(row.total_tasks);
-          const span = document.createElement("span");
-          span.textContent = `${done} / ${total} (${pct}%)`;
-          return span;
-        },
-      },
-      {
-        key: "started_at",
-        label: "Started",
-        render: (val) => (val ? formatRelativeTime(String(val)) : "—"),
-      },
-      {
-        key: "duration_seconds",
-        label: "Duration",
-        render: (val) =>
-          val != null ? formatDuration(Number(val) * 1000) : "—",
-      },
-      {
-        key: "id",
-        label: "Actions",
-        render: (val, row) => {
-          const wrap = document.createElement("div");
-          wrap.style.cssText = "display:flex;gap:8px;align-items:center";
-
-          const status = String(row.status || "");
-          const isActive = [
-            "pending",
-            "running",
-            "queued",
-            "initializing",
-            "processing",
-            "cancelling",
-          ].includes(status);
-          const isDone = ["completed", "failed", "cancelled"].includes(status);
-
-          // View details link
-          const view = document.createElement("a");
-          view.href = `/jobs/${val}`;
-          view.className = "bb-job-link";
-          view.textContent = "View";
-          view.setAttribute("aria-label", "View job details");
-          wrap.appendChild(view);
-
-          if (isDone) {
-            const restart = document.createElement("button");
-            restart.className = "bb-job-link";
-            restart.textContent = "Restart";
-            restart.setAttribute("aria-label", "Restart this job");
-            restart.addEventListener("click", () => restartJob(row));
-            wrap.appendChild(restart);
-          }
-
-          if (isActive) {
-            const cancel = document.createElement("button");
-            cancel.className = "bb-job-link";
-            cancel.textContent = "Cancel";
-            cancel.setAttribute("aria-label", "Cancel this job");
-            cancel.addEventListener("click", () => cancelJob(String(val)));
-            wrap.appendChild(cancel);
-          }
-
-          return wrap;
-        },
-      },
-    ],
-    rows: jobs.map((job) => ({
-      ...job,
-      domain: job.domains?.name || job.domain || "",
-    })),
-    emptyMessage: "No jobs found.",
-  });
-
-  container.appendChild(table);
+  // Update rows in place — _renderBody() runs without touching the header,
+  // so there is no flicker on polling updates.
+  table.rows = jobs.map((job) => ({
+    ...job,
+    domain: job.domains?.name || job.domain || "",
+  }));
 }
 
 // ── Create job modal ───────────────────────────────────────────────────────────
