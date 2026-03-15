@@ -31,13 +31,15 @@ function upgradeStatusPill() {
   );
   if (!span) return;
 
-  // Read the current status from the bbb-class attribute which job-page.js
-  // sets to "status-pill {job.status_class}" e.g. "status-pill status-running"
-  const bbbClass = span.getAttribute("bbb-class") || "";
-  const statusClass = bbbClass.replace("status-pill", "").trim();
-  // statusClass is like "status-running", "status-completed", "status-pending"
-  const status =
-    statusClass.replace("status-", "") || span.textContent.trim().toLowerCase();
+  // Read status from the *resolved* class list that bb-data-binder has written.
+  // e.g. class="status-pill status-completed" → "completed"
+  // Skip unresolved template tokens like "{job.status_class}".
+  const resolvedClass = [...span.classList].find(
+    (c) => c.startsWith("status-") && c !== "status-pill" && !c.includes("{")
+  );
+  if (!resolvedClass) return; // binder hasn't resolved yet — observer will retry
+
+  const status = resolvedClass.replace("status-", "");
 
   // Already upgraded — update the existing pill's status attribute
   const existing = span.parentElement?.querySelector("hover-status-pill");
@@ -62,15 +64,17 @@ function watchStatusPill() {
   );
   if (!span) return;
 
-  upgradeStatusPill();
-
+  // Observe class changes — bb-data-binder resolves bbb-class by updating classList
   new MutationObserver(upgradeStatusPill).observe(span, {
+    attributes: true,
+    attributeFilter: ["class"],
     characterData: true,
     childList: true,
     subtree: true,
-    attributes: true,
-    attributeFilter: ["class", "bbb-class"],
   });
+
+  // Try immediately; if binder hasn't resolved yet the observer will catch it
+  upgradeStatusPill();
 }
 
 // ── Tasks table upgrade ────────────────────────────────────────────────────────
