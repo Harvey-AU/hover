@@ -128,10 +128,20 @@ async function buildHeaders(path, extra, body) {
  */
 export async function request(path, init = {}) {
   const { rawBody, ...fetchInit } = init;
+  // rawBody is the pre-serialisation value supplied by post/put/patch.
+  // When request() is called directly with init.body already set (e.g.
+  // a pre-stringified string), rawBody is undefined and we use body as-is.
   const bodyToSend =
     rawBody !== undefined ? serialiseBody(rawBody) : fetchInit.body;
 
-  const headers = await buildHeaders(path, fetchInit.headers, rawBody);
+  // Pass the original (pre-serialisation) value to buildHeaders so it
+  // can correctly decide whether to set Content-Type: application/json.
+  const rawBodyForHeaders = rawBody !== undefined ? rawBody : fetchInit.body;
+  const headers = await buildHeaders(
+    path,
+    fetchInit.headers,
+    rawBodyForHeaders
+  );
 
   const response = await fetch(path, {
     ...fetchInit,
