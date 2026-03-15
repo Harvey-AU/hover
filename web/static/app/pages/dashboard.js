@@ -201,11 +201,9 @@ function renderJobsTable(container, jobs) {
         label: "Domain",
         render: (val, row) => {
           const name = val || row.domains?.name || "—";
-          const a = document.createElement("a");
-          a.href = `/jobs/${row.id}`;
-          a.className = "bb-job-link";
-          a.textContent = name;
-          return a;
+          const span = document.createElement("span");
+          span.textContent = name;
+          return span;
         },
       },
       {
@@ -251,6 +249,14 @@ function renderJobsTable(container, jobs) {
             "initializing",
           ].includes(status);
           const isDone = ["completed", "failed", "cancelled"].includes(status);
+
+          // View details link
+          const view = document.createElement("a");
+          view.href = `/jobs/${val}`;
+          view.className = "bb-job-link";
+          view.textContent = "View";
+          view.setAttribute("aria-label", "View job details");
+          wrap.appendChild(view);
 
           if (isDone) {
             const restart = document.createElement("button");
