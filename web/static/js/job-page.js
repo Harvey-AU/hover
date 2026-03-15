@@ -477,6 +477,8 @@ function formatTasksForBinding(tasks, defaultDomain) {
 }
 
 function renderTasksTable(tasks, showAnalytics) {
+  // job-details.js ES module owns tasks rendering when loaded
+  if (window.__hoverTasksOwned) return;
   const table = document.getElementById("tasksTable");
   const tbody = document.getElementById("tasksTableBody");
   const emptyEl = document.getElementById("tasksEmpty");
@@ -530,6 +532,7 @@ function renderTasksTable(tasks, showAnalytics) {
 }
 
 function renderTaskHeader(state, showAnalytics) {
+  if (window.__hoverTasksOwned) return;
   const table = document.getElementById("tasksTable");
   if (!table) {
     return;
@@ -590,6 +593,7 @@ function renderTaskHeader(state, showAnalytics) {
 }
 
 function updateTasksTableVisibility(count) {
+  if (window.__hoverTasksOwned) return;
   const loadingEl = document.getElementById("tasksLoading");
   const emptyEl = document.getElementById("tasksEmpty");
   const table = document.getElementById("tasksTable");
