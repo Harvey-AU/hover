@@ -48,15 +48,23 @@ const POLL_IDLE_MS = 2000;
 
 // ── Tab definitions ────────────────────────────────────────────────────────────
 
-const STATUS_TABS = [
-  { key: "", label: "All" },
-  { key: "waiting", label: "Waiting" },
-  { key: "pending", label: "Pending" },
-  { key: "running", label: "Running" },
-  { key: "completed", label: "Completed" },
-  { key: "failed", label: "Failed" },
-  { key: "cache:hit", label: "Hit" },
-  { key: "cache:miss", label: "Miss" },
+/**
+ * Each tab has a key (used in state), a label, and an optional filter bag
+ * that maps directly to API query params (status, cache, performance).
+ *
+ * @type {Array<{ key: string, label: string, filters?: Record<string,string> }>}
+ */
+const TABS = [
+  { key: "all", label: "All" },
+  { key: "broken", label: "Broken Links", filters: { status: "failed" } },
+  { key: "success", label: "Success", filters: { cache: "hit" } },
+  { key: "slow", label: "Slow", filters: { performance: "slow" } },
+  {
+    key: "very_slow",
+    label: "Very Slow",
+    filters: { performance: "very_slow" },
+  },
+  { key: "in_progress", label: "In Progress", filters: { status: "running" } },
 ];
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -69,6 +77,8 @@ const taskState = {
   page: 0,
   sortColumn: "created_at",
   sortDirection: "desc",
+  activeTab: "all",
+  performanceFilter: "",
   statusFilter: "",
   cacheFilter: "",
   pathFilter: "",
@@ -184,7 +194,10 @@ function buildTasksSection() {
   // ── Filter tabs ────────────────────────────────────────────────────────────
   const legacyFilters = document.getElementById("taskFilters");
   if (legacyFilters) {
-    tabsEl = createTabs(STATUS_TABS, { active: "" });
+    tabsEl = createTabs(
+      TABS.map(({ key, label }) => ({ key, label })),
+      { active: "all" }
+    );
     tabsEl.id = "taskFilters";
     legacyFilters.replaceWith(tabsEl);
   }
@@ -205,7 +218,7 @@ function buildTasksSection() {
   if (legacyTable) legacyTable.style.display = "none";
 
   tasksTable = createDataTable({
-    columns: buildColumns(false),
+    columns: buildColumns("all", false),
     rows: [],
     emptyMessage: "No tasks found for this view.",
   });
@@ -221,88 +234,153 @@ function buildTasksSection() {
 
 // ── Column definitions ─────────────────────────────────────────────────────────
 
-/**
- * Build column definitions for hover-data-table.
- * @param {boolean} showAnalytics
- * @returns {import("/app/components/hover-data-table.js").ColumnDef[]}
- */
-function buildColumns(showAnalytics) {
-  /** @type {import("/app/components/hover-data-table.js").ColumnDef[]} */
-  const cols = [
-    {
-      key: "path",
-      label: "Path",
-      sortable: true,
-      render: (val, row) => {
-        const url = row.url || val || "";
-        const display = row.display_path || val || "/";
-        if (!url) {
-          const code = document.createElement("code");
-          code.textContent = display;
-          return code;
-        }
-        const a = document.createElement("a");
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
+function colPath() {
+  return {
+    key: "path",
+    label: "Path",
+    sortable: true,
+    render: (val, row) => {
+      const url = row.url || val || "";
+      const display = row.display_path || val || "/";
+      if (!url) {
         const code = document.createElement("code");
         code.textContent = display;
-        a.appendChild(code);
-        return a;
-      },
+        return code;
+      }
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      const code = document.createElement("code");
+      code.textContent = display;
+      a.appendChild(code);
+      return a;
+    },
+  };
+}
+
+function colStatus() {
+  return {
+    key: "status",
+    label: "Status",
+    sortable: true,
+    render: (val) => createStatusPill(String(val || "unknown")),
+  };
+}
+
+function colLoadTime1() {
+  return {
+    key: "response_time",
+    label: "Load time 1st",
+    sortable: true,
+    render: (val) => fmtMs(val),
+  };
+}
+
+function colLoadTime2() {
+  return {
+    key: "second_response_time",
+    label: "Load time 2nd",
+    sortable: true,
+    render: (val) => fmtMs(val),
+  };
+}
+
+function colCache() {
+  return {
+    key: "cache_status",
+    label: "Cache",
+    sortable: true,
+    render: (val) => String(val || "—"),
+  };
+}
+
+function colFoundOn() {
+  return {
+    key: "source_url",
+    label: "Found on",
+    render: (val, row) => {
+      if (!val || row.source_type === "sitemap") {
+        const span = document.createElement("span");
+        span.textContent = "Sitemap";
+        span.style.color = "var(--text-colour--disabled)";
+        return span;
+      }
+      const a = document.createElement("a");
+      a.href = val;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = val.replace(/^https?:\/\/[^/]+/, "") || val;
+      a.title = val;
+      return a;
+    },
+  };
+}
+
+function colsAnalytics() {
+  return [
+    {
+      key: "page_views_7d",
+      label: "Views (7d)",
+      sortable: true,
+      render: (val) => fmtOptCount(val),
     },
     {
-      key: "status",
-      label: "Status",
+      key: "page_views_28d",
+      label: "Views (28d)",
       sortable: true,
-      render: (val) => createStatusPill(String(val || "unknown")),
+      render: (val) => fmtOptCount(val),
     },
     {
-      key: "response_time",
-      label: "Response (ms)",
+      key: "page_views_180d",
+      label: "Views (180d)",
       sortable: true,
-      render: (val) => fmtMs(val),
-    },
-    {
-      key: "cache_status",
-      label: "Cache",
-      sortable: true,
-      render: (val) => String(val || "—"),
-    },
-    {
-      key: "second_response_time",
-      label: "2nd Response (ms)",
-      sortable: true,
-      render: (val) => fmtMs(val),
-    },
-    {
-      key: "status_code",
-      label: "Status Code",
-      sortable: true,
-      render: (val) => (val != null ? String(val) : "—"),
+      render: (val) => fmtOptCount(val),
     },
   ];
+}
 
-  if (showAnalytics) {
-    cols.push(
-      {
-        key: "page_views_7d",
-        label: "Views (7d)",
-        render: (val) => fmtOptCount(val),
-      },
-      {
-        key: "page_views_28d",
-        label: "Views (28d)",
-        render: (val) => fmtOptCount(val),
-      },
-      {
-        key: "page_views_180d",
-        label: "Views (180d)",
-        render: (val) => fmtOptCount(val),
-      }
-    );
+/**
+ * Return the column set for the active tab.
+ * Analytics columns are appended when data is present.
+ *
+ * @param {string} tab  active tab key
+ * @param {boolean} showAnalytics
+ * @returns {Array}
+ */
+function buildColumns(tab, showAnalytics) {
+  let cols;
+  switch (tab) {
+    case "broken":
+      cols = [colPath(), colFoundOn()];
+      break;
+    case "success":
+    case "slow":
+    case "very_slow":
+      cols = [
+        colPath(),
+        colLoadTime1(),
+        colLoadTime2(),
+        colCache(),
+        colFoundOn(),
+      ];
+      break;
+    case "in_progress":
+      cols = [colPath(), colStatus(), colFoundOn()];
+      break;
+    case "all":
+    default:
+      cols = [
+        colPath(),
+        colStatus(),
+        colLoadTime1(),
+        colLoadTime2(),
+        colCache(),
+        colFoundOn(),
+      ];
+      break;
   }
-
+  if (showAnalytics) cols.push(...colsAnalytics());
   return cols;
 }
 
@@ -322,6 +400,8 @@ async function loadTasks() {
   );
   if (taskState.statusFilter) params.set("status", taskState.statusFilter);
   if (taskState.cacheFilter) params.set("cache", taskState.cacheFilter);
+  if (taskState.performanceFilter)
+    params.set("performance", taskState.performanceFilter);
   if (taskState.pathFilter) params.set("path", taskState.pathFilter);
 
   try {
@@ -336,8 +416,8 @@ async function loadTasks() {
         t.page_views_180d !== undefined
     );
 
-    // Rebuild columns if analytics availability changed
-    tasksTable.columns = buildColumns(showAnalytics);
+    // Rebuild columns for active tab (and analytics availability)
+    tasksTable.columns = buildColumns(taskState.activeTab, showAnalytics);
 
     const domain = resolveDomain();
     tasksTable.rows = tasks.map((t) => normaliseTask(t, domain));
@@ -442,17 +522,13 @@ function wireInteractions() {
   // Filter tabs
   if (tabsEl) {
     tabsEl.addEventListener("hover-tabs:change", (e) => {
-      const key = e.detail.key;
-      if (key.startsWith("cache:")) {
-        taskState.cacheFilter = key.slice(6); // "hit" or "miss"
-        taskState.statusFilter = "";
-      } else {
-        taskState.statusFilter = key;
-        taskState.cacheFilter = "";
-      }
+      const tab = TABS.find((t) => t.key === e.detail.key) ?? TABS[0];
+      taskState.activeTab = tab.key;
+      taskState.statusFilter = tab.filters?.status ?? "";
+      taskState.cacheFilter = tab.filters?.cache ?? "";
+      taskState.performanceFilter = tab.filters?.performance ?? "";
       taskState.pathFilter = "";
       taskState.page = 0;
-      // Clear path input
       const pathInput = document.getElementById("pathFilter");
       if (pathInput) pathInput.value = "";
       loadTasks().catch(console.error);
@@ -471,9 +547,11 @@ function wireInteractions() {
           taskState.pathFilter = value;
           taskState.page = 0;
           if (value.length > 0) {
+            taskState.activeTab = "all";
             taskState.statusFilter = "";
             taskState.cacheFilter = "";
-            if (tabsEl) tabsEl.active = "";
+            taskState.performanceFilter = "";
+            if (tabsEl) tabsEl.active = "all";
           }
           loadTasks().catch(console.error);
         }
