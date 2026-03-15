@@ -62,6 +62,14 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
+- **Job details ES module layer (Phase 4)**: Added `pages/job-details.js` as an
+  ES module entrypoint that co-exists with the legacy `job-page.js`
+  - `hover-status-pill` replaces the legacy `.status-pill` span in the overview
+    grid; a `MutationObserver` keeps it in sync as `job-page.js` updates the
+    status
+  - Task table status cells upgraded to `hover-status-pill` as rows are rendered
+  - `tokens.css` and `components.css` loaded on the job details page
+
 - **Dashboard ES module layer (Phase 3)**: Added `pages/dashboard.js` as an ES
   module entrypoint that co-exists with the legacy `bb-*` scripts during
   migration; provides the jobs list and stats using shared components
