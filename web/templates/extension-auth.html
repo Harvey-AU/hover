@@ -3,27 +3,146 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hover Extension Login</title>
+    <title>Hover — Connect to Webflow</title>
+
+    <!--
+      Phase 1 loading pattern:
+      1. /config.js       — sets window.BBB_CONFIG (server-rendered)
+      2. /js/auth.js      — BBAuth helpers; still loaded as legacy script
+                            while the auth modal component is pre-module
+      3. Supabase SDK     — CDN UMD, sets window.supabase
+      4. module entry     — /app/pages/webflow-login.js (ES module)
+
+      No bb-bootstrap.js. No core.js. No BB_APP.whenReady().
+      The extensionAuth flag is set inside webflow-login.js before any
+      auth action, preserving the auth redirect contract from AGENTS.md.
+    -->
+    <script src="/config.js"></script>
+    <script src="/js/auth.js" defer></script>
+    <script
+      src="https://unpkg.com/@supabase/supabase-js@2.95.3/dist/umd/supabase.js"
+      integrity="sha384-g8TQpKstPpyDTjwOLNQvGR++9KAGGvtxWv+P5XmDd3QZQx1jie8r1hx0gVpD+cdb"
+      crossorigin="anonymous"
+      defer
+    ></script>
+
+    <link rel="stylesheet" href="/app/styles/tokens.css" />
+    <link rel="stylesheet" href="/app/styles/base.css" />
+    <link rel="stylesheet" href="/app/styles/components.css" />
     <link rel="stylesheet" href="/styles/app.css" />
-    <script>
-      window.BB_APP = Object.assign({}, window.BB_APP || {}, {
-        extensionAuth: true,
-      });
-    </script>
-    <script src="/js/core.js" defer></script>
+
+    <style>
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: var(--spacing--6xl);
+      }
+
+      .extension-auth-shell {
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing--7xl);
+      }
+
+      .extension-auth-header {
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing--xl);
+        text-align: center;
+      }
+
+      .extension-auth-title {
+        margin: 0;
+        font-size: var(--font-size--display);
+        font-weight: 700;
+        color: var(--colour--brand-primary);
+      }
+
+      .extension-auth-description {
+        margin: 0;
+        font-size: var(--font-size--body);
+        color: var(--text-colour--secondary);
+        line-height: var(--line-height--body);
+      }
+
+      .extension-auth-status {
+        font-size: var(--font-size--caption);
+        color: var(--text-colour--secondary);
+        text-align: center;
+        min-height: 1.4em;
+        transition: color var(--motion-duration--normal)
+          var(--motion-easing--standard);
+      }
+
+      .extension-auth-status[data-variant="success"] {
+        color: var(--status-colour--success);
+      }
+
+      .extension-auth-status[data-variant="error"] {
+        color: var(--status-colour--danger);
+      }
+
+      .extension-auth-status[data-variant="warning"] {
+        color: var(--status-colour--warning);
+      }
+
+      .extension-auth-reopen {
+        display: block;
+        width: 100%;
+        padding: var(--spacing--sm) var(--spacing--xl);
+        font-size: var(--font-size--body);
+        font-family: var(--font-family--primary);
+        color: var(--text-colour--secondary);
+        background: transparent;
+        border: var(--border-size--default) solid var(--border-colour--default);
+        border-radius: var(--radius--control);
+        cursor: pointer;
+        text-align: center;
+        transition:
+          border-color var(--motion-duration--fast) var(--motion-easing--standard),
+          color var(--motion-duration--fast) var(--motion-easing--standard);
+      }
+
+      .extension-auth-reopen:hover {
+        border-color: var(--border-colour--active);
+        color: var(--text-colour--primary);
+      }
+    </style>
   </head>
-  <body class="page-cli-auth">
-    <main>
-      <h1>Connect Hover</h1>
-      <p>
-        Sign in or create your account. Once complete, this window will send
-        your session back to the Webflow Designer extension.
-      </p>
-      <div id="extensionAuthStatus" class="status">Preparing sign-in…</div>
-      <button class="reopen-button" type="button" id="reopenModalBtn">
-        Reopen Sign-In Modal
+
+  <body>
+    <main class="extension-auth-shell">
+      <div class="extension-auth-header">
+        <h1 class="extension-auth-title">Connect Hover</h1>
+        <p class="extension-auth-description">
+          Sign in or create your account. Once complete, this window will send
+          your session back to the Webflow Designer extension.
+        </p>
+      </div>
+
+      <div
+        id="extensionAuthStatus"
+        class="extension-auth-status"
+        aria-live="polite"
+      >
+        Preparing sign-in…
+      </div>
+
+      <button
+        class="extension-auth-reopen"
+        type="button"
+        id="reopenModalBtn"
+      >
+        Reopen sign-in
       </button>
+
       <div id="authModalContainer"></div>
     </main>
+
+    <script type="module" src="/app/pages/webflow-login.js"></script>
   </body>
 </html>
