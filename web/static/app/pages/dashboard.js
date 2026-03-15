@@ -2,28 +2,27 @@
  * pages/dashboard.js — dashboard module entrypoint
  *
  * Phase 3: registers shared Web Components and provides the stats/jobs
- * rendering layer for the dashboard surface. Co-exists with legacy bb-*
- * scripts during migration — does not replace them wholesale yet.
+ * rendering layer for the dashboard surface. Co-exists with remaining
+ * legacy bb-* scripts (bb-data-binder, bb-global-nav, integrations).
  *
  * Loading contract (dashboard.html):
  *   1. /config.js              — sets window.BBB_CONFIG
- *   2. /js/bb-bootstrap.js     — BB_APP.whenReady() (legacy, still needed)
- *   3. /js/core.js defer       — Supabase init, window.BBAuth, window.BBB_CONFIG
- *   4. Supabase SDK            — loaded by core.js
- *   5. <script type="module">  — this file (runs after all deferred scripts)
+ *   2. /js/core.js defer       — Supabase init, window.BBAuth, window.BBB_CONFIG
+ *   3. Supabase SDK            — loaded by core.js
+ *   4. <script type="module">  — this file (runs after all deferred scripts)
  *
  * Responsibilities:
  *   - Register hover-* Web Components for use anywhere in the page
  *   - Render the jobs list using hover-data-table + hover-status-pill
  *   - Render stats cards using shared formatters
- *   - Subscribe to job updates via shared webflow-jobs.js
- *   - Replace bb-dashboard-actions.js job rendering with shared components
+ *   - Handle create-job / close-create-job-modal / refresh-dashboard actions
+ *   - restart-job and cancel-job actions
  *
  * What this does NOT touch (still handled by legacy scripts):
  *   - Auth modal and session management (auth.js, bb-data-binder.js)
  *   - Org switching (bb-global-nav.js, bb-data-binder.js)
  *   - Integrations (bb-slack.js, bb-webflow.js, bb-google.js)
- *   - Job creation form (bb-auth-extension.js handleDashboardJobCreation)
+ *   - Job creation form submission (bb-auth-extension.js handleDashboardJobCreation)
  *   - Admin functions (bb-admin.js)
  */
 
@@ -77,12 +76,22 @@ async function init() {
     });
   }
 
-  // Wire refresh button
-  document
-    .querySelectorAll("[bbb-action='refresh-dashboard']")
-    .forEach((btn) => {
-      btn.addEventListener("click", refresh);
-    });
+  // Wire action buttons — refresh, create-job modal, close-create-job-modal
+  document.addEventListener("click", (e) => {
+    const el = e.target.closest("[bbb-action]");
+    if (!el) return;
+    const action = el.getAttribute("bbb-action");
+    if (action === "refresh-dashboard") {
+      e.preventDefault();
+      refresh();
+    } else if (action === "create-job") {
+      e.preventDefault();
+      openCreateJobModal();
+    } else if (action === "close-create-job-modal") {
+      e.preventDefault();
+      closeCreateJobModal();
+    }
+  });
 
   // Initial render
   await refresh();
@@ -292,6 +301,24 @@ function renderJobsTable(container, jobs) {
   container.appendChild(table);
 }
 
+// ── Create job modal ───────────────────────────────────────────────────────────
+
+function openCreateJobModal() {
+  const modal = document.getElementById("createJobModal");
+  if (modal) modal.style.display = "flex";
+}
+
+function closeCreateJobModal() {
+  const modal = document.getElementById("createJobModal");
+  if (modal) modal.style.display = "none";
+  const form = document.getElementById("createJobForm");
+  if (form) {
+    form.reset();
+    const maxPages = document.getElementById("maxPages");
+    if (maxPages) maxPages.value = "0";
+  }
+}
+
 // ── Job actions ────────────────────────────────────────────────────────────────
 
 async function restartJob(job) {
@@ -354,15 +381,12 @@ function waitForSession(timeoutMs = 8000) {
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
-// Wait for the legacy bb-bootstrap chain to complete, then init.
-// This ensures Supabase and auth state are ready before we fetch data.
-if (typeof window.BB_APP?.whenReady === "function") {
-  window.BB_APP.whenReady().then(init).catch(console.error);
+// Initialise after DOM is ready. waitForSession() inside refresh() handles
+// the Supabase timing — no dependency on bb-bootstrap.js or BB_APP.whenReady.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () =>
+    init().catch(console.error)
+  );
 } else {
-  // bb-bootstrap not present — wait for DOMContentLoaded then init directly
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
-  }
+  init().catch(console.error);
 }

@@ -46,7 +46,6 @@
       });
     </script>
 
-    <script src="/js/bb-bootstrap.js"></script>
     <script src="/js/core.js" defer></script>
     <script src="/js/bb-global-nav.js" defer></script>
 
@@ -636,7 +635,6 @@
     <script src="/js/bb-domain-search.js" defer></script>
     <script src="/js/bb-auth-extension.js" defer></script>
     <script src="/js/bb-metadata.js" defer></script>
-    <script src="/js/bb-dashboard-actions.js" defer></script>
     <script src="/js/bb-integration-http.js" defer></script>
     <script src="/js/bb-slack.js" defer></script>
     <script src="/js/bb-webflow.js" defer></script>
@@ -647,7 +645,8 @@
       // Initialize dashboard with unified authentication system
       document.addEventListener("DOMContentLoaded", async () => {
         try {
-          await window.BB_APP.whenReady();
+          // Wait for core.js to set BB_APP.coreReady (no bb-bootstrap.js needed)
+          await window.BB_APP?.coreReady;
           // Initialize the complete dashboard with auth integration
           await initializeDashboard({
             debug: false,
@@ -656,11 +655,6 @@
             autoRefresh: true,
             networkMonitoring: true,
           });
-
-          // Setup dashboard action handlers
-          if (window.setupDashboardActions) {
-            window.setupDashboardActions();
-          }
 
           // Setup job creation form handler
           const createJobForm = document.getElementById("createJobForm");
