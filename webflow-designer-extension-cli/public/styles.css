@@ -427,10 +427,26 @@ body {
 }
 
 .topbar-profile-avatar {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
   background: var(--background-colour--avatar);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-colour--primary);
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.topbar-profile-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
 }
 
 .topbar-org-select {
@@ -1061,6 +1077,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--spacing--md);
+}
+
+.result-card--compact {
+  padding: var(--spacing--sm) var(--spacing--xl);
+  box-shadow: none;
+  gap: 0;
 }
 
 .result-card-details {

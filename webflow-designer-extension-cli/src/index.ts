@@ -258,6 +258,102 @@ function extractErrorMessage(rawBody?: string): string {
   return rawBody;
 }
 
+// ---------------------------------------------------------------------------
+// Avatar helpers — mirrors auth.js getInitials / setUserAvatar / getGravatarUrl
+// ---------------------------------------------------------------------------
+
+function getInitials(value: string): string {
+  const raw = (value || "").trim();
+  if (!raw) return "?";
+
+  if (raw.includes(" ")) {
+    const parts = raw.split(/\s+/).filter(Boolean).slice(0, 2);
+    if (parts.length) {
+      return parts.map((p) => p.charAt(0).toUpperCase()).join("");
+    }
+  }
+
+  const emailPrefix = raw.includes("@") ? raw.split("@")[0] : raw;
+  const parts = emailPrefix.split(/[._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts
+      .slice(0, 2)
+      .map((p) => p.charAt(0).toUpperCase())
+      .join("");
+  }
+
+  return emailPrefix.slice(0, 2).toUpperCase();
+}
+
+async function getGravatarUrl(email: string, size = 80): Promise<string> {
+  const normalised = (email || "").trim().toLowerCase();
+  if (!normalised || !globalThis.crypto?.subtle) return "";
+  try {
+    const data = new TextEncoder().encode(normalised);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+    const hash = [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const params = new URLSearchParams({ s: String(size), d: "404" });
+    return `https://www.gravatar.com/avatar/${hash}?${params.toString()}`;
+  } catch {
+    return "";
+  }
+}
+
+async function renderAvatar(
+  target: HTMLElement,
+  email: string,
+  initials: string
+): Promise<void> {
+  const existingImg = target.querySelector("img");
+  if (existingImg) existingImg.remove();
+
+  target.textContent = initials;
+
+  const url = await getGravatarUrl(email, 80);
+  if (!url) return;
+
+  const img = document.createElement("img");
+  img.src = url;
+  img.alt = "User avatar";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.addEventListener(
+    "load",
+    () => {
+      target.textContent = "";
+      target.appendChild(img);
+    },
+    { once: true }
+  );
+  img.addEventListener(
+    "error",
+    () => {
+      if (img.parentNode) img.parentNode.removeChild(img);
+      target.textContent = initials;
+    },
+    { once: true }
+  );
+}
+
+async function updateAvatarFromState(): Promise<void> {
+  const avatarEl = document.querySelector<HTMLElement>(
+    ".topbar-profile-avatar"
+  );
+  if (!avatarEl) return;
+
+  const email = state.userEmail;
+  const displayName = state.userDisplayName || email || "";
+  if (!displayName) {
+    avatarEl.textContent = "?";
+    return;
+  }
+
+  const initials = getInitials(displayName);
+  await renderAvatar(avatarEl, email ?? "", initials);
+}
+
 const ui = {
   // Status messages
   statusBlock: document.querySelector(".status-block"),
@@ -322,6 +418,8 @@ type ExtensionState = {
   currentScheduler: Scheduler | null;
   webflowConnected: boolean;
   webflowAutoPublishEnabled: boolean;
+  userEmail: string | null;
+  userDisplayName: string | null;
 };
 
 const state: ExtensionState = {
@@ -337,6 +435,8 @@ const state: ExtensionState = {
   currentScheduler: null,
   webflowConnected: false,
   webflowAutoPublishEnabled: false,
+  userEmail: null,
+  userDisplayName: null,
 };
 
 let statusToastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1304,7 +1404,7 @@ function renderRecentResults(jobs: JobItem[]): void {
 
   if (recentJobs.length > 0) {
     for (const job of recentJobs) {
-      recentContainer.appendChild(buildResultCard(job));
+      recentContainer.appendChild(buildResultCard(job, false, true));
     }
   }
 }
@@ -1313,9 +1413,15 @@ function renderRecentResults(jobs: JobItem[]): void {
 // Result card builder
 // ---------------------------------------------------------------------------
 
-function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
+function buildResultCard(
+  job: JobItem,
+  startExpanded = false,
+  compact = false
+): HTMLElement {
   const card = document.createElement("div");
-  card.className = "result-card result-card--complete";
+  card.className = compact
+    ? "result-card result-card--complete result-card--compact"
+    : "result-card result-card--complete";
 
   const { brokenLinks, verySlow, slow } = getIssueCounts(job);
   const normalisedStatus = normalizeJobStatus(job.status);
@@ -1420,7 +1526,7 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
   summary.appendChild(summaryRow);
 
-  if (metrics.length > 0) {
+  if (!compact && metrics.length > 0) {
     const metaRow = document.createElement("div");
     metaRow.className = "result-card-summary-meta";
 
@@ -1437,6 +1543,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   header.appendChild(summary);
   main.appendChild(header);
   card.appendChild(main);
+
+  if (compact) {
+    return card;
+  }
 
   const footer = document.createElement("div");
   footer.className = "result-card-footer";
@@ -2271,7 +2381,50 @@ async function loadUsageAndOrgs(): Promise<void> {
     state.organisations = [];
     state.usage = null;
     state.currentScheduler = null;
+    state.userEmail = null;
+    state.userDisplayName = null;
     return;
+  }
+
+  // Decode user identity from the JWT — avoids an extra round-trip.
+  // The token is a Supabase JWT; email and user_metadata live in the payload.
+  try {
+    const parts = state.token.split(".");
+    if (parts.length === 3) {
+      const payload = JSON.parse(atob(parts[1])) as Record<string, unknown>;
+      const email =
+        typeof payload["email"] === "string" ? payload["email"] : null;
+      const meta =
+        typeof payload["user_metadata"] === "object" &&
+        payload["user_metadata"] !== null
+          ? (payload["user_metadata"] as Record<string, unknown>)
+          : {};
+      const fullName =
+        typeof meta["full_name"] === "string"
+          ? meta["full_name"]
+          : typeof meta["name"] === "string"
+            ? meta["name"]
+            : null;
+      const firstName =
+        typeof meta["given_name"] === "string"
+          ? meta["given_name"]
+          : typeof meta["first_name"] === "string"
+            ? meta["first_name"]
+            : "";
+      const lastName =
+        typeof meta["family_name"] === "string"
+          ? meta["family_name"]
+          : typeof meta["last_name"] === "string"
+            ? meta["last_name"]
+            : "";
+      const composedName =
+        [firstName, lastName].filter(Boolean).join(" ").trim() || null;
+
+      state.userEmail = email;
+      state.userDisplayName = fullName || composedName || email;
+    }
+  } catch {
+    // Non-critical — avatar will fall back to "?"
   }
 
   const [orgData, usageData] = await Promise.all([
@@ -2582,6 +2735,7 @@ async function refreshDashboard(): Promise<void> {
       ]);
       renderUsage(state.usage);
       renderOrganisations();
+      void updateAvatarFromState();
 
       // Initialise Supabase realtime; fall back to legacy polling on failure.
       const client = await initSupabaseClient();
