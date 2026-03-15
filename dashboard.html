@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dashboard - Adapt</title>
     <link rel="stylesheet" href="/styles/app.css" />
+    <link rel="stylesheet" href="/app/styles/tokens.css" />
+    <link rel="stylesheet" href="/app/styles/components.css" />
 
     <!-- Sentry Error Monitoring & Performance -->
     <script
@@ -625,6 +627,9 @@
         ></div>
       </div>
     </div>
+
+    <!-- ES module entrypoint — loads after all deferred legacy scripts -->
+    <script type="module" src="/app/pages/dashboard.js"></script>
 
     <!-- Include the data binding and dashboard logic -->
     <script src="/js/bb-data-binder.js" defer></script>
