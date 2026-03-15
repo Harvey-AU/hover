@@ -261,10 +261,20 @@
       </section>
     </main>
 
+    <!--
+      Shared Hover Web Components — loaded before index.js so components
+      are defined before the extension renders any job cards.
+      Paths are relative to the extension public/ directory at build time;
+      at runtime these are served from the Hover app /app/ static route.
+    -->
     <script
-      src="https://unpkg.com/@supabase/supabase-js@2.80.0/dist/umd/supabase.js"
+      src="https://unpkg.com/@supabase/supabase-js@2.95.3/dist/umd/supabase.js"
+      integrity="sha384-g8TQpKstPpyDTjwOLNQvGR++9KAGGvtxWv+P5XmDd3QZQx1jie8r1hx0gVpD+cdb"
+      crossorigin="anonymous"
       defer
     ></script>
+    <script type="module" src="/app/components/hover-status-pill.js"></script>
+    <script type="module" src="/app/components/hover-data-table.js"></script>
     <script src="index.js" defer></script>
   </body>
 </html>
