@@ -36,7 +36,9 @@ import { createDataTable } from "/app/components/hover-data-table.js";
 const REALTIME_DEBOUNCE_MS = 250;
 const SUBSCRIBE_RETRY_INTERVAL_MS = 1000;
 const MAX_SUBSCRIBE_RETRIES = 15;
-const FALLBACK_POLLING_INTERVAL_MS = 10000;
+// Match legacy bb-auth-extension.js: 1 s when jobs are active, 10 s when idle.
+const FALLBACK_POLLING_INTERVAL_ACTIVE_MS = 500;
+const FALLBACK_POLLING_INTERVAL_IDLE_MS = 1000;
 
 // ── Data fetching ──────────────────────────────────────────────────────────────
 
@@ -189,15 +191,31 @@ export function subscribeToJobUpdates(orgId, onUpdate) {
     }
   }
 
+  // Adaptive interval: 1 s while jobs are active, 10 s when idle.
+  // Matches the legacy bb-auth-extension.js dual-interval behaviour.
+  function getFallbackInterval() {
+    return window.dataBinder?.hasRealtimeActiveJobs
+      ? FALLBACK_POLLING_INTERVAL_ACTIVE_MS
+      : FALLBACK_POLLING_INTERVAL_IDLE_MS;
+  }
+
+  let fallbackIntervalMs = null;
+
   function startFallback() {
-    if (fallbackTimer) return;
-    fallbackTimer = setInterval(onUpdate, FALLBACK_POLLING_INTERVAL_MS);
+    const nextMs = getFallbackInterval();
+    if (fallbackTimer && fallbackIntervalMs === nextMs) return;
+    if (fallbackTimer) {
+      clearInterval(fallbackTimer);
+    }
+    fallbackIntervalMs = nextMs;
+    fallbackTimer = setInterval(onUpdate, fallbackIntervalMs);
   }
 
   function clearFallback() {
     if (fallbackTimer) {
       clearInterval(fallbackTimer);
       fallbackTimer = null;
+      fallbackIntervalMs = null;
     }
   }
 
