@@ -80,8 +80,18 @@ On merge, CI will:
     the module layer
   - Restart and cancel job actions use `hover-toast` for feedback instead of
     legacy error divs
-  - Supabase Realtime subscription via `webflow-jobs.js` with org-switch
+  - `bb-bootstrap.js` and `bb-dashboard-actions.js` removed from
+    `dashboard.html`; `openCreateJobModal`, `closeCreateJobModal`, and `refresh`
+    ported into `dashboard.js` and exposed as `window` bridges for
+    `bb-auth-extension.js`
+  - Inline dashboard init script updated to await `window.BB_APP.coreReady`
+    directly (set by `core.js`) — no polling shim required
+  - Supabase Realtime subscription via `subscribeToJobUpdates` from
+    `webflow-jobs.js` with automatic 10 s fallback polling and org-switch
     re-subscription on `bb:org-switched` event
+  - Stats fetch gated behind `waitForSession` to prevent 401 on cold load
+  - Jobs table updated in place via `table.rows = [...]` on each poll — no DOM
+    teardown, no flicker
   - `tokens.css` and `components.css` loaded on the dashboard so all `hover-*`
     components render with the correct design tokens
 
