@@ -110,7 +110,9 @@ class HoverDataTable extends HTMLElement {
   }
 
   connectedCallback() {
-    this._render();
+    // Defer render to microtask so property assignments (columns, rows)
+    // made immediately after createElement() are applied first.
+    Promise.resolve().then(() => this._render());
   }
 
   attributeChangedCallback(name) {
