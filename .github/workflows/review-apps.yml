@@ -216,18 +216,10 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🐝 **Review App Deployed!**
+              body: `🐝 **Review App Deployed**
 
-              <a href="${appUrl}" target="_blank">Homepage: ${appUrl}</a>
-
-              📋 **Test Features:**
-              1. <a href="${appUrl}/dashboard" target="_blank">Visit dashboard: ${appUrl}/dashboard</a>
-              2. Test authentication and job creation flow
-              3. Check dashboard functionality
-              4. Verify database operations work correctly
-
-              🗄️ **Database**: ${dbLabel}
-              ⚠️ *Preview environment - app and database cleaned up when PR closes*`
+              Homepage: <a href="${appUrl}">${appUrl}</a>
+              Dashboard: <a href="${appUrl}/dashboard">${appUrl}/dashboard</a>`
             });
 
   cleanup-review:
