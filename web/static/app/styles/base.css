@@ -76,7 +76,7 @@ body {
 
 .content-scroll {
   flex: 1;
-  background-color: var(--colour--neutral-800);
+  background-color: var(--background-colour--panel);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -98,7 +98,7 @@ body {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }
