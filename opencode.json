@@ -39,6 +39,11 @@
         "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
       }
     },
+    "figma": {
+      "type": "remote",
+      "url": "http://127.0.0.1:3845/mcp",
+      "enabled": true
+    },
     "sentry": {
       "type": "remote",
       "url": "https://mcp.sentry.dev/mcp",
@@ -71,5 +76,10 @@
     "external_directory": "ask",
     "doom_loop": "ask"
   },
-  "plugin": []
+  "plugin": [
+    "opencode-shell-strategy",
+    "opencode-dynamic-context-pruning",
+    "opencode-pty",
+    "opencode-worktree"
+  ]
 }

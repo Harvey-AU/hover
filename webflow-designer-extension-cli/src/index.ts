@@ -32,7 +32,8 @@ const API_BASE_STORAGE_KEY = "bbb_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
-const DEFAULT_BBB_APP_ORIGIN = "https://adapt-pr-255.fly.dev";
+const DEFAULT_BBB_APP_ORIGIN = "https://adapt.app.goodnative.co";
+const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://adapt-pr-255.fly.dev"]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
@@ -50,6 +51,7 @@ const APP_ROUTES = {
   changePlan: "/settings/plans",
   manageTeam: "/settings/team",
 } as const;
+const UNAUTHENTICATED_EXTENSION_SIZE = { width: 240, height: 407 } as const;
 const AUTHENTICATED_EXTENSION_SIZE = { width: 450, height: 500 } as const;
 type ExtensionPanelSize =
   | "default"
@@ -232,6 +234,11 @@ type AuthMessage = {
   state?: string;
   extensionState?: string;
   accessToken?: string;
+  user?: {
+    id?: string;
+    email?: string;
+    avatarUrl?: string;
+  };
 };
 
 type ErrorPayload = {
@@ -254,6 +261,128 @@ function extractErrorMessage(rawBody?: string): string {
   }
 
   return rawBody;
+}
+
+// ---------------------------------------------------------------------------
+// Avatar helpers — mirrors auth.js getInitials / setUserAvatar / getGravatarUrl
+// ---------------------------------------------------------------------------
+
+function getInitials(value: string): string {
+  const raw = (value || "").trim();
+  if (!raw) return "?";
+
+  if (raw.includes(" ")) {
+    const parts = raw.split(/\s+/).filter(Boolean).slice(0, 2);
+    if (parts.length) {
+      return parts.map((p) => p.charAt(0).toUpperCase()).join("");
+    }
+  }
+
+  const emailPrefix = raw.includes("@") ? raw.split("@")[0] : raw;
+  const parts = emailPrefix.split(/[._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts
+      .slice(0, 2)
+      .map((p) => p.charAt(0).toUpperCase())
+      .join("");
+  }
+
+  return emailPrefix.slice(0, 2).toUpperCase();
+}
+
+async function getGravatarUrl(email: string, size = 80): Promise<string> {
+  const normalised = (email || "").trim().toLowerCase();
+  if (!normalised || !globalThis.crypto?.subtle) return "";
+  try {
+    const data = new TextEncoder().encode(normalised);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+    const hash = [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const params = new URLSearchParams({ s: String(size), d: "404" });
+    return `https://www.gravatar.com/avatar/${hash}?${params.toString()}`;
+  } catch {
+    return "";
+  }
+}
+
+async function renderAvatar(
+  target: HTMLElement,
+  email: string,
+  initials: string
+): Promise<void> {
+  const existingImg = target.querySelector("img");
+  if (existingImg) existingImg.remove();
+
+  target.textContent = initials;
+
+  const url = await getGravatarUrl(email, 80);
+  if (!url) return;
+
+  const img = document.createElement("img");
+  img.src = url;
+  img.alt = "User avatar";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.addEventListener(
+    "load",
+    () => {
+      target.textContent = "";
+      target.appendChild(img);
+    },
+    { once: true }
+  );
+  img.addEventListener(
+    "error",
+    () => {
+      if (img.parentNode) img.parentNode.removeChild(img);
+      target.textContent = initials;
+    },
+    { once: true }
+  );
+}
+
+async function updateAvatarFromState(): Promise<void> {
+  const avatarEl = document.querySelector<HTMLElement>(
+    ".topbar-profile-avatar"
+  );
+  if (!avatarEl) return;
+
+  const displayName = state.userDisplayName || state.userEmail || "";
+  const initials = displayName ? getInitials(displayName) : "?";
+
+  // Use the OAuth avatar_url from the auth postMessage if available,
+  // otherwise fall back to Gravatar via the shared renderAvatar helper.
+  if (state.userAvatarUrl) {
+    const existingImg = avatarEl.querySelector("img");
+    if (existingImg) existingImg.remove();
+    avatarEl.textContent = initials;
+
+    const img = document.createElement("img");
+    img.src = state.userAvatarUrl;
+    img.alt = "User avatar";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.addEventListener(
+      "load",
+      () => {
+        avatarEl.textContent = "";
+        avatarEl.appendChild(img);
+      },
+      { once: true }
+    );
+    img.addEventListener(
+      "error",
+      () => {
+        if (img.parentNode) img.parentNode.removeChild(img);
+        avatarEl.textContent = initials;
+      },
+      { once: true }
+    );
+    return;
+  }
+
+  await renderAvatar(avatarEl, state.userEmail ?? "", initials);
 }
 
 const ui = {
@@ -289,12 +418,6 @@ const ui = {
   // Job card
   jobSection: document.getElementById("jobSection"),
   noJobState: document.getElementById("noJobState"),
-  jobStatusIcon: document.getElementById("jobStatusIcon"),
-  jobStatusLabel: document.getElementById("jobStatusLabel"),
-  jobProgressText: document.getElementById("jobProgressText"),
-  jobIssuePills: document.getElementById("jobIssuePills"),
-  viewReportButton: document.getElementById("viewReportButton"),
-  jobCardActions: document.querySelector("#jobSection .job-card-actions"),
   checkSiteAuthButton: document.getElementById("checkSiteAuthButton"),
 
   // Recent results
@@ -326,6 +449,9 @@ type ExtensionState = {
   currentScheduler: Scheduler | null;
   webflowConnected: boolean;
   webflowAutoPublishEnabled: boolean;
+  userEmail: string | null;
+  userDisplayName: string | null;
+  userAvatarUrl: string | null;
 };
 
 const state: ExtensionState = {
@@ -341,6 +467,9 @@ const state: ExtensionState = {
   currentScheduler: null,
   webflowConnected: false,
   webflowAutoPublishEnabled: false,
+  userEmail: null,
+  userDisplayName: null,
+  userAvatarUrl: null,
 };
 
 let statusToastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -361,7 +490,16 @@ let isRealtimeRefreshing = false;
 let cleanupHandlerRegistered = false;
 
 function getStoredBaseUrl(): string {
-  return localStorage.getItem(API_BASE_STORAGE_KEY) || DEFAULT_BBB_APP_ORIGIN;
+  const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
+  if (!storedBaseUrl) {
+    return DEFAULT_BBB_APP_ORIGIN;
+  }
+
+  if (LEGACY_EXTENSION_APP_ORIGINS.has(storedBaseUrl)) {
+    return DEFAULT_BBB_APP_ORIGIN;
+  }
+
+  return storedBaseUrl;
 }
 
 function getStoredToken(): string | null {
@@ -996,6 +1134,8 @@ async function connectAccount(): Promise<string | null> {
 
     if (message.type === "success" && message.accessToken) {
       setStoredToken(message.accessToken);
+      if (message.user?.email) state.userEmail = message.user.email;
+      if (message.user?.avatarUrl) state.userAvatarUrl = message.user.avatarUrl;
       setStatus("", "");
       return message.accessToken;
     }
@@ -1046,7 +1186,7 @@ function setStatus(message: string, detail = "") {
 async function setExtensionSizeForAuthState(isAuthed: boolean): Promise<void> {
   try {
     await webflow.setExtensionSize(
-      isAuthed ? AUTHENTICATED_EXTENSION_SIZE : "default"
+      isAuthed ? AUTHENTICATED_EXTENSION_SIZE : UNAUTHENTICATED_EXTENSION_SIZE
     );
   } catch (error) {
     console.warn("Unable to set extension size", error);
@@ -1086,73 +1226,20 @@ function iconClassForJob(status: string): string {
 
 /** Show the in-progress card only for active jobs; hide for completed/none. */
 function renderJobState(job: JobItem | null): void {
+  const section = asNode(ui.jobSection);
   if (!job || !isActiveJobStatus(job.status)) {
     stopJobStatusPolling();
-    hide(asNode(ui.jobSection));
-    show(asNode(ui.viewReportButton));
-    show(asNode(ui.jobCardActions));
-    show(asNode(ui.jobIssuePills));
-    // Show no-job placeholder only when there are zero jobs at all
-    // (if there are completed jobs, recent results will fill the space)
+    hide(section);
     return;
   }
 
-  show(asNode(ui.jobSection));
-  hide(asNode(ui.viewReportButton));
-  hide(asNode(ui.jobCardActions));
-
-  // Status dot
-  if (ui.jobStatusIcon) {
-    ui.jobStatusIcon.className = iconClassForJob(job.status);
-  }
-
-  // Status label
-  setText(ui.jobStatusLabel, statusLabelForJob(job.status));
-
-  // Progress: "218 / 372 pages"
-  setText(
-    ui.jobProgressText,
-    `${job.completed_tasks} / ${job.total_tasks} pages`
-  );
-
-  // Issue pills on the in-progress card
-  renderIssuePillsInto(ui.jobIssuePills, job);
-
-  if ((ui.jobIssuePills?.childElementCount || 0) > 0) {
-    show(asNode(ui.jobIssuePills));
-  } else {
-    hide(asNode(ui.jobIssuePills));
-  }
-}
-
-/** Render issue-category pills into a container. */
-function renderIssuePillsInto(
-  container: HTMLElement | null,
-  job: JobItem
-): void {
-  if (!container) {
-    return;
-  }
-
-  while (container.firstChild) {
-    container.removeChild(container.firstChild);
-  }
-
-  const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-
-  if (brokenLinks > 0) {
-    container.appendChild(
-      makePill(
-        "dot-danger",
-        `${brokenLinks} broken link${brokenLinks !== 1 ? "s" : ""}`
-      )
-    );
-  }
-  if (verySlow > 0) {
-    container.appendChild(makePill("dot-danger", `${verySlow} very slow`));
-  }
-  if (slow > 0) {
-    container.appendChild(makePill("dot-warn", `${slow} slow`));
+  // Build the card using the same function as completed cards.
+  // buildResultCard handles active status: spinner icon, "In progress" / "Starting up" label.
+  const card = buildResultCard(job);
+  if (section) {
+    section.innerHTML = "";
+    section.appendChild(card);
+    show(section);
   }
 }
 
@@ -1214,13 +1301,6 @@ function getSavedTimeMs(job: JobItem): number | null {
   return null;
 }
 
-function makePill(dotClass: string, label: string): HTMLSpanElement {
-  const pill = document.createElement("span");
-  pill.className = "issue-pill";
-  pill.innerHTML = `<span class="dot ${dotClass}"></span> ${label}`;
-  return pill;
-}
-
 // ---------------------------------------------------------------------------
 // Date formatting
 // ---------------------------------------------------------------------------
@@ -1266,6 +1346,38 @@ function formatShortDate(value?: string): string {
           : "th";
 
   return `${day}${suffix} ${month} ${h}:${minutes}${ampm}`;
+}
+
+function formatMetricMilliseconds(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return `${Math.max(0, Math.round(value)).toLocaleString()}ms`;
+}
+
+function getCompletedCardMetrics(
+  job: JobItem
+): Array<{ label: string; value: string }> {
+  const metrics: Array<{ label: string; value: string }> = [];
+
+  if (
+    typeof job.avg_time_per_task_seconds === "number" &&
+    Number.isFinite(job.avg_time_per_task_seconds) &&
+    job.avg_time_per_task_seconds > 0
+  ) {
+    metrics.push({
+      label: "Avg",
+      value: `${Math.round(job.avg_time_per_task_seconds * 1000).toLocaleString()}ms`,
+    });
+  }
+
+  const savedMs = formatMetricMilliseconds(getSavedTimeMs(job));
+  if (savedMs) {
+    metrics.push({ label: "Saved", value: savedMs });
+  }
+
+  return metrics;
 }
 
 // ---------------------------------------------------------------------------
@@ -1327,7 +1439,7 @@ function renderRecentResults(jobs: JobItem[]): void {
 
   if (recentJobs.length > 0) {
     for (const job of recentJobs) {
-      recentContainer.appendChild(buildResultCard(job));
+      recentContainer.appendChild(buildResultCard(job, false, true));
     }
   }
 }
@@ -1336,72 +1448,146 @@ function renderRecentResults(jobs: JobItem[]): void {
 // Result card builder
 // ---------------------------------------------------------------------------
 
-function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
+function buildResultCard(
+  job: JobItem,
+  startExpanded = false,
+  compact = false
+): HTMLElement {
   const card = document.createElement("div");
-  card.className = "result-card";
+  card.className = compact
+    ? "result-card result-card--complete result-card--compact"
+    : "result-card result-card--complete";
 
   const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-  // Summary row buckets:
-  // - error: broken links
-  // - ok: slow + very slow
-  // - good: everything else
-  const failCount = brokenLinks;
-  const warnCount = verySlow + slow;
-  const successCount = Math.max(0, job.total_tasks - failCount - warnCount);
-  const dateStr = formatShortDate(job.completed_at || job.created_at);
-
   const normalisedStatus = normalizeJobStatus(job.status);
-  let outcomeDotClass = "dot-success";
+  const isActive = isActiveJobStatus(normalisedStatus);
+
+  // For active jobs use live task counters; for completed use issue-bucket counts.
+  const failCount = isActive ? job.failed_tasks : brokenLinks;
+  const warnCount = isActive ? 0 : verySlow + slow;
+  const successCount = isActive
+    ? Math.max(0, job.completed_tasks - job.failed_tasks)
+    : Math.max(0, job.total_tasks - brokenLinks - verySlow - slow);
+  const dateStr = formatShortDate(job.completed_at || job.created_at);
+  const metrics = getCompletedCardMetrics(job);
+
+  let outcomeDotClass = "dot--success";
   let outcomeLabel = "Completed";
+  let statusColour = "var(--status-colour--success)";
 
   if (normalisedStatus === "cancelled") {
-    outcomeDotClass = "dot-neutral";
+    outcomeDotClass = "dot--neutral";
     outcomeLabel = "Cancelled";
-  } else if (isActiveJobStatus(normalisedStatus)) {
-    outcomeDotClass = "dot-warn";
-    outcomeLabel = "In progress";
+    statusColour = "var(--status-colour--neutral)";
+  } else if (isActive) {
+    outcomeDotClass = "dot--warning";
+    outcomeLabel = statusLabelForJob(normalisedStatus);
+    statusColour =
+      normalisedStatus === "running" || normalisedStatus === "initializing"
+        ? "var(--status-colour--success)"
+        : "var(--status-colour--warning)";
   } else if (normalisedStatus !== "completed") {
-    outcomeDotClass = "dot-danger";
+    outcomeDotClass = "dot--danger";
     outcomeLabel = "Error";
+    statusColour = "var(--status-colour--danger)";
   }
 
-  // ── Row 1: date + success / total ──
+  if (job.total_tasks > 0) {
+    outcomeLabel = `${job.total_tasks} ${outcomeLabel}`;
+  }
+
+  const main = document.createElement("div");
+  main.className = "result-card-main";
+
   const header = document.createElement("div");
   header.className = "result-card-header";
-  header.innerHTML = `
-    <div class="result-card-success">
-      <span class="result-card-total">${job.total_tasks} pages: </span>
-      <span class="result-card-count"><span class="dot dot-success"></span> ${successCount} good</span>
-      <span class="result-card-count"><span class="dot dot-warn"></span> ${warnCount} ok</span>
-      <span class="result-card-count"><span class="dot dot-danger"></span> ${failCount} error</span>
-    </div>
-    <span class="result-card-count"><span class="dot ${outcomeDotClass}"></span> ${outcomeLabel}</span>`;
-  card.appendChild(header);
+  const status = document.createElement("div");
+  status.className = "result-card-status";
 
-  // ── Row 2: speed stats ──
-  const stats = document.createElement("div");
-  stats.className = "result-card-stats";
-  const statsLeft = document.createElement("div");
-  statsLeft.className = "result-card-stats-left";
+  const statusLine = document.createElement("div");
+  statusLine.className = "result-card-status-line";
 
-  if (job.avg_time_per_task_seconds) {
-    const avgMs = Math.round(job.avg_time_per_task_seconds * 1000);
-    statsLeft.innerHTML += `<span>Avg: ${avgMs.toLocaleString()}ms</span>`;
+  const statusIcon = document.createElement("span");
+  statusIcon.setAttribute("aria-hidden", "true");
+  statusIcon.style.color = statusColour;
+
+  if (normalisedStatus === "completed") {
+    statusIcon.className =
+      "icon icon--small icon--tick result-card-status-icon";
+  } else if (isActiveJobStatus(normalisedStatus)) {
+    statusIcon.className = iconClassForJob(normalisedStatus);
+  } else {
+    statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
   }
-  // TODO: connect slowest, saved, cached when per-job timing stats available
-  // Placeholder values shown to match Figma layout
-  const savedMs = getSavedTimeMs(job);
-  if (savedMs !== null) {
-    statsLeft.innerHTML += `<span>Saved: ${savedMs.toLocaleString()}ms</span>`;
-  }
-  const statsDate = document.createElement("span");
-  statsDate.className = "result-card-stats-date";
-  statsDate.textContent = dateStr;
 
-  stats.appendChild(statsLeft);
-  stats.appendChild(statsDate);
-  // TODO: "Cached: XX%" needs cache-hit data from API
-  card.appendChild(stats);
+  const statusLabel = document.createElement("span");
+  statusLabel.className = "result-card-status-label";
+  statusLabel.textContent = outcomeLabel;
+  statusLabel.style.color = statusColour;
+
+  statusLine.appendChild(statusIcon);
+  statusLine.appendChild(statusLabel);
+
+  const timestamp = document.createElement("p");
+  timestamp.className = "result-card-timestamp";
+  timestamp.textContent = dateStr;
+
+  status.appendChild(statusLine);
+  status.appendChild(timestamp);
+  header.appendChild(status);
+
+  const summary = document.createElement("div");
+  summary.className = "result-card-summary";
+
+  const summaryRow = document.createElement("div");
+  summaryRow.className = "result-card-summary-row";
+
+  const summaryItems: Array<{
+    dotClass: string;
+    label: string;
+    value: number;
+  }> = [
+    { dotClass: "dot--success", label: "good", value: successCount },
+    { dotClass: "dot--warning", label: "ok", value: warnCount },
+    { dotClass: "dot--danger", label: "error", value: failCount },
+  ];
+
+  for (const item of summaryItems) {
+    const summaryItem = document.createElement("span");
+    summaryItem.className = "result-card-summary-stat";
+    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
+    summaryRow.appendChild(summaryItem);
+  }
+
+  summary.appendChild(summaryRow);
+
+  if (!compact && metrics.length > 0) {
+    const metaRow = document.createElement("div");
+    metaRow.className = "result-card-summary-meta";
+
+    for (const metric of metrics) {
+      const metricItem = document.createElement("span");
+      metricItem.className = "result-card-summary-meta-item";
+      metricItem.textContent = `${metric.label}: ${metric.value}`;
+      metaRow.appendChild(metricItem);
+    }
+
+    summary.appendChild(metaRow);
+  }
+
+  header.appendChild(summary);
+  main.appendChild(header);
+  card.appendChild(main);
+
+  if (compact) {
+    return card;
+  }
+
+  const footer = document.createElement("div");
+  footer.className = "result-card-footer";
+
+  const issuesRow = document.createElement("div");
+  issuesRow.className = "result-card-issues";
 
   const details = document.createElement("div");
   details.className = `result-card-details${startExpanded ? "" : " hidden"}`;
@@ -1411,25 +1597,21 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   const issuesContainer = document.createElement("div");
   issuesContainer.className = "issues-detail";
 
-  // Tab row
-  const tabs = document.createElement("div");
-  tabs.className = "issues-tabs";
-
   type TabDef = { dotClass: string; label: string; count: number; key: string };
   const tabDefs: TabDef[] = [
     {
-      dotClass: "dot-danger",
-      label: "broken link",
+      dotClass: "dot--danger",
+      label: "missing",
       count: brokenLinks,
       key: "broken",
     },
     {
-      dotClass: "dot-danger",
+      dotClass: "dot--danger",
       label: "very slow",
       count: verySlow,
       key: "veryslow",
     },
-    { dotClass: "dot-warn", label: "slow", count: slow, key: "slow" },
+    { dotClass: "dot--warning", label: "slow", count: slow, key: "slow" },
   ];
 
   // Detail table panel (hidden by default, shown on tab click)
@@ -1447,10 +1629,10 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
     activeTabKey = tabKey;
 
     for (const t of tabElements) {
-      t.classList.remove("active");
+      t.setAttribute("aria-pressed", "false");
     }
 
-    tab.classList.add("active");
+    tab.setAttribute("aria-pressed", "true");
     show(tablePanel);
     void renderIssuesTable(tablePanel, job, tabKey, issueRowsCache, () => {
       return activeTabKey === tabKey;
@@ -1465,27 +1647,33 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
 
     const tab = document.createElement("button");
     tab.type = "button";
-    tab.className = "issues-tab";
+    tab.className = "btn btn--text";
     tab.dataset.tabKey = def.key;
-    tab.innerHTML = `<span class="dot ${def.dotClass}"></span> ${def.count} ${def.label}${def.count !== 1 && def.label === "broken link" ? "s" : ""}`;
+    tab.setAttribute("aria-pressed", "false");
+    const label = `${def.count} ${def.label}`;
+    tab.innerHTML = `<span class="dot ${def.dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
 
     tab.addEventListener("click", () => {
-      // Toggle: if already active, collapse
-      const wasActive = tab.classList.contains("active");
+      const wasActive = tab.getAttribute("aria-pressed") === "true";
 
       for (const t of tabElements) {
-        t.classList.remove("active");
+        t.setAttribute("aria-pressed", "false");
       }
 
       if (wasActive) {
         hide(tablePanel);
+        details.classList.add("hidden");
+        card.classList.remove("result-card-expanded");
+        activeTabKey = null;
         return;
       }
 
+      details.classList.remove("hidden");
+      card.classList.add("result-card-expanded");
       activateIssueTab(tab, def.key);
     });
 
-    tabs.appendChild(tab);
+    issuesRow.appendChild(tab);
     tabElements.push(tab);
 
     if (!firstTab) {
@@ -1495,68 +1683,56 @@ function buildResultCard(job: JobItem, startExpanded = false): HTMLElement {
   }
 
   if (hasAnyIssues) {
-    issuesContainer.appendChild(tabs);
     issuesContainer.appendChild(tablePanel);
     details.appendChild(issuesContainer);
   }
 
-  // ── Row 4: pills row (for non-tab display) + CSV button ──
-  const pillsRow = document.createElement("div");
-  pillsRow.className = "result-card-pills";
+  footer.appendChild(issuesRow);
 
-  // If no issues, still show the pill row for CSV button
-  if (!hasAnyIssues) {
-    // No issue tabs needed
+  if (!isActiveJobStatus(normalisedStatus)) {
+    const actions = document.createElement("div");
+    actions.className = "result-card-actions";
+
+    const viewFullResultsBtn = document.createElement("button");
+    viewFullResultsBtn.type = "button";
+    viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
+    viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
+    viewFullResultsBtn.addEventListener("click", () => {
+      const detailPath = job.id
+        ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
+        : APP_ROUTES.dashboard;
+      openSettingsPage(detailPath);
+    });
+    actions.appendChild(viewFullResultsBtn);
+    footer.appendChild(actions);
   }
 
-  // CSV export button
+  // Only append footer if it has content
+  if (hasAnyIssues || !isActiveJobStatus(normalisedStatus)) {
+    card.appendChild(footer);
+  }
+
   const csvBtn = document.createElement("button");
   csvBtn.type = "button";
-  csvBtn.className = "btn-sm";
+  csvBtn.className = "btn btn--ghost btn--xs";
   csvBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 18v2h16v-2"/></svg> Export Results`;
   csvBtn.addEventListener("click", () => {
     void exportJob(job.id);
   });
-  pillsRow.appendChild(csvBtn);
 
-  const viewFullResultsBtn = document.createElement("button");
-  viewFullResultsBtn.type = "button";
-  viewFullResultsBtn.className = "btn-sm";
-  viewFullResultsBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Detailed Results`;
-  viewFullResultsBtn.addEventListener("click", () => {
-    const detailPath = job.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
-  });
-  pillsRow.appendChild(viewFullResultsBtn);
-
-  details.appendChild(pillsRow);
+  const detailActions = document.createElement("div");
+  detailActions.className = "result-card-pills";
+  detailActions.appendChild(csvBtn);
+  details.appendChild(detailActions);
   card.appendChild(details);
-
-  const toggleDetails = (): void => {
-    if (details.classList.contains("hidden")) {
-      details.classList.remove("hidden");
-      card.classList.add("result-card-expanded");
-
-      if (hasAnyIssues && firstTab && firstTabKey) {
-        activateIssueTab(firstTab, firstTabKey);
-      }
-      return;
-    }
-    details.classList.add("hidden");
-    card.classList.remove("result-card-expanded");
-  };
 
   if (startExpanded) {
     card.classList.add("result-card-expanded");
+    details.classList.remove("hidden");
     if (hasAnyIssues && firstTab && firstTabKey) {
       activateIssueTab(firstTab, firstTabKey);
     }
   }
-
-  header.addEventListener("click", toggleDetails);
-  stats.addEventListener("click", toggleDetails);
 
   return card;
 }
@@ -1831,7 +2007,7 @@ async function renderIssuesTable(
   footer.className = "issues-table-footer";
   const viewAllBtn = document.createElement("button");
   viewAllBtn.type = "button";
-  viewAllBtn.className = "btn-secondary";
+  viewAllBtn.className = "btn btn--tertiary btn--sm";
   viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
   viewAllBtn.addEventListener("click", () => {
     const detailPath = job.id
@@ -2023,7 +2199,7 @@ function renderMiniChart(jobs: JobItem[]): void {
 
     if (row.okCount > 0) {
       const seg = document.createElement("div");
-      seg.className = "chart-bar-warn";
+      seg.className = "chart-bar--warning";
       const okHeight = Math.max(
         minSegmentHeightPercent,
         Math.min((row.okCount / maxIssues) * 100, 100)
@@ -2034,7 +2210,7 @@ function renderMiniChart(jobs: JobItem[]): void {
 
     if (row.errorCount > 0) {
       const seg = document.createElement("div");
-      seg.className = "chart-bar-danger";
+      seg.className = "chart-bar--danger";
       const errorHeight = Math.max(
         minSegmentHeightPercent,
         Math.min((row.errorCount / maxIssues) * 100, 100)
@@ -2150,7 +2326,6 @@ function setDisabledAll(disabled: boolean): void {
     ui.checkSiteAuthButton,
     ui.signInButton,
     ui.runNowButton,
-    ui.viewReportButton,
     ui.scheduleSelect,
     ui.orgSelect,
     ui.webflowPublishToggle,
@@ -2552,6 +2727,7 @@ async function refreshDashboard(): Promise<void> {
       ]);
       renderUsage(state.usage);
       renderOrganisations();
+      void updateAvatarFromState();
 
       // Initialise Supabase realtime; fall back to legacy polling on failure.
       const client = await initSupabaseClient();
@@ -2725,14 +2901,6 @@ function initEventHandlers(): void {
     } catch (error) {
       await handleAuthError(error);
     }
-  });
-
-  // Auth: view full report
-  ui.viewReportButton?.addEventListener("click", () => {
-    const detailPath = state.currentJob?.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(state.currentJob.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
   });
 
   // Auth: settings gear
