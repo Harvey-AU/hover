@@ -2208,6 +2208,7 @@ function initExtensionAuthPage() {
       user: {
         id: session.user.id,
         email: session.user.email || "",
+        avatarUrl: session.user.user_metadata?.avatar_url || "",
       },
     });
 

@@ -234,6 +234,11 @@ type AuthMessage = {
   state?: string;
   extensionState?: string;
   accessToken?: string;
+  user?: {
+    id?: string;
+    email?: string;
+    avatarUrl?: string;
+  };
 };
 
 type ErrorPayload = {
@@ -343,15 +348,41 @@ async function updateAvatarFromState(): Promise<void> {
   );
   if (!avatarEl) return;
 
-  const email = state.userEmail;
-  const displayName = state.userDisplayName || email || "";
-  if (!displayName) {
-    avatarEl.textContent = "?";
+  const displayName = state.userDisplayName || state.userEmail || "";
+  const initials = displayName ? getInitials(displayName) : "?";
+
+  // Use the OAuth avatar_url from the auth postMessage if available,
+  // otherwise fall back to Gravatar via the shared renderAvatar helper.
+  if (state.userAvatarUrl) {
+    const existingImg = avatarEl.querySelector("img");
+    if (existingImg) existingImg.remove();
+    avatarEl.textContent = initials;
+
+    const img = document.createElement("img");
+    img.src = state.userAvatarUrl;
+    img.alt = "User avatar";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.addEventListener(
+      "load",
+      () => {
+        avatarEl.textContent = "";
+        avatarEl.appendChild(img);
+      },
+      { once: true }
+    );
+    img.addEventListener(
+      "error",
+      () => {
+        if (img.parentNode) img.parentNode.removeChild(img);
+        avatarEl.textContent = initials;
+      },
+      { once: true }
+    );
     return;
   }
 
-  const initials = getInitials(displayName);
-  await renderAvatar(avatarEl, email ?? "", initials);
+  await renderAvatar(avatarEl, state.userEmail ?? "", initials);
 }
 
 const ui = {
@@ -420,6 +451,7 @@ type ExtensionState = {
   webflowAutoPublishEnabled: boolean;
   userEmail: string | null;
   userDisplayName: string | null;
+  userAvatarUrl: string | null;
 };
 
 const state: ExtensionState = {
@@ -437,6 +469,7 @@ const state: ExtensionState = {
   webflowAutoPublishEnabled: false,
   userEmail: null,
   userDisplayName: null,
+  userAvatarUrl: null,
 };
 
 let statusToastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1101,6 +1134,8 @@ async function connectAccount(): Promise<string | null> {
 
     if (message.type === "success" && message.accessToken) {
       setStoredToken(message.accessToken);
+      if (message.user?.email) state.userEmail = message.user.email;
+      if (message.user?.avatarUrl) state.userAvatarUrl = message.user.avatarUrl;
       setStatus("", "");
       return message.accessToken;
     }
@@ -2381,50 +2416,7 @@ async function loadUsageAndOrgs(): Promise<void> {
     state.organisations = [];
     state.usage = null;
     state.currentScheduler = null;
-    state.userEmail = null;
-    state.userDisplayName = null;
     return;
-  }
-
-  // Decode user identity from the JWT — avoids an extra round-trip.
-  // The token is a Supabase JWT; email and user_metadata live in the payload.
-  try {
-    const parts = state.token.split(".");
-    if (parts.length === 3) {
-      const payload = JSON.parse(atob(parts[1])) as Record<string, unknown>;
-      const email =
-        typeof payload["email"] === "string" ? payload["email"] : null;
-      const meta =
-        typeof payload["user_metadata"] === "object" &&
-        payload["user_metadata"] !== null
-          ? (payload["user_metadata"] as Record<string, unknown>)
-          : {};
-      const fullName =
-        typeof meta["full_name"] === "string"
-          ? meta["full_name"]
-          : typeof meta["name"] === "string"
-            ? meta["name"]
-            : null;
-      const firstName =
-        typeof meta["given_name"] === "string"
-          ? meta["given_name"]
-          : typeof meta["first_name"] === "string"
-            ? meta["first_name"]
-            : "";
-      const lastName =
-        typeof meta["family_name"] === "string"
-          ? meta["family_name"]
-          : typeof meta["last_name"] === "string"
-            ? meta["last_name"]
-            : "";
-      const composedName =
-        [firstName, lastName].filter(Boolean).join(" ").trim() || null;
-
-      state.userEmail = email;
-      state.userDisplayName = fullName || composedName || email;
-    }
-  } catch {
-    // Non-critical — avatar will fall back to "?"
   }
 
   const [orgData, usageData] = await Promise.all([
