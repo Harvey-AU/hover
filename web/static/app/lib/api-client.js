@@ -17,13 +17,6 @@
  */
 
 /**
- * @typedef {Object} ApiError
- * @property {string} message
- * @property {number} status
- * @property {unknown} [body]
- */
-
-/**
  * Typed error class for API failures. Carries the HTTP status and the
  * parsed response body so callers can branch on status codes.
  */

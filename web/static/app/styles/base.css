@@ -20,6 +20,14 @@
 
 /* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 
+/* Firefox */
+* {
+  scrollbar-color: var(--background-colour--thumb-track)
+    var(--background-colour--panel);
+  scrollbar-width: thin;
+}
+
+/* WebKit / Blink */
 ::-webkit-scrollbar {
   width: var(--size--scrollbar);
   height: var(--size--scrollbar);
