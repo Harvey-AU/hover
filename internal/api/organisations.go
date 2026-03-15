@@ -104,6 +104,20 @@ func (h *Handler) createOrganisation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject duplicate names within this user's existing organisations
+	existingOrgs, err := h.DB.ListUserOrganisations(userClaims.UserID)
+	if err != nil {
+		InternalError(w, r, err)
+		return
+	}
+	nameLower := strings.ToLower(name)
+	for _, o := range existingOrgs {
+		if strings.ToLower(o.Name) == nameLower {
+			BadRequest(w, r, "An organisation with that name already exists")
+			return
+		}
+	}
+
 	// Create the organisation
 	org, err := h.DB.CreateOrganisation(name)
 	if err != nil {
