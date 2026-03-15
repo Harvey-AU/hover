@@ -62,6 +62,21 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
+- **Dashboard ES module layer (Phase 3)**: Added `pages/dashboard.js` as an ES
+  module entrypoint that co-exists with the legacy `bb-*` scripts during
+  migration; provides the jobs list and stats using shared components
+  - Jobs list rendered by `hover-data-table` with `hover-status-pill` status
+    indicators, relative timestamps, and duration formatting from
+    `lib/formatters.js`
+  - Stats cards updated via the shared stats API; date range selector wired to
+    the module layer
+  - Restart and cancel job actions use `hover-toast` for feedback instead of
+    legacy error divs
+  - Supabase Realtime subscription via `webflow-jobs.js` with org-switch
+    re-subscription on `bb:org-switched` event
+  - `tokens.css` and `components.css` loaded on the dashboard so all `hover-*`
+    components render with the correct design tokens
+
 - **Shared job list components (Phase 2)**: Reusable Web Components for job
   status and tabular data, shared across the Webflow extension, dashboard, and
   future surfaces (Shopify, WordPress)
