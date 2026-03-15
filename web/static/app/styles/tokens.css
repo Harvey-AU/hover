@@ -36,7 +36,7 @@
 
   /* ── Primitive: Spacing scale ──────────────────────────────────────────── */
 
-  --spacing--3xs: 2px;
+  --spacing--3xs: 2px; /* intentionally equal to --spacing--2xs; reserved for future differentiation */
   --spacing--2xs: 2px;
   --spacing--xs: 3px;
   --spacing--sm: 4px;
@@ -70,6 +70,7 @@
 
   /* ── Primitive: Border and radius ──────────────────────────────────────── */
 
+  --border-size--thin: 0.5px;
   --border-size--default: 1px;
   --border-size--strong: 1.5px;
 
@@ -113,6 +114,7 @@
   --colour--white-13: rgba(255, 255, 255, 0.13);
   --colour--white-12: rgba(255, 255, 255, 0.12);
   --colour--white-07: rgba(255, 255, 255, 0.07);
+  --colour--brand-primary-30: rgba(142, 218, 239, 0.3);
 
   /* ── Semantic: Background colours ─────────────────────────────────────── */
 
@@ -128,7 +130,7 @@
   --background-colour--thumb-track: var(--colour--white-25);
   --background-colour--thumb-hover: var(--colour--white-40);
   --background-colour--toggle-track: var(--colour--white-12);
-  --background-colour--hover-subtle: rgba(142, 218, 239, 0.3);
+  --background-colour--hover-subtle: var(--colour--brand-primary-30);
 
   /* ── Semantic: Text colours ────────────────────────────────────────────── */
 
@@ -172,5 +174,5 @@
 
   --section-gutter: var(--spacing--2xl);
   --section-padding: var(--spacing--lg);
-  --section-border: var(--colour--brand-primary) solid 0.5px;
+  --section-border: var(--colour--brand-primary) solid var(--border-size--thin);
 }
