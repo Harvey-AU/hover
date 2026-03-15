@@ -1,0 +1,175 @@
+/* ─── Design tokens — Hover app ──────────────────────────────────────────────
+ *
+ * Source of truth for the Hover visual language.
+ * Mirrors the Webflow Designer extension dark theme (styles.css).
+ *
+ * Two-layer structure:
+ *   1. Primitive tokens  — raw values, no semantics
+ *   2. Semantic tokens   — role-based aliases that reference primitives
+ *
+ * New code must reference semantic tokens, not primitives directly.
+ * The light-to-dark migration of the main app will update semantic token
+ * values only — component code stays unchanged.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+:root,
+:host {
+  color-scheme: dark;
+
+  /* ── Primitive: Typography ─────────────────────────────────────────────── */
+
+  --font-family--primary:
+    "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-family--mono:
+    "IBM Plex Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
+
+  --font-size--label: 11.5px;
+  --font-size--caption: 12px;
+  --font-size--body: 14px;
+  --font-size--title: 14px;
+  --font-size--display: 16px;
+
+  --letter-spacing--brand: 0.02em;
+  --letter-spacing--default: 0;
+
+  --line-height--body: 1.4;
+
+  /* ── Primitive: Spacing scale ──────────────────────────────────────────── */
+
+  --spacing--3xs: 2px;
+  --spacing--2xs: 2px;
+  --spacing--xs: 3px;
+  --spacing--sm: 4px;
+  --spacing--md: 5px;
+  --spacing--lg: 6px;
+  --spacing--xl: 8px;
+  --spacing--2xl: 9px;
+  --spacing--3xl: 10px;
+  --spacing--4xl: 12px;
+  --spacing--5xl: 17px;
+  --spacing--6xl: 18px;
+  --spacing--7xl: 20px;
+  --spacing--8xl: 28px;
+
+  /* ── Primitive: Sizes ──────────────────────────────────────────────────── */
+
+  --size--scrollbar: 7px;
+  --size--icon-small: 16px;
+  --size--avatar: 30px;
+  --size--dot-small: 6px;
+  --size--dot-default: 0.75em;
+  --size--toggle-width: 29px;
+  --size--toggle-height: 17px;
+  --size--toggle-thumb: 12px;
+  --size--toggle-offset: 2.5px;
+  --size--dropdown-max-width: 250px;
+  --size--label-max-width: 75px;
+  --size--button-height: 28px;
+  --size--chart-height: 110px;
+  --size--chart-bar-width: 12px;
+
+  /* ── Primitive: Border and radius ──────────────────────────────────────── */
+
+  --border-size--default: 1px;
+  --border-size--strong: 1.5px;
+
+  --radius--small: 3px;
+  --radius--notch: 3px;
+  --radius--pill: 999px;
+  --radius--round: 50%;
+  --radius--control: 4px;
+
+  /* ── Primitive: Motion ─────────────────────────────────────────────────── */
+
+  --motion-duration--fast: 0.1s;
+  --motion-duration--normal: 0.15s;
+  --motion-easing--standard: ease;
+
+  --opacity--disabled: 0.45;
+  --opacity--disabled-soft: 0.4;
+
+  /* ── Primitive: Colours ────────────────────────────────────────────────── */
+
+  --colour--brand-primary: #8edaef;
+  --colour--brand-primary-hover: #9fe0f2;
+  --colour--neutral-0: #c7f0fb;
+  --colour--neutral-100: #61d0ef;
+  --colour--neutral-300: #b1b1b1;
+  --colour--neutral-700: #434343;
+  --colour--neutral-750: #101a45;
+  --colour--neutral-800: #030423;
+  --colour--neutral-850: #233c67;
+  --colour--neutral-900: #030423;
+  --colour--status-success: #22c55e;
+  --colour--status-warning: #f59e0b;
+  --colour--status-danger: #f50b0b;
+  --colour--overlay-dark: rgba(0, 0, 0, 0.6);
+  --colour--overlay-black: #000000;
+  --colour--white: #ffffff;
+  --colour--white-50: rgba(255, 255, 255, 0.5);
+  --colour--white-40: rgba(255, 255, 255, 0.4);
+  --colour--white-25: rgba(255, 255, 255, 0.25);
+  --colour--white-19: rgba(255, 255, 255, 0.19);
+  --colour--white-13: rgba(255, 255, 255, 0.13);
+  --colour--white-12: rgba(255, 255, 255, 0.12);
+  --colour--white-07: rgba(255, 255, 255, 0.07);
+
+  /* ── Semantic: Background colours ─────────────────────────────────────── */
+
+  --background-colour--canvas: var(--colour--neutral-900);
+  --background-colour--panel: var(--colour--neutral-800);
+  --background-colour--surface: var(--colour--neutral-750);
+  --background-colour--surface-inner: var(--colour--neutral-850);
+  --background-colour--interactive: var(--colour--neutral-700);
+  --background-colour--avatar: var(--colour--neutral-100);
+  --background-colour--brand: var(--colour--brand-primary);
+  --background-colour--brand-hover: var(--colour--brand-primary-hover);
+  --background-colour--thumb: var(--colour--white);
+  --background-colour--thumb-hover: var(--text-colour--disabled);
+  --background-colour--toggle-track: var(--colour--white-12);
+  --background-colour--hover-subtle: rgba(142, 218, 239, 0.3);
+
+  /* ── Semantic: Text colours ────────────────────────────────────────────── */
+
+  --text-colour--primary: var(--colour--neutral-100);
+  --text-colour--secondary: var(--colour--neutral-300);
+  --text-colour--heading: var(--colour--neutral-100);
+  --text-colour--disabled: var(--colour--white-40);
+  --text-colour--on-brand: var(--colour--neutral-900);
+
+  /* ── Semantic: Border colours ──────────────────────────────────────────── */
+
+  --border-colour--default: var(--colour--white-13);
+  --border-colour--strong: var(--colour--white-19);
+  --border-colour--surface: var(--colour--neutral-850);
+  --border-colour--active: var(--colour--brand-primary);
+  --border-colour--button-subtle: var(--colour--brand-primary);
+
+  /* ── Semantic: Status colours ──────────────────────────────────────────── */
+
+  --status-colour--success: var(--colour--status-success);
+  --status-colour--warning: var(--colour--status-warning);
+  --status-colour--danger: var(--colour--status-danger);
+  --status-colour--neutral: var(--text-colour--disabled);
+
+  /* ── Semantic: Shadows ─────────────────────────────────────────────────── */
+
+  --shadow--surface: 0 0.5px 1px 0 var(--colour--overlay-dark);
+  --shadow--overlay: 1px 1px 1px 0 var(--colour--overlay-black);
+
+  /* ── Semantic: Button tokens ───────────────────────────────────────────── */
+
+  --border-size-button-subtle: var(--border-size--strong);
+  --padding--button-primary: var(--spacing--xs) var(--spacing--5xl);
+  --font-size--button-primary: var(--font-size--label);
+
+  /* ── Semantic: Component assets ────────────────────────────────────────── */
+
+  --control-icon--chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%238edaef' stroke-width='1.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* ── Layout globals ────────────────────────────────────────────────────── */
+
+  --section-gutter: var(--spacing--2xl);
+  --section-padding: var(--spacing--lg);
+  --section-border: var(--colour--brand-primary) solid 0.5px;
+}
