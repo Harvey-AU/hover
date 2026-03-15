@@ -351,19 +351,12 @@
         });
       }
 
-      // Listen for org switches (from anywhere)
+      // Listen for org switches (from anywhere) — re-render full list so newly
+      // created orgs appear without a page reload.
       document.addEventListener("bb:org-switched", (e) => {
         const newOrg = e.detail?.organisation;
         if (newOrg) {
-          currentOrgName.textContent = newOrg.name || "Organisation";
-          if (orgListEl) {
-            orgListEl.querySelectorAll(".bb-org-item").forEach((el) => {
-              el.classList.toggle(
-                "active",
-                el.dataset.orgId === String(newOrg.id)
-              );
-            });
-          }
+          updateNavOrgDisplay(newOrg, window.BB_ORGANISATIONS);
         }
       });
 
