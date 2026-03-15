@@ -62,6 +62,21 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
+- **Shared job list components (Phase 2)**: Reusable Web Components for job
+  status and tabular data, shared across the Webflow extension, dashboard, and
+  future surfaces (Shopify, WordPress)
+  - `web/static/app/components/hover-status-pill.js` — animated status indicator
+    with `icon`, `dot`, and `label` variants; covers all job statuses; replaces
+    duplicated `.dot` + `.job-status-icon` patterns in the extension
+  - `web/static/app/components/hover-data-table.js` — data table with custom
+    column renderers, loading skeleton rows, and empty/error states; replaces
+    duplicated `.issues-table` DOM construction in the extension
+  - `web/static/app/pages/webflow-jobs.js` — shared job-list data fetching,
+    rendering helpers, and Supabase Realtime subscription with debounce and
+    fallback polling; imported by both extension and dashboard
+  - Webflow extension `index.html` loads shared components via
+    `<script type="module">` and updated to Supabase SDK 2.95.3
+
 - **Webflow extension auth screen (Phase 1)**: Migrated
   `web/templates/extension-auth.html` to the ES module pattern; retired
   `core.js` and `bb-bootstrap.js` from this surface
