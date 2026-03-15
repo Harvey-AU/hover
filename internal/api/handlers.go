@@ -426,6 +426,8 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir("./web/static/js/"))))
 	mux.Handle("/styles/", http.StripPrefix("/styles/", http.FileServer(http.Dir("./web/static/styles/"))))
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./web/static/assets/"))))
+	// ES module app — new frontend architecture (Phase 0+)
+	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.Dir("./web/static/app/"))))
 	mux.Handle("/web/", http.StripPrefix("/web/", h.jsFileServer(http.Dir("./web/"))))
 }
 
