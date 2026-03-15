@@ -82,14 +82,21 @@ export function formatRelativeTime(value) {
 
     const rtf = new Intl.RelativeTimeFormat("en-AU", { numeric: "auto" });
 
+    // Sign-aware rounding: past values floor, future values ceil.
+    // This avoids "0 minutes ago" or "-1 hour ago" artifacts near thresholds.
+    const round = (n) => (n >= 0 ? Math.floor(n) : Math.ceil(n));
+
     if (absSec < 3600) {
-      return rtf.format(Math.round(diffSec / 60), "minute");
+      return rtf.format(round(diffSec / 60), "minute");
     }
     if (absSec < 86400) {
-      return rtf.format(Math.round(diffSec / 3600), "hour");
+      return rtf.format(round(diffSec / 3600), "hour");
+    }
+    if (absSec < 604800) {
+      return rtf.format(round(diffSec / 86400), "day");
     }
     if (absSec < 2592000) {
-      return rtf.format(Math.round(diffSec / 86400), "day");
+      return rtf.format(round(diffSec / 604800), "week");
     }
     return formatDate(value);
   } catch {
