@@ -13,6 +13,10 @@
     "load-test": {
       "description": "Run scripted load test safely",
       "template": "Run ./scripts/generate-test-jobs.sh using $ARGUMENTS when provided. Confirm prerequisites first, avoid exposing tokens, and summarise outcomes and risk signals."
+    },
+    "coderabbit": {
+      "description": "Run CodeRabbit AI code review via WSL wrapper",
+      "template": "Run bash scripts/coderabbit.sh review --plain $ARGUMENTS using the PTY tool with notifyOnExit set to true. Do not poll or give up early — coderabbit takes several minutes to analyse. Wait for the pty_exited notification, then read the full output with pty_read and summarise the findings by severity."
     }
   },
   "mcp": {
