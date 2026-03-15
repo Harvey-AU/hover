@@ -15,8 +15,8 @@
     -->
     <script src="/config.js"></script>
     <script
-      src="https://unpkg.com/@supabase/supabase-js@2.80.0/dist/umd/supabase.js"
-      integrity="sha384-i0m00Vn1ERlKXxNWSa87g6OUB7eLxpmsQoNF68IHuQVtfJTebIca7XhFsYt9h/gN"
+      src="https://unpkg.com/@supabase/supabase-js@2.95.3/dist/umd/supabase.js"
+      integrity="sha384-g8TQpKstPpyDTjwOLNQvGR++9KAGGvtxWv+P5XmDd3QZQx1jie8r1hx0gVpD+cdb"
       crossorigin="anonymous"
     ></script>
 
@@ -279,10 +279,10 @@
 
       const grid = document.getElementById("formatters");
       for (const [label, value] of fmts) {
-        grid.innerHTML += `
-          <span class="fmt-label">${label}</span>
-          <span class="fmt-value">${value}</span>
-        `;
+        grid.insertAdjacentHTML(
+          "beforeend",
+          `<span class="fmt-label">${label}</span><span class="fmt-value">${value}</span>`
+        );
       }
     </script>
   </body>
