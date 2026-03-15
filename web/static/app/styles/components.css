@@ -119,3 +119,186 @@
 .hover-toast__close:hover {
   color: var(--text-colour--primary);
 }
+
+/* ─── hover-status-pill ──────────────────────────────────────────────────── */
+
+hover-status-pill,
+.hover-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing--md);
+  font-size: var(--font-size--label);
+  line-height: 1;
+}
+
+/* Colour variants */
+.hover-status-pill--success {
+  color: var(--status-colour--success);
+}
+.hover-status-pill--warning {
+  color: var(--status-colour--warning);
+}
+.hover-status-pill--danger {
+  color: var(--status-colour--danger);
+}
+.hover-status-pill--neutral {
+  color: var(--text-colour--disabled);
+}
+
+.hover-status-pill__label {
+  font-size: var(--font-size--label);
+  font-weight: 700;
+  color: inherit;
+}
+
+/* Plain dot */
+.hover-status-pill__dot {
+  display: inline-block;
+  width: var(--size--dot-default);
+  height: var(--size--dot-default);
+  border-radius: var(--radius--round);
+  flex-shrink: 0;
+  background: currentcolor;
+}
+
+/* Animated job-status icon */
+@keyframes hover-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hover-status-pill__icon {
+  display: inline-block;
+  width: var(--size--dot-default);
+  height: var(--size--dot-default);
+  border-radius: var(--radius--round);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.hover-status-pill__icon--pending {
+  border: 1.5px solid rgba(245, 158, 11, 0.25);
+  border-top-color: var(--colour--status-warning);
+  animation: hover-status-spin 0.9s linear infinite;
+}
+
+.hover-status-pill__icon--running {
+  border: 1.5px solid rgba(34, 197, 94, 0.25);
+  border-top-color: var(--colour--status-success);
+  animation: hover-status-spin 0.7s linear infinite;
+}
+
+.hover-status-pill__icon--completed {
+  background: var(--colour--status-success);
+}
+
+.hover-status-pill__icon--error {
+  background: var(--colour--status-danger);
+}
+
+.hover-status-pill__icon--neutral {
+  background: var(--text-colour--disabled);
+}
+
+/* ─── hover-data-table ───────────────────────────────────────────────────── */
+
+hover-data-table,
+.hover-data-table {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  font-size: var(--font-size--label);
+}
+
+.hover-data-table__head {
+  display: flex;
+  padding: 0 var(--spacing--sm);
+  border-bottom: var(--border-size--default) solid var(--border-colour--surface);
+}
+
+.hover-data-table__head-cell {
+  flex: 1;
+  padding: var(--spacing--xs) var(--spacing--sm);
+  font-size: var(--font-size--label);
+  color: var(--text-colour--secondary);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hover-data-table__body {
+  display: flex;
+  flex-direction: column;
+}
+
+.hover-data-table__row {
+  display: flex;
+  align-items: center;
+  border-top: var(--border-size--default) solid var(--border-colour--surface);
+  padding: var(--spacing--3xs) 0;
+  transition: background var(--motion-duration--fast)
+    var(--motion-easing--standard);
+}
+
+.hover-data-table__row[role="button"] {
+  cursor: pointer;
+}
+
+.hover-data-table__row[role="button"]:hover {
+  background: var(--background-colour--hover-subtle);
+}
+
+.hover-data-table__row[role="button"]:focus-visible {
+  outline: var(--border-size--default) solid var(--border-colour--active);
+  outline-offset: -1px;
+}
+
+.hover-data-table__cell {
+  flex: 1;
+  padding: var(--spacing--3xs) var(--spacing--sm);
+  font-size: var(--font-size--label);
+  color: var(--text-colour--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Empty and error states */
+.hover-data-table__empty {
+  padding: var(--spacing--4xl) var(--spacing--sm);
+  font-size: var(--font-size--label);
+  color: var(--text-colour--secondary);
+  text-align: center;
+}
+
+.hover-data-table__empty--error {
+  color: var(--status-colour--danger);
+}
+
+/* Skeleton loading rows */
+.hover-data-table__row--skeleton {
+  pointer-events: none;
+}
+
+.hover-data-table__skeleton {
+  display: block;
+  height: 10px;
+  border-radius: var(--radius--small);
+  background: var(--background-colour--interactive);
+  opacity: 0.4;
+  animation: hover-skeleton-pulse 1.4s ease-in-out infinite;
+  width: 70%;
+}
+
+@keyframes hover-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
