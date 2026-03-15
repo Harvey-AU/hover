@@ -30,7 +30,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--colour--white-25);
+  background: var(--background-colour--thumb-track);
   border-radius: var(--radius--small);
 }
 
@@ -82,7 +82,7 @@ body {
   flex-direction: column;
   gap: var(--spacing--3xl);
   border-radius: var(--radius--control);
-  padding-right: calc(var(--size--scrollbar));
+  padding-right: var(--size--scrollbar);
 }
 
 /* ─── Utilities ──────────────────────────────────────────────────────────── */
