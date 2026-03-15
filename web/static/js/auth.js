@@ -677,11 +677,12 @@ function updateAuthState(isAuthenticated) {
 }
 
 /**
- * Update user info in header elements
+ * Update user info in global-nav header elements.
+ * Uses nav-scoped selectors so that ID lookups stay within the nav context.
  */
 async function updateUserInfo() {
-  const userEmailElement = document.getElementById("userEmail");
-  const userAvatarElement = document.getElementById("userAvatar");
+  const userEmailElement = document.querySelector(".global-nav #userEmail");
+  const userAvatarElement = document.querySelector(".global-nav #userAvatar");
 
   if (!userEmailElement || !userAvatarElement) return;
 

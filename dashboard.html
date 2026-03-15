@@ -580,7 +580,7 @@
             ×
           </button>
         </div>
-        <form id="createOrgForm">
+        <form id="createOrgForm" bbb-form="create-organisation">
           <div class="bb-form-group">
             <label for="newOrgName">Organisation Name</label>
             <input
@@ -691,7 +691,7 @@
             await window.BB_NAV_READY;
           }
 
-          // Initialise organisation switcher and create modal
+          // Initialise organisation switcher and create org modal lifecycle
           if (session?.user) {
             await initOrgSwitcher();
             initCreateOrgModal();
@@ -785,17 +785,12 @@
             console.warn("Failed to refresh data binder:", err);
           }
         }
-        // Refresh quota display for new organisation
-        if (typeof fetchAndDisplayQuota === "function") {
-          try {
-            await fetchAndDisplayQuota();
-          } catch (err) {
-            console.warn("Failed to refresh quota display:", err);
-          }
-        }
+        // Quota refresh on org-switch is handled by bb-global-nav.js (initQuota).
       });
 
-      // Create Organisation Modal Handler
+      // Create Organisation Modal — lifecycle only.
+      // Form submission is handled via bbb-form="create-organisation" by bb-data-binder.js,
+      // which dispatches bb:org-switched on success.
       function initCreateOrgModal() {
         const modal = document.getElementById("createOrgModal");
         const form = document.getElementById("createOrgForm");
@@ -804,7 +799,6 @@
         const createBtn = document.getElementById("createOrgBtn");
         const closeBtn = document.getElementById("closeCreateOrgModal");
         const cancelBtn = document.getElementById("cancelCreateOrg");
-        const submitBtn = document.getElementById("submitCreateOrg");
 
         if (!modal || !form) return;
 
@@ -839,447 +833,21 @@
           }
         });
 
-        // Handle form submission
-        form?.addEventListener("submit", async (e) => {
-          e.preventDefault();
-
-          const name = nameInput.value.trim();
-          if (!name) {
-            errorDiv.textContent = "Organisation name is required";
-            errorDiv.style.display = "block";
-            return;
-          }
-
-          submitBtn.disabled = true;
-          submitBtn.textContent = "Creating...";
-          errorDiv.style.display = "none";
-
-          try {
-            const {
-              data: { session },
-            } = await window.supabase.auth.getSession();
-            if (!session) {
-              throw new Error("Not authenticated");
-            }
-
-            const response = await fetch("/v1/organisations", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${session.access_token}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ name }),
-            });
-
-            const data = await response.json();
-
-            if (response.ok) {
-              closeModal();
-
-              const newOrg = data.data?.organisation;
-
-              // Update shared org data
-              window.BB_ACTIVE_ORG = newOrg;
-              if (Array.isArray(window.BB_ORGANISATIONS)) {
-                window.BB_ORGANISATIONS.push(newOrg);
-              } else {
-                window.BB_ORGANISATIONS = [newOrg];
-              }
-
-              // Dispatch event for all listeners (nav, dashboard, etc.)
-              document.dispatchEvent(
-                new CustomEvent("bb:org-switched", {
-                  detail: { organisation: newOrg },
-                })
-              );
-
-              // Refresh the org switcher to show new org in list
-              await initOrgSwitcher();
-
-              // Refresh dashboard
-              if (window.refreshDashboard) {
-                window.refreshDashboard();
-              }
-
-              if (window.showNotification) {
-                window.showNotification(
-                  `Organisation "${name}" created`,
-                  "success"
-                );
-              }
-            } else {
-              errorDiv.textContent =
-                data.message || "Failed to create organisation";
-              errorDiv.style.display = "block";
-            }
-          } catch (err) {
-            console.error("Error creating organisation:", err);
-            errorDiv.textContent = "An error occurred. Please try again.";
-            errorDiv.style.display = "block";
-          } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = "Create";
-          }
-        });
-      }
-
-      // Notifications Dropdown and Modal Setup
-      function setupNotificationsModal() {
-        const container = document.getElementById("notificationsContainer");
-        const toggleBtn = document.getElementById("notificationsBtn");
-        const settingsBtn = document.getElementById("notificationsSettingsBtn");
-        const markAllReadBtn = document.getElementById("markAllReadBtn");
-
-        // Toggle dropdown
-        if (toggleBtn) {
-          toggleBtn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            const isOpen = container.classList.toggle("open");
-            if (isOpen) {
-              await loadNotifications();
-            }
-          });
-        }
-
-        // Settings button closes the dropdown
-        if (settingsBtn) {
-          settingsBtn.addEventListener("click", () => {
-            container.classList.remove("open");
-          });
-        }
-
-        // Mark all read button
-        if (markAllReadBtn) {
-          markAllReadBtn.addEventListener("click", async () => {
-            await markAllNotificationsRead();
-          });
-        }
-
-        // Close dropdown on outside click
-        document.addEventListener("click", (e) => {
-          if (!container.contains(e.target)) {
-            container.classList.remove("open");
+        // bb-data-binder.js handles the POST and dispatches bb:org-switched on success.
+        // This listener closes the modal and triggers any dashboard-level refresh.
+        form.addEventListener("bb-form-success", async () => {
+          closeModal();
+          if (window.refreshDashboard) {
+            window.refreshDashboard();
           }
         });
 
-        // Close on Escape key
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape") {
-            if (container.classList.contains("open")) {
-              container.classList.remove("open");
-            }
-          }
+        // Surface bbb-form errors to the modal error div
+        form.addEventListener("bb-form-error", (e) => {
+          errorDiv.textContent =
+            e.detail?.error?.message || "An error occurred. Please try again.";
+          errorDiv.style.display = "block";
         });
-
-        // Load notifications on page load for badge
-        loadNotificationCount();
-        // Subscribe to realtime updates
-        subscribeToNotifications();
-      }
-
-      function setupUserMenuDropdown() {
-        const dropdown = document.getElementById("userMenuDropdown");
-        const button = document.getElementById("userAvatar");
-        const orgName = document.getElementById("currentOrgName");
-        const userMenuOrgName = document.getElementById("userMenuOrgName");
-
-        if (!dropdown || !button) return;
-
-        const syncOrgName = () => {
-          if (!orgName || !userMenuOrgName) return;
-          const name = orgName.textContent?.trim();
-          if (name) {
-            userMenuOrgName.textContent = name;
-          }
-        };
-
-        syncOrgName();
-        if (orgName) {
-          const observer = new MutationObserver(syncOrgName);
-          observer.observe(orgName, {
-            childList: true,
-            characterData: true,
-            subtree: true,
-          });
-        }
-
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const isOpen = dropdown.classList.toggle("show");
-          button.setAttribute("aria-expanded", isOpen ? "true" : "false");
-        });
-
-        document.addEventListener("click", (event) => {
-          if (
-            !dropdown.contains(event.target) &&
-            !button.contains(event.target)
-          ) {
-            dropdown.classList.remove("show");
-            button.setAttribute("aria-expanded", "false");
-          }
-        });
-
-        document.addEventListener("keydown", (event) => {
-          if (event.key === "Escape") {
-            dropdown.classList.remove("show");
-            button.setAttribute("aria-expanded", "false");
-          }
-        });
-      }
-
-      // Subscribe to realtime notifications via postgres_changes
-      async function subscribeToNotifications() {
-        const orgId = window.BB_ACTIVE_ORG?.id;
-        if (!orgId || !window.supabase) {
-          // Retry once org is loaded
-          setTimeout(subscribeToNotifications, 1000);
-          return;
-        }
-
-        // Clean up existing subscription if any
-        if (window.notificationsChannel) {
-          window.supabase.removeChannel(window.notificationsChannel);
-        }
-
-        try {
-          // Subscribe to INSERT events on notifications table for this org
-          const channel = window.supabase
-            .channel(`notifications-changes:${orgId}`)
-            .on(
-              "postgres_changes",
-              {
-                event: "INSERT",
-                schema: "public",
-                table: "notifications",
-                filter: `organisation_id=eq.${orgId}`,
-              },
-              (payload) => {
-                console.log("[Realtime] Notification received:", payload);
-                // Small delay to ensure transaction is committed before querying
-                setTimeout(() => {
-                  loadNotificationCount();
-                  // Refresh dropdown if it's open
-                  const container = document.getElementById(
-                    "notificationsContainer"
-                  );
-                  if (container?.classList.contains("open")) {
-                    loadNotifications();
-                  }
-                }, 200);
-              }
-            )
-            .subscribe((status, err) => {
-              console.log("[Realtime] Subscription status:", status, err || "");
-              if (status === "SUBSCRIBED") {
-                console.log(
-                  "[Realtime] Listening for notifications on org:" + orgId
-                );
-              }
-            });
-
-          window.notificationsChannel = channel;
-        } catch (err) {
-          console.error("Failed to subscribe to notifications:", err);
-        }
-      }
-
-      // Load notification count for badge
-      async function loadNotificationCount() {
-        try {
-          const {
-            data: { session },
-          } = await window.supabase.auth.getSession();
-          if (!session) return;
-
-          const response = await fetch("/v1/notifications?limit=1", {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            updateNotificationBadge(data.unread_count);
-          }
-        } catch (err) {
-          console.error("Failed to load notification count:", err);
-        }
-      }
-
-      // Load full notifications list
-      async function loadNotifications() {
-        const list = document.getElementById("notificationsList");
-        if (!list) return;
-
-        try {
-          const {
-            data: { session },
-          } = await window.supabase.auth.getSession();
-          if (!session) {
-            list.innerHTML =
-              '<div class="bb-notifications-empty"><div>Please sign in</div></div>';
-            return;
-          }
-
-          const response = await fetch("/v1/notifications?limit=10", {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          });
-
-          if (!response.ok) {
-            throw new Error("Failed to fetch notifications");
-          }
-
-          const data = await response.json();
-          updateNotificationBadge(data.unread_count);
-          renderNotifications(data.notifications);
-        } catch (err) {
-          console.error("Failed to load notifications:", err);
-          list.innerHTML =
-            '<div class="bb-notifications-empty"><div>Failed to load</div></div>';
-        }
-      }
-
-      // Render notifications list
-      function renderNotifications(notifications) {
-        const list = document.getElementById("notificationsList");
-        if (!list) return;
-
-        if (!notifications || notifications.length === 0) {
-          list.innerHTML = `
-            <div class="bb-notifications-empty">
-              <div class="bb-notifications-empty-icon">🔔</div>
-              <div>No notifications yet</div>
-            </div>
-          `;
-          return;
-        }
-
-        const typeIcons = {
-          job_completed: "✅",
-          job_failed: "❌",
-          job_started: "🚀",
-          system: "ℹ️",
-        };
-
-        list.innerHTML = notifications
-          .map((n) => {
-            const isUnread = !n.read_at;
-            const icon = typeIcons[n.type] || "📬";
-            const time = formatRelativeTime(n.created_at);
-
-            return `
-            <div class="bb-notification-item ${isUnread ? "unread" : ""}"
-                 data-id="${escapeHtml(n.id)}"
-                 data-link="${escapeHtml(n.link || "")}">
-              <div class="bb-notification-item-icon">${icon}</div>
-              <div class="bb-notification-item-content">
-                <div class="bb-notification-item-subject">${escapeHtml(n.subject)}</div>
-                <div class="bb-notification-item-preview">${escapeHtml(n.preview)}</div>
-                <div class="bb-notification-item-time">${time}</div>
-              </div>
-            </div>
-          `;
-          })
-          .join("");
-
-        // Use event delegation for click handling (avoids XSS from inline onclick)
-        list.onclick = (e) => {
-          const item = e.target.closest(".bb-notification-item");
-          if (item) {
-            handleNotificationClick(item.dataset.id, item.dataset.link);
-          }
-        };
-      }
-
-      // Handle notification click
-      async function handleNotificationClick(id, link) {
-        // Mark as read
-        try {
-          const {
-            data: { session },
-          } = await window.supabase.auth.getSession();
-          if (session) {
-            await fetch(`/v1/notifications/${id}/read`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${session.access_token}` },
-            });
-            // Update badge
-            loadNotificationCount();
-          }
-        } catch (err) {
-          console.error("Failed to mark notification read:", err);
-        }
-
-        // Navigate if there's a link
-        if (link) {
-          document
-            .getElementById("notificationsContainer")
-            .classList.remove("open");
-          // Handle relative links
-          if (link.startsWith("/")) {
-            window.location.href = link;
-          } else {
-            window.open(link, "_blank");
-          }
-        }
-      }
-
-      // Mark all notifications as read
-      async function markAllNotificationsRead() {
-        try {
-          const {
-            data: { session },
-          } = await window.supabase.auth.getSession();
-          if (!session) return;
-
-          const response = await fetch("/v1/notifications/read-all", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          });
-
-          if (response.ok) {
-            updateNotificationBadge(0);
-            // Remove unread styling from visible notifications
-            document
-              .querySelectorAll(".bb-notification-item.unread")
-              .forEach((el) => {
-                el.classList.remove("unread");
-              });
-          }
-        } catch (err) {
-          console.error("Failed to mark all read:", err);
-        }
-      }
-
-      // Update badge count
-      function updateNotificationBadge(count) {
-        const badge = document.getElementById("notificationsBadge");
-        if (badge) {
-          badge.textContent = count > 9 ? "9+" : count || "";
-          badge.dataset.count = count || 0;
-        }
-      }
-
-      // Format relative time
-      function formatRelativeTime(dateStr) {
-        const date = new Date(dateStr);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-        const diffDays = Math.floor(diffMs / 86400000);
-
-        if (diffMins < 1) return "just now";
-        if (diffMins < 60) return `${diffMins}m ago`;
-        if (diffHours < 24) return `${diffHours}h ago`;
-        if (diffDays < 7) return `${diffDays}d ago`;
-        return date.toLocaleDateString();
-      }
-
-      // Escape HTML to prevent XSS
-      function escapeHtml(text) {
-        if (!text) return "";
-        const div = document.createElement("div");
-        div.textContent = text;
-        return div.innerHTML;
       }
 
       // Update empty state visibility based on connections
@@ -1324,133 +892,8 @@
       window.showWebflowError = (msg) =>
         window.showIntegrationFeedback("webflow", "error", msg);
 
-      // ========================================
-      // Quota Display
-      // ========================================
-
-      // Format time remaining until reset
-      function formatTimeUntilReset(resetTime) {
-        const now = new Date();
-        const reset = new Date(resetTime);
-        const diffMs = reset - now;
-
-        if (diffMs <= 0) return "Resets soon";
-
-        const hours = Math.floor(diffMs / (1000 * 60 * 60));
-        const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-        if (hours > 0) {
-          return `Resets in ${hours}h ${minutes}m`;
-        }
-        return `Resets in ${minutes}m`;
-      }
-
-      // Fetch and display quota information
-      async function fetchAndDisplayQuota() {
-        const quotaDisplay = document.getElementById("quotaDisplay");
-        const quotaPlan = document.getElementById("quotaPlan");
-        const quotaUsage = document.getElementById("quotaUsage");
-        const quotaReset = document.getElementById("quotaReset");
-
-        if (!quotaDisplay || !window.supabase) return;
-
-        try {
-          // Get auth token from Supabase session
-          const session = await window.supabase.auth.getSession();
-          const token = session?.data?.session?.access_token;
-
-          if (!token) {
-            return;
-          }
-
-          const response = await fetch("/v1/usage", {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          });
-
-          if (!response.ok) {
-            console.warn("Failed to fetch quota:", response.status);
-            return;
-          }
-
-          const data = await response.json();
-          const usage = data.data?.usage;
-
-          if (!usage) return;
-
-          // Update display
-          quotaPlan.textContent = usage.plan_display_name || "Free";
-          quotaUsage.textContent = `${usage.daily_used.toLocaleString()}/${usage.daily_limit.toLocaleString()}`;
-          quotaResetTime = usage.resets_at;
-          updateResetCountdown();
-
-          // Update styling based on usage percentage
-          quotaDisplay.classList.remove("quota-warning", "quota-exhausted");
-          if (usage.usage_percentage >= 100) {
-            quotaDisplay.classList.add("quota-exhausted");
-          } else if (usage.usage_percentage >= 80) {
-            quotaDisplay.classList.add("quota-warning");
-          }
-
-          // Show the display
-          quotaDisplay.style.display = "flex";
-        } catch (err) {
-          console.warn("Error fetching quota:", err);
-        }
-      }
-
-      // Fetch quota data periodically and update countdown locally
-      let quotaResetInterval;
-      let quotaResetTime = null;
-      let countdownInterval;
-
-      function updateResetCountdown() {
-        if (!quotaResetTime) return;
-        const quotaReset = document.getElementById("quotaReset");
-        if (quotaReset) {
-          quotaReset.textContent = formatTimeUntilReset(quotaResetTime);
-        }
-      }
-
-      function startQuotaResetCountdown() {
-        if (quotaResetInterval) clearInterval(quotaResetInterval);
-        if (countdownInterval) clearInterval(countdownInterval);
-        quotaResetInterval = setInterval(fetchAndDisplayQuota, 60000);
-        countdownInterval = setInterval(updateResetCountdown, 1000);
-      }
-
-      // Clean up interval on page unload to prevent memory leaks
-      window.addEventListener("beforeunload", () => {
-        if (quotaResetInterval) clearInterval(quotaResetInterval);
-        if (countdownInterval) clearInterval(countdownInterval);
-      });
-
-      // Listen for Supabase auth state change
-      if (window.supabase) {
-        window.supabase.auth.onAuthStateChange((event, session) => {
-          if (session) {
-            fetchAndDisplayQuota();
-            startQuotaResetCountdown();
-          } else {
-            const quotaDisplay = document.getElementById("quotaDisplay");
-            if (quotaDisplay) quotaDisplay.style.display = "none";
-            if (quotaResetInterval) clearInterval(quotaResetInterval);
-            if (countdownInterval) clearInterval(countdownInterval);
-          }
-        });
-      }
-
-      // Also try after a delay to catch already-logged-in users
-      setTimeout(async () => {
-        if (window.supabase) {
-          const session = await window.supabase.auth.getSession();
-          if (session?.data?.session) {
-            fetchAndDisplayQuota();
-            startQuotaResetCountdown();
-          }
-        }
-      }, 1000);
+      // Quota display is managed by bb-global-nav.js (initQuota).
+      // Notifications are managed by bb-global-nav.js (initNavNotifications).
     </script>
   </body>
 </html>

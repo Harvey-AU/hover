@@ -88,6 +88,7 @@
                 </div>
 
                 <div class="bb-dropdown" id="userMenu">
+                  <!-- Populated by auth.js updateUserInfo() via .global-nav scoped selectors -->
                   <button
                     type="button"
                     class="user-avatar"

@@ -685,6 +685,24 @@ class BBDataBinder {
       form.reset();
     }
 
+    // Action-specific post-submit side-effects
+    if (action === "create-organisation") {
+      const newOrg = result?.data?.organisation;
+      if (newOrg) {
+        window.BB_ACTIVE_ORG = newOrg;
+        if (Array.isArray(window.BB_ORGANISATIONS)) {
+          window.BB_ORGANISATIONS.push(newOrg);
+        } else {
+          window.BB_ORGANISATIONS = [newOrg];
+        }
+        document.dispatchEvent(
+          new CustomEvent("bb:org-switched", {
+            detail: { organisation: newOrg },
+          })
+        );
+      }
+    }
+
     // Show success message
     this.showFormMessage(
       form,
