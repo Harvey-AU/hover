@@ -811,11 +811,11 @@ func buildTaskQuery(jobID string, params TaskQueryParams) TaskQueryBuilder {
 	// Uses second_response_time when available (cache-warmed load), falls back to response_time.
 	switch params.PerformanceFilter {
 	case "slow":
-		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 2000`
-		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 2000`
+		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 1500`
+		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 1500`
 	case "very_slow":
-		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 3000`
-		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 3000`
+		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 4000`
+		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 4000`
 	}
 
 	// Add path filter if provided (case-insensitive partial match)
