@@ -124,7 +124,9 @@ async function refreshStats() {
       { headers: await authHeaders() }
     );
     if (!res.ok) return;
-    const { stats } = await res.json();
+    const json = await res.json();
+    // API wraps response: { status, data: { stats: {...} } } or { stats: {...} }
+    const stats = json?.data?.stats ?? json?.stats;
     if (!stats) return;
 
     setStatCard("stats.total_jobs", formatCount(stats.total_jobs));
