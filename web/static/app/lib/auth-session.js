@@ -90,13 +90,14 @@ export async function isAuthenticated() {
 
 /**
  * Registers a listener for auth state changes.
- * Returns an unsubscribe function.
+ * Returns a plain unsubscribe function — call it to stop listening.
  *
  * @param {(event: AuthChangeEvent, session: Session|null) => void} callback
- * @returns {{ data: { subscription: { unsubscribe: () => void } } }}
+ * @returns {() => void} unsubscribe
  */
 export function onAuthStateChange(callback) {
-  return authClient().onAuthStateChange(callback);
+  const { data } = authClient().onAuthStateChange(callback);
+  return () => data.subscription.unsubscribe();
 }
 
 /**
