@@ -133,156 +133,178 @@
     <p class="section-title">Formatter output</p>
     <div class="formatters-grid" id="formatters"></div>
 
+    <script>
+      // Catch module load failures and surface them visibly.
+      window.addEventListener("error", (e) => {
+        if (e.filename?.includes("/app/lib/")) {
+          const list = document.getElementById("checks");
+          const item = document.createElement("li");
+          item.className = "check-item";
+          item.dataset.status = "fail";
+          item.innerHTML = `<span class="check-badge">FAIL</span><div>Module load error<div class="check-detail">${e.message} — ${e.filename}</div></div>`;
+          list?.appendChild(item);
+        }
+      });
+    </script>
     <script type="module">
-      import { isConfigured, supabaseUrl } from "/app/lib/config.js";
-      import {
-        formatDate,
-        formatDateTime,
-        formatRelativeTime,
-        formatDuration,
-        formatCount,
-        formatPercent,
-        formatStatus,
-        statusCategory,
-        formatUrl,
-      } from "/app/lib/formatters.js";
-      import { ApiError } from "/app/lib/api-client.js";
-      import { getSession } from "/app/lib/auth-session.js";
+        import { isConfigured, supabaseUrl } from "/app/lib/config.js";
+        import {
+          formatDate,
+          formatDateTime,
+          formatRelativeTime,
+          formatDuration,
+          formatCount,
+          formatPercent,
+          formatStatus,
+          statusCategory,
+          formatUrl,
+        } from "/app/lib/formatters.js";
+        import { ApiError } from "/app/lib/api-client.js";
+        import { getSession } from "/app/lib/auth-session.js";
 
-      // ── Checks ──────────────────────────────────────────────────────────────
+        // ── Checks ──────────────────────────────────────────────────────────────
 
-      const checks = [];
+        const checks = [];
 
-      function pass(label, detail = "") {
-        checks.push({ status: "pass", label, detail });
-      }
-      function fail(label, detail = "") {
-        checks.push({ status: "fail", label, detail });
-      }
-      function warn(label, detail = "") {
-        checks.push({ status: "warn", label, detail });
-      }
-
-      // 1. ES module loaded
-      pass("ES module loaded", "type=module script executed without errors");
-
-      // 2. No bb-bootstrap.js
-      if (typeof window.BB_APP?.whenReady === "function") {
-        warn(
-          "bb-bootstrap.js present",
-          "BB_APP.whenReady is defined — page loaded legacy scripts too"
-        );
-      } else {
-        pass("No bb-bootstrap dependency", "BB_APP.whenReady is not defined");
-      }
-
-      // 3. No core.js
-      if (window.BB_APP?.coreReady) {
-        warn(
-          "core.js present",
-          "BB_APP.coreReady is defined — page loaded legacy scripts too"
-        );
-      } else {
-        pass("No core.js dependency", "BB_APP.coreReady is not defined");
-      }
-
-      // 4. Config
-      if (isConfigured()) {
-        pass(
-          "Config loaded",
-          `supabaseUrl: ${supabaseUrl.replace(/https?:\/\//, "").slice(0, 40)}…`
-        );
-      } else {
-        fail(
-          "Config missing",
-          "window.BBB_CONFIG not set — ensure /config.js loaded"
-        );
-      }
-
-      // 5. Supabase SDK
-      if (window.supabase?.createClient) {
-        pass("Supabase SDK present", "window.supabase.createClient available");
-      } else {
-        fail("Supabase SDK missing", "window.supabase not found");
-      }
-
-      // 6. auth-session wrappers reachable (just import, don't call getSession
-      //    since supabase client is not yet initialised on this page)
-      try {
-        if (typeof getSession === "function") {
-          pass("auth-session imported", "getSession is a function");
-        } else {
-          fail("auth-session import failed", "getSession is not a function");
+        function pass(label, detail = "") {
+          checks.push({ status: "pass", label, detail });
         }
-      } catch (e) {
-        fail("auth-session import error", String(e));
-      }
-
-      // 7. ApiError class
-      try {
-        const e = new ApiError("test", 404, { message: "not found" });
-        if (e instanceof Error && e.status === 404) {
-          pass("ApiError class", "instanceof Error, status=404 ✓");
-        } else {
-          fail("ApiError class", "unexpected shape");
+        function fail(label, detail = "") {
+          checks.push({ status: "fail", label, detail });
         }
-      } catch (e) {
-        fail("ApiError class", String(e));
-      }
+        function warn(label, detail = "") {
+          checks.push({ status: "warn", label, detail });
+        }
 
-      // ── Render checks ────────────────────────────────────────────────────────
+        // 1. ES module loaded
+        pass("ES module loaded", "type=module script executed without errors");
 
-      const list = document.getElementById("checks");
-      const badges = { pass: "PASS", fail: "FAIL", warn: "WARN" };
-      for (const c of checks) {
-        const li = document.createElement("li");
-        li.className = "check-item";
-        li.dataset.status = c.status;
-        li.innerHTML = `
-          <span class="check-badge">${badges[c.status]}</span>
-          <div>
-            ${c.label}
-            ${c.detail ? `<div class="check-detail">${c.detail}</div>` : ""}
-          </div>
-        `;
-        list.appendChild(li);
-      }
+        // 2. No bb-bootstrap.js
+        if (typeof window.BB_APP?.whenReady === "function") {
+          warn(
+            "bb-bootstrap.js present",
+            "BB_APP.whenReady is defined — page loaded legacy scripts too"
+          );
+        } else {
+          pass("No bb-bootstrap dependency", "BB_APP.whenReady is not defined");
+        }
 
-      // ── Formatter demos ──────────────────────────────────────────────────────
+        // 3. No core.js
+        if (window.BB_APP?.coreReady) {
+          warn(
+            "core.js present",
+            "BB_APP.coreReady is defined — page loaded legacy scripts too"
+          );
+        } else {
+          pass("No core.js dependency", "BB_APP.coreReady is not defined");
+        }
 
-      const fmts = [
-        ["formatDate(now)", formatDate(new Date().toISOString())],
-        ["formatDateTime(now)", formatDateTime(new Date().toISOString())],
-        [
-          "formatRelativeTime(-1h)",
-          formatRelativeTime(new Date(Date.now() - 3600000).toISOString()),
-        ],
-        [
-          "formatRelativeTime(+5m)",
-          formatRelativeTime(new Date(Date.now() + 300000).toISOString()),
-        ],
-        ["formatDuration(90000)", formatDuration(90000)],
-        ["formatDuration(3661000)", formatDuration(3661000)],
-        ["formatDuration(500)", formatDuration(500)],
-        ["formatCount(1234567)", formatCount(1234567)],
-        ["formatPercent(0.856)", formatPercent(0.856, 1)],
-        ["formatStatus('completed')", formatStatus("completed")],
-        ["formatStatus('running')", formatStatus("running")],
-        ["statusCategory('failed')", statusCategory("failed")],
-        [
-          "formatUrl('https://example.com/')",
-          formatUrl("https://example.com/"),
-        ],
-        ["formatDate(null)", formatDate(null)],
-        ["formatDuration(null)", formatDuration(null)],
-      ];
+        // 4. Config
+        if (isConfigured()) {
+          pass(
+            "Config loaded",
+            `supabaseUrl: ${supabaseUrl.replace(/https?:\/\//, "").slice(0, 40)}…`
+          );
+        } else {
+          fail(
+            "Config missing",
+            "window.BBB_CONFIG not set — ensure /config.js loaded"
+          );
+        }
 
-      const grid = document.getElementById("formatters");
-      for (const [label, value] of fmts) {
-        grid.insertAdjacentHTML(
-          "beforeend",
-          `<span class="fmt-label">${label}</span><span class="fmt-value">${value}</span>`
-        );
+        // 5. Supabase SDK
+        if (window.supabase?.createClient) {
+          pass("Supabase SDK present", "window.supabase.createClient available");
+        } else {
+          fail("Supabase SDK missing", "window.supabase not found");
+        }
+
+        // 6. auth-session wrappers reachable (just import, don't call getSession
+        //    since supabase client is not yet initialised on this page)
+        try {
+          if (typeof getSession === "function") {
+            pass("auth-session imported", "getSession is a function");
+          } else {
+            fail("auth-session import failed", "getSession is not a function");
+          }
+        } catch (e) {
+          fail("auth-session import error", String(e));
+        }
+
+        // 7. ApiError class
+        try {
+          const e = new ApiError("test", 404, { message: "not found" });
+          if (e instanceof Error && e.status === 404) {
+            pass("ApiError class", "instanceof Error, status=404 ✓");
+          } else {
+            fail("ApiError class", "unexpected shape");
+          }
+        } catch (e) {
+          fail("ApiError class", String(e));
+        }
+
+        // ── Render checks ────────────────────────────────────────────────────────
+
+        const list = document.getElementById("checks");
+        const badges = { pass: "PASS", fail: "FAIL", warn: "WARN" };
+        for (const c of checks) {
+          const li = document.createElement("li");
+          li.className = "check-item";
+          li.dataset.status = c.status;
+          li.innerHTML = `
+            <span class="check-badge">${badges[c.status]}</span>
+            <div>
+              ${c.label}
+              ${c.detail ? `<div class="check-detail">${c.detail}</div>` : ""}
+            </div>
+          `;
+          list.appendChild(li);
+        }
+
+        // ── Formatter demos ──────────────────────────────────────────────────────
+
+        const fmts = [
+          ["formatDate(now)", formatDate(new Date().toISOString())],
+          ["formatDateTime(now)", formatDateTime(new Date().toISOString())],
+          [
+            "formatRelativeTime(-1h)",
+            formatRelativeTime(new Date(Date.now() - 3600000).toISOString()),
+          ],
+          [
+            "formatRelativeTime(+5m)",
+            formatRelativeTime(new Date(Date.now() + 300000).toISOString()),
+          ],
+          ["formatDuration(90000)", formatDuration(90000)],
+          ["formatDuration(3661000)", formatDuration(3661000)],
+          ["formatDuration(500)", formatDuration(500)],
+          ["formatCount(1234567)", formatCount(1234567)],
+          ["formatPercent(0.856)", formatPercent(0.856, 1)],
+          ["formatStatus('completed')", formatStatus("completed")],
+          ["formatStatus('running')", formatStatus("running")],
+          ["statusCategory('failed')", statusCategory("failed")],
+          [
+            "formatUrl('https://example.com/')",
+            formatUrl("https://example.com/"),
+          ],
+          ["formatDate(null)", formatDate(null)],
+          ["formatDuration(null)", formatDuration(null)],
+        ];
+
+        const grid = document.getElementById("formatters");
+        for (const [label, value] of fmts) {
+          grid.insertAdjacentHTML(
+            "beforeend",
+            `<span class="fmt-label">${label}</span><span class="fmt-value">${value}</span>`
+          );
+        }
+      } catch (err) {
+        // Surface import/evaluation failures visibly rather than silently aborting.
+        const list = document.getElementById("checks");
+        const item = document.createElement("li");
+        item.className = "check-item";
+        item.dataset.status = "fail";
+        item.innerHTML = `<span class="check-badge">FAIL</span><div>Module import error<div class="check-detail">${String(err)}</div></div>`;
+        list?.appendChild(item);
       }
     </script>
   </body>
