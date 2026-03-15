@@ -49,8 +49,24 @@ let currentRange = "today";
  * Called once auth and org state are confirmed ready.
  */
 async function init() {
-  // Register components (safe to call multiple times — browser deduplicates)
-  // Components are defined in their own modules via customElements.define().
+  // Suppress legacy binder-inserted job cards so our hover-data-table owns
+  // the jobs list. The binder clones bbb-template="job" elements and inserts
+  // them as siblings — we hide them as they arrive.
+  const jobsList = document.querySelector(".bb-jobs-list");
+  if (jobsList) {
+    new MutationObserver((mutations) => {
+      mutations.forEach((m) => {
+        m.addedNodes.forEach((node) => {
+          if (
+            node instanceof HTMLElement &&
+            node.classList.contains("bb-job-card")
+          ) {
+            node.style.display = "none";
+          }
+        });
+      });
+    }).observe(jobsList, { childList: true });
+  }
 
   // Wire date range selector
   const dateRange = document.getElementById("dateRange");
@@ -158,10 +174,12 @@ async function refreshJobs() {
 }
 
 function renderJobsTable(container, jobs) {
-  // Remove legacy bbb-template cards — replaced by hover-data-table
+  // Hide legacy bbb-template cards — the binder may re-insert clones but
+  // they will also be hidden because they inherit style="display:none" from
+  // the template element.
   container
     .querySelectorAll("[bbb-template='job']")
-    .forEach((el) => el.remove());
+    .forEach((el) => (el.style.display = "none"));
 
   // Remove empty state if present
   container
