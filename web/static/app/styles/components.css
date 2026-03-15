@@ -1,0 +1,121 @@
+/* ─── Component styles — Hover app ───────────────────────────────────────────
+ *
+ * Depends on tokens.css being loaded first.
+ * Contains styles for all hover-* Web Components.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* ─── hover-toast ────────────────────────────────────────────────────────── */
+
+.hover-toast-container {
+  position: fixed;
+  bottom: var(--spacing--6xl);
+  right: var(--spacing--6xl);
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing--xl);
+  pointer-events: none;
+  max-width: 360px;
+  width: calc(100vw - var(--spacing--6xl) * 2);
+}
+
+.hover-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing--xl);
+  padding: var(--spacing--4xl) var(--spacing--4xl);
+  border-radius: var(--radius--control);
+  border: var(--border-size--default) solid var(--border-colour--default);
+  background: var(--background-colour--surface);
+  box-shadow: var(--shadow--overlay);
+  font-family: var(--font-family--primary);
+  font-size: var(--font-size--body);
+  line-height: var(--line-height--body);
+  color: var(--text-colour--primary);
+  pointer-events: all;
+  opacity: 0;
+  transform: translateY(var(--spacing--xl));
+  transition:
+    opacity var(--motion-duration--normal) var(--motion-easing--standard),
+    transform var(--motion-duration--normal) var(--motion-easing--standard);
+}
+
+.hover-toast--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hover-toast--leaving {
+  opacity: 0;
+  transform: translateY(var(--spacing--xl));
+}
+
+/* Variant: success */
+.hover-toast--success {
+  border-color: var(--status-colour--success);
+}
+
+.hover-toast--success .hover-toast__icon {
+  color: var(--status-colour--success);
+}
+
+/* Variant: error */
+.hover-toast--error {
+  border-color: var(--status-colour--danger);
+}
+
+.hover-toast--error .hover-toast__icon {
+  color: var(--status-colour--danger);
+}
+
+/* Variant: warning */
+.hover-toast--warning {
+  border-color: var(--status-colour--warning);
+}
+
+.hover-toast--warning .hover-toast__icon {
+  color: var(--status-colour--warning);
+}
+
+/* Variant: info */
+.hover-toast--info {
+  border-color: var(--border-colour--active);
+}
+
+.hover-toast--info .hover-toast__icon {
+  color: var(--colour--brand-primary);
+}
+
+.hover-toast__icon {
+  font-size: var(--font-size--body);
+  font-weight: 700;
+  line-height: var(--line-height--body);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.hover-toast__message {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size--body);
+  color: var(--text-colour--primary);
+}
+
+.hover-toast__close {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-size: var(--font-size--display);
+  line-height: 1;
+  color: var(--text-colour--secondary);
+  flex-shrink: 0;
+  transition: color var(--motion-duration--fast) var(--motion-easing--standard);
+  align-self: flex-start;
+}
+
+.hover-toast__close:hover {
+  color: var(--text-colour--primary);
+}
