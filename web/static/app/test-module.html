@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Phase 0 Module Test — Hover</title>
+
+    <!--
+      Phase 0 loading pattern:
+      1. /config.js    — sets window.BBB_CONFIG (server-rendered)
+      2. Supabase SDK  — sets window.supabase (CDN, pre-module)
+      3. module entry  — imports from app/lib/* via ES module
+
+      No bb-bootstrap.js. No core.js. No window.BB_APP.whenReady().
+    -->
+    <script src="/config.js"></script>
+    <script
+      src="https://unpkg.com/@supabase/supabase-js@2.80.0/dist/umd/supabase.js"
+      integrity="sha384-i0m00Vn1ERlKXxNWSa87g6OUB7eLxpmsQoNF68IHuQVtfJTebIca7XhFsYt9h/gN"
+      crossorigin="anonymous"
+    ></script>
+
+    <link rel="stylesheet" href="/app/styles/tokens.css" />
+    <link rel="stylesheet" href="/app/styles/base.css" />
+
+    <style>
+      body {
+        padding: 32px;
+        max-width: 680px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        font-size: var(--font-size--display);
+        font-weight: 700;
+        color: var(--colour--brand-primary);
+        margin: 0 0 8px;
+      }
+
+      .subtitle {
+        font-size: var(--font-size--caption);
+        color: var(--text-colour--secondary);
+        margin: 0 0 32px;
+      }
+
+      .check-list {
+        list-style: none;
+        padding: 0;
+        margin: 0 0 32px;
+        display: flex;
+        flex-direction: column;
+        gap: var(--spacing--3xl);
+      }
+
+      .check-item {
+        display: flex;
+        align-items: baseline;
+        gap: var(--spacing--xl);
+        font-size: var(--font-size--body);
+        color: var(--text-colour--secondary);
+      }
+
+      .check-item[data-status="pass"] {
+        color: var(--status-colour--success);
+      }
+
+      .check-item[data-status="fail"] {
+        color: var(--status-colour--danger);
+      }
+
+      .check-item[data-status="warn"] {
+        color: var(--status-colour--warning);
+      }
+
+      .check-badge {
+        font-family: var(--font-family--mono);
+        font-size: var(--font-size--label);
+        font-weight: 700;
+        min-width: 40px;
+        flex-shrink: 0;
+      }
+
+      .check-detail {
+        font-family: var(--font-family--mono);
+        font-size: var(--font-size--label);
+        color: var(--text-colour--secondary);
+        margin-top: 4px;
+      }
+
+      .section-title {
+        font-size: var(--font-size--title);
+        font-weight: 700;
+        color: var(--text-colour--heading);
+        margin: 0 0 12px;
+        border-bottom: var(--section-border);
+        padding-bottom: 8px;
+      }
+
+      .formatters-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing--xl);
+        font-size: var(--font-size--label);
+        font-family: var(--font-family--mono);
+        color: var(--text-colour--secondary);
+        margin-bottom: 32px;
+      }
+
+      .fmt-row {
+        display: contents;
+      }
+
+      .fmt-label {
+        color: var(--text-colour--secondary);
+      }
+
+      .fmt-value {
+        color: var(--colour--brand-primary);
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Phase 0 — Module validation</h1>
+    <p class="subtitle">
+      Confirms the ES module architecture loads correctly with no
+      bb-bootstrap.js, core.js, or BB_APP.whenReady() chain.
+    </p>
+
+    <p class="section-title">Module checks</p>
+    <ul class="check-list" id="checks"></ul>
+
+    <p class="section-title">Formatter output</p>
+    <div class="formatters-grid" id="formatters"></div>
+
+    <script type="module">
+      import { isConfigured, supabaseUrl } from "/app/lib/config.js";
+      import {
+        formatDate,
+        formatDateTime,
+        formatRelativeTime,
+        formatDuration,
+        formatCount,
+        formatPercent,
+        formatStatus,
+        statusCategory,
+        formatUrl,
+      } from "/app/lib/formatters.js";
+      import { ApiError } from "/app/lib/api-client.js";
+      import { getSession } from "/app/lib/auth-session.js";
+
+      // ── Checks ──────────────────────────────────────────────────────────────
+
+      const checks = [];
+
+      function pass(label, detail = "") {
+        checks.push({ status: "pass", label, detail });
+      }
+      function fail(label, detail = "") {
+        checks.push({ status: "fail", label, detail });
+      }
+      function warn(label, detail = "") {
+        checks.push({ status: "warn", label, detail });
+      }
+
+      // 1. ES module loaded
+      pass("ES module loaded", "type=module script executed without errors");
+
+      // 2. No bb-bootstrap.js
+      if (typeof window.BB_APP?.whenReady === "function") {
+        warn(
+          "bb-bootstrap.js present",
+          "BB_APP.whenReady is defined — page loaded legacy scripts too"
+        );
+      } else {
+        pass("No bb-bootstrap dependency", "BB_APP.whenReady is not defined");
+      }
+
+      // 3. No core.js
+      if (window.BB_APP?.coreReady) {
+        warn(
+          "core.js present",
+          "BB_APP.coreReady is defined — page loaded legacy scripts too"
+        );
+      } else {
+        pass("No core.js dependency", "BB_APP.coreReady is not defined");
+      }
+
+      // 4. Config
+      if (isConfigured()) {
+        pass(
+          "Config loaded",
+          `supabaseUrl: ${supabaseUrl.replace(/https?:\/\//, "").slice(0, 40)}…`
+        );
+      } else {
+        fail(
+          "Config missing",
+          "window.BBB_CONFIG not set — ensure /config.js loaded"
+        );
+      }
+
+      // 5. Supabase SDK
+      if (window.supabase?.createClient) {
+        pass("Supabase SDK present", "window.supabase.createClient available");
+      } else {
+        fail("Supabase SDK missing", "window.supabase not found");
+      }
+
+      // 6. auth-session wrappers reachable (just import, don't call getSession
+      //    since supabase client is not yet initialised on this page)
+      try {
+        if (typeof getSession === "function") {
+          pass("auth-session imported", "getSession is a function");
+        } else {
+          fail("auth-session import failed", "getSession is not a function");
+        }
+      } catch (e) {
+        fail("auth-session import error", String(e));
+      }
+
+      // 7. ApiError class
+      try {
+        const e = new ApiError("test", 404, { message: "not found" });
+        if (e instanceof Error && e.status === 404) {
+          pass("ApiError class", "instanceof Error, status=404 ✓");
+        } else {
+          fail("ApiError class", "unexpected shape");
+        }
+      } catch (e) {
+        fail("ApiError class", String(e));
+      }
+
+      // ── Render checks ────────────────────────────────────────────────────────
+
+      const list = document.getElementById("checks");
+      const badges = { pass: "PASS", fail: "FAIL", warn: "WARN" };
+      for (const c of checks) {
+        const li = document.createElement("li");
+        li.className = "check-item";
+        li.dataset.status = c.status;
+        li.innerHTML = `
+          <span class="check-badge">${badges[c.status]}</span>
+          <span>
+            ${c.label}
+            ${c.detail ? `<div class="check-detail">${c.detail}</div>` : ""}
+          </span>
+        `;
+        list.appendChild(li);
+      }
+
+      // ── Formatter demos ──────────────────────────────────────────────────────
+
+      const fmts = [
+        ["formatDate(now)", formatDate(new Date().toISOString())],
+        ["formatDateTime(now)", formatDateTime(new Date().toISOString())],
+        [
+          "formatRelativeTime(-1h)",
+          formatRelativeTime(new Date(Date.now() - 3600000).toISOString()),
+        ],
+        [
+          "formatRelativeTime(+5m)",
+          formatRelativeTime(new Date(Date.now() + 300000).toISOString()),
+        ],
+        ["formatDuration(90000)", formatDuration(90000)],
+        ["formatDuration(3661000)", formatDuration(3661000)],
+        ["formatDuration(500)", formatDuration(500)],
+        ["formatCount(1234567)", formatCount(1234567)],
+        ["formatPercent(0.856)", formatPercent(0.856, 1)],
+        ["formatStatus('completed')", formatStatus("completed")],
+        ["formatStatus('running')", formatStatus("running")],
+        ["statusCategory('failed')", statusCategory("failed")],
+        [
+          "formatUrl('https://example.com/')",
+          formatUrl("https://example.com/"),
+        ],
+        ["formatDate(null)", formatDate(null)],
+        ["formatDuration(null)", formatDuration(null)],
+      ];
+
+      const grid = document.getElementById("formatters");
+      for (const [label, value] of fmts) {
+        grid.innerHTML += `
+          <span class="fmt-label">${label}</span>
+          <span class="fmt-value">${value}</span>
+        `;
+      }
+    </script>
+  </body>
+</html>
