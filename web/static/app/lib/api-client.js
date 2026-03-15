@@ -55,21 +55,61 @@ async function getBearerToken() {
 }
 
 /**
+ * Returns true when the body should have Content-Type: application/json
+ * set automatically. FormData, Blob, URLSearchParams, and ArrayBuffer all
+ * have their own content type and must not be stringified.
+ * @param {unknown} body
+ * @returns {boolean}
+ */
+function isJsonBody(body) {
+  return (
+    body != null &&
+    !(body instanceof FormData) &&
+    !(body instanceof Blob) &&
+    !(body instanceof URLSearchParams) &&
+    !(body instanceof ArrayBuffer) &&
+    !ArrayBuffer.isView(body)
+  );
+}
+
+/**
+ * Serialises a body value for the fetch call.
+ * Passes FormData/Blob/URLSearchParams/ArrayBuffer through unchanged.
+ * Stringifies everything else.
+ * @param {unknown} body
+ * @returns {BodyInit}
+ */
+function serialiseBody(body) {
+  return isJsonBody(body)
+    ? JSON.stringify(body)
+    : /** @type {BodyInit} */ (body);
+}
+
+/**
  * Builds the standard request headers, injecting an Authorization header
- * when a session is available.
+ * when the request is same-origin (prevents token leaking to third-party
+ * hosts). Content-Type is set to application/json when the body warrants it.
+ *
+ * @param {string} path - the request path or URL
  * @param {HeadersInit} [extra] - additional headers to merge
+ * @param {unknown} [body] - the request body (used to decide Content-Type)
  * @returns {Promise<Headers>}
  */
-async function buildHeaders(extra) {
+async function buildHeaders(path, extra, body) {
   const headers = new Headers(extra);
 
-  if (!headers.has("Content-Type") && !(extra instanceof FormData)) {
+  if (!headers.has("Content-Type") && isJsonBody(body)) {
     headers.set("Content-Type", "application/json");
   }
 
   const token = await getBearerToken();
   if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+    // Only attach the bearer token for same-origin requests to avoid
+    // accidentally leaking credentials to third-party hosts.
+    const requestUrl = new URL(path, window.location.origin);
+    if (requestUrl.origin === window.location.origin) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
   }
 
   return headers;
@@ -85,7 +125,7 @@ async function buildHeaders(extra) {
  * @throws {ApiError} on non-2xx responses
  */
 export async function request(path, init = {}) {
-  const headers = await buildHeaders(init.headers);
+  const headers = await buildHeaders(path, init.headers, init.body);
 
   const response = await fetch(path, {
     ...init,
@@ -121,7 +161,8 @@ export function get(path, init = {}) {
 }
 
 /**
- * POST request with JSON body.
+ * POST request. Automatically serialises plain objects to JSON.
+ * Pass FormData, Blob, or URLSearchParams to send non-JSON bodies.
  * @param {string} path
  * @param {unknown} [body]
  * @param {RequestInit} [init]
@@ -131,12 +172,13 @@ export function post(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "POST",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? serialiseBody(body) : undefined,
   });
 }
 
 /**
- * PUT request with JSON body.
+ * PUT request. Automatically serialises plain objects to JSON.
+ * Pass FormData, Blob, or URLSearchParams to send non-JSON bodies.
  * @param {string} path
  * @param {unknown} [body]
  * @param {RequestInit} [init]
@@ -146,12 +188,13 @@ export function put(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "PUT",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? serialiseBody(body) : undefined,
   });
 }
 
 /**
- * PATCH request with JSON body.
+ * PATCH request. Automatically serialises plain objects to JSON.
+ * Pass FormData, Blob, or URLSearchParams to send non-JSON bodies.
  * @param {string} path
  * @param {unknown} [body]
  * @param {RequestInit} [init]
@@ -161,7 +204,7 @@ export function patch(path, body, init = {}) {
   return request(path, {
     ...init,
     method: "PATCH",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? serialiseBody(body) : undefined,
   });
 }
 
