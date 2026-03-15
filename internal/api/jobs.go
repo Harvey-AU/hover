@@ -807,15 +807,16 @@ func buildTaskQuery(jobID string, params TaskQueryParams) TaskQueryBuilder {
 		countQuery += ` AND (t.cache_status = 'HIT' OR t.cache_status = 'DYNAMIC')`
 	}
 
-	// Add performance filter: slow (>2000ms) or very_slow (>3000ms)
-	// Uses second_response_time when available (cache-warmed load), falls back to response_time.
+	// Add performance filter: slow (>1500ms) or very_slow (>4000ms).
+	// NULLIF treats a stored 0 as absent so pages that were warmed but recorded
+	// 0 ms for second_response_time fall back to response_time correctly.
 	switch params.PerformanceFilter {
 	case "slow":
-		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 1500`
-		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 1500`
+		baseQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 1500`
+		countQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 1500`
 	case "very_slow":
-		baseQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 4000`
-		countQuery += ` AND COALESCE(t.second_response_time, t.response_time) > 4000`
+		baseQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 4000`
+		countQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 4000`
 	}
 
 	// Add path filter if provided (case-insensitive partial match)

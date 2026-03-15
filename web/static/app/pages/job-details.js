@@ -389,6 +389,11 @@ function buildColumns(tab, showAnalytics) {
 async function loadTasks() {
   if (!tasksTable) return;
 
+  // Hide pagination immediately — avoids flicker where previous tab's count
+  // causes pagination to flash before the new result count arrives.
+  const paginationEl = document.getElementById("tasksPagination");
+  if (paginationEl) paginationEl.style.display = "none";
+
   const params = new URLSearchParams();
   params.set("limit", String(taskState.limit));
   params.set("offset", String(taskState.page * taskState.limit));
@@ -529,6 +534,7 @@ function wireInteractions() {
       taskState.performanceFilter = tab.filters?.performance ?? "";
       taskState.pathFilter = "";
       taskState.page = 0;
+      taskState.totalTasks = 0;
       const pathInput = document.getElementById("pathFilter");
       if (pathInput) pathInput.value = "";
       loadTasks().catch(console.error);
