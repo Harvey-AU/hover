@@ -62,6 +62,20 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
+- **Webflow extension auth screen (Phase 1)**: Migrated
+  `web/templates/extension-auth.html` to the ES module pattern; retired
+  `core.js` and `bb-bootstrap.js` from this surface
+  - `web/static/app/components/hover-toast.js` — `hover-toast` Web Component
+    with imperative `showToast()` API, 4 variants (success/error/warning/info),
+    auto-dismiss, stacking container, and enter/leave animations
+  - `web/static/app/styles/components.css` — component styles for `hover-toast`
+    and future `hover-*` components; all values reference semantic tokens
+  - `web/static/app/pages/webflow-login.js` — ES module entrypoint for
+    `/extension-auth`; handles session restore, OAuth callback tokens, backend
+    user registration, and `postMessage` handoff to the Webflow Designer
+    extension; uses `hover-toast` for feedback; preserves the `extensionAuth`
+    redirect contract from `AGENTS.md`
+
 ### Fixed
 
 - **Seed idempotency**: `auth.identities` `ON CONFLICT` column corrected from
