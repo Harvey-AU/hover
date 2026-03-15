@@ -247,6 +247,8 @@ function renderJobsTable(container, jobs) {
             "running",
             "queued",
             "initializing",
+            "processing",
+            "cancelling",
           ].includes(status);
           const isDone = ["completed", "failed", "cancelled"].includes(status);
 

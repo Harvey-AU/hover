@@ -32,10 +32,12 @@ const STATUS_LABELS = {
   initializing: "Starting up",
   running: "In progress",
   in_progress: "In progress",
+  processing: "In progress",
   completed: "Done",
   failed: "Error",
   error: "Error",
   cancelled: "Cancelled",
+  cancelling: "Cancelling",
   skipped: "Skipped",
 };
 
@@ -46,10 +48,12 @@ const STATUS_ICON_MOD = {
   initializing: "pending",
   running: "running",
   in_progress: "running",
+  processing: "running",
   completed: "completed",
   failed: "error",
   error: "error",
   cancelled: "neutral",
+  cancelling: "neutral",
   skipped: "neutral",
 };
 
@@ -60,10 +64,12 @@ const STATUS_COLOUR_MOD = {
   initializing: "warning",
   running: "warning",
   in_progress: "warning",
+  processing: "warning",
   completed: "success",
   failed: "danger",
   error: "danger",
   cancelled: "neutral",
+  cancelling: "neutral",
   skipped: "neutral",
 };
 
