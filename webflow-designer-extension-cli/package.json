@@ -6,8 +6,9 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "webflow:update": "npm update @webflow/webflow-cli",
-    "build": "npm run compile && npm exec -- webflow extension bundle --skip-update-check",
-    "dev": "concurrently -r \"npm exec -- webflow extension serve --skip-update-check\" \"npm run compile -- --watch --preserveWatchOutput\"",
+    "sync-components": "node -e \"const fs=require('fs'),p='../web/static/app/components',d='./public';['hover-status-pill.js','hover-data-table.js','hover-toast.js'].forEach(f=>fs.copyFileSync(p+'/'+f,d+'/'+f))\"",
+    "build": "npm run sync-components && npm run compile && npm exec -- webflow extension bundle --skip-update-check",
+    "dev": "npm run sync-components && concurrently -r \"npm exec -- webflow extension serve --skip-update-check\" \"npm run compile -- --watch --preserveWatchOutput\"",
     "lint": "eslint --no-config-lookup -c eslint.config.mjs \"src/**/*.ts\"",
     "format:check": "prettier --check \"./**/*.{ts,json,md,html,css,yml,yaml}\"",
     "format:write": "prettier --write \"./**/*.{ts,json,md,html,css,yml,yaml}\""
