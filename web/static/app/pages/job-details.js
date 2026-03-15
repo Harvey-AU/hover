@@ -31,15 +31,27 @@ function upgradeStatusPill() {
   );
   if (!span) return;
 
-  // Read status from the *resolved* class list that bb-data-binder has written.
-  // e.g. class="status-pill status-completed" → "completed"
-  // Skip unresolved template tokens like "{job.status_class}".
-  const resolvedClass = [...span.classList].find(
-    (c) => c.startsWith("status-") && c !== "status-pill" && !c.includes("{")
-  );
-  if (!resolvedClass) return; // binder hasn't resolved yet — observer will retry
+  // Read status from the text content — bb-data-binder resolves bbb-text
+  // reliably (e.g. "COMPLETED") even when bbb-class is not resolved.
+  const label = span.textContent.trim().toLowerCase();
+  if (!label || label.includes("{")) return; // binder hasn't resolved yet
 
-  const status = resolvedClass.replace("status-", "");
+  // Map display labels back to status keys
+  const STATUS_MAP = {
+    completed: "completed",
+    done: "completed",
+    running: "running",
+    "in progress": "running",
+    pending: "pending",
+    "starting up": "pending",
+    queued: "queued",
+    failed: "failed",
+    error: "failed",
+    cancelled: "cancelled",
+    cancelling: "cancelling",
+    skipped: "skipped",
+  };
+  const status = STATUS_MAP[label] ?? label;
 
   // Already upgraded — update the existing pill's status attribute
   const existing = span.parentElement?.querySelector("hover-status-pill");
