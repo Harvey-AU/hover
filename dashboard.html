@@ -834,12 +834,9 @@
         });
 
         // bb-data-binder.js handles the POST and dispatches bb:org-switched on success.
-        // This listener closes the modal and triggers any dashboard-level refresh.
-        form.addEventListener("bb-form-success", async () => {
+        // The bb:org-switched listener above handles dashboard refresh — just close the modal.
+        form.addEventListener("bb-form-success", () => {
           closeModal();
-          if (window.refreshDashboard) {
-            window.refreshDashboard();
-          }
         });
 
         // Surface bbb-form errors to the modal error div
