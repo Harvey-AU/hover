@@ -53,7 +53,8 @@ export async function fetchJobs(options = {}) {
   if (options.include) params.set("include", options.include);
   const qs = params.toString();
   const res = await get(`/v1/jobs${qs ? `?${qs}` : ""}`);
-  return res?.jobs ?? [];
+  // API wraps response: { status, data: { jobs: [...] } }
+  return res?.data?.jobs ?? res?.jobs ?? [];
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────────
