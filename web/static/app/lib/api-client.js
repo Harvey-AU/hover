@@ -55,21 +55,17 @@ async function getBearerToken() {
 }
 
 /**
- * Returns true when the body should have Content-Type: application/json
- * set automatically. FormData, Blob, URLSearchParams, and ArrayBuffer all
- * have their own content type and must not be stringified.
+ * Returns true only when the body is a plain object or array —
+ * the only values that should be automatically JSON.stringify'd.
+ * Strings, numbers, FormData, Blob, URLSearchParams, ArrayBuffer, and
+ * TypedArrays are all passed through unchanged by serialiseBody().
  * @param {unknown} body
  * @returns {boolean}
  */
 function isJsonBody(body) {
-  return (
-    body != null &&
-    !(body instanceof FormData) &&
-    !(body instanceof Blob) &&
-    !(body instanceof URLSearchParams) &&
-    !(body instanceof ArrayBuffer) &&
-    !ArrayBuffer.isView(body)
-  );
+  if (body == null) return false;
+  if (Array.isArray(body)) return true;
+  return Object.prototype.toString.call(body) === "[object Object]";
 }
 
 /**
