@@ -27,6 +27,7 @@
  *   - Admin functions (bb-admin.js)
  */
 
+import { get, post, put } from "/app/lib/api-client.js";
 import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
 import { createStatusPill } from "/app/components/hover-status-pill.js";
 import { createDataTable } from "/app/components/hover-data-table.js";
@@ -119,14 +120,11 @@ async function refresh() {
 async function refreshStats() {
   try {
     const tzOffset = new Date().getTimezoneOffset();
-    const res = await fetch(
-      `/v1/dashboard/stats?range=${currentRange}&tzOffset=${tzOffset}`,
-      { headers: await authHeaders() }
+    // api-client auto-unwraps the { status, data } envelope
+    const data = await get(
+      `/v1/dashboard/stats?range=${currentRange}&tzOffset=${tzOffset}`
     );
-    if (!res.ok) return;
-    const json = await res.json();
-    // API wraps response: { status, data: { stats: {...} } } or { stats: {...} }
-    const stats = json?.data?.stats ?? json?.stats;
+    const stats = data?.stats;
     if (!stats) return;
 
     setStatCard("stats.total_jobs", formatCount(stats.total_jobs));
@@ -308,18 +306,13 @@ function renderJobsTable(container, jobs) {
 
 async function restartJob(job) {
   try {
-    const res = await fetch("/v1/jobs", {
-      method: "POST",
-      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-      body: JSON.stringify({
-        domain: job.domains?.name || job.domain,
-        max_pages: job.max_pages ?? 0,
-        use_sitemap: true,
-        find_links: job.find_links ?? true,
-        concurrency: job.concurrency,
-      }),
+    await post("/v1/jobs", {
+      domain: job.domains?.name || job.domain,
+      max_pages: job.max_pages ?? 0,
+      use_sitemap: true,
+      find_links: job.find_links ?? true,
+      concurrency: job.concurrency,
     });
-    if (!res.ok) throw new Error(`${res.status}`);
     showToast("Job restarted.", { variant: "success" });
     await refresh();
   } catch (err) {
@@ -329,12 +322,7 @@ async function restartJob(job) {
 
 async function cancelJob(jobId) {
   try {
-    const res = await fetch(`/v1/jobs/${jobId}`, {
-      method: "PUT",
-      headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "cancel" }),
-    });
-    if (!res.ok) throw new Error(`${res.status}`);
+    await put(`/v1/jobs/${jobId}`, { action: "cancel" });
     showToast("Job cancelled.", { variant: "warning" });
     await refresh();
   } catch (err) {
@@ -372,17 +360,6 @@ function waitForSession(timeoutMs = 8000) {
     };
     check();
   });
-}
-
-/** Get auth headers from the active Supabase session. */
-async function authHeaders() {
-  try {
-    const { data } = await window.supabase?.auth?.getSession();
-    const token = data?.session?.access_token;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch {
-    return {};
-  }
 }
 
 /**

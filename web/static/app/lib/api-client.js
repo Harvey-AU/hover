@@ -157,6 +157,21 @@ export async function request(path, init = {}) {
     throw new ApiError(message, response.status, body);
   }
 
+  // Unwrap the standard API envelope { status, data, message, request_id }.
+  // If the response has a `data` key alongside a `status` string, return
+  // `data` directly so callers never need to do `res?.data?.jobs` manually.
+  // Responses that are not envelopes (plain objects, arrays, strings) pass
+  // through unchanged.
+  if (
+    body !== null &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    typeof body.status === "string" &&
+    Object.prototype.hasOwnProperty.call(body, "data")
+  ) {
+    return body.data;
+  }
+
   return body;
 }
 
