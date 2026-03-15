@@ -240,10 +240,10 @@
         li.dataset.status = c.status;
         li.innerHTML = `
           <span class="check-badge">${badges[c.status]}</span>
-          <span>
+          <div>
             ${c.label}
             ${c.detail ? `<div class="check-detail">${c.detail}</div>` : ""}
-          </span>
+          </div>
         `;
         list.appendChild(li);
       }
