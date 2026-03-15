@@ -59,7 +59,8 @@ export function createDataTable(options = {}) {
     document.createElement("hover-data-table")
   );
   if (options.columns) {
-    el.setAttribute("columns", JSON.stringify(options.columns));
+    // Set columns as a property so render functions are preserved (JSON.stringify drops them)
+    el.columns = options.columns;
   }
   if (options.emptyMessage) {
     el.setAttribute("empty-message", options.emptyMessage);
@@ -88,6 +89,16 @@ class HoverDataTable extends HTMLElement {
     this.onRowClick = null;
   }
 
+  /** @param {Column[]} value */
+  set columns(value) {
+    this._columns_prop = Array.isArray(value) ? value : [];
+    if (this._rendered) this._render();
+  }
+
+  get columns() {
+    return this._columns_prop ?? null;
+  }
+
   /** @param {Record<string,unknown>[]} value */
   set rows(value) {
     this._rows = Array.isArray(value) ? value : [];
@@ -113,8 +124,9 @@ class HoverDataTable extends HTMLElement {
 
   // ── Private ────────────────────────────────────────────────────────────────
 
-  /** Parse columns attribute, returning [] on failure. */
+  /** Return columns — prefers JS property (preserves render fns) over JSON attribute. */
   _columns() {
+    if (this._columns_prop?.length) return this._columns_prop;
     try {
       const raw = this.getAttribute("columns");
       return raw ? JSON.parse(raw) : [];

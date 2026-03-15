@@ -28,7 +28,7 @@
  */
 
 import { get, post, put } from "/app/lib/api-client.js";
-import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
+import { fetchJobs } from "/app/pages/webflow-jobs.js";
 import { createStatusPill } from "/app/components/hover-status-pill.js";
 import { createDataTable } from "/app/components/hover-data-table.js";
 import { showToast } from "/app/components/hover-toast.js";
@@ -40,7 +40,6 @@ import {
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
-let unsubscribeRealtime = null;
 let currentRange = "today";
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
@@ -88,25 +87,8 @@ async function init() {
   // Initial render
   await refresh();
 
-  // Subscribe to realtime job updates once org is available
-  waitForOrg((orgId) => {
-    if (unsubscribeRealtime) unsubscribeRealtime();
-    unsubscribeRealtime = subscribeToJobUpdates(orgId, refresh);
-  });
-
-  // Re-subscribe on org switch
-  document.addEventListener("bb:org-switched", (e) => {
-    const orgId = e.detail?.organisation?.id;
-    if (!orgId) return;
-    if (unsubscribeRealtime) unsubscribeRealtime();
-    unsubscribeRealtime = subscribeToJobUpdates(orgId, refresh);
-    refresh();
-  });
-
-  // Clean up on unload
-  window.addEventListener("beforeunload", () => {
-    if (unsubscribeRealtime) unsubscribeRealtime();
-  });
+  // Re-render jobs on org switch (binder handles realtime; we just re-render)
+  document.addEventListener("bb:org-switched", () => refresh());
 }
 
 // ── Refresh ────────────────────────────────────────────────────────────────────
@@ -360,26 +342,6 @@ function waitForSession(timeoutMs = 8000) {
     };
     check();
   });
-}
-
-/**
- * Wait for window.BB_ACTIVE_ORG to be available, then call cb(orgId).
- * Polls at 250ms intervals for up to 10s.
- */
-function waitForOrg(cb) {
-  const orgId = window.BB_ACTIVE_ORG?.id;
-  if (orgId) {
-    cb(orgId);
-    return;
-  }
-  let attempts = 0;
-  const timer = setInterval(() => {
-    const id = window.BB_ACTIVE_ORG?.id;
-    if (id || attempts++ > 40) {
-      clearInterval(timer);
-      if (id) cb(id);
-    }
-  }, 250);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
