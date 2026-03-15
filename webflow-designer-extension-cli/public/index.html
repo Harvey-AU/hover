@@ -4,35 +4,90 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="./styles.css" rel="stylesheet" />
-    <title>Adapt for Webflow</title>
+    <title>Hover for Webflow</title>
   </head>
 
   <body>
     <main class="app-shell">
       <!-- ═══ UNAUTH STATE ═══ -->
       <section class="panel" id="unauthState">
-        <header class="header">
-          <div class="top-brand">
-            <span class="brand-text">Adapt</span>
-          </div>
-        </header>
-
-        <div class="section">
-          <p class="section-title">
-            Run your Webflow site checks without leaving Designer.
-          </p>
-          <ul class="benefits-list">
-            <li>Broken links and slow pages</li>
-            <li>Exports and status from one screen</li>
-            <li>Organisation-aware usage and plan visibility</li>
+        <div class="section auth-wrapper">
+          <header class="header auth-header">
+            <div class="top-brand">
+              <img
+                class="brand-logo"
+                src="./Hover Logo Bright Transparent.png"
+                alt="Hover"
+              />
+            </div>
+            <p class="section-title">
+              Run your Webflow site checks without leaving Designer
+            </p>
+          </header>
+          <ul class="icon-list">
+            <li>
+              <span
+                class="icon icon--medium icon--broken"
+                aria-hidden="true"
+              ></span>
+              <span>Broken links and slow pages</span>
+            </li>
+            <li>
+              <span
+                class="icon icon--medium icon--download"
+                aria-hidden="true"
+              ></span>
+              <span>Export results</span>
+            </li>
+            <li>
+              <span
+                class="icon icon--medium icon--person"
+                aria-hidden="true"
+              ></span>
+              <span>Share usage across websites</span>
+            </li>
+            <li>
+              <span
+                class="icon icon--medium icon--download"
+                aria-hidden="true"
+              ></span>
+              <span>Publish site runs report</span>
+            </li>
+            <li>
+              <span
+                class="icon icon--medium icon--person"
+                aria-hidden="true"
+              ></span>
+              <span>Realtime results in Webflow</span>
+            </li>
           </ul>
 
-          <div class="actions">
-            <button id="checkSiteButton" type="button" class="primary">
-              CHECK SITE &rarr;
+          <div class="actions auth-actions">
+            <button
+              id="checkSiteButton"
+              type="button"
+              class="btn btn--primary btn--lg corners--right"
+            >
+              <span>Connect your site</span>
+              <span
+                class="icon icon--large icon--arrow icon--arrow--right"
+                aria-hidden="true"
+              ></span>
             </button>
-            <button id="signInButton" type="button" class="secondary">
-              SIGN IN
+            <div class="auth-login-prompt">
+              <div class="auth-login-divider"></div>
+              <p class="auth-login-copy">Already have an account?</p>
+            </div>
+            <button
+              id="signInButton"
+              type="button"
+              class="btn btn--secondary btn--lg corners--right"
+            >
+              <span>Login</span>
+              <span
+                class="icon icon--large icon--arrow icon--arrow--right"
+                aria-hidden="true"
+              ></span>
             </button>
           </div>
         </div>
@@ -42,80 +97,72 @@
       <section class="panel hidden" id="authState">
         <!-- ─── Top bar: org + plan + settings ─── -->
         <header class="topbar section">
-          <!-- TODO: placeholder avatar / dark-mode toggle -->
-          <div class="topbar-avatar" id="avatarPlaceholder"></div>
-          <div class="topbar-left">
-            <select id="orgSelect" class="btn-secondary"></select>
+          <button
+            id="settingsButton"
+            type="button"
+            class="btn btn--primary btn--icon-square corners--top-left topbar-profile"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <span class="topbar-profile-avatar" aria-hidden="true"></span>
+          </button>
+          <div class="topbar-content">
+            <select
+              id="orgSelect"
+              class="btn btn--tertiary btn--sm btn--border-thin btn--square btn--select topbar-org-select"
+            ></select>
             <div class="topbar-plan">
               <div class="plan-badge">
                 <p class="plan-badge-title" id="planNameText">
                   <strong>Plan:</strong> —
                 </p>
                 <p class="plan-badge-remaining" id="planRemainingText">
-                  <span class="dot dot-success"></span>
+                  <span class="dot dot--success"></span>
                   <span id="planRemainingValue">—</span>
                 </p>
               </div>
-              <!-- TODO: wire up settings gear to open settings page -->
-              <button
-                id="settingsButton"
-                type="button"
-                class="icon-btn"
-                title="Settings"
-              >
-                &#9881;
-              </button>
             </div>
           </div>
         </header>
 
         <!-- ─── Action bar: run + schedule + auto-publish ─── -->
         <div class="action-bar section">
-          <button id="runNowButton" type="button" class="btn-primary">
-            Run now
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <g clip-path="url(#clip0_4104_48093)">
-                <path
-                  d="M7.5 8.5V13.5H8.5V8.5H13.5V7.5H8.5V2.5H7.5V7.5H2.5V8.5H7.5Z"
-                  fill="white"
-                  fill-opacity="0.67"
-                ></path>
-              </g>
-              <defs>
-                <clipPath id="clip0_4104_48093">
-                  <path
-                    d="M0 2C0 0.895431 0.895431 0 2 0H14C15.1046 0 16 0.895431 16 2V14C16 15.1046 15.1046 16 14 16H2C0.895431 16 0 15.1046 0 14V2Z"
-                    fill="white"
-                  ></path>
-                </clipPath>
-              </defs>
-            </svg>
+          <div class="action-bar-controls">
+            <div class="control-group control-group--schedule">
+              <label class="control-label" for="scheduleSelect"
+                >Run every:</label
+              >
+              <select
+                id="scheduleSelect"
+                class="btn btn--tertiary btn--sm btn--border-thin btn--square btn--select action-bar-select"
+              >
+                <option value="off">Off</option>
+                <option value="6">6 hrs</option>
+                <option value="12">12 hrs</option>
+                <option value="24">24 hrs</option>
+                <option value="48">48 hrs</option>
+              </select>
+            </div>
+            <div class="control-group auto-publish-control">
+              <span class="control-label auto-publish-label"
+                >Run on publish</span
+              >
+              <input id="runPublishToggle" type="checkbox" class="toggle" />
+            </div>
+          </div>
+          <button
+            id="runNowButton"
+            type="button"
+            class="btn btn--primary btn--sm corners--right"
+          >
+            <span class="icon icon--small icon--bee" aria-hidden="true"></span>
+            <span>Run now</span>
           </button>
-          <div class="display-flex">
-            <label for="scheduleSelect">Run every:</label>
-            <select id="scheduleSelect" class="btn-secondary">
-              <option value="off">Off</option>
-              <option value="6">6 hrs</option>
-              <option value="12">12 hrs</option>
-              <option value="24">24 hrs</option>
-              <option value="48">48 hrs</option>
-            </select>
-          </div>
-          <div class="auto-publish-control">
-            <span class="auto-publish-label">Run on publish</span>
-            <input id="runPublishToggle" type="checkbox" class="toggle" />
-          </div>
         </div>
 
         <!-- ─── Status messages ─── -->
         <div class="status-block section">
-          <div class="status-content">
+          <div class="status-block-content">
             <p id="statusText" class="status"></p>
             <p id="detailText" class="detail"></p>
           </div>
@@ -123,35 +170,11 @@
 
         <!-- ─── Scrollable content area ─── -->
         <div class="content-scroll section">
-          <p id="jobSectionHeading" class="section-heading">In progress</p>
-          <!-- Active / current job card -->
-          <div id="jobSection" class="result-card">
-            <div class="result-card-header">
-              <div class="job-progress-right">
-                <span class="dot dot-success"></span>
-                <span id="jobProgressText" class="job-progress-text"
-                  >&mdash;</span
-                >
-              </div>
-              <div class="result-status-left">
-                <span id="jobStatusIcon" class="job-status-icon"></span>
-                <span id="jobStatusLabel" class="result-status-label"
-                  >Loading&hellip;</span
-                >
-              </div>
-            </div>
-
-            <!-- Issue summary pills -->
-            <div class="issue-pills" id="jobIssuePills">
-              <!-- Populated by JS: broken links, very slow, slow pills -->
-            </div>
-
-            <div class="job-card-actions">
-              <button id="viewReportButton" type="button" class="btn-link-blue">
-                View full report
-              </button>
-            </div>
-          </div>
+          <section class="job-band">
+            <p id="jobSectionHeading" class="section-heading">In progress</p>
+            <!-- Active / current job card — populated by renderJobState() -->
+            <div id="jobSection" class="hidden"></div>
+          </section>
 
           <!-- No job placeholder -->
           <div id="noJobState" class="no-job-state hidden">
@@ -190,7 +213,11 @@
 
         <!-- ─── Footer ─── -->
         <footer class="panel-footer section">
-          <button id="feedbackButton" type="button" class="footer-link">
+          <button
+            id="feedbackButton"
+            type="button"
+            class="btn btn--ghost btn--footer-link"
+          >
             <!-- Chat bubble icon (SVG inline) -->
             <svg
               width="13"
@@ -208,7 +235,11 @@
             </svg>
             Feedback
           </button>
-          <button id="helpButton" type="button" class="footer-link">
+          <button
+            id="helpButton"
+            type="button"
+            class="btn btn--ghost btn--footer-link"
+          >
             <!-- Info circle icon (SVG inline) -->
             <svg
               width="16"

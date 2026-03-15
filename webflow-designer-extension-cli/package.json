@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "compile": "tsc -p tsconfig.json",
-    "build": "npm install && npm run compile && npx webflow extension bundle",
-    "dev": "npm install && concurrently -r \"npx webflow extension serve\" \"npm run compile -- --watch --preserveWatchOutput\"",
+    "webflow:update": "npm update @webflow/webflow-cli",
+    "build": "npm run compile && npm exec -- webflow extension bundle --skip-update-check",
+    "dev": "concurrently -r \"npm exec -- webflow extension serve --skip-update-check\" \"npm run compile -- --watch --preserveWatchOutput\"",
     "lint": "eslint --no-config-lookup -c eslint.config.mjs \"src/**/*.ts\"",
     "format:check": "prettier --check \"./**/*.{ts,json,md,html,css,yml,yaml}\"",
     "format:write": "prettier --write \"./**/*.{ts,json,md,html,css,yml,yaml}\""
@@ -15,7 +16,7 @@
     "@typescript-eslint/eslint-plugin": "^7.7.0",
     "@typescript-eslint/parser": "^7.7.0",
     "@webflow/designer-extension-typings": "^2.0.2",
-    "@webflow/webflow-cli": "^1.12.1",
+    "@webflow/webflow-cli": "^1.12.4",
     "concurrently": "^8.2.2",
     "eslint": "^8.57.0",
     "prettier": "^3.6.2",
