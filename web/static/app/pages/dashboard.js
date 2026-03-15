@@ -96,6 +96,10 @@ async function init() {
   // Initial render
   await refresh();
 
+  // Poll every 10 s to pick up job status changes (Supabase realtime is
+  // disabled on preview branches — polling is the fallback).
+  setInterval(() => refresh(), 10_000);
+
   // Re-render jobs on org switch (binder handles realtime; we just re-render)
   document.addEventListener("bb:org-switched", () => refresh());
 }
@@ -109,6 +113,10 @@ async function refresh() {
 // ── Stats ──────────────────────────────────────────────────────────────────────
 
 async function refreshStats() {
+  // Gate behind session — avoids a 401 when the module runs before core.js
+  // has signed in.
+  const token = await waitForSession();
+  if (!token) return;
   try {
     const tzOffset = new Date().getTimezoneOffset();
     // api-client auto-unwraps the { status, data } envelope
@@ -390,3 +398,10 @@ if (document.readyState === "loading") {
 } else {
   init().catch(console.error);
 }
+
+// ── Legacy bridges ─────────────────────────────────────────────────────────────
+// bb-auth-extension.js calls these globals after job creation.
+// Expose them so the legacy script can close the modal and trigger a refresh
+// without depending on bb-dashboard-actions.js.
+window.closeCreateJobModal = closeCreateJobModal;
+window.HoverDashboard = { refresh };
