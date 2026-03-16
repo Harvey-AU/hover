@@ -261,7 +261,17 @@ async function loadAuthModal() {
   try {
     const res = await fetch("/auth-modal.html", { cache: "no-store" });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    container.innerHTML = await res.text();
+    // Verify content-type before injecting — guards against unexpected proxy responses.
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("text/html")) {
+      throw new Error(`Unexpected content-type: ${ct}`);
+    }
+    const html = await res.text();
+    // Parse via DOMParser and only insert non-script nodes to prevent XSS
+    // in the unlikely event the response is tampered.
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("script").forEach((s) => s.remove());
+    container.append(...doc.body.childNodes);
   } catch (err) {
     console.error("webflow-login: failed to load auth modal", err);
     setStatus("Sign-in modal failed to load — please refresh.", "error");
