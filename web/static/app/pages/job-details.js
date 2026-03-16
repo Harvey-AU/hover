@@ -609,7 +609,10 @@ function wireInteractions() {
 // ── Realtime + polling ─────────────────────────────────────────────────────────
 
 function throttledRefresh() {
-  clearPoll();
+  // Do NOT clear the fallback poll here — it is a background safety net and
+  // should only stop when the realtime subscription is confirmed healthy.
+  // Clearing it on every realtime event would permanently kill the fallback
+  // after the first event fires.
   const now = Date.now();
   if (now - lastRefresh >= THROTTLE_MS && !isRefreshing) {
     executeRefresh();
@@ -703,6 +706,10 @@ function startSubscription() {
   // Cleanup on unload
   window.addEventListener("beforeunload", () => {
     clearPoll();
+    if (throttleTimer) {
+      clearTimeout(throttleTimer);
+      throttleTimer = null;
+    }
     if (realtimeChannel && window.supabase) {
       window.supabase.removeChannel(realtimeChannel).catch(() => {});
     }
