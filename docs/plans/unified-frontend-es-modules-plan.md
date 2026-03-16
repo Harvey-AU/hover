@@ -9,7 +9,7 @@ extension screens, `/dashboard`, job details, and settings screens
 | --------------------------- | -------------- | ----------------------------------------------------------------- |
 | Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page          |
 | Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated |
-| Phase 2 — Webflow job list  | ⚠️ Partially complete | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill` built — extension `index.js` still uses `buildResultCard()` directly; extension job list not yet on new architecture |
+| Phase 2 — Webflow job list  | ✅ Complete | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
 | Phase 3 — Dashboard         | ⚠️ Partially complete | `dashboard.js` module exists, stats work — job list was a flat table until Phase 4; definition of done (matches Webflow surface visually) not met until `hover-job-card` landed |
 | Phase 4 — Job details       | ✅ Complete    | See Phase 4 notes below — scope expanded significantly            |
 | Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove          |
@@ -539,7 +539,7 @@ Validation:
 
 ---
 
-### Phase 2 — Webflow job list screen ⚠️ Partially complete
+### Phase 2 — Webflow job list screen ✅ Complete
 
 Objective: establish the list and status language for operational screens.
 
@@ -569,15 +569,15 @@ Validation:
 - Webflow job list and dashboard job listing feel like the same product surface
 - state transitions are visually consistent
 
-**What is still missing:**
+**Completed (2026-03-16):**
 
-- The Webflow extension's `index.js` still uses `buildResultCard()` directly —
-  `hover-job-card` was built but not yet wired into the extension
-- Extension job list does not import from `/app/components/`; components are
-  still local copies in `public/`
-- A `sync:components` script does not yet exist to automate copying components
-  from `web/static/app/components/` to `webflow-designer-extension-cli/public/`
-- Extension rebuild to consume `hover-job-card` is a separate PR
+- `hover-job-card` wired into extension `index.js` via `window.HoverJobCard` bridge
+- `buildResultCard`, `fetchIssueTasks`, `renderIssuesTable` removed from `index.js`
+- `sync:components` npm script added — copies all 4 shared components from
+  `web/static/app/components/` to `webflow-designer-extension-cli/public/` and
+  patches `hover-job-card.js` for the extension context (no `/app/` path)
+- `scripts/patch-extension-components.js` handles the extension-specific
+  `defaultFetcher` override automatically on each sync
 
 ---
 

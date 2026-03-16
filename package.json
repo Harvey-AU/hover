@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Web cache warming service",
+  "scripts": {
+    "sync:components": "cp web/static/app/components/hover-job-card.js webflow-designer-extension-cli/public/hover-job-card.js && cp web/static/app/components/hover-data-table.js webflow-designer-extension-cli/public/hover-data-table.js && cp web/static/app/components/hover-status-pill.js webflow-designer-extension-cli/public/hover-status-pill.js && cp web/static/app/components/hover-toast.js webflow-designer-extension-cli/public/hover-toast.js && node scripts/patch-extension-components.js && echo 'Components synced to extension public/'"
+  },
   "devDependencies": {
     "eslint": "^9.39.2",
     "eslint-plugin-security": "^3.0.1"

@@ -1032,6 +1032,17 @@ async function apiRequest<T>(
   return parseApiResponse<T>(response);
 }
 
+// Wire hover-job-card's issue-tab fetcher to the extension's apiRequest.
+// window.HoverJobCard is set by hover-job-card.js (module script, loaded before index.ts).
+function initHoverJobCard(): void {
+  const hoverJobCard = (window as any).HoverJobCard;
+  if (hoverJobCard?.setApiFetcher) {
+    hoverJobCard.setApiFetcher((path: string) =>
+      apiRequest(path, { method: "GET" })
+    );
+  }
+}
+
 function getPopupPosition() {
   const left =
     window.screenX + Math.max(0, (window.outerWidth - AUTH_POPUP_WIDTH) / 2);
@@ -1233,12 +1244,26 @@ function renderJobState(job: JobItem | null): void {
     return;
   }
 
-  // Build the card using the same function as completed cards.
-  // buildResultCard handles active status: spinner icon, "In progress" / "Starting up" label.
-  const card = buildResultCard(job);
+  const hoverJobCard = (window as any).HoverJobCard;
+  const card: HTMLElement = hoverJobCard
+    ? hoverJobCard.createJobCard(job, { context: "extension" })
+    : buildResultCardFallback(job);
+
   if (section) {
     section.innerHTML = "";
     section.appendChild(card);
+    section.addEventListener(
+      "hover-job-card:view",
+      (e: Event) => openSettingsPage((e as CustomEvent).detail.path),
+      { once: true }
+    );
+    section.addEventListener(
+      "hover-job-card:export",
+      (e: Event) => {
+        void exportJob((e as CustomEvent).detail.jobId);
+      },
+      { once: true }
+    );
     show(section);
   }
 }
@@ -1433,593 +1458,51 @@ function renderRecentResults(jobs: JobItem[]): void {
   const latestJob = groupedJobs[0] || null;
   const recentJobs = groupedJobs.slice(1, 6);
 
+  const hoverJobCard = (window as any).HoverJobCard;
+
+  function makeCard(cardJob: JobItem, compact: boolean): HTMLElement {
+    const card: HTMLElement = hoverJobCard
+      ? hoverJobCard.createJobCard(cardJob, { context: "extension", compact })
+      : buildResultCardFallback(cardJob, false, compact);
+    card.addEventListener("hover-job-card:view", (e: Event) =>
+      openSettingsPage((e as CustomEvent).detail.path)
+    );
+    card.addEventListener("hover-job-card:export", (e: Event) => {
+      void exportJob((e as CustomEvent).detail.jobId);
+    });
+    return card;
+  }
+
   if (latestJob) {
-    latestContainer.appendChild(buildResultCard(latestJob));
+    latestContainer.appendChild(makeCard(latestJob, false));
   }
 
   if (recentJobs.length > 0) {
     for (const job of recentJobs) {
-      recentContainer.appendChild(buildResultCard(job, false, true));
+      recentContainer.appendChild(makeCard(job, true));
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Result card builder
+// Result card fallback (used only if hover-job-card.js fails to load)
 // ---------------------------------------------------------------------------
 
-function buildResultCard(
+function buildResultCardFallback(
   job: JobItem,
-  startExpanded = false,
+  _startExpanded = false,
   compact = false
 ): HTMLElement {
+  // Minimal fallback used only if hover-job-card.js fails to load.
   const card = document.createElement("div");
   card.className = compact
     ? "result-card result-card--complete result-card--compact"
     : "result-card result-card--complete";
-
-  const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-  const normalisedStatus = normalizeJobStatus(job.status);
-  const isActive = isActiveJobStatus(normalisedStatus);
-
-  // For active jobs use live task counters; for completed use issue-bucket counts.
-  const failCount = isActive ? job.failed_tasks : brokenLinks;
-  const warnCount = isActive ? 0 : verySlow + slow;
-  const successCount = isActive
-    ? Math.max(0, job.completed_tasks - job.failed_tasks)
-    : Math.max(0, job.total_tasks - brokenLinks - verySlow - slow);
-  const dateStr = formatShortDate(job.completed_at || job.created_at);
-  const metrics = getCompletedCardMetrics(job);
-
-  let outcomeDotClass = "dot--success";
-  let outcomeLabel = "Completed";
-  let statusColour = "var(--status-colour--success)";
-
-  if (normalisedStatus === "cancelled") {
-    outcomeDotClass = "dot--neutral";
-    outcomeLabel = "Cancelled";
-    statusColour = "var(--status-colour--neutral)";
-  } else if (isActive) {
-    outcomeDotClass = "dot--warning";
-    outcomeLabel = statusLabelForJob(normalisedStatus);
-    statusColour =
-      normalisedStatus === "running" || normalisedStatus === "initializing"
-        ? "var(--status-colour--success)"
-        : "var(--status-colour--warning)";
-  } else if (normalisedStatus !== "completed") {
-    outcomeDotClass = "dot--danger";
-    outcomeLabel = "Error";
-    statusColour = "var(--status-colour--danger)";
-  }
-
-  if (job.total_tasks > 0) {
-    outcomeLabel = `${job.total_tasks} ${outcomeLabel}`;
-  }
-
-  const main = document.createElement("div");
-  main.className = "result-card-main";
-
-  const header = document.createElement("div");
-  header.className = "result-card-header";
-  const status = document.createElement("div");
-  status.className = "result-card-status";
-
-  const statusLine = document.createElement("div");
-  statusLine.className = "result-card-status-line";
-
-  const statusIcon = document.createElement("span");
-  statusIcon.setAttribute("aria-hidden", "true");
-  statusIcon.style.color = statusColour;
-
-  if (normalisedStatus === "completed") {
-    statusIcon.className =
-      "icon icon--small icon--tick result-card-status-icon";
-  } else if (isActiveJobStatus(normalisedStatus)) {
-    statusIcon.className = iconClassForJob(normalisedStatus);
-  } else {
-    statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
-  }
-
-  const statusLabel = document.createElement("span");
-  statusLabel.className = "result-card-status-label";
-  statusLabel.textContent = outcomeLabel;
-  statusLabel.style.color = statusColour;
-
-  statusLine.appendChild(statusIcon);
-  statusLine.appendChild(statusLabel);
-
-  const timestamp = document.createElement("p");
-  timestamp.className = "result-card-timestamp";
-  timestamp.textContent = dateStr;
-
-  status.appendChild(statusLine);
-  status.appendChild(timestamp);
-  header.appendChild(status);
-
-  const summary = document.createElement("div");
-  summary.className = "result-card-summary";
-
-  const summaryRow = document.createElement("div");
-  summaryRow.className = "result-card-summary-row";
-
-  const summaryItems: Array<{
-    dotClass: string;
-    label: string;
-    value: number;
-  }> = [
-    { dotClass: "dot--success", label: "good", value: successCount },
-    { dotClass: "dot--warning", label: "ok", value: warnCount },
-    { dotClass: "dot--danger", label: "error", value: failCount },
-  ];
-
-  for (const item of summaryItems) {
-    const summaryItem = document.createElement("span");
-    summaryItem.className = "result-card-summary-stat";
-    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
-    summaryRow.appendChild(summaryItem);
-  }
-
-  summary.appendChild(summaryRow);
-
-  if (!compact && metrics.length > 0) {
-    const metaRow = document.createElement("div");
-    metaRow.className = "result-card-summary-meta";
-
-    for (const metric of metrics) {
-      const metricItem = document.createElement("span");
-      metricItem.className = "result-card-summary-meta-item";
-      metricItem.textContent = `${metric.label}: ${metric.value}`;
-      metaRow.appendChild(metricItem);
-    }
-
-    summary.appendChild(metaRow);
-  }
-
-  header.appendChild(summary);
-  main.appendChild(header);
-  card.appendChild(main);
-
-  if (compact) {
-    return card;
-  }
-
-  const footer = document.createElement("div");
-  footer.className = "result-card-footer";
-
-  const issuesRow = document.createElement("div");
-  issuesRow.className = "result-card-issues";
-
-  const details = document.createElement("div");
-  details.className = `result-card-details${startExpanded ? "" : " hidden"}`;
-
-  // ── Row 3: issue pills (tabs) + issues detail table ──
-
-  const issuesContainer = document.createElement("div");
-  issuesContainer.className = "issues-detail";
-
-  type TabDef = { dotClass: string; label: string; count: number; key: string };
-  const tabDefs: TabDef[] = [
-    {
-      dotClass: "dot--danger",
-      label: "missing",
-      count: brokenLinks,
-      key: "broken",
-    },
-    {
-      dotClass: "dot--danger",
-      label: "very slow",
-      count: verySlow,
-      key: "veryslow",
-    },
-    { dotClass: "dot--warning", label: "slow", count: slow, key: "slow" },
-  ];
-
-  // Detail table panel (hidden by default, shown on tab click)
-  const tablePanel = document.createElement("div");
-  tablePanel.className = "issues-table hidden";
-
-  let hasAnyIssues = false;
-  const tabElements: HTMLElement[] = [];
-  let firstTab: HTMLButtonElement | null = null;
-  let firstTabKey: string | null = null;
-  const issueRowsCache = new Map<string, JobTask[]>();
-  let activeTabKey: string | null = null;
-
-  const activateIssueTab = (tab: HTMLElement, tabKey: string): void => {
-    activeTabKey = tabKey;
-
-    for (const t of tabElements) {
-      t.setAttribute("aria-pressed", "false");
-    }
-
-    tab.setAttribute("aria-pressed", "true");
-    show(tablePanel);
-    void renderIssuesTable(tablePanel, job, tabKey, issueRowsCache, () => {
-      return activeTabKey === tabKey;
-    });
-  };
-
-  for (const def of tabDefs) {
-    if (def.count <= 0) {
-      continue;
-    }
-    hasAnyIssues = true;
-
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "btn btn--text";
-    tab.dataset.tabKey = def.key;
-    tab.setAttribute("aria-pressed", "false");
-    const label = `${def.count} ${def.label}`;
-    tab.innerHTML = `<span class="dot ${def.dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
-
-    tab.addEventListener("click", () => {
-      const wasActive = tab.getAttribute("aria-pressed") === "true";
-
-      for (const t of tabElements) {
-        t.setAttribute("aria-pressed", "false");
-      }
-
-      if (wasActive) {
-        hide(tablePanel);
-        details.classList.add("hidden");
-        card.classList.remove("result-card-expanded");
-        activeTabKey = null;
-        return;
-      }
-
-      details.classList.remove("hidden");
-      card.classList.add("result-card-expanded");
-      activateIssueTab(tab, def.key);
-    });
-
-    issuesRow.appendChild(tab);
-    tabElements.push(tab);
-
-    if (!firstTab) {
-      firstTab = tab;
-      firstTabKey = def.key;
-    }
-  }
-
-  if (hasAnyIssues) {
-    issuesContainer.appendChild(tablePanel);
-    details.appendChild(issuesContainer);
-  }
-
-  footer.appendChild(issuesRow);
-
-  if (!isActiveJobStatus(normalisedStatus)) {
-    const actions = document.createElement("div");
-    actions.className = "result-card-actions";
-
-    const viewFullResultsBtn = document.createElement("button");
-    viewFullResultsBtn.type = "button";
-    viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
-    viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
-    viewFullResultsBtn.addEventListener("click", () => {
-      const detailPath = job.id
-        ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-        : APP_ROUTES.dashboard;
-      openSettingsPage(detailPath);
-    });
-    actions.appendChild(viewFullResultsBtn);
-    footer.appendChild(actions);
-  }
-
-  // Only append footer if it has content
-  if (hasAnyIssues || !isActiveJobStatus(normalisedStatus)) {
-    card.appendChild(footer);
-  }
-
-  const csvBtn = document.createElement("button");
-  csvBtn.type = "button";
-  csvBtn.className = "btn btn--ghost btn--xs";
-  csvBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 18v2h16v-2"/></svg> Export Results`;
-  csvBtn.addEventListener("click", () => {
-    void exportJob(job.id);
-  });
-
-  const detailActions = document.createElement("div");
-  detailActions.className = "result-card-pills";
-  detailActions.appendChild(csvBtn);
-  details.appendChild(detailActions);
-  card.appendChild(details);
-
-  if (startExpanded) {
-    card.classList.add("result-card-expanded");
-    details.classList.remove("hidden");
-    if (hasAnyIssues && firstTab && firstTabKey) {
-      activateIssueTab(firstTab, firstTabKey);
-    }
-  }
-
+  const label = document.createElement("p");
+  label.textContent = String(job.status || "unknown");
+  card.appendChild(label);
   return card;
 }
-
-// ---------------------------------------------------------------------------
-// Issues detail table (inside a result card, toggled by tab click)
-// ---------------------------------------------------------------------------
-
-function taskResponseTime(task: JobTask): number | null {
-  if (
-    typeof task.second_response_time === "number" &&
-    Number.isFinite(task.second_response_time) &&
-    task.second_response_time > 0
-  ) {
-    return task.second_response_time;
-  }
-
-  if (
-    typeof task.response_time === "number" &&
-    Number.isFinite(task.response_time) &&
-    task.response_time > 0
-  ) {
-    return task.response_time;
-  }
-
-  return null;
-}
-
-function toPathDisplay(value: string | undefined): string {
-  if (!value) {
-    return "-";
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "-";
-  }
-
-  if (trimmed.startsWith("/")) {
-    return trimmed;
-  }
-
-  try {
-    const parsed = new URL(trimmed);
-    const path = `${parsed.pathname || "/"}${parsed.search}${parsed.hash}`;
-    return path || "/";
-  } catch {
-    return trimmed;
-  }
-}
-
-function toAbsoluteUrl(
-  value: string | undefined,
-  fallbackUrl?: string
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.toString();
-  } catch {
-    // continue
-  }
-
-  if (!trimmed.startsWith("/")) {
-    return null;
-  }
-
-  if (fallbackUrl) {
-    try {
-      const base = new URL(fallbackUrl);
-      return new URL(trimmed, `${base.protocol}//${base.host}`).toString();
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
-}
-
-async function fetchIssueTasks(
-  jobId: string,
-  tabKey: string
-): Promise<JobTask[]> {
-  const basePath = `/v1/jobs/${encodeURIComponent(jobId)}/tasks?limit=200`;
-
-  const query =
-    tabKey === "broken"
-      ? `${basePath}&status=failed&sort=-created_at`
-      : `${basePath}&sort=-second_response_time`;
-
-  const response = await apiRequest<JobTasksResponse>(query, { method: "GET" });
-  const tasks = Array.isArray(response.tasks) ? response.tasks : [];
-
-  if (tabKey === "broken") {
-    return tasks;
-  }
-
-  const withTimes = tasks
-    .map((task) => ({ task, responseTime: taskResponseTime(task) }))
-    .filter(
-      (item): item is { task: JobTask; responseTime: number } =>
-        item.responseTime !== null
-    );
-
-  if (tabKey === "veryslow") {
-    return withTimes
-      .filter((item) => item.responseTime >= 5000)
-      .sort((a, b) => b.responseTime - a.responseTime)
-      .map((item) => item.task);
-  }
-
-  return withTimes
-    .filter((item) => item.responseTime >= 3000 && item.responseTime < 5000)
-    .sort((a, b) => b.responseTime - a.responseTime)
-    .map((item) => item.task);
-}
-
-async function renderIssuesTable(
-  panel: HTMLElement,
-  job: JobItem,
-  tabKey: string,
-  cache: Map<string, JobTask[]>,
-  isStillActive: () => boolean
-): Promise<void> {
-  while (panel.firstChild) {
-    panel.removeChild(panel.firstChild);
-  }
-
-  const loading = document.createElement("p");
-  loading.className = "detail";
-  loading.textContent = "Loading...";
-  panel.appendChild(loading);
-
-  let tasks: JobTask[];
-  try {
-    if (cache.has(tabKey)) {
-      tasks = cache.get(tabKey) || [];
-    } else {
-      tasks = await fetchIssueTasks(job.id, tabKey);
-      cache.set(tabKey, tasks);
-    }
-  } catch (error) {
-    if (!isStillActive()) {
-      return;
-    }
-
-    while (panel.firstChild) {
-      panel.removeChild(panel.firstChild);
-    }
-    const failed = document.createElement("p");
-    failed.className = "detail";
-    failed.textContent = "Could not load issue details.";
-    panel.appendChild(failed);
-    return;
-  }
-
-  if (!isStillActive()) {
-    return;
-  }
-
-  while (panel.firstChild) {
-    panel.removeChild(panel.firstChild);
-  }
-
-  const columnLabels: Record<string, [string, string]> = {
-    broken: ["Broken URL", "Found at"],
-    veryslow: ["URL", "Response time"],
-    slow: ["URL", "Response time"],
-  };
-
-  const [col1Label, col2Label] = columnLabels[tabKey] || ["URL", "Details"];
-
-  const body = document.createElement("div");
-  body.className = "issues-table-body";
-
-  const col1 = document.createElement("div");
-  col1.className = "issues-table-col";
-  const col1Heading = document.createElement("div");
-  col1Heading.className = "issues-table-heading";
-  col1Heading.textContent = col1Label;
-  col1.appendChild(col1Heading);
-
-  const col2 = document.createElement("div");
-  col2.className = "issues-table-col";
-  const col2Heading = document.createElement("div");
-  col2Heading.className = "issues-table-heading";
-  col2Heading.textContent = col2Label;
-  col2.appendChild(col2Heading);
-
-  const rows = tasks.slice(0, 20);
-
-  if (rows.length === 0) {
-    const noData = document.createElement("p");
-    noData.className = "detail";
-    noData.textContent =
-      tabKey === "broken"
-        ? "No broken links found for this run."
-        : tabKey === "veryslow"
-          ? "No very slow pages found for this run."
-          : "No slow pages found for this run.";
-    panel.appendChild(noData);
-  } else {
-    for (const task of rows) {
-      const leftText = toPathDisplay(task.path || task.url);
-      const rightText =
-        tabKey === "broken"
-          ? toPathDisplay(task.source_url)
-          : (() => {
-              const responseTime = taskResponseTime(task);
-              return responseTime !== null
-                ? `${responseTime.toLocaleString()}ms`
-                : "-";
-            })();
-
-      const row1 = document.createElement("div");
-      row1.className = "issues-table-row";
-      const cell1 = document.createElement("span");
-      cell1.className = "issues-table-cell";
-      const leftHref = toAbsoluteUrl(task.url || task.path, task.url);
-      if (leftHref) {
-        const leftLink = document.createElement("a");
-        leftLink.className = "issues-table-link";
-        leftLink.href = leftHref;
-        leftLink.target = "_blank";
-        leftLink.rel = "noopener noreferrer";
-        leftLink.textContent = leftText;
-        cell1.appendChild(leftLink);
-      } else {
-        cell1.textContent = leftText;
-      }
-      row1.appendChild(cell1);
-      col1.appendChild(row1);
-
-      const row2 = document.createElement("div");
-      row2.className = "issues-table-row";
-      const cell2 = document.createElement("span");
-      cell2.className = "issues-table-cell";
-      if (tabKey === "broken") {
-        const rightHref = toAbsoluteUrl(task.source_url);
-        if (rightHref) {
-          const rightLink = document.createElement("a");
-          rightLink.className = "issues-table-link";
-          rightLink.href = rightHref;
-          rightLink.target = "_blank";
-          rightLink.rel = "noopener noreferrer";
-          rightLink.textContent = rightText;
-          cell2.appendChild(rightLink);
-        } else {
-          cell2.textContent = rightText;
-        }
-      } else {
-        cell2.textContent = rightText;
-      }
-      row2.appendChild(cell2);
-      col2.appendChild(row2);
-    }
-
-    body.appendChild(col1);
-    body.appendChild(col2);
-    panel.appendChild(body);
-  }
-
-  const footer = document.createElement("div");
-  footer.className = "issues-table-footer";
-  const viewAllBtn = document.createElement("button");
-  viewAllBtn.type = "button";
-  viewAllBtn.className = "btn btn--tertiary btn--sm";
-  viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
-  viewAllBtn.addEventListener("click", () => {
-    const detailPath = job.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
-  });
-  footer.appendChild(viewAllBtn);
-  panel.appendChild(footer);
-}
-
-// ---------------------------------------------------------------------------
 // Job export
 // ---------------------------------------------------------------------------
 
@@ -2973,6 +2456,7 @@ async function initialise(): Promise<void> {
     // ignore
   }
 
+  initHoverJobCard();
   initEventHandlers();
   await refreshDashboard();
   renderAuthState(Boolean(state.token));

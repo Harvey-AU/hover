@@ -32,8 +32,10 @@
 let _apiFetcher = null;
 
 async function defaultFetcher(path) {
-  const { get } = await import("/app/lib/api-client.js");
-  return get(path);
+  // Extension context: call setApiFetcher() before creating cards.
+  throw new Error(
+    `hover-job-card: no API fetcher set. Call setApiFetcher() before creating cards. Path: ${path}`
+  );
 }
 
 /**
@@ -738,3 +740,6 @@ async function fetchIssueTasks(jobId, tabKey) {
 }
 
 export default { createJobCard };
+
+// Window bridge for non-module scripts (index.js)
+window.HoverJobCard = { createJobCard, setApiFetcher };
