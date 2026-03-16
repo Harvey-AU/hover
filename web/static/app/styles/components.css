@@ -499,6 +499,7 @@ hover-job-card {
   font-weight: 700;
   line-height: 1.4;
   color: var(--status-colour--success);
+  white-space: nowrap;
 }
 
 .result-card-timestamp {
@@ -679,5 +680,7 @@ hover-job-card {
   padding: var(--spacing--2xs) var(--spacing--lg);
 }
 
-/* Dashboard context overrides — deferred until layout is decided.
-   The context="dashboard" attribute is wired and ready when needed. */
+/* Dashboard context overrides */
+hover-job-card[context="dashboard"] {
+  max-width: 680px;
+}
