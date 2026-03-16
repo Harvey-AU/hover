@@ -243,7 +243,11 @@ class HoverJobCard extends HTMLElement {
       { dotClass: "dot--danger", label: "error", value: failCount },
     ]) {
       const stat = el("span", "result-card-summary-stat");
-      stat.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
+      const dot = el("span", `dot ${item.dotClass}`);
+      stat.appendChild(dot);
+      stat.appendChild(
+        document.createTextNode(` ${item.value.toLocaleString()} ${item.label}`)
+      );
       summaryRow.appendChild(stat);
     }
     summary.appendChild(summaryRow);
@@ -307,7 +311,15 @@ class HoverJobCard extends HTMLElement {
       tab.type = "button";
       tab.dataset.tabKey = def.key;
       tab.setAttribute("aria-pressed", "false");
-      tab.innerHTML = `<span class="dot ${def.dotClass}"></span><span>${def.count.toLocaleString()} ${def.label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
+      const tabDot = el("span", `dot ${def.dotClass}`);
+      const tabLabel = el("span");
+      tabLabel.textContent = `${def.count.toLocaleString()} ${def.label}`;
+      const tabArrow = el(
+        "span",
+        "icon icon--small icon--arrow icon--arrow--right"
+      );
+      tabArrow.setAttribute("aria-hidden", "true");
+      tab.append(tabDot, tabLabel, tabArrow);
 
       tab.addEventListener("click", () => {
         const wasActive = tab.getAttribute("aria-pressed") === "true";
