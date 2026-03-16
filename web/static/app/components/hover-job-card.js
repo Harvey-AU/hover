@@ -390,9 +390,7 @@ class HoverJobCard extends HTMLElement {
 
     footer.appendChild(actions);
 
-    if (hasAnyIssues || true) {
-      card.appendChild(footer);
-    }
+    card.appendChild(footer);
 
     // Export button — completed jobs only
     if (!isActive) {
