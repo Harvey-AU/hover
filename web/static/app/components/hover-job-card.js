@@ -41,6 +41,7 @@ const ACTIVE_STATUSES = new Set([
   "running",
   "in_progress",
   "processing",
+  "cancelling",
 ]);
 
 const APP_ROUTES = {
@@ -356,7 +357,7 @@ class HoverJobCard extends HTMLElement {
       details.appendChild(detailActions);
     }
 
-    card.appendChild(details);
+    if (details.children.length > 0) card.appendChild(details);
 
     // Auto-expand if attribute set
     if (startExpanded) {
