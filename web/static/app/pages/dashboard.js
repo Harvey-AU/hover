@@ -13,7 +13,7 @@
  *
  * Responsibilities:
  *   - Register hover-* Web Components for use anywhere in the page
- *   - Render the jobs list using hover-data-table + hover-status-pill
+ *   - Render the jobs list using hover-job-card
  *   - Render stats cards using shared formatters
  *   - Handle create-job / close-create-job-modal / refresh-dashboard actions
  *   - restart-job and cancel-job actions
@@ -28,14 +28,9 @@
 
 import { get, post, put } from "/app/lib/api-client.js";
 import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
-import { createStatusPill } from "/app/components/hover-status-pill.js";
-import { createDataTable } from "/app/components/hover-data-table.js";
+import { createJobCard } from "/app/components/hover-job-card.js";
 import { showToast } from "/app/components/hover-toast.js";
-import {
-  formatRelativeTime,
-  formatDuration,
-  formatCount,
-} from "/app/lib/formatters.js";
+import { formatCount } from "/app/lib/formatters.js";
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -48,9 +43,8 @@ let currentRange = "today";
  * Called once auth and org state are confirmed ready.
  */
 async function init() {
-  // Suppress legacy binder-inserted job cards so our hover-data-table owns
-  // the jobs list. The binder clones bbb-template="job" elements and inserts
-  // them as siblings — we hide them as they arrive.
+  // Suppress legacy binder-inserted job cards — the binder clones
+  // bbb-template="job" elements and inserts them as siblings; hide on arrival.
   const jobsList = document.querySelector(".bb-jobs-list");
   if (jobsList) {
     new MutationObserver((mutations) => {
@@ -155,119 +149,15 @@ function setStatCard(key, value) {
 
 // ── Jobs list ──────────────────────────────────────────────────────────────────
 
-// Column definitions are stable — defined once so the table header is never
-// rebuilt on refresh. Only rows are swapped in place via table.rows = [...].
-const JOB_COLUMNS = [
-  {
-    key: "domain",
-    label: "Domain",
-    render: (val, row) => {
-      const name = val || row.domains?.name || "—";
-      const span = document.createElement("span");
-      span.textContent = name;
-      return span;
-    },
-  },
-  {
-    key: "status",
-    label: "Status",
-    render: (val) => createStatusPill(String(val || "")),
-  },
-  {
-    key: "progress",
-    label: "Progress",
-    render: (val, row) => {
-      const pct = Math.round(Number(val) || 0);
-      const done = formatCount(row.completed_tasks);
-      const total = formatCount(row.total_tasks);
-      const span = document.createElement("span");
-      span.textContent = `${done} / ${total} (${pct}%)`;
-      return span;
-    },
-  },
-  {
-    key: "started_at",
-    label: "Started",
-    render: (val) => (val ? formatRelativeTime(String(val)) : "—"),
-  },
-  {
-    key: "duration_seconds",
-    label: "Duration",
-    render: (val) => (val != null ? formatDuration(Number(val) * 1000) : "—"),
-  },
-  {
-    key: "id",
-    label: "Actions",
-    render: (val, row) => {
-      const wrap = document.createElement("div");
-      wrap.style.cssText = "display:flex;gap:8px;align-items:center";
-
-      const status = String(row.status || "");
-      const isActive = [
-        "pending",
-        "running",
-        "queued",
-        "initializing",
-        "processing",
-        "cancelling",
-      ].includes(status);
-      const isDone = ["completed", "failed", "cancelled"].includes(status);
-
-      const view = document.createElement("a");
-      view.href = `/jobs/${val}`;
-      view.className = "bb-job-link";
-      view.textContent = "View";
-      view.setAttribute("aria-label", "View job details");
-      wrap.appendChild(view);
-
-      if (isDone) {
-        const restart = document.createElement("button");
-        restart.className = "bb-job-link";
-        restart.textContent = "Restart";
-        restart.setAttribute("aria-label", "Restart this job");
-        restart.addEventListener("click", () => restartJob(row));
-        wrap.appendChild(restart);
-      }
-
-      if (isActive) {
-        const cancel = document.createElement("button");
-        cancel.className = "bb-job-link";
-        cancel.textContent = "Cancel";
-        cancel.setAttribute("aria-label", "Cancel this job");
-        cancel.addEventListener("click", () => cancelJob(String(val)));
-        wrap.appendChild(cancel);
-      }
-
-      return wrap;
-    },
-  },
-];
+/** @type {Map<string, HoverJobCard>} jobId → card element, for in-place updates */
+const _jobCards = new Map();
 
 async function refreshJobs() {
   const container = document.querySelector(".bb-jobs-list");
   if (!container) return;
 
-  // Create the table once — subsequent calls update rows in place to avoid
-  // tearing down and rebuilding the DOM (which causes visible flicker).
-  let table = container.querySelector("hover-data-table");
-  if (!table) {
-    table = createDataTable({
-      columns: JOB_COLUMNS,
-      rows: [],
-      emptyMessage: "No jobs found.",
-    });
-    table.setAttribute("loading", "");
-    container.appendChild(table);
-  }
-
-  // Wait for a valid Supabase session before fetching — the module may run
-  // before core.js has called initialiseSupabase() and signed in.
   const token = await waitForSession();
-  if (!token) {
-    table.removeAttribute("loading");
-    table.setAttribute("error", "Not signed in.");
-    return;
-  }
+  if (!token) return;
 
   try {
     const jobs = await fetchJobs({
@@ -275,30 +165,116 @@ async function refreshJobs() {
       range: currentRange,
       include: "stats",
     });
-    renderJobsTable(container, table, jobs);
+    renderJobCards(container, jobs);
   } catch {
-    table.removeAttribute("loading");
-    table.setAttribute("error", "Failed to load jobs.");
+    // Non-fatal — existing cards stay visible
   }
 }
 
-function renderJobsTable(container, table, jobs) {
-  // Hide legacy bbb-template cards — the binder may re-insert clones but
-  // they will also be hidden because they inherit style="display:none" from
-  // the template element.
+function renderJobCards(container, jobs) {
+  // Hide legacy bbb-template cards inserted by bb-data-binder
   container
-    .querySelectorAll("[bbb-template='job']")
+    .querySelectorAll("[bbb-template='job'], .bb-job-card")
     .forEach((el) => (el.style.display = "none"));
 
-  table.removeAttribute("loading");
-  table.removeAttribute("error");
+  // Empty state
+  if (jobs.length === 0) {
+    _jobCards.forEach((card) => card.remove());
+    _jobCards.clear();
 
-  // Update rows in place — _renderBody() runs without touching the header,
-  // so there is no flicker on polling updates.
-  table.rows = jobs.map((job) => ({
-    ...job,
-    domain: job.domains?.name || job.domain || "",
-  }));
+    let empty = container.querySelector(".jobs-empty-state");
+    if (!empty) {
+      empty = document.createElement("p");
+      empty.className = "jobs-empty-state detail";
+      empty.textContent = "No jobs yet.";
+      container.appendChild(empty);
+    }
+    return;
+  }
+
+  // Remove empty state if present
+  container.querySelector(".jobs-empty-state")?.remove();
+
+  // Track which job IDs are in the new response
+  const incoming = new Set(jobs.map((j) => j.id));
+
+  // Remove cards no longer in the list
+  _jobCards.forEach((card, id) => {
+    if (!incoming.has(id)) {
+      card.remove();
+      _jobCards.delete(id);
+    }
+  });
+
+  // Update existing cards in-place, append new ones in order
+  jobs.forEach((job, index) => {
+    const existing = _jobCards.get(job.id);
+    if (existing) {
+      // In-place update — no DOM removal, no flicker
+      existing.job = job;
+      // Ensure correct order
+      const cards = Array.from(container.querySelectorAll("hover-job-card"));
+      if (cards[index] !== existing)
+        container.insertBefore(existing, cards[index] ?? null);
+    } else {
+      const card = createJobCard(job, { context: "dashboard" });
+      card.dataset.jobId = job.id;
+
+      // Navigation — "All" button and "View all X" in issue tables
+      card.addEventListener("hover-job-card:view", (e) => {
+        window.location.href = e.detail.path;
+      });
+
+      // Export
+      card.addEventListener("hover-job-card:export", (e) => {
+        exportJob(e.detail.jobId).catch((err) =>
+          showToast(`Export failed: ${err.message}`, { variant: "error" })
+        );
+      });
+
+      // Insert at correct position
+      const cards = Array.from(container.querySelectorAll("hover-job-card"));
+      container.insertBefore(card, cards[index] ?? null);
+      _jobCards.set(job.id, card);
+    }
+  });
+}
+
+async function exportJob(jobId) {
+  try {
+    const data = await get(`/v1/jobs/${encodeURIComponent(jobId)}/export`, {
+      headers: { Accept: "application/json" },
+    });
+    const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+    if (!tasks.length) {
+      showToast("No tasks to export.", { variant: "warning" });
+      return;
+    }
+
+    const keys = Object.keys(tasks[0]);
+    const csv = [
+      keys.join(","),
+      ...tasks.map((t) => keys.map((k) => csvEscape(t[k])).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `job-${jobId}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Export downloaded.", { variant: "success" });
+  } catch (err) {
+    throw err;
+  }
+}
+
+function csvEscape(val) {
+  if (val == null) return "";
+  const str = String(val);
+  return str.includes(",") || str.includes('"') || str.includes("\n")
+    ? `"${str.replace(/"/g, '""')}"`
+    : str;
 }
 
 // ── Create job modal ───────────────────────────────────────────────────────────
