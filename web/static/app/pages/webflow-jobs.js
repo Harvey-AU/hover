@@ -184,6 +184,7 @@ export function subscribeToJobUpdates(orgId, onUpdate) {
     if (!debounceTimer) {
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
+        if (unsubscribed) return;
         lastUpdate = Date.now();
         clearFallback();
         onUpdate();
