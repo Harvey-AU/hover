@@ -175,23 +175,6 @@ type JobListResponse = {
   jobs: JobItem[];
 };
 
-type JobTask = {
-  id: string;
-  path: string;
-  url: string;
-  status: string;
-  response_time?: number;
-  second_response_time?: number;
-  source_url?: string;
-};
-
-type JobTasksResponse = {
-  tasks: JobTask[];
-  pagination?: {
-    total?: number;
-  };
-};
-
 type Scheduler = {
   id: string;
   domain: string;
@@ -642,26 +625,6 @@ function normalizeDomain(input: string): string {
     return "";
   }
   return trimmed.split("/")[0] || trimmed;
-}
-
-function statusLabelForJob(status: string): string {
-  if (status === "completed") {
-    return "Done";
-  }
-
-  if (status === "running" || status === "initializing") {
-    return "In progress";
-  }
-
-  if (status === "pending") {
-    return "Starting up";
-  }
-
-  if (status === "cancelled") {
-    return "Cancelled";
-  }
-
-  return "Error";
 }
 
 function normalizeJobStatus(status: string): string {
@@ -1221,20 +1184,6 @@ function renderAuthState(isAuthed: boolean): void {
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
-function iconClassForJob(status: string): string {
-  const base = "job-status-icon";
-  if (status === "completed") {
-    return `${base} ${base}--completed`;
-  }
-  if (status === "running" || status === "initializing") {
-    return `${base} ${base}--running`;
-  }
-  if (status === "pending" || status === "queued") {
-    return `${base} ${base}--pending`;
-  }
-  return `${base} ${base}--error`;
-}
-
 /** Show the in-progress card only for active jobs; hide for completed/none. */
 function renderJobState(job: JobItem | null): void {
   const section = asNode(ui.jobSection);
@@ -1247,7 +1196,7 @@ function renderJobState(job: JobItem | null): void {
   const hoverJobCard = (window as any).HoverJobCard;
   const card: HTMLElement = hoverJobCard
     ? hoverJobCard.createJobCard(job, { context: "extension" })
-    : buildResultCardFallback(job);
+    : buildResultCardFallback(job, false);
 
   if (section) {
     section.innerHTML = "";
@@ -1301,30 +1250,6 @@ function getIssueCounts(job: JobItem): {
   };
 }
 
-function getSavedTimeMs(job: JobItem): number | null {
-  const statsSavedMs = job.stats?.cache_warming_effect?.total_time_saved_ms;
-  if (typeof statsSavedMs === "number" && Number.isFinite(statsSavedMs)) {
-    return Math.max(0, Math.round(statsSavedMs));
-  }
-
-  const statsSavedSeconds =
-    job.stats?.cache_warming_effect?.total_time_saved_seconds;
-  if (
-    typeof statsSavedSeconds === "number" &&
-    Number.isFinite(statsSavedSeconds)
-  ) {
-    return Math.max(0, Math.round(statsSavedSeconds * 1000));
-  }
-
-  if (
-    typeof job.duration_seconds === "number" &&
-    Number.isFinite(job.duration_seconds)
-  ) {
-    return Math.max(0, Math.round(job.duration_seconds * 1000));
-  }
-
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // Date formatting
@@ -1371,38 +1296,6 @@ function formatShortDate(value?: string): string {
           : "th";
 
   return `${day}${suffix} ${month} ${h}:${minutes}${ampm}`;
-}
-
-function formatMetricMilliseconds(value: number | null): string | null {
-  if (value === null || !Number.isFinite(value)) {
-    return null;
-  }
-
-  return `${Math.max(0, Math.round(value)).toLocaleString()}ms`;
-}
-
-function getCompletedCardMetrics(
-  job: JobItem
-): Array<{ label: string; value: string }> {
-  const metrics: Array<{ label: string; value: string }> = [];
-
-  if (
-    typeof job.avg_time_per_task_seconds === "number" &&
-    Number.isFinite(job.avg_time_per_task_seconds) &&
-    job.avg_time_per_task_seconds > 0
-  ) {
-    metrics.push({
-      label: "Avg",
-      value: `${Math.round(job.avg_time_per_task_seconds * 1000).toLocaleString()}ms`,
-    });
-  }
-
-  const savedMs = formatMetricMilliseconds(getSavedTimeMs(job));
-  if (savedMs) {
-    metrics.push({ label: "Saved", value: savedMs });
-  }
-
-  return metrics;
 }
 
 // ---------------------------------------------------------------------------
@@ -1463,7 +1356,7 @@ function renderRecentResults(jobs: JobItem[]): void {
   function makeCard(cardJob: JobItem, compact: boolean): HTMLElement {
     const card: HTMLElement = hoverJobCard
       ? hoverJobCard.createJobCard(cardJob, { context: "extension", compact })
-      : buildResultCardFallback(cardJob, false, compact);
+      : buildResultCardFallback(cardJob, compact);
     card.addEventListener("hover-job-card:view", (e: Event) =>
       openSettingsPage((e as CustomEvent).detail.path)
     );
@@ -1488,11 +1381,7 @@ function renderRecentResults(jobs: JobItem[]): void {
 // Result card fallback (used only if hover-job-card.js fails to load)
 // ---------------------------------------------------------------------------
 
-function buildResultCardFallback(
-  job: JobItem,
-  _startExpanded = false,
-  compact = false
-): HTMLElement {
+function buildResultCardFallback(job: JobItem, compact = false): HTMLElement {
   // Minimal fallback used only if hover-job-card.js fails to load.
   const card = document.createElement("div");
   card.className = compact

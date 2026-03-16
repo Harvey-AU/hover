@@ -5,16 +5,16 @@ extension screens, `/dashboard`, job details, and settings screens
 
 ## Progress summary (as of 2026-03-16)
 
-| Phase                       | Status         | Notes                                                             |
-| --------------------------- | -------------- | ----------------------------------------------------------------- |
-| Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page          |
-| Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated |
-| Phase 2 — Webflow job list  | ✅ Complete | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
+| Phase                       | Status                | Notes                                                                                                                                                                           |
+| --------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Phase 0 — Foundations       | ✅ Complete           | `app/` structure, tokens, base, lib utilities, test page                                                                                                                        |
+| Phase 1 — Webflow auth      | ✅ Complete           | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated                                                                                                               |
+| Phase 2 — Webflow job list  | ✅ Complete           | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added                    |
 | Phase 3 — Dashboard         | ⚠️ Partially complete | `dashboard.js` module exists, stats work — job list was a flat table until Phase 4; definition of done (matches Webflow surface visually) not met until `hover-job-card` landed |
-| Phase 4 — Job details       | ✅ Complete    | See Phase 4 notes below — scope expanded significantly            |
-| Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove          |
-| Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded             |
-| Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                   |
+| Phase 4 — Job details       | ✅ Complete           | See Phase 4 notes below — scope expanded significantly                                                                                                                          |
+| Phase 5 — Settings          | 🔲 Not started        | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove                                                                                                                        |
+| Phase 6 — Dashboard cleanup | 🔲 Not started        | `bb-domain-search`, integrations scripts still loaded                                                                                                                           |
+| Phase 7 — Global nav + auth | 🔲 Not started        | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                                                 |
 
 ---
 
@@ -571,8 +571,10 @@ Validation:
 
 **Completed (2026-03-16):**
 
-- `hover-job-card` wired into extension `index.js` via `window.HoverJobCard` bridge
-- `buildResultCard`, `fetchIssueTasks`, `renderIssuesTable` removed from `index.js`
+- `hover-job-card` wired into extension `index.js` via `window.HoverJobCard`
+  bridge
+- `buildResultCard`, `fetchIssueTasks`, `renderIssuesTable` removed from
+  `index.js`
 - `sync:components` npm script added — copies all 4 shared components from
   `web/static/app/components/` to `webflow-designer-extension-cli/public/` and
   patches `hover-job-card.js` for the extension context (no `/app/` path)
@@ -608,8 +610,8 @@ Validation:
   `bb-metadata.js` still loaded on both `dashboard.html` and `job-details.html`
 - `bb-domain-search`, `bb-integration-http`, `bb-slack`, `bb-webflow`,
   `bb-google`, `bb-admin` still loaded on `dashboard.html`
-- Dashboard job list now uses `hover-job-card` (fixed in Phase 4) but the
-  domain search, integrations, and admin sections remain legacy
+- Dashboard job list now uses `hover-job-card` (fixed in Phase 4) but the domain
+  search, integrations, and admin sections remain legacy
 
 ---
 
@@ -618,6 +620,7 @@ Validation:
 Objective: bring the detail view onto the same visual and structural system.
 
 **What was originally planned:**
+
 - `pages/job-details.js` module entrypoint
 - `hover-data-table` for task rows, `hover-tabs`, `hover-status-pill`
 
@@ -632,8 +635,8 @@ rendering job cards with duplicated logic drove a broader piece of work:
    emits `hover-data-table:sort` event
 3. **`pages/job-details.js`** — full tasks section ownership: fetch, sort, 6
    filter tabs (All / Broken Links / Success / Slow / Very Slow / In Progress)
-   with per-tab column sets, pagination, realtime + adaptive polling,
-   analytics columns, status pill upgrade
+   with per-tab column sets, pagination, realtime + adaptive polling, analytics
+   columns, status pill upgrade
 4. **`hover-job-card`** — domain-level Web Component, single source of truth for
    job card rendering across dashboard and extension; ported from
    `buildResultCard()` in the extension; `context` attribute for layout
@@ -641,7 +644,7 @@ rendering job cards with duplicated logic drove a broader piece of work:
 5. **Dashboard job list** — replaced flat `hover-data-table` with
    `hover-job-card` list; in-place card updates via Map, no flicker
 6. **Go API** — `performance` query param (`slow` >1,500ms / `very_slow`
-   >4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
+   > 4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
 7. **SVG icons + CSS** — icons copied to `web/static/app/icons/`; full button,
    dot, and icon CSS ported from extension `styles.css` into `components.css`
 
@@ -660,8 +663,10 @@ copies of components in `public/` (existing pattern for `hover-status-pill`,
 to automate copying when the extension rebuild PR lands.
 
 **Still outstanding from Phase 4:**
-- `job-page.js` header, stats, action buttons still legacy — `window.__hoverTasksOwned`
-  gate prevents double-render but `job-page.js` is not yet retired
+
+- `job-page.js` header, stats, action buttons still legacy —
+  `window.__hoverTasksOwned` gate prevents double-render but `job-page.js` is
+  not yet retired
 - `bb-global-nav.js`, `bb-data-binder.js`, `bb-auth-extension.js`,
   `bb-metadata.js` still loaded on `job-details.html`
 
