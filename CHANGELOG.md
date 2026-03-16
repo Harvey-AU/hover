@@ -62,67 +62,64 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
-- **Job details ES module layer (Phase 4)**: Added `pages/job-details.js` as an
-  ES module entrypoint that co-exists with the legacy `job-page.js`
-  - `hover-status-pill` replaces the legacy `.status-pill` span in the overview
-    grid; a `MutationObserver` keeps it in sync as `job-page.js` updates the
-    status
-  - Task table status cells upgraded to `hover-status-pill` as rows are rendered
-  - `tokens.css` and `components.css` loaded on the job details page
+- **Job details + domain component layer (Phase 4)**: Completed job details
+  migration and introduced domain-level Web Components shared between the
+  dashboard and Webflow extension
+  - `hover-job-card` — canonical job card Web Component ported from
+    `buildResultCard()` in the Webflow extension; single source of truth for job
+    card rendering; `context` attribute (`extension` / `dashboard`) for layout
+    differences; emits `hover-job-card:view` and `hover-job-card:export` events;
+    handles issue tabs (Broken Links / Slow / Very Slow), expandable detail
+    table, and export; CSS class selectors provide per-context overrides
+  - `hover-tabs` — tab bar Web Component with `tabs` property, `active`
+    attribute, `hover-tabs:change` event, and full keyboard navigation
+  - `hover-data-table` extended with sortable column support — `sortable: true`
+    column option, emits `hover-data-table:sort` event with column and direction
+  - `pages/job-details.js` — full tasks section ownership: 6 filter tabs (All /
+    Broken Links / Success / Slow / Very Slow / In Progress) each with per-tab
+    column sets; `found-on` column with sitemap fallback; analytics columns
+    (Views 7d/28d/180d) appended when data present; sort, pagination, path
+    search, and adaptive fallback polling (500ms active / 1s idle);
+    `window.__hoverTasksOwned` gate prevents double-render with `job-page.js`
+  - Dashboard job list replaced from `hover-data-table` flat rows to
+    `hover-job-card` list; in-place card updates via Map keyed on job ID — no
+    DOM teardown, no flicker on polling
+  - Go tasks API: new `performance` query param (`slow` >1,500ms / `very_slow`
+    > 4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
+    > — zero-ms second response times no longer suppress first-load time from
+    > filter
+  - SVG icons copied to `web/static/app/icons/`; full button, dot, icon, and
+    card CSS ported from Webflow extension `styles.css` into `components.css` as
+    the shared source of truth
 
 - **Dashboard ES module layer (Phase 3)**: Added `pages/dashboard.js` as an ES
   module entrypoint that co-exists with the legacy `bb-*` scripts during
   migration; provides the jobs list and stats using shared components
-  - Jobs list rendered by `hover-data-table` with `hover-status-pill` status
-    indicators, relative timestamps, and duration formatting from
-    `lib/formatters.js`
   - Stats cards updated via the shared stats API; date range selector wired to
     the module layer
-  - Restart and cancel job actions use `hover-toast` for feedback instead of
-    legacy error divs
+  - Restart and cancel job actions use `hover-toast` for feedback
   - `bb-bootstrap.js` and `bb-dashboard-actions.js` removed from
-    `dashboard.html`; `openCreateJobModal`, `closeCreateJobModal`, and `refresh`
-    ported into `dashboard.js` and exposed as `window` bridges for
-    `bb-auth-extension.js`
-  - Inline dashboard init script updated to await `window.BB_APP.coreReady`
-    directly (set by `core.js`) — no polling shim required
-  - Supabase Realtime subscription via `subscribeToJobUpdates` from
-    `webflow-jobs.js` with automatic 10 s fallback polling and org-switch
-    re-subscription on `bb:org-switched` event
+    `dashboard.html`
+  - Supabase Realtime subscription via `subscribeToJobUpdates` with adaptive
+    fallback polling (500ms active / 1s idle) and org-switch re-subscription
   - Stats fetch gated behind `waitForSession` to prevent 401 on cold load
-  - Jobs table updated in place via `table.rows = [...]` on each poll — no DOM
-    teardown, no flicker
-  - `tokens.css` and `components.css` loaded on the dashboard so all `hover-*`
-    components render with the correct design tokens
+  - `tokens.css` and `components.css` loaded on the dashboard
 
 - **Shared job list components (Phase 2)**: Reusable Web Components for job
-  status and tabular data, shared across the Webflow extension, dashboard, and
-  future surfaces (Shopify, WordPress)
-  - `web/static/app/components/hover-status-pill.js` — animated status indicator
-    with `icon`, `dot`, and `label` variants; covers all job statuses; replaces
-    duplicated `.dot` + `.job-status-icon` patterns in the extension
-  - `web/static/app/components/hover-data-table.js` — data table with custom
-    column renderers, loading skeleton rows, and empty/error states; replaces
-    duplicated `.issues-table` DOM construction in the extension
-  - `web/static/app/pages/webflow-jobs.js` — shared job-list data fetching,
-    rendering helpers, and Supabase Realtime subscription with debounce and
-    fallback polling; imported by both extension and dashboard
-  - Webflow extension `index.html` loads shared components via
-    `<script type="module">` and updated to Supabase SDK 2.95.3
+  status and tabular data
+  - `hover-status-pill` — animated status indicator covering all job statuses
+  - `hover-data-table` — data table with custom column renderers, skeleton rows,
+    empty/error states
+  - `webflow-jobs.js` — shared job-list data fetching and Supabase Realtime
+    subscription with debounce and fallback polling
+  - Webflow extension updated to Supabase SDK 2.95.3
 
 - **Webflow extension auth screen (Phase 1)**: Migrated
-  `web/templates/extension-auth.html` to the ES module pattern; retired
-  `core.js` and `bb-bootstrap.js` from this surface
-  - `web/static/app/components/hover-toast.js` — `hover-toast` Web Component
-    with imperative `showToast()` API, 4 variants (success/error/warning/info),
-    auto-dismiss, stacking container, and enter/leave animations
-  - `web/static/app/styles/components.css` — component styles for `hover-toast`
-    and future `hover-*` components; all values reference semantic tokens
-  - `web/static/app/pages/webflow-login.js` — ES module entrypoint for
-    `/extension-auth`; handles session restore, OAuth callback tokens, backend
-    user registration, and `postMessage` handoff to the Webflow Designer
-    extension; uses `hover-toast` for feedback; preserves the `extensionAuth`
-    redirect contract from `AGENTS.md`
+  `web/templates/extension-auth.html` to the ES module pattern
+  - `hover-toast` — Web Component with `showToast()` API, 4 variants,
+    auto-dismiss, stacking, enter/leave animations
+  - `webflow-login.js` — session restore, OAuth callback, backend registration,
+    `postMessage` handoff; preserves auth redirect contract from `AGENTS.md`
 
 ### Fixed
 

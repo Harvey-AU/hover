@@ -1,7 +1,22 @@
 # Unified Frontend: ES Modules and Naming Convention
 
-Date: 2026-03-15 Status: Proposed Scope: Webflow extension screens,
-`/dashboard`, job details, and settings screens
+Date: 2026-03-15 Status: **In progress (Phase 4 complete)** Scope: Webflow
+extension screens, `/dashboard`, job details, and settings screens
+
+## Progress summary (as of 2026-03-16)
+
+| Phase                       | Status         | Notes                                                             |
+| --------------------------- | -------------- | ----------------------------------------------------------------- |
+| Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page          |
+| Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated |
+| Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`        |
+| Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, stats, job list, realtime/polling, modal bridges  |
+| Phase 4 — Job details       | ✅ Complete    | See Phase 4 notes below — scope expanded significantly            |
+| Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove          |
+| Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded             |
+| Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                   |
+
+---
 
 ## Summary
 
@@ -281,38 +296,34 @@ A repo-wide rename-first pass would:
 ```text
 web/static/
   app/
+    icons/                        ← SVG icon files (synced from extension)
     lib/
-      api-client.js
-      auth-session.js
-      config.js
-      events.js
-      formatters.js
-      org-store.js
-      urls.js
+      api-client.js               ✅
+      auth-session.js             ✅
+      config.js                   ✅
+      formatters.js               ✅
     components/
-      hover-button.js
-      hover-card.js
-      hover-data-table.js
-      hover-empty-state.js
-      hover-modal.js
-      hover-status-pill.js
-      hover-tabs.js
-      hover-toast.js
+      hover-data-table.js         ✅ (with sort support)
+      hover-job-card.js           ✅ (domain component, Phase 4)
+      hover-status-pill.js        ✅
+      hover-tabs.js               ✅ (Phase 4)
+      hover-toast.js              ✅
+      hover-button.js             🔲 planned
+      hover-modal.js              🔲 planned
+      hover-empty-state.js        🔲 planned
     pages/
-      dashboard.js
-      job-details.js
-      settings-account.js
-      settings-billing.js
-      settings-integrations.js
-      settings-team.js
-      webflow-jobs.js
-      webflow-login.js
+      dashboard.js                ✅
+      job-details.js              ✅
+      webflow-jobs.js             ✅
+      webflow-login.js            ✅
+      settings-account.js         🔲 Phase 5
+      settings-billing.js         🔲 Phase 5
+      settings-integrations.js    🔲 Phase 5
+      settings-team.js            🔲 Phase 5
     styles/
-      base.css
-      components.css
-      layout.css
-      tokens.css
-      utilities.css
+      base.css                    ✅
+      components.css              ✅
+      tokens.css                  ✅
 ```
 
 Structural rules that should not change:
@@ -581,21 +592,64 @@ Validation:
 
 ---
 
-### Phase 4 — Job details
+### Phase 4 — Job details ✅ Complete
 
 Objective: bring the detail view onto the same visual and structural system.
 
-Tasks:
+**What was originally planned:**
+- `pages/job-details.js` module entrypoint
+- `hover-data-table` for task rows, `hover-tabs`, `hover-status-pill`
 
-- create `pages/job-details.js` as the module entrypoint
-- reuse `hover-data-table` for task rows and issue groups
-- reuse `hover-tabs`, `hover-status-pill`, and summary card patterns
-- standardise detail loading and error states
+**What was actually built (scope expanded significantly):**
+
+The discovery that the dashboard and Webflow extension were independently
+rendering job cards with duplicated logic drove a broader piece of work:
+
+1. **`hover-tabs`** — new Web Component; tab bar with `tabs` property, `active`
+   attribute, `hover-tabs:change` event, keyboard navigation
+2. **`hover-data-table` sort support** — added `sortable: true` column option,
+   emits `hover-data-table:sort` event
+3. **`pages/job-details.js`** — full tasks section ownership: fetch, sort, 6
+   filter tabs (All / Broken Links / Success / Slow / Very Slow / In Progress)
+   with per-tab column sets, pagination, realtime + adaptive polling,
+   analytics columns, status pill upgrade
+4. **`hover-job-card`** — domain-level Web Component, single source of truth for
+   job card rendering across dashboard and extension; ported from
+   `buildResultCard()` in the extension; `context` attribute for layout
+   differences; emits `hover-job-card:view` and `hover-job-card:export`
+5. **Dashboard job list** — replaced flat `hover-data-table` with
+   `hover-job-card` list; in-place card updates via Map, no flicker
+6. **Go API** — `performance` query param (`slow` >1,500ms / `very_slow`
+   >4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
+7. **SVG icons + CSS** — icons copied to `web/static/app/icons/`; full button,
+   dot, and icon CSS ported from extension `styles.css` into `components.css`
+
+**Key architectural decision:**
+
+Domain components (`hover-job-card`) sit above generic primitives. They accept a
+plain data object and own all render logic. A `context` attribute handles the
+1–5% of layout differences between surfaces. CSS class selectors provide all
+per-context overrides — no Shadow DOM, no `part` attributes needed.
+
+**Extension sync approach:**
+
+`web/static/app/components/` is the source of truth. Extension has its own
+copies of components in `public/` (existing pattern for `hover-status-pill`,
+`hover-data-table`, `hover-toast`). A `sync:components` npm script will be added
+to automate copying when the extension rebuild PR lands.
+
+**Still outstanding from Phase 4:**
+- `job-page.js` header, stats, action buttons still legacy — `window.__hoverTasksOwned`
+  gate prevents double-render but `job-page.js` is not yet retired
+- `bb-global-nav.js`, `bb-data-binder.js`, `bb-auth-extension.js`,
+  `bb-metadata.js` still loaded on `job-details.html`
 
 Validation:
 
-- job details uses the same design language as dashboard and Webflow job list
-- shared table, status, and tab components work in both contexts
+- ✅ Tasks table: `hover-tabs` + `hover-data-table` with per-tab column sets
+- ✅ Performance filter tabs backed by Go API filter
+- ✅ Dashboard job list uses `hover-job-card`, matches extension visual output
+- ✅ Adaptive fallback polling: 500ms active, 1s idle
 
 ---
 
@@ -603,21 +657,73 @@ Validation:
 
 Objective: make settings feel like part of the same product, not a separate UI.
 
+**Scope:** `settings.html` currently loads 8 legacy scripts: `bb-data-binder`,
+`bb-auth-extension`, `bb-integration-http`, `bb-slack`, `bb-webflow`,
+`bb-google`, `bb-invite-flow`, `bb-settings` (2,293 lines).
+
 Tasks:
 
 - create per-section page modules: `settings-account.js`, `settings-team.js`,
   `settings-billing.js`, `settings-integrations.js`
-- create settings navigation and section primitives
-- standardise form spacing, field messaging, and feedback patterns
+- the integrations section (Slack, Webflow, Google) each have their own OAuth
+  flows — extract each into its own module carefully
 - reuse `hover-modal`, `hover-tabs`, `hover-toast`, and card primitives already
   established
 - retire `bb-settings.js` once all sections are migrated
 
-Validation:
+Risk: highest-risk phase — OAuth callback wiring in `bb-settings.js` is tightly
+coupled and must be extracted carefully to avoid breaking OAuth flows.
 
-- account, team, billing, and integrations sections use one shared design system
-- settings feedback and loading patterns are consistent with the rest of the
-  product
+---
+
+### Phase 6 — Dashboard cleanup
+
+Objective: remove remaining legacy scripts from `dashboard.html`.
+
+**Still loaded after Phase 3/4:** `bb-domain-search`, `bb-integration-http`,
+`bb-slack`, `bb-webflow`, `bb-google`, `bb-admin`, `bb-data-binder`,
+`bb-auth-extension`, `bb-metadata`.
+
+Tasks:
+
+- domain search widget → `hover-combobox` or equivalent component
+- integration scripts → moved into `settings-integrations.js` (done in Phase 5)
+- `bb-admin` → `admin.js` module
+- retire `bb-data-binder` from dashboard once all binder-driven UI is replaced
+
+---
+
+### Phase 7 — Global nav + auth
+
+Objective: complete the migration; no active page depends on legacy scripts.
+
+Tasks:
+
+- `bb-global-nav.js` (742 lines) → `hover-nav` component or `global-nav.js`
+  module; owns org-switcher, quota bar, notifications
+- `auth.js` on `extension-auth.html` → migrate last; owns OAuth redirect
+  contract (AGENTS.md); must migrate together with extension auth rebuild
+- retire `core.js` global nav dependency once `bb-global-nav.js` is replaced
+
+Note: `auth.js` redirect contract (`handleSocialLogin`) must be preserved
+exactly — deep-link URLs return to the originating URL, invites route to
+`/welcome`. Do not touch until auth is fully migrated end-to-end.
+
+---
+
+### Ongoing — New screens
+
+Any screen added after Phase 7 must use the ES module architecture and new
+naming conventions.
+
+Standing rules:
+
+- new screens use the shared module architecture from day one
+- any pattern repeated a third time must be extracted to `lib/` or `components/`
+  before that third use is merged
+- the legacy global-script model must not be expanded for new screens
+- `sync:components` script must be run before any extension rebuild PR that
+  consumes updated components
 
 ---
 
