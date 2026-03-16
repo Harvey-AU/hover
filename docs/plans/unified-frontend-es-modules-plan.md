@@ -9,8 +9,8 @@ extension screens, `/dashboard`, job details, and settings screens
 | --------------------------- | -------------- | ----------------------------------------------------------------- |
 | Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page          |
 | Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated |
-| Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`        |
-| Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, stats, job list, realtime/polling, modal bridges  |
+| Phase 2 — Webflow job list  | ⚠️ Partially complete | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill` built — extension `index.js` still uses `buildResultCard()` directly; extension job list not yet on new architecture |
+| Phase 3 — Dashboard         | ⚠️ Partially complete | `dashboard.js` module exists, stats work — job list was a flat table until Phase 4; definition of done (matches Webflow surface visually) not met until `hover-job-card` landed |
 | Phase 4 — Job details       | ✅ Complete    | See Phase 4 notes below — scope expanded significantly            |
 | Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove          |
 | Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded             |
@@ -539,7 +539,7 @@ Validation:
 
 ---
 
-### Phase 2 — Webflow job list screen
+### Phase 2 — Webflow job list screen ⚠️ Partially complete
 
 Objective: establish the list and status language for operational screens.
 
@@ -569,9 +569,19 @@ Validation:
 - Webflow job list and dashboard job listing feel like the same product surface
 - state transitions are visually consistent
 
+**What is still missing:**
+
+- The Webflow extension's `index.js` still uses `buildResultCard()` directly —
+  `hover-job-card` was built but not yet wired into the extension
+- Extension job list does not import from `/app/components/`; components are
+  still local copies in `public/`
+- A `sync:components` script does not yet exist to automate copying components
+  from `web/static/app/components/` to `webflow-designer-extension-cli/public/`
+- Extension rebuild to consume `hover-job-card` is a separate PR
+
 ---
 
-### Phase 3 — `/dashboard`
+### Phase 3 — `/dashboard` ⚠️ Partially complete
 
 Objective: rebuild the main dashboard using the system established in Phases 1
 and 2.
@@ -589,6 +599,17 @@ Validation:
 - dashboard renders from `pages/dashboard.js`
 - primary dashboard actions (run scan, restart job, cancel job) still work
 - dashboard styling matches the Webflow surface
+
+**What is still missing:**
+
+- `job-page.js` still owns the job header, stats cards, and action buttons on
+  `job-details.html` — not yet replaced by module code
+- `bb-global-nav.js`, `bb-data-binder.js`, `bb-auth-extension.js`,
+  `bb-metadata.js` still loaded on both `dashboard.html` and `job-details.html`
+- `bb-domain-search`, `bb-integration-http`, `bb-slack`, `bb-webflow`,
+  `bb-google`, `bb-admin` still loaded on `dashboard.html`
+- Dashboard job list now uses `hover-job-card` (fixed in Phase 4) but the
+  domain search, integrations, and admin sections remain legacy
 
 ---
 
