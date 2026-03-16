@@ -62,70 +62,89 @@ On merge, CI will:
     existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
     required
 
-- **Job details + domain component layer (Phase 4)**: Completed job details
-  migration and introduced domain-level Web Components shared between the
-  dashboard and Webflow extension
-  - `hover-job-card` — canonical job card Web Component ported from
-    `buildResultCard()` in the Webflow extension; single source of truth for job
-    card rendering; `context` attribute (`extension` / `dashboard`) for layout
-    differences; emits `hover-job-card:view` and `hover-job-card:export` events;
-    handles issue tabs (Broken Links / Slow / Very Slow), expandable detail
-    table, and export; CSS class selectors provide per-context overrides
+- **Domain component layer + job details (Phase 4)**: Introduced domain-level
+  Web Components shared between the dashboard and Webflow extension; completed
+  job details migration
+  - `hover-job-card` — canonical job card Web Component ported from the Webflow
+    extension's `buildResultCard()`; single source of truth for job card
+    rendering; `context` attribute (`extension` / `dashboard`) and `compact`
+    attribute for layout differences; emits `hover-job-card:view`, `:export`,
+    `:restart`, `:cancel` events; issue tabs (Broken Links / Slow / Very Slow),
+    expandable detail table; restart/cancel buttons hidden in extension context
   - `hover-tabs` — tab bar Web Component with `tabs` property, `active`
-    attribute, `hover-tabs:change` event, and full keyboard navigation
+    attribute, `hover-tabs:change` event, keyboard navigation, and fast-path
+    diff that updates labels when keys match
   - `hover-data-table` extended with sortable column support — `sortable: true`
-    column option, emits `hover-data-table:sort` event with column and direction
+    column option, `hover-data-table:sort` event; string render fallback uses
+    `textContent` not `innerHTML`
   - `pages/job-details.js` — full tasks section ownership: 6 filter tabs (All /
     Broken Links / Success / Slow / Very Slow / In Progress) each with per-tab
     column sets; `found-on` column with sitemap fallback; analytics columns
-    (Views 7d/28d/180d) appended when data present; sort, pagination, path
-    search, and adaptive fallback polling (500ms active / 1s idle);
-    `window.__hoverTasksOwned` gate prevents double-render with `job-page.js`
-  - Dashboard job list replaced from `hover-data-table` flat rows to
-    `hover-job-card` list; in-place card updates via Map keyed on job ID — no
-    DOM teardown, no flicker on polling
+    (Views 7d/28d/180d); sort, pagination, path search; adaptive fallback
+    polling (500ms active / 1s idle); `window.__hoverTasksOwned` gate prevents
+    double-render with `job-page.js`; `throttleTimer` cleared on unload
   - Go tasks API: new `performance` query param (`slow` >1,500ms / `very_slow`
     > 4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
-    > — zero-ms second response times no longer suppress first-load time from
-    > filter
   - SVG icons copied to `web/static/app/icons/`; full button, dot, icon, and
-    card CSS ported from Webflow extension `styles.css` into `components.css` as
-    the shared source of truth
+    card CSS ported from Webflow extension `styles.css` into `components.css`
+  - `bb-bootstrap.js` removed from `job-details.html`; `job-page.js` guarded to
+    fall back to `window.BB_APP?.coreReady` when `whenReady()` is unavailable
 
-- **Dashboard ES module layer (Phase 3)**: Added `pages/dashboard.js` as an ES
-  module entrypoint that co-exists with the legacy `bb-*` scripts during
-  migration; provides the jobs list and stats using shared components
-  - Stats cards updated via the shared stats API; date range selector wired to
-    the module layer
-  - Restart and cancel job actions use `hover-toast` for feedback
+- **Dashboard ES module layer (Phase 3)**: `pages/dashboard.js` as ES module
+  entrypoint; job list rendered by `hover-job-card` with in-place Map-based card
+  updates (no flicker)
+  - Restart and cancel job actions wired via card events with `showToast`
+    feedback
   - `bb-bootstrap.js` and `bb-dashboard-actions.js` removed from
-    `dashboard.html`
-  - Supabase Realtime subscription via `subscribeToJobUpdates` with adaptive
-    fallback polling (500ms active / 1s idle) and org-switch re-subscription
-  - Stats fetch gated behind `waitForSession` to prevent 401 on cold load
-  - `tokens.css` and `components.css` loaded on the dashboard
+    `dashboard.html`; double-init guard on `init()`
+  - Stats cards via shared stats API; date range selector wired
+  - Supabase Realtime via `subscribeToJobUpdates` with adaptive fallback polling
+    (500ms active / 1s idle); debounce callback guarded against post-cleanup
+    fire
+  - `cancelJob` URL uses `encodeURIComponent`
 
-- **Shared job list components (Phase 2)**: Reusable Web Components for job
-  status and tabular data
+- **Shared job list components (Phase 2)**: Reusable Web Components shared
+  across dashboard and Webflow extension
   - `hover-status-pill` — animated status indicator covering all job statuses
-  - `hover-data-table` — data table with custom column renderers, skeleton rows,
-    empty/error states
-  - `webflow-jobs.js` — shared job-list data fetching and Supabase Realtime
-    subscription with debounce and fallback polling
+  - `hover-data-table` — data table with custom column renderers, sortable
+    headers, skeleton rows, empty/error states
+  - `webflow-jobs.js` — shared job-list data fetching with Supabase Realtime
+    subscription, debounce, and fallback polling
+  - Webflow extension `index.ts`: `buildResultCard` retired (~370 lines
+    removed); replaced by `hover-job-card` via `window.HoverJobCard` bridge;
+    `initHoverJobCard()` wires `setApiFetcher` to extension's `apiRequest`
+  - `npm run sync:components` script copies all shared components from
+    `web/static/app/components/` to extension `public/` and patches
+    `hover-job-card.js` for the extension context; patch script asserts the
+    regex applied
   - Webflow extension updated to Supabase SDK 2.95.3
 
 - **Webflow extension auth screen (Phase 1)**: Migrated
   `web/templates/extension-auth.html` to the ES module pattern
   - `hover-toast` — Web Component with `showToast()` API, 4 variants,
     auto-dismiss, stacking, enter/leave animations
-  - `webflow-login.js` — session restore, OAuth callback, backend registration,
-    `postMessage` handoff; preserves auth redirect contract from `AGENTS.md`
+  - `webflow-login.js` — session restore, OAuth callback, backend registration;
+    `postMessage` contract matches `index.ts` expectations
+    (`source: "bbb-extension-auth"`, `accessToken` camelCase,
+    `state`/`extensionState` from URL params); `window.opener` null guard; auth
+    modal loaded via `DOMParser` with script stripping
+
+- **ES module frontend foundation (Phase 0)**: `web/static/app/` architecture
+  - `tokens.css`, `base.css`, `components.css` loaded on all migrated pages
+    (dashboard, job details, extension auth, test page)
+  - `api-client.js`, `auth-session.js`, `config.js`, `formatters.js` — shared
+    lib modules with no DOM dependency
+  - `/app/` static route in `internal/api/handlers.go`
 
 ### Fixed
 
 - **Seed idempotency**: `auth.identities` `ON CONFLICT` column corrected from
   `(provider, id)` to `(id)` — the row primary key — resolving a batch insert
   error on preview branch seed runs
+- **Job details init crash**: `job-page.js` now falls back to
+  `window.BB_APP?.coreReady` when `bb-bootstrap.js` is not loaded, preventing
+  "Failed to load job details" toast on pages that have removed
+  `bb-bootstrap.js`
 
 ## [0.27.2] – 2026-03-15
 

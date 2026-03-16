@@ -583,7 +583,7 @@ Validation:
 
 ---
 
-### Phase 3 — `/dashboard` ✅ Complete
+### Phase 3 — `/dashboard` ✅ Complete (2026-03-16)
 
 Objective: rebuild the main dashboard using the system established in Phases 1
 and 2.
@@ -612,7 +612,7 @@ Validation:
 
 ---
 
-### Phase 4 — Job details ✅ Complete
+### Phase 4 — Job details ✅ Complete (2026-03-16)
 
 Objective: bring the detail view onto the same visual and structural system.
 
