@@ -42,7 +42,10 @@ let currentRange = "today";
  * Initialise the dashboard module layer.
  * Called once auth and org state are confirmed ready.
  */
+let _initialised = false;
 async function init() {
+  if (_initialised) return;
+  _initialised = true;
   // Suppress legacy binder-inserted job cards — the binder clones
   // bbb-template="job" elements and inserts them as siblings; hide on arrival.
   const jobsList = document.querySelector(".bb-jobs-list");
