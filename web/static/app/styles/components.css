@@ -370,7 +370,180 @@ hover-tabs,
 
 /* ─── hover-job-card ─────────────────────────────────────────────────────── */
 
-/* Spinner animation shared with job-status-icon */
+/* Utilities used by hover-job-card */
+.hidden {
+  display: none !important;
+}
+
+/* Icons — mask-based, same as extension */
+.icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  background-color: currentcolor;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.icon--small {
+  width: 16px;
+  height: 11px;
+}
+
+.icon--tick {
+  -webkit-mask-image: url("/app/icons/Icon_Tick.svg");
+  mask-image: url("/app/icons/Icon_Tick.svg");
+}
+
+.icon--arrow {
+  -webkit-mask-image: url("/app/icons/Icon_Arrow.svg");
+  mask-image: url("/app/icons/Icon_Arrow.svg");
+}
+
+.icon--arrow--right {
+  transform: rotate(0deg);
+}
+
+.icon--download {
+  -webkit-mask-image: url("/app/icons/Icon_Download.svg");
+  mask-image: url("/app/icons/Icon_Download.svg");
+}
+
+/* Dots */
+.dot {
+  display: inline-block;
+  width: var(--size--dot-default);
+  height: var(--size--dot-default);
+  border-radius: var(--radius--round);
+  flex-shrink: 0;
+}
+
+.dot--success {
+  background: var(--status-colour--success);
+}
+
+.dot--warning {
+  background: var(--status-colour--warning);
+}
+
+.dot--danger {
+  background: var(--status-colour--danger);
+}
+
+.dot--neutral {
+  background: var(--status-colour--neutral);
+}
+
+/* Buttons */
+.btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 2px solid transparent;
+  border-radius: var(--radius--control);
+  font-family: var(--font-family--primary);
+  letter-spacing: var(--letter-spacing--default);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--motion-duration--fast) var(--motion-easing--standard),
+    border-color var(--motion-duration--fast) var(--motion-easing--standard),
+    color var(--motion-duration--fast) var(--motion-easing--standard);
+}
+
+.btn:not(select) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing--sm);
+}
+
+.btn:disabled {
+  opacity: var(--opacity--disabled);
+  cursor: not-allowed;
+}
+
+.btn--secondary {
+  background: rgba(97, 208, 239, 0.35);
+  color: var(--colour--brand-primary);
+  border-color: var(--background-colour--brand);
+}
+
+.btn--secondary:not(:disabled):hover {
+  background: var(--background-colour--hover-subtle);
+  border-color: var(--border-colour--strong);
+}
+
+.btn--tertiary {
+  background-color: var(--background-colour--canvas);
+  color: var(--colour--brand-primary);
+  border-color: var(--background-colour--brand);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-colour--primary);
+  border-color: transparent;
+}
+
+.btn--ghost:not(:disabled):hover {
+  color: var(--text-colour--secondary);
+}
+
+.btn--text {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-size: var(--font-size--body);
+  font-weight: 400;
+  line-height: 1;
+  border-radius: 0;
+}
+
+.btn--text:not(:disabled):hover {
+  color: var(--text-colour--primary);
+}
+
+.btn--sm {
+  min-width: 0;
+  height: 21px;
+  padding: 0 8px;
+  font-size: var(--font-size--button-primary);
+  font-weight: 700;
+  line-height: 1;
+  gap: 3px;
+  box-shadow: var(--shadow--surface);
+}
+
+.btn--xs {
+  padding: var(--spacing--sm) var(--spacing--md);
+  font-size: var(--font-size--label);
+  font-weight: 400;
+}
+
+.btn--xs.btn--ghost {
+  padding: 0;
+  font-size: var(--font-size--caption);
+}
+
+.btn--xs svg,
+.btn--sm svg {
+  flex-shrink: 0;
+}
+
+.corners--right {
+  border-top-left-radius: 0;
+  border-top-right-radius: var(--radius--notch);
+  border-bottom-right-radius: var(--radius--notch);
+  border-bottom-left-radius: 0;
+}
+
+/* Job status spinner */
 @keyframes job-status-spin {
   to {
     transform: rotate(360deg);
@@ -406,7 +579,7 @@ hover-tabs,
   background: var(--colour--status-danger);
 }
 
-/* Card base */
+/* Card */
 hover-job-card {
   display: block;
 }
@@ -433,9 +606,6 @@ hover-job-card {
 
 .result-card--active {
   border-color: var(--border-colour--active);
-}
-
-.result-card-expanded {
 }
 
 .result-card-details {
@@ -612,7 +782,6 @@ hover-job-card {
   align-items: center;
 }
 
-/* Issues detail table */
 .issues-detail {
   display: flex;
   flex-direction: column;
@@ -680,7 +849,7 @@ hover-job-card {
   padding: var(--spacing--2xs) var(--spacing--lg);
 }
 
-/* Dashboard context overrides */
+/* Dashboard context overrides — add when needed */
 hover-job-card[context="dashboard"] {
   max-width: 680px;
 }
