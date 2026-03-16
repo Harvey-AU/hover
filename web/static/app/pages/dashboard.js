@@ -329,7 +329,7 @@ async function restartJob(job) {
 
 async function cancelJob(jobId) {
   try {
-    await put(`/v1/jobs/${jobId}`, { action: "cancel" });
+    await put(`/v1/jobs/${encodeURIComponent(jobId)}`, { action: "cancel" });
     showToast("Job cancelled.", { variant: "warning" });
     await refresh();
   } catch (err) {
