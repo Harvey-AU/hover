@@ -356,24 +356,35 @@ class HoverJobCard extends HTMLElement {
     // Footer actions
     const actions = el("div", "result-card-actions");
 
+    const isExtension = this.context === "extension";
+
     if (!isActive) {
-      // Completed jobs: Restart + All
-      const restartBtn = el("button", "btn btn--ghost btn--sm");
-      restartBtn.type = "button";
-      restartBtn.textContent = "Restart";
-      restartBtn.addEventListener("click", () => {
-        this.dispatchEvent(
-          new CustomEvent("hover-job-card:restart", {
-            bubbles: true,
-            detail: { jobId: job.id, job },
-          })
-        );
-      });
-      actions.appendChild(restartBtn);
+      // Completed jobs: Restart (not in extension — no restart API there) + All
+      if (!isExtension) {
+        const restartBtn = el("button", "btn btn--ghost btn--sm");
+        restartBtn.type = "button";
+        restartBtn.textContent = "Restart";
+        restartBtn.addEventListener("click", () => {
+          this.dispatchEvent(
+            new CustomEvent("hover-job-card:restart", {
+              bubbles: true,
+              detail: { jobId: job.id, job },
+            })
+          );
+        });
+        actions.appendChild(restartBtn);
+      }
 
       const viewBtn = el("button", "btn btn--secondary btn--sm corners--right");
       viewBtn.type = "button";
-      viewBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
+      const viewArrow = el(
+        "span",
+        "icon icon--small icon--arrow icon--arrow--right"
+      );
+      viewArrow.setAttribute("aria-hidden", "true");
+      const viewLabel = el("span");
+      viewLabel.textContent = "All";
+      viewBtn.append(viewArrow, viewLabel);
       viewBtn.addEventListener("click", () => {
         const path = job.id
           ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
@@ -386,8 +397,8 @@ class HoverJobCard extends HTMLElement {
         );
       });
       actions.appendChild(viewBtn);
-    } else {
-      // Active jobs: Cancel
+    } else if (!isExtension) {
+      // Active jobs: Cancel (not in extension — no cancel API there)
       const cancelBtn = el("button", "btn btn--ghost btn--sm");
       cancelBtn.type = "button";
       cancelBtn.textContent = "Cancel";
