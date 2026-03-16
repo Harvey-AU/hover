@@ -119,15 +119,24 @@ class HoverTabs extends HTMLElement {
     this.className = "hover-tabs";
     this.setAttribute("role", "tablist");
 
-    // Diff: only rebuild if tab count or active key changed
+    // Fast path: same count and same keys — update active state and labels only.
     const existing = this.querySelectorAll("[data-key]");
-    if (existing.length === this._tabs.length) {
-      // Fast path — just update active state
-      existing.forEach((btn) => {
+    const sameKeys =
+      existing.length === this._tabs.length &&
+      Array.from(existing).every(
+        (btn, i) => btn.dataset.key === this._tabs[i]?.key
+      );
+    if (sameKeys) {
+      existing.forEach((btn, i) => {
         const isActive = btn.dataset.key === active;
         btn.classList.toggle("hover-tabs__tab--active", isActive);
         btn.setAttribute("aria-selected", String(isActive));
         btn.setAttribute("tabindex", isActive ? "0" : "-1");
+        // Update label in case it changed (e.g. count annotation).
+        const label = this._tabs[i]?.label;
+        if (label !== undefined && btn.textContent !== label) {
+          btn.textContent = label;
+        }
       });
       return;
     }
