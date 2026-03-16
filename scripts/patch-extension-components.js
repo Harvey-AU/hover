@@ -39,5 +39,14 @@ if (!src.includes("window.HoverJobCard")) {
     "\n// Window bridge for non-module scripts (index.js)\nwindow.HoverJobCard = { createJobCard, setApiFetcher };\n";
 }
 
+// Assert the patch was applied — if the dynamic import path is still present,
+// the regex silently no-oped (e.g. due to a Prettier reformat).
+if (src.includes('import("/app/lib/api-client.js")')) {
+  throw new Error(
+    "patch-extension-components: defaultFetcher patch did not apply.\n" +
+      "The hover-job-card.js source may have been reformatted. Update the regex in this script."
+  );
+}
+
 fs.writeFileSync(target, src, "utf8");
 console.log("Patched hover-job-card.js for extension context.");

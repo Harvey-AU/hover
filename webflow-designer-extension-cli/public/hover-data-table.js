@@ -261,7 +261,8 @@ class HoverDataTable extends HTMLElement {
           if (rendered instanceof Node) {
             td.appendChild(rendered);
           } else {
-            td.innerHTML = rendered;
+            // Use textContent — render functions must return a Node for HTML markup.
+            td.textContent = rendered != null ? String(rendered) : "—";
           }
         } else {
           td.textContent = value != null ? String(value) : "—";
