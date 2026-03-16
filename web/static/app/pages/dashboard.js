@@ -232,6 +232,20 @@ function renderJobCards(container, jobs) {
         );
       });
 
+      // Restart
+      card.addEventListener("hover-job-card:restart", (e) => {
+        restartJob(e.detail.job).catch((err) =>
+          showToast(`Restart failed: ${err.message}`, { variant: "error" })
+        );
+      });
+
+      // Cancel
+      card.addEventListener("hover-job-card:cancel", (e) => {
+        cancelJob(e.detail.jobId).catch((err) =>
+          showToast(`Cancel failed: ${err.message}`, { variant: "error" })
+        );
+      });
+
       // Insert at correct position
       const cards = Array.from(container.querySelectorAll("hover-job-card"));
       container.insertBefore(card, cards[index] ?? null);

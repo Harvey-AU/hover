@@ -37,6 +37,16 @@ const EXTENSION_ORIGIN = "https://webflow.com";
 /** Storage key written by auth.js for CLI/extension auth state. */
 const CLI_AUTH_STORAGE_KEY = "bbb_cli_auth_state";
 
+/**
+ * The state token passed by the extension when opening this popup.
+ * Included in the postMessage payload so index.ts can verify it.
+ * Passed as both ?state= and ?extension_state= in the URL.
+ */
+const EXTENSION_STATE =
+  new URLSearchParams(window.location.search).get("extension_state") ||
+  new URLSearchParams(window.location.search).get("state") ||
+  "";
+
 // ── Element references ─────────────────────────────────────────────────────────
 
 /** @returns {HTMLElement|null} */
@@ -123,16 +133,22 @@ async function handleAuthenticated(session) {
     });
   }
 
-  // Send the access token back to the extension.
+  // Send the session back to the extension.
+  // Contract must match what index.ts connectAccount() expects:
+  //   { source: "bbb-extension-auth", state, extensionState, type: "success",
+  //     accessToken, user: { id, email, avatarUrl } }
   try {
     window.opener?.postMessage(
       {
-        type: "HOVER_AUTH_SUCCESS",
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
+        source: "bbb-extension-auth",
+        state: EXTENSION_STATE,
+        extensionState: EXTENSION_STATE,
+        type: "success",
+        accessToken: session.access_token,
         user: {
-          id: session.user?.id,
-          email: session.user?.email,
+          id: session.user?.id ?? "",
+          email: session.user?.email ?? "",
+          avatarUrl: session.user?.user_metadata?.avatar_url ?? "",
         },
       },
       EXTENSION_ORIGIN

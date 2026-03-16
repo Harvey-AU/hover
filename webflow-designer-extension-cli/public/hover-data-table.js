@@ -30,7 +30,10 @@
  *   container.appendChild(table);
  *
  * Column definition:
- *   { key: string, label: string, render?: (value, row) => string|Node }
+ *   { key: string, label: string, sortable?: boolean, render?: (value, row) => string|Node }
+ *
+ * When a column has `sortable: true`, clicking its header emits:
+ *   hover-data-table:sort  — detail: { column: string, direction: "asc"|"desc" }
  *
  * The `render` function may return an HTML string or a DOM Node.
  * If omitted, the raw value is displayed as text.
@@ -39,7 +42,7 @@
 // ── Imperative helper ──────────────────────────────────────────────────────────
 
 /**
- * @typedef {{ key: string, label: string, render?: (value: unknown, row: Record<string,unknown>) => string|Node }} Column
+ * @typedef {{ key: string, label: string, sortable?: boolean, render?: (value: unknown, row: Record<string,unknown>) => string|Node }} Column
  */
 
 /**
@@ -87,6 +90,10 @@ class HoverDataTable extends HTMLElement {
     this._rows = [];
     /** @type {((row: Record<string,unknown>) => void)|null} */
     this.onRowClick = null;
+    /** @type {string|null} Active sort column key */
+    this._sortColumn = null;
+    /** @type {"asc"|"desc"} */
+    this._sortDirection = "desc";
   }
 
   /** @param {Column[]} value */
@@ -151,7 +158,34 @@ class HoverDataTable extends HTMLElement {
       columns.forEach((col) => {
         const cell = document.createElement("div");
         cell.className = "hover-data-table__head-cell";
-        cell.textContent = col.label || col.key;
+        if (col.sortable) {
+          cell.classList.add("hover-data-table__head-cell--sortable");
+          cell.setAttribute("role", "button");
+          cell.setAttribute("tabindex", "0");
+          cell.dataset.colKey = col.key;
+          cell.addEventListener("click", () => this._onSortClick(col.key));
+          cell.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              this._onSortClick(col.key);
+            }
+          });
+        }
+        const label = document.createElement("span");
+        label.textContent = col.label || col.key;
+        cell.appendChild(label);
+        if (col.sortable) {
+          const arrow = document.createElement("span");
+          arrow.className = "hover-data-table__sort-arrow";
+          arrow.setAttribute("aria-hidden", "true");
+          arrow.textContent =
+            this._sortColumn === col.key
+              ? this._sortDirection === "desc"
+                ? " ↓"
+                : " ↑"
+              : " ↕";
+          cell.appendChild(arrow);
+        }
         head.appendChild(cell);
       });
       this.appendChild(head);
@@ -238,6 +272,31 @@ class HoverDataTable extends HTMLElement {
 
       body.appendChild(tr);
     });
+  }
+
+  _onSortClick(key) {
+    if (this._sortColumn === key) {
+      this._sortDirection = this._sortDirection === "desc" ? "asc" : "desc";
+    } else {
+      this._sortColumn = key;
+      this._sortDirection = "desc";
+    }
+    // Update arrow glyphs without full re-render
+    this.querySelectorAll("[data-col-key]").forEach((cell) => {
+      const arrow = cell.querySelector(".hover-data-table__sort-arrow");
+      if (!arrow) return;
+      if (cell.dataset.colKey === this._sortColumn) {
+        arrow.textContent = this._sortDirection === "desc" ? " ↓" : " ↑";
+      } else {
+        arrow.textContent = " ↕";
+      }
+    });
+    this.dispatchEvent(
+      new CustomEvent("hover-data-table:sort", {
+        bubbles: true,
+        detail: { column: this._sortColumn, direction: this._sortDirection },
+      })
+    );
   }
 
   /** Build skeleton loading rows. */

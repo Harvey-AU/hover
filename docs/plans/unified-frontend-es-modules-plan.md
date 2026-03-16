@@ -5,16 +5,16 @@ extension screens, `/dashboard`, job details, and settings screens
 
 ## Progress summary (as of 2026-03-16)
 
-| Phase                       | Status                | Notes                                                                                                                                                                           |
-| --------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Phase 0 — Foundations       | ✅ Complete           | `app/` structure, tokens, base, lib utilities, test page                                                                                                                        |
-| Phase 1 — Webflow auth      | ✅ Complete           | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated                                                                                                               |
-| Phase 2 — Webflow job list  | ✅ Complete           | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added                    |
-| Phase 3 — Dashboard         | ⚠️ Partially complete | `dashboard.js` module exists, stats work — job list was a flat table until Phase 4; definition of done (matches Webflow surface visually) not met until `hover-job-card` landed |
-| Phase 4 — Job details       | ✅ Complete           | See Phase 4 notes below — scope expanded significantly                                                                                                                          |
-| Phase 5 — Settings          | 🔲 Not started        | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove                                                                                                                        |
-| Phase 6 — Dashboard cleanup | 🔲 Not started        | `bb-domain-search`, integrations scripts still loaded                                                                                                                           |
-| Phase 7 — Global nav + auth | 🔲 Not started        | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                                                 |
+| Phase                       | Status         | Notes                                                                                                                                                        |
+| --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page; `base.css` now loaded on all migrated pages                                                        |
+| Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated; postMessage contract fixed                                                                |
+| Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
+| Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, `hover-job-card` job list, restart/cancel wired via card events, `bb-bootstrap.js` and `bb-dashboard-actions.js` removed                     |
+| Phase 4 — Job details       | ✅ Complete    | Tasks table, filter tabs, per-tab columns, `hover-job-card`, performance API filter, `bb-bootstrap.js` removed                                               |
+| Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove                                                                                                     |
+| Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded                                                                                                        |
+| Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                              |
 
 ---
 
@@ -583,7 +583,7 @@ Validation:
 
 ---
 
-### Phase 3 — `/dashboard` ⚠️ Partially complete
+### Phase 3 — `/dashboard` ✅ Complete
 
 Objective: rebuild the main dashboard using the system established in Phases 1
 and 2.
@@ -602,16 +602,13 @@ Validation:
 - primary dashboard actions (run scan, restart job, cancel job) still work
 - dashboard styling matches the Webflow surface
 
-**What is still missing:**
+**Completed (2026-03-16):**
 
-- `job-page.js` still owns the job header, stats cards, and action buttons on
-  `job-details.html` — not yet replaced by module code
-- `bb-global-nav.js`, `bb-data-binder.js`, `bb-auth-extension.js`,
-  `bb-metadata.js` still loaded on both `dashboard.html` and `job-details.html`
-- `bb-domain-search`, `bb-integration-http`, `bb-slack`, `bb-webflow`,
-  `bb-google`, `bb-admin` still loaded on `dashboard.html`
-- Dashboard job list now uses `hover-job-card` (fixed in Phase 4) but the domain
-  search, integrations, and admin sections remain legacy
+- Restart/cancel wired via `hover-job-card:restart` and `hover-job-card:cancel`
+  events; `dashboard.js` handles both with `showToast` feedback
+- `base.css` added to `dashboard.html`
+- Remaining legacy scripts (`bb-global-nav.js`, integrations, etc.) explicitly
+  deferred to Phase 5–7 — not a Phase 3 gap
 
 ---
 

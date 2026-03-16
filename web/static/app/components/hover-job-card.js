@@ -23,8 +23,10 @@
  *   job     — plain job object from the API; setting this triggers a render
  *
  * Events:
- *   hover-job-card:view   — "All" / "View all X" clicked; detail: { jobId, path }
- *   hover-job-card:export — "Export Results" clicked; detail: { jobId }
+ *   hover-job-card:view    — "All" / "View all X" clicked; detail: { jobId, path }
+ *   hover-job-card:export  — "Export Results" clicked; detail: { jobId }
+ *   hover-job-card:restart — "Restart" clicked (completed jobs); detail: { jobId, job }
+ *   hover-job-card:cancel  — "Cancel" clicked (active jobs); detail: { jobId }
  */
 
 // API fetcher — defaults to /app/lib/api-client.js get(); overridden by extension
@@ -337,9 +339,24 @@ class HoverJobCard extends HTMLElement {
 
     footer.appendChild(issuesRow);
 
-    // "All" button — completed jobs only
+    // Footer actions
+    const actions = el("div", "result-card-actions");
+
     if (!isActive) {
-      const actions = el("div", "result-card-actions");
+      // Completed jobs: Restart + All
+      const restartBtn = el("button", "btn btn--ghost btn--sm");
+      restartBtn.type = "button";
+      restartBtn.textContent = "Restart";
+      restartBtn.addEventListener("click", () => {
+        this.dispatchEvent(
+          new CustomEvent("hover-job-card:restart", {
+            bubbles: true,
+            detail: { jobId: job.id, job },
+          })
+        );
+      });
+      actions.appendChild(restartBtn);
+
       const viewBtn = el("button", "btn btn--secondary btn--sm corners--right");
       viewBtn.type = "button";
       viewBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
@@ -355,10 +372,25 @@ class HoverJobCard extends HTMLElement {
         );
       });
       actions.appendChild(viewBtn);
-      footer.appendChild(actions);
+    } else {
+      // Active jobs: Cancel
+      const cancelBtn = el("button", "btn btn--ghost btn--sm");
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", () => {
+        this.dispatchEvent(
+          new CustomEvent("hover-job-card:cancel", {
+            bubbles: true,
+            detail: { jobId: job.id },
+          })
+        );
+      });
+      actions.appendChild(cancelBtn);
     }
 
-    if (hasAnyIssues || !isActive) {
+    footer.appendChild(actions);
+
+    if (hasAnyIssues || true) {
       card.appendChild(footer);
     }
 
