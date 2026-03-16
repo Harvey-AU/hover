@@ -137,8 +137,14 @@ async function handleAuthenticated(session) {
   // Contract must match what index.ts connectAccount() expects:
   //   { source: "bbb-extension-auth", state, extensionState, type: "success",
   //     accessToken, user: { id, email, avatarUrl } }
+  if (!window.opener) {
+    // Opened directly (not by the extension popup flow) — nothing to notify.
+    setStatus("Signed in — you can close this window.", "success");
+    showToast("Signed in successfully.", { variant: "success", duration: 0 });
+    return;
+  }
   try {
-    window.opener?.postMessage(
+    window.opener.postMessage(
       {
         source: "bbb-extension-auth",
         state: EXTENSION_STATE,
