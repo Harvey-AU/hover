@@ -679,20 +679,5 @@ hover-job-card {
   padding: var(--spacing--2xs) var(--spacing--lg);
 }
 
-/* Dashboard context — wider layout */
-hover-job-card[context="dashboard"] .result-card--complete {
-  border-radius: var(--radius--control);
-}
-
-hover-job-card[context="dashboard"] .result-card-header {
-  grid-template-columns: 180px minmax(0, 1fr);
-}
-
-hover-job-card[context="dashboard"] .result-card-summary-stat,
-hover-job-card[context="dashboard"] .result-card-summary-meta-item {
-  font-size: var(--font-size--label);
-}
-
-hover-job-card[context="dashboard"] .result-card-timestamp {
-  font-size: var(--font-size--label);
-}
+/* Dashboard context overrides — deferred until layout is decided.
+   The context="dashboard" attribute is wired and ready when needed. */
