@@ -644,7 +644,7 @@ type TaskQueryParams struct {
 	Status            string
 	CacheFilter       string
 	PathFilter        string
-	PerformanceFilter string // "slow" (>2000ms) or "very_slow" (>3000ms)
+	PerformanceFilter string // "slow" (>1500ms) or "very_slow" (>4000ms)
 	OrderBy           string
 }
 
@@ -671,7 +671,7 @@ func parseTaskQueryParams(r *http.Request) TaskQueryParams {
 	cacheFilter := r.URL.Query().Get("cache") // Optional cache filter (hit/miss)
 	pathFilter := r.URL.Query().Get("path")   // Optional path keyword filter
 
-	// Parse performance filter: "slow" (>2000ms) or "very_slow" (>3000ms)
+	// Parse performance filter: "slow" (>1500ms) or "very_slow" (>4000ms)
 	performanceFilter := r.URL.Query().Get("performance")
 	if performanceFilter != "slow" && performanceFilter != "very_slow" {
 		performanceFilter = ""
