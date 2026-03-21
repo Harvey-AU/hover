@@ -3641,7 +3641,7 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 
 	return &taskHTMLUpload{
 		Bucket:              taskHTMLStorageBucket,
-		Path:                fmt.Sprintf("jobs/%s/tasks/%s.html.gz", task.JobID, task.ID),
+		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
 		ContentType:         contentType,
 		ContentEncoding:     taskHTMLContentEncoding,
 		SizeBytes:           int64(len(result.Body)),

@@ -35,7 +35,7 @@ Store page bodies in a private Supabase Storage bucket and keep only metadata on
 Recommended default:
 
 - bucket: `task-html`
-- object path: `jobs/{job_id}/tasks/{task_id}.html.gz`
+- object path: `jobs/{job_id}/tasks/page-path/{task_id}.html.gz`
 - upload gzip-compressed HTML
 - keep a few scalar metadata columns on `tasks`
 
@@ -105,7 +105,7 @@ If upload fails:
 
 Recommended path shape:
 
-- `jobs/{job_id}/tasks/{task_id}.html.gz`
+- `jobs/{job_id}/tasks/page-path/{task_id}.html.gz`
 
 Benefits:
 
@@ -115,7 +115,7 @@ Benefits:
 
 Alternative if multiple versions per task are needed later:
 
-- `jobs/{job_id}/tasks/{task_id}/{unix_ts}.html.gz`
+- `jobs/{job_id}/tasks/page-path/{task_id}/{unix_ts}.html.gz`
 
 ## 9. Content Eligibility Rules
 

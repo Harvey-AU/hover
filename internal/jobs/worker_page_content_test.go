@@ -58,7 +58,7 @@ func TestBuildTaskHTMLUpload(t *testing.T) {
 	require.NotNil(t, upload)
 
 	assert.Equal(t, taskHTMLStorageBucket, upload.Bucket)
-	assert.Equal(t, "jobs/job-456/tasks/task-123.html.gz", upload.Path)
+	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", upload.Path)
 	assert.Equal(t, "text/html", upload.ContentType)
 	assert.Equal(t, taskHTMLContentEncoding, upload.ContentEncoding)
 	assert.Equal(t, int64(len(body)), upload.SizeBytes)
@@ -108,7 +108,7 @@ func TestStoreTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
 			capturedOptions = options
 			capturedPayload = append([]byte(nil), data...)
 			assert.Equal(t, taskHTMLStorageBucket, bucket)
-			assert.Equal(t, "jobs/job-456/tasks/task-123.html.gz", path)
+			assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", path)
 			return bucket + "/" + path, nil
 		}},
 	}
@@ -116,7 +116,7 @@ func TestStoreTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
 	wp.storeTaskHTML(context.Background(), task, result, capturedAt)
 
 	assert.Equal(t, taskHTMLStorageBucket, task.HTMLStorageBucket)
-	assert.Equal(t, "jobs/job-456/tasks/task-123.html.gz", task.HTMLStoragePath)
+	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", task.HTMLStoragePath)
 	assert.Equal(t, "text/plain", task.HTMLContentType)
 	assert.Equal(t, taskHTMLContentEncoding, task.HTMLContentEncoding)
 	assert.Equal(t, int64(len(result.Body)), task.HTMLSizeBytes)

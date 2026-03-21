@@ -30,13 +30,13 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "service-role-key")
-	path, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/task.html.gz", []byte("payload"), UploadOptions{
+	path, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/page-path/task.html.gz", []byte("payload"), UploadOptions{
 		ContentType:     "text/html",
 		ContentEncoding: "gzip",
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "task-html/jobs/job/tasks/task.html.gz", path)
+	assert.Equal(t, "task-html/jobs/job/tasks/page-path/task.html.gz", path)
 	assert.Equal(t, "text/html", receivedContentType)
 	assert.Equal(t, "gzip", receivedContentEncoding)
 	assert.Equal(t, []byte("payload"), receivedBody)
