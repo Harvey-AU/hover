@@ -772,7 +772,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.SecondPerformance = &secondResult.Performance
 			if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
 				secondary := *secondResult.RequestDiagnostics.Primary
-				secondary.Request.Provenance = "secondary"
+				if secondary.Request != nil {
+					requestCopy := *secondary.Request
+					requestCopy.Provenance = "secondary"
+					secondary.Request = &requestCopy
+				}
 				if res.RequestDiagnostics != nil {
 					res.RequestDiagnostics.Secondary = &secondary
 				}
