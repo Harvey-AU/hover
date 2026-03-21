@@ -102,21 +102,23 @@ func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
 	}
 }
 
-func TestPersistTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
-	task := &db.Task{ID: "task-123", JobID: "job-456"}
-	result := &crawler.CrawlResult{
+func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
+	request := &taskHTMLPersistRequest{
+		Task:        db.Task{ID: "task-123", JobID: "job-456"},
 		ContentType: "text/html; charset=utf-8",
 		Body:        []byte("<html><body>ok</body></html>"),
 	}
 	capturedAt := time.Date(2026, time.March, 21, 8, 0, 0, 0, time.UTC)
+	request.CapturedAt = capturedAt
 
 	var capturedOptions storage.UploadOptions
 	var capturedPayload []byte
-	var persistedTask *db.Task
+	var persistedMetadata db.TaskHTMLMetadata
+	var persistedTaskID string
 	wp := &WorkerPool{
-		dbQueue: &MockDbQueue{UpdateTaskStatusFunc: func(ctx context.Context, task *db.Task) error {
-			persisted := *task
-			persistedTask = &persisted
+		dbQueue: &MockDbQueue{UpdateTaskHTMLMetadataFunc: func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error {
+			persistedTaskID = taskID
+			persistedMetadata = metadata
 			return nil
 		}},
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
@@ -128,26 +130,23 @@ func TestPersistTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
 		}},
 	}
 
-	wp.persistTaskHTML(context.Background(), task, result, capturedAt)
+	wp.processTaskHTMLPersistence(context.Background(), request)
 
-	require.NotNil(t, persistedTask)
-	assert.Equal(t, taskHTMLStorageBucket, persistedTask.HTMLStorageBucket)
-	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", persistedTask.HTMLStoragePath)
-	assert.Equal(t, "text/html", persistedTask.HTMLContentType)
-	assert.Equal(t, taskHTMLContentEncoding, persistedTask.HTMLContentEncoding)
-	assert.Equal(t, int64(len(result.Body)), persistedTask.HTMLSizeBytes)
-	assert.Equal(t, int64(len(capturedPayload)), persistedTask.HTMLCompressedSizeBytes)
-	assert.Equal(t, capturedAt, persistedTask.HTMLCapturedAt)
-	assert.Len(t, persistedTask.HTMLSHA256, 64)
+	assert.Equal(t, "task-123", persistedTaskID)
+	assert.Equal(t, taskHTMLStorageBucket, persistedMetadata.StorageBucket)
+	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", persistedMetadata.StoragePath)
+	assert.Equal(t, "text/html", persistedMetadata.ContentType)
+	assert.Equal(t, taskHTMLContentEncoding, persistedMetadata.ContentEncoding)
+	assert.Equal(t, int64(len(request.Body)), persistedMetadata.SizeBytes)
+	assert.Equal(t, int64(len(capturedPayload)), persistedMetadata.CompressedSizeBytes)
+	assert.Equal(t, capturedAt, persistedMetadata.CapturedAt)
+	assert.Len(t, persistedMetadata.SHA256, 64)
 	assert.Equal(t, "text/html", capturedOptions.ContentType)
 	assert.Equal(t, taskHTMLContentEncoding, capturedOptions.ContentEncoding)
-	assert.Equal(t, result.Body, gunzipTestPayload(t, capturedPayload))
-	assert.Empty(t, task.HTMLStorageBucket)
-	assert.True(t, task.HTMLCapturedAt.IsZero())
+	assert.Equal(t, request.Body, gunzipTestPayload(t, capturedPayload))
 }
 
-func TestPersistTaskHTMLLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
-	task := &db.Task{ID: "task-123", JobID: "job-456"}
+func TestProcessTaskHTMLPersistenceLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
 	wp := &WorkerPool{
 		dbQueue: &MockDbQueue{},
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
@@ -155,24 +154,18 @@ func TestPersistTaskHTMLLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
 		}},
 	}
 
-	wp.persistTaskHTML(context.Background(), task, &crawler.CrawlResult{
+	wp.processTaskHTMLPersistence(context.Background(), &taskHTMLPersistRequest{
+		Task:        db.Task{ID: "task-123", JobID: "job-456"},
 		ContentType: "text/html",
 		Body:        []byte("<html></html>"),
-	}, time.Now().UTC())
-
-	assert.Empty(t, task.HTMLStorageBucket)
-	assert.Empty(t, task.HTMLStoragePath)
-	assert.Zero(t, task.HTMLSizeBytes)
-	assert.Zero(t, task.HTMLCompressedSizeBytes)
-	assert.Empty(t, task.HTMLSHA256)
-	assert.True(t, task.HTMLCapturedAt.IsZero())
+		CapturedAt:  time.Now().UTC(),
+	})
 }
 
-func TestPersistTaskHTMLDeletesUploadWhenMetadataPersistenceFails(t *testing.T) {
-	task := &db.Task{ID: "task-123", JobID: "job-456"}
+func TestProcessTaskHTMLPersistenceDeletesUploadWhenMetadataPersistenceFails(t *testing.T) {
 	deleted := false
 	wp := &WorkerPool{
-		dbQueue: &MockDbQueue{UpdateTaskStatusFunc: func(ctx context.Context, task *db.Task) error {
+		dbQueue: &MockDbQueue{UpdateTaskHTMLMetadataFunc: func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error {
 			return errors.New("write failed")
 		}},
 		storageClient: &stubStorageUploader{
@@ -188,11 +181,12 @@ func TestPersistTaskHTMLDeletesUploadWhenMetadataPersistenceFails(t *testing.T) 
 		},
 	}
 
-	wp.persistTaskHTML(context.Background(), task, &crawler.CrawlResult{
+	wp.processTaskHTMLPersistence(context.Background(), &taskHTMLPersistRequest{
+		Task:        db.Task{ID: "task-123", JobID: "job-456"},
 		ContentType: "text/html",
 		Body:        []byte("<html></html>"),
-	}, time.Now().UTC())
+		CapturedAt:  time.Now().UTC(),
+	})
 
 	assert.True(t, deleted)
-	assert.Empty(t, task.HTMLStoragePath)
 }

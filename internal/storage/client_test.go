@@ -16,14 +16,17 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	var receivedContentType string
 	var receivedContentEncoding string
 	var receivedBody []byte
+	var receivedBodyErr error
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedContentType = r.Header.Get("Content-Type")
 		receivedContentEncoding = r.Header.Get("Content-Encoding")
 
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
-		receivedBody = body
+		receivedBodyErr = err
+		if err == nil {
+			receivedBody = body
+		}
 
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -36,6 +39,7 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	require.NoError(t, receivedBodyErr)
 	assert.Equal(t, "task-html/jobs/job/tasks/page-path/task.html.gz", path)
 	assert.Equal(t, "text/html", receivedContentType)
 	assert.Equal(t, "gzip", receivedContentEncoding)

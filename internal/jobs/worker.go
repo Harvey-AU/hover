@@ -71,6 +71,8 @@ const (
 	pendingUnlimitedCap      = 100
 	taskHTMLStorageBucket    = "task-html"
 	taskHTMLContentEncoding  = "gzip"
+	taskHTMLPersistQueueSize = 128
+	taskHTMLPersistWorkers   = 2
 )
 
 type storageUploader interface {
@@ -89,6 +91,13 @@ type taskHTMLUpload struct {
 	SHA256              string
 	CapturedAt          time.Time
 	Payload             []byte
+}
+
+type taskHTMLPersistRequest struct {
+	Task        db.Task
+	ContentType string
+	Body        []byte
+	CapturedAt  time.Time
 }
 
 type WaitingReason string
@@ -178,6 +187,7 @@ type WorkerPool struct {
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
 	storageClient       storageUploader // For uploading HTML samples
+	taskHTMLPersistCh   chan *taskHTMLPersistRequest
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -568,6 +578,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	supabaseServiceKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseServiceKey != "" {
 		wp.storageClient = storage.New(supabaseURL, supabaseServiceKey)
+		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, taskHTMLPersistQueueSize)
 		log.Info().Msg("Storage client initialised for HTML uploads")
 	} else {
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
@@ -627,6 +638,7 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.StartCleanupMonitor(ctx)
 	wp.StartQuotaPromotionMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
+	wp.startTaskHTMLPersistenceLoop(ctx)
 
 	// Start orphaned task cleanup loop
 	wp.wg.Go(func() {
@@ -3660,17 +3672,81 @@ func applyTaskHTMLMetadata(task *db.Task, upload *taskHTMLUpload) {
 	task.HTMLCapturedAt = upload.CapturedAt
 }
 
-func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
-	if wp.storageClient == nil {
+func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
+	if wp.taskHTMLPersistCh == nil {
 		return
 	}
 
-	upload, ok, err := buildTaskHTMLUpload(task, result, capturedAt)
+	for range taskHTMLPersistWorkers {
+		wp.wg.Go(func() {
+			wp.taskHTMLPersistenceWorker(ctx)
+		})
+	}
+}
+
+func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
+	drain := func() {
+		for {
+			select {
+			case request := <-wp.taskHTMLPersistCh:
+				wp.processTaskHTMLPersistence(ctx, request)
+			default:
+				return
+			}
+		}
+	}
+
+	for {
+		select {
+		case request := <-wp.taskHTMLPersistCh:
+			wp.processTaskHTMLPersistence(ctx, request)
+		case <-wp.stopCh:
+			drain()
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
+	if wp.storageClient == nil || wp.taskHTMLPersistCh == nil || task == nil || result == nil {
+		return
+	}
+	if !canStoreTaskHTML(result.ContentType, result.Body) {
+		return
+	}
+
+	request := &taskHTMLPersistRequest{
+		Task:        *task,
+		ContentType: result.ContentType,
+		Body:        append([]byte(nil), result.Body...),
+		CapturedAt:  capturedAt,
+	}
+
+	select {
+	case wp.taskHTMLPersistCh <- request:
+	default:
+		log.Warn().Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Task HTML persistence queue is full, skipping HTML upload")
+	}
+}
+
+func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *taskHTMLPersistRequest) {
+	if request == nil || wp.storageClient == nil {
+		return
+	}
+
+	result := &crawler.CrawlResult{ContentType: request.ContentType, Body: request.Body}
+	upload, ok, err := buildTaskHTMLUpload(&request.Task, result, request.CapturedAt)
 	if err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Msg("Failed to prepare task HTML for storage")
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Msg("Failed to prepare task HTML for storage")
 		return
 	}
 	if !ok {
+		return
+	}
+
+	if wp.storageClient == nil {
 		return
 	}
 
@@ -3681,29 +3757,40 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 		ContentType:     upload.ContentType,
 		ContentEncoding: upload.ContentEncoding,
 	}); err != nil {
-		log.Warn().Err(err).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to upload task HTML to storage")
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to upload task HTML to storage")
 		return
 	}
 
-	htmlTask := *task
+	htmlTask := request.Task
 	applyTaskHTMLMetadata(&htmlTask, upload)
 
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer persistCancel()
 
-	if err := wp.dbQueue.UpdateTaskStatus(persistCtx, &htmlTask); err != nil {
+	metadata := db.TaskHTMLMetadata{
+		StorageBucket:       upload.Bucket,
+		StoragePath:         upload.Path,
+		ContentType:         upload.ContentType,
+		ContentEncoding:     upload.ContentEncoding,
+		SizeBytes:           upload.SizeBytes,
+		CompressedSizeBytes: upload.CompressedSizeBytes,
+		SHA256:              upload.SHA256,
+		CapturedAt:          upload.CapturedAt,
+	}
+
+	if err := wp.dbQueue.UpdateTaskHTMLMetadata(persistCtx, request.Task.ID, metadata); err != nil {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cleanupCancel()
 		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
-			log.Warn().Err(deleteErr).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")
+			log.Warn().Err(deleteErr).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")
 		}
-		log.Warn().Err(err).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to persist task HTML metadata")
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to persist task HTML metadata")
 		return
 	}
 
 	log.Debug().
-		Str("task_id", task.ID).
-		Str("job_id", task.JobID).
+		Str("task_id", request.Task.ID).
+		Str("job_id", request.Task.JobID).
 		Int64("html_size_bytes", upload.SizeBytes).
 		Int64("html_compressed_size_bytes", upload.CompressedSizeBytes).
 		Msg("Stored task HTML in storage")

@@ -877,6 +877,18 @@ type Task struct {
 	PriorityScore float64
 }
 
+// TaskHTMLMetadata stores storage metadata for captured task HTML.
+type TaskHTMLMetadata struct {
+	StorageBucket       string
+	StoragePath         string
+	ContentType         string
+	ContentEncoding     string
+	SizeBytes           int64
+	CompressedSizeBytes int64
+	SHA256              string
+	CapturedAt          time.Time
+}
+
 // GetNextTask gets a pending task using row-level locking
 // Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers
 // Combines SELECT and UPDATE in a CTE for atomic claiming
@@ -1656,6 +1668,42 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 	}
 
 	return nil
+}
+
+// UpdateTaskHTMLMetadata persists storage metadata for an already completed task.
+func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata TaskHTMLMetadata) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("taskID cannot be empty")
+	}
+	if strings.TrimSpace(metadata.StoragePath) == "" {
+		return fmt.Errorf("storage path cannot be empty")
+	}
+
+	var capturedAt any
+	if !metadata.CapturedAt.IsZero() {
+		capturedAt = metadata.CapturedAt
+	}
+
+	return q.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE tasks
+			SET html_storage_bucket = $2,
+				html_storage_path = $3,
+				html_content_type = $4,
+				html_content_encoding = $5,
+				html_size_bytes = $6,
+				html_compressed_size_bytes = $7,
+				html_sha256 = $8,
+				html_captured_at = $9
+			WHERE id = $1
+		`, taskID, metadata.StorageBucket, metadata.StoragePath, metadata.ContentType,
+			metadata.ContentEncoding, metadata.SizeBytes, metadata.CompressedSizeBytes,
+			metadata.SHA256, capturedAt)
+		if err != nil {
+			return fmt.Errorf("failed to update task HTML metadata: %w", err)
+		}
+		return nil
+	})
 }
 
 // DecrementRunningTasks immediately decrements the running_tasks counter for a job.
