@@ -692,7 +692,6 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Attempt:     i + 1,
 			CacheStatus: cacheStatus,
 			Delay:       delayBeforeAttempt,
-			Diagnostics: &probe,
 		}
 		res.CacheCheckAttempts = append(res.CacheCheckAttempts, attempt)
 		if res.RequestDiagnostics != nil {
