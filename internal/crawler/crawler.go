@@ -200,6 +200,15 @@ func redactDiagnosticHeaders(headers http.Header) http.Header {
 	return cloned
 }
 
+func buildProbeErrorDiagnostics(method, targetURL string, err error) ProbeDiagnostics {
+	requestMeta := buildRequestMetadata(method, targetURL, targetURL, time.Now().UTC(), "probe")
+	responseMeta := ResponseMetadata{Error: err.Error()}
+	return ProbeDiagnostics{
+		Request:  &requestMeta,
+		Response: &responseMeta,
+	}
+}
+
 func buildRequestAttemptDiagnostics(
 	method string,
 	targetURL string,
@@ -662,7 +671,10 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		probe, err := c.CheckCacheStatus(ctx, targetURL)
 		probe.Attempt = i + 1
 		probe.DelayMS = delayBeforeAttempt
-		cacheStatus := probe.Cache.NormalisedStatus
+		cacheStatus := ""
+		if probe.Cache != nil {
+			cacheStatus = probe.Cache.NormalisedStatus
+		}
 
 		attempt := CacheCheckAttempt{
 			Attempt:     i + 1,
@@ -983,7 +995,7 @@ func (c *Crawler) makeSecondRequest(ctx context.Context, targetURL string) (*Cra
 func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (ProbeDiagnostics, error) {
 	req, err := http.NewRequestWithContext(ctx, "HEAD", targetURL, nil)
 	if err != nil {
-		return ProbeDiagnostics{}, err
+		return buildProbeErrorDiagnostics(http.MethodHead, targetURL, err), err
 	}
 
 	req.Header.Set("User-Agent", c.config.UserAgent)
@@ -1007,7 +1019,7 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (Probe
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return ProbeDiagnostics{}, err
+		return buildProbeErrorDiagnostics(req.Method, targetURL, err), err
 	}
 	defer resp.Body.Close()
 

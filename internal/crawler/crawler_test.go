@@ -235,6 +235,27 @@ func TestCheckCacheStatusCapturesDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCheckCacheStatusReturnsPartialDiagnosticsOnError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := ts.URL
+	ts.Close()
+
+	crawler := New(testConfig())
+	probe, err := crawler.CheckCacheStatus(context.Background(), url)
+	if err == nil {
+		t.Fatal("Expected an error for unreachable probe target")
+	}
+	if probe.Request == nil {
+		t.Fatal("Expected probe request metadata on error")
+	}
+	if probe.Response == nil {
+		t.Fatal("Expected probe response metadata on error")
+	}
+	if probe.Response.Error == "" {
+		t.Fatal("Expected probe error metadata to be populated")
+	}
+}
+
 func TestPerformanceMetricsWithRealURL(t *testing.T) {
 	// Skip in CI or if no internet connection
 	if testing.Short() || os.Getenv("CI") != "" {
