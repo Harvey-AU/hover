@@ -1675,6 +1675,9 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 	if strings.TrimSpace(taskID) == "" {
 		return fmt.Errorf("taskID cannot be empty")
 	}
+	if strings.TrimSpace(metadata.StorageBucket) == "" {
+		return fmt.Errorf("storage bucket cannot be empty")
+	}
 	if strings.TrimSpace(metadata.StoragePath) == "" {
 		return fmt.Errorf("storage path cannot be empty")
 	}

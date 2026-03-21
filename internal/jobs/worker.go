@@ -3684,9 +3684,11 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 }
 
 func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
-	drain := func() {
+	drain := func(drainCtx context.Context) {
 		for {
 			select {
+			case <-drainCtx.Done():
+				return
 			case request := <-wp.taskHTMLPersistCh:
 				wp.processTaskHTMLPersistence(ctx, request)
 			default:
@@ -3700,10 +3702,14 @@ func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 		case request := <-wp.taskHTMLPersistCh:
 			wp.processTaskHTMLPersistence(ctx, request)
 		case <-wp.stopCh:
-			drain()
+			drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			drain(drainCtx)
+			cancel()
 			return
 		case <-ctx.Done():
-			drain()
+			drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			drain(drainCtx)
+			cancel()
 			return
 		}
 	}
