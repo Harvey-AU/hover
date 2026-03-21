@@ -23,6 +23,8 @@ import (
 	"github.com/Harvey-AU/adapt/internal/observability"
 )
 
+var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")
+
 // ConcurrencyOverrideFunc is a callback to get effective concurrency for a job
 // Returns the effective concurrency limit, or 0 if no override exists
 type ConcurrencyOverrideFunc func(jobID string, domain string) int
@@ -1698,7 +1700,7 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 				html_compressed_size_bytes = CASE WHEN $7 > 0 THEN $7 ELSE html_compressed_size_bytes END,
 				html_sha256 = COALESCE(NULLIF($8, ''), html_sha256),
 				html_captured_at = COALESCE($9, html_captured_at)
-			WHERE id = $1
+			WHERE id = $1 AND status = 'completed'
 		`, taskID, metadata.StorageBucket, metadata.StoragePath, metadata.ContentType,
 			metadata.ContentEncoding, metadata.SizeBytes, metadata.CompressedSizeBytes,
 			metadata.SHA256, capturedAt)
@@ -1710,7 +1712,7 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			return fmt.Errorf("failed to read task HTML metadata update result: %w", err)
 		}
 		if rowsAffected == 0 {
-			return fmt.Errorf("no task updated for id %s", taskID)
+			return fmt.Errorf("%w: %s", ErrTaskNotReadyForHTMLMetadata, taskID)
 		}
 		return nil
 	})

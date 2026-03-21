@@ -39,10 +39,10 @@ On merge, CI will:
 
 ### Changed
 
-- **Diagnostics hygiene**: Stored crawl diagnostics now redact sensitive headers,
-  scrub query strings and fragments from recorded URLs, avoid duplicating full
-  probe payloads, and preserve retry/waiting-state diagnostics safely through
-  batch promotion paths.
+- **Diagnostics hygiene**: Stored crawl diagnostics now redact sensitive
+  headers, scrub query strings and fragments from recorded URLs, avoid
+  duplicating full probe payloads, and preserve retry/waiting-state diagnostics
+  safely through batch promotion paths.
 
 ### Fixed
 

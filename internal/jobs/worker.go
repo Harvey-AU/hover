@@ -72,6 +72,9 @@ const (
 	taskHTMLContentEncoding  = "gzip"
 	taskHTMLPersistQueueSize = 128
 	taskHTMLPersistWorkers   = 2
+	taskHTMLDrainTimeout     = 15 * time.Second
+	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
+	taskHTMLReadyMaxWait     = 5 * time.Second
 )
 
 type storageUploader interface {
@@ -187,6 +190,7 @@ type WorkerPool struct {
 	techDetectedMutex   sync.RWMutex
 	storageClient       storageUploader // For uploading HTML samples
 	taskHTMLPersistCh   chan *taskHTMLPersistRequest
+	taskHTMLPending     atomic.Int64
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -3606,6 +3610,15 @@ func canonicalTaskHTMLContentType(contentType string) string {
 	return strings.ToLower(mediaType)
 }
 
+func normalisedTaskHTMLContentType(contentType string) string {
+	trimmed := strings.TrimSpace(contentType)
+	if trimmed == "" {
+		return "text/html"
+	}
+
+	return strings.ToLower(trimmed)
+}
+
 func canStoreTaskHTML(contentType string, body []byte) bool {
 	if len(body) == 0 {
 		return false
@@ -3640,7 +3653,7 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 		return nil, false, err
 	}
 
-	contentType := canonicalTaskHTMLContentType(result.ContentType)
+	contentType := normalisedTaskHTMLContentType(result.ContentType)
 	checksum := sha256.Sum256(result.Body)
 
 	return &taskHTMLUpload{
@@ -3686,13 +3699,20 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 	drain := func(drainCtx context.Context) {
 		for {
+			if wp.taskHTMLPending.Load() == 0 {
+				return
+			}
 			select {
 			case <-drainCtx.Done():
 				return
 			case request := <-wp.taskHTMLPersistCh:
-				wp.processTaskHTMLPersistence(ctx, request)
+				wp.processTaskHTMLPersistence(drainCtx, request)
+			case <-time.After(50 * time.Millisecond):
+				continue
 			default:
-				return
+				if wp.taskHTMLPending.Load() == 0 {
+					return
+				}
 			}
 		}
 	}
@@ -3702,12 +3722,12 @@ func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 		case request := <-wp.taskHTMLPersistCh:
 			wp.processTaskHTMLPersistence(ctx, request)
 		case <-wp.stopCh:
-			drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
 			drain(drainCtx)
 			cancel()
 			return
 		case <-ctx.Done():
-			drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
 			drain(drainCtx)
 			cancel()
 			return
@@ -3729,15 +3749,19 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 		Body:        append([]byte(nil), result.Body...),
 		CapturedAt:  capturedAt,
 	}
+	wp.taskHTMLPending.Add(1)
 
 	select {
 	case wp.taskHTMLPersistCh <- request:
 	default:
+		wp.taskHTMLPending.Add(-1)
 		log.Warn().Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Task HTML persistence queue is full, skipping HTML upload")
 	}
 }
 
 func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *taskHTMLPersistRequest) {
+	defer wp.taskHTMLPending.Add(-1)
+
 	if request == nil || wp.storageClient == nil {
 		return
 	}
@@ -3752,7 +3776,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 		return
 	}
 
-	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	uploadCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	if _, err := wp.storageClient.UploadWithOptions(uploadCtx, upload.Bucket, upload.Path, upload.Payload, storage.UploadOptions{
@@ -3766,9 +3790,6 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	htmlTask := request.Task
 	applyTaskHTMLMetadata(&htmlTask, upload)
 
-	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer persistCancel()
-
 	metadata := db.TaskHTMLMetadata{
 		StorageBucket:       upload.Bucket,
 		StoragePath:         upload.Path,
@@ -3780,8 +3801,31 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 		CapturedAt:          upload.CapturedAt,
 	}
 
-	if err := wp.dbQueue.UpdateTaskHTMLMetadata(persistCtx, request.Task.ID, metadata); err != nil {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	readyCtx, readyCancel := context.WithTimeout(ctx, taskHTMLReadyMaxWait)
+	defer readyCancel()
+
+	for {
+		persistCtx, persistCancel := context.WithTimeout(readyCtx, 10*time.Second)
+		err = wp.dbQueue.UpdateTaskHTMLMetadata(persistCtx, request.Task.ID, metadata)
+		persistCancel()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, db.ErrTaskNotReadyForHTMLMetadata) {
+			break
+		}
+
+		select {
+		case <-readyCtx.Done():
+			err = readyCtx.Err()
+		case <-time.After(taskHTMLReadyRetryDelay):
+			continue
+		}
+		break
+	}
+
+	if err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cleanupCancel()
 		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
 			log.Warn().Err(deleteErr).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")

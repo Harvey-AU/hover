@@ -2,7 +2,7 @@
 
 This document outlines how to store per-task HTML page content in Supabase
 Storage rather than Postgres, so each crawl run can retain the fetched page body
- for later inspection.
+for later inspection.
 
 ## 1. Goal
 
@@ -15,10 +15,10 @@ Storage rather than Postgres, so each crawl run can retain the fetched page body
 
 In scope:
 
-- HTML/text page bodies fetched by the crawler
-- one stored object per task attempt
+- HTML/XHTML page bodies fetched by the crawler
+- one canonical stored object per task id
 - task-level metadata pointing to the stored object
-- optional gzip compression before upload
+- gzip compression before upload
 
 Out of scope:
 
@@ -36,7 +36,7 @@ Recommended default:
 
 - bucket: `task-html`
 - object path: `jobs/{job_id}/tasks/page-path/{task_id}.html.gz`
-- upload gzip-compressed HTML
+- always upload gzip-compressed HTML
 - keep a few scalar metadata columns on `tasks`
 
 ## 4. Why Storage Instead Of Postgres
@@ -85,15 +85,17 @@ tracking without querying Storage directly.
 
 ## 7. Upload Timing
 
-Upload the body in the worker success path after the crawl result is available.
+Queue HTML persistence from the worker success path after the crawl result is
+available, then let a bounded background worker handle upload and metadata
+storage.
 
 Suggested flow:
 
 1. crawler fetches page and populates `result.Body`
-2. worker verifies response is HTML/text and body is non-empty
-3. worker gzip-compresses the body
-4. worker uploads to Supabase Storage
-5. worker persists object metadata on the task row
+2. worker verifies response is HTML/XHTML and body is non-empty
+3. worker queues an HTML persistence request after task success handling
+4. background worker gzip-compresses the body and uploads to Supabase Storage
+5. background worker persists object metadata on the completed task row
 
 If upload fails:
 
@@ -161,8 +163,8 @@ File:
 
 ### Storage client
 
-Reuse `internal/storage/client.go` and optionally extend it with a metadata-aware
-upload helper if needed.
+Reuse `internal/storage/client.go` and optionally extend it with a
+metadata-aware upload helper if needed.
 
 ### Crawler result
 
