@@ -1691,8 +1691,8 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 				html_storage_path = COALESCE(NULLIF($3, ''), html_storage_path),
 				html_content_type = COALESCE(NULLIF($4, ''), html_content_type),
 				html_content_encoding = COALESCE(NULLIF($5, ''), html_content_encoding),
-				html_size_bytes = $6,
-				html_compressed_size_bytes = $7,
+				html_size_bytes = CASE WHEN $6 > 0 THEN $6 ELSE html_size_bytes END,
+				html_compressed_size_bytes = CASE WHEN $7 > 0 THEN $7 ELSE html_compressed_size_bytes END,
 				html_sha256 = COALESCE(NULLIF($8, ''), html_sha256),
 				html_captured_at = COALESCE($9, html_captured_at)
 			WHERE id = $1
