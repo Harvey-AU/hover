@@ -28,6 +28,8 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.27.3] – 2026-03-21
+
 ### Added
 
 - **Per-request crawl diagnostics**: Tasks now persist a structured
