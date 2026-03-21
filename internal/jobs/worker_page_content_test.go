@@ -18,6 +18,7 @@ import (
 
 type stubStorageUploader struct {
 	uploadWithOptionsFunc func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
+	deleteFunc            func(ctx context.Context, bucket, path string) error
 }
 
 func (s *stubStorageUploader) Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error) {
@@ -29,6 +30,13 @@ func (s *stubStorageUploader) UploadWithOptions(ctx context.Context, bucket, pat
 		return s.uploadWithOptionsFunc(ctx, bucket, path, data, options)
 	}
 	return bucket + "/" + path, nil
+}
+
+func (s *stubStorageUploader) Delete(ctx context.Context, bucket, path string) error {
+	if s.deleteFunc != nil {
+		return s.deleteFunc(ctx, bucket, path)
+	}
+	return nil
 }
 
 func gunzipTestPayload(t *testing.T, payload []byte) []byte {
@@ -158,4 +166,33 @@ func TestPersistTaskHTMLLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
 	assert.Zero(t, task.HTMLCompressedSizeBytes)
 	assert.Empty(t, task.HTMLSHA256)
 	assert.True(t, task.HTMLCapturedAt.IsZero())
+}
+
+func TestPersistTaskHTMLDeletesUploadWhenMetadataPersistenceFails(t *testing.T) {
+	task := &db.Task{ID: "task-123", JobID: "job-456"}
+	deleted := false
+	wp := &WorkerPool{
+		dbQueue: &MockDbQueue{UpdateTaskStatusFunc: func(ctx context.Context, task *db.Task) error {
+			return errors.New("write failed")
+		}},
+		storageClient: &stubStorageUploader{
+			uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
+				return bucket + "/" + path, nil
+			},
+			deleteFunc: func(ctx context.Context, bucket, path string) error {
+				deleted = true
+				assert.Equal(t, taskHTMLStorageBucket, bucket)
+				assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", path)
+				return nil
+			},
+		},
+	}
+
+	wp.persistTaskHTML(context.Background(), task, &crawler.CrawlResult{
+		ContentType: "text/html",
+		Body:        []byte("<html></html>"),
+	}, time.Now().UTC())
+
+	assert.True(t, deleted)
+	assert.Empty(t, task.HTMLStoragePath)
 }

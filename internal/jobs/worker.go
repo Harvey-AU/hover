@@ -76,6 +76,7 @@ const (
 type storageUploader interface {
 	Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error)
 	UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
+	Delete(ctx context.Context, bucket, path string) error
 }
 
 type taskHTMLUpload struct {
@@ -3691,6 +3692,11 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 	defer persistCancel()
 
 	if err := wp.dbQueue.UpdateTaskStatus(persistCtx, &htmlTask); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cleanupCancel()
+		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
+			log.Warn().Err(deleteErr).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")
+		}
 		log.Warn().Err(err).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to persist task HTML metadata")
 		return
 	}

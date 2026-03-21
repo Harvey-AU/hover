@@ -1545,7 +1545,6 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				Int("second_headers_bytes", len(secondHeaders)).
 				Int("cache_check_attempts_bytes", len(cacheCheckAttempts)).
 				Int("request_diagnostics_bytes", len(requestDiagnostics)).
-				Str("html_storage_path", task.HTMLStoragePath).
 				Msg("Updating task with JSONB fields")
 
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
