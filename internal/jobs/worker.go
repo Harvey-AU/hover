@@ -1562,7 +1562,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 
 		result, err := wp.processTask(taskCtx, jobsTask)
 		if err != nil {
-			return wp.handleTaskError(ctx, task, err)
+			return wp.handleTaskError(ctx, task, result, err)
 		} else {
 			return wp.handleTaskSuccess(ctx, task, result)
 		}
@@ -3448,9 +3448,10 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 }
 
 // handleTaskError processes task failures with appropriate retry logic and status updates
-func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskErr error) error {
+func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result *crawler.CrawlResult, taskErr error) error {
 	now := time.Now().UTC()
 	retryReason := "non_retryable"
+	wp.populateRequestDiagnostics(task, result)
 
 	// Check if this is a blocking error (403/429/503)
 	if isBlockingError(taskErr) {
@@ -3458,6 +3459,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 		if task.RetryCount < maxRetries {
 			retryReason = "blocking"
 			task.RetryCount++
+			task.Error = taskErr.Error()
 			// Route retries through waiting to respect pending queue cap
 			task.Status = string(TaskStatusWaiting)
 			task.StartedAt = time.Time{} // Reset started time
@@ -3486,6 +3488,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 		// For other retryable errors, use normal retry limit
 		retryReason = "retryable"
 		task.RetryCount++
+		task.Error = taskErr.Error()
 		// Route retries through waiting to respect pending queue cap
 		task.Status = string(TaskStatusWaiting)
 		task.StartedAt = time.Time{} // Reset started time
@@ -3535,6 +3538,23 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 	return nil
 }
 
+func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
+	task.RequestDiagnostics = []byte("{}")
+	if result == nil {
+		return
+	}
+
+	if diagnosticsBytes, err := json.Marshal(result.RequestDiagnostics); err == nil {
+		if json.Valid(diagnosticsBytes) {
+			task.RequestDiagnostics = diagnosticsBytes
+		} else {
+			log.Warn().Str("task_id", task.ID).Msg("Request diagnostics produced invalid JSON, using empty object")
+		}
+	} else {
+		log.Error().Err(err).Str("task_id", task.ID).Interface("request_diagnostics", result.RequestDiagnostics).Msg("Failed to marshal request diagnostics")
+	}
+}
+
 // handleTaskSuccess processes successful task completion with metrics and database updates
 func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, result *crawler.CrawlResult) error {
 	now := time.Now().UTC()
@@ -3578,6 +3598,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 	task.Headers = []byte("{}")
 	task.SecondHeaders = []byte("{}")
 	task.CacheCheckAttempts = []byte("[]")
+	task.RequestDiagnostics = []byte("{}")
 
 	// Only attempt marshaling if data exists and is non-empty
 	if len(result.Headers) > 0 {
@@ -3618,6 +3639,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			log.Error().Err(err).Str("task_id", task.ID).Interface("cache_attempts", result.CacheCheckAttempts).Msg("Failed to marshal cache check attempts")
 		}
 	}
+
+	wp.populateRequestDiagnostics(task, result)
 
 	// Immediately queue running_tasks decrement to free concurrency slot
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
