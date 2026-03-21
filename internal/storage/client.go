@@ -48,7 +48,9 @@ func (c *Client) setAuthHeaders(req *http.Request) {
 	req.Header.Set("apikey", c.serviceKey)
 	if isJWTAPIKey(c.serviceKey) {
 		req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+		return
 	}
+	req.Header.Set("Authorization", c.serviceKey)
 }
 
 // Upload uploads a file to the specified bucket and path

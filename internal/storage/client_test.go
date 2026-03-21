@@ -48,7 +48,7 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	assert.Equal(t, "text/html", receivedContentType)
 	assert.Equal(t, "gzip", receivedContentEncoding)
 	assert.Equal(t, "service-role-key", receivedAPIKey)
-	assert.Empty(t, receivedAuthorization)
+	assert.Equal(t, "service-role-key", receivedAuthorization)
 	assert.Equal(t, []byte("payload"), receivedBody)
 }
 
