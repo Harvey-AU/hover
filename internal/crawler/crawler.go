@@ -653,7 +653,9 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Diagnostics: probe,
 		}
 		res.CacheCheckAttempts = append(res.CacheCheckAttempts, attempt)
-		res.RequestDiagnostics.Probes = append(res.RequestDiagnostics.Probes, probe)
+		if res.RequestDiagnostics != nil {
+			res.RequestDiagnostics.Probes = append(res.RequestDiagnostics.Probes, probe)
+		}
 
 		if err != nil {
 			log.Warn().
@@ -726,10 +728,12 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.SecondContentLength = secondResult.ContentLength
 			res.SecondHeaders = secondResult.Headers
 			res.SecondPerformance = &secondResult.Performance
-			if secondResult.RequestDiagnostics.Primary != nil {
+			if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
 				secondary := *secondResult.RequestDiagnostics.Primary
 				secondary.Request.Provenance = "secondary"
-				res.RequestDiagnostics.Secondary = &secondary
+				if res.RequestDiagnostics != nil {
+					res.RequestDiagnostics.Secondary = &secondary
+				}
 			}
 
 			// Calculate improvement ratio for pattern analysis
@@ -879,9 +883,10 @@ func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool)
 
 	start := time.Now()
 	res := &CrawlResult{
-		URL:       targetURL,
-		Timestamp: start.Unix(),
-		Links:     make(map[string][]string),
+		URL:                targetURL,
+		Timestamp:          start.Unix(),
+		Links:              make(map[string][]string),
+		RequestDiagnostics: &RequestDiagnostics{},
 	}
 
 	log.Debug().

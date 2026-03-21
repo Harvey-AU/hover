@@ -12,7 +12,7 @@ func TestPopulateRequestDiagnostics(t *testing.T) {
 	wp := &WorkerPool{}
 	task := &db.Task{ID: "task-1"}
 	result := &crawler.CrawlResult{
-		RequestDiagnostics: crawler.RequestDiagnostics{
+		RequestDiagnostics: &crawler.RequestDiagnostics{
 			Primary: &crawler.RequestAttemptDiagnostics{
 				Request: crawler.RequestMetadata{
 					Method:     "GET",

@@ -103,7 +103,7 @@ type CrawlResult struct {
 	SecondHeaders       http.Header         `json:"second_headers,omitempty"`
 	SecondPerformance   *PerformanceMetrics `json:"second_performance,omitempty"`
 	CacheCheckAttempts  []CacheCheckAttempt `json:"cache_check_attempts,omitempty"`
-	RequestDiagnostics  RequestDiagnostics  `json:"request_diagnostics,omitempty"`
+	RequestDiagnostics  *RequestDiagnostics `json:"request_diagnostics,omitempty"`
 	BodySample          []byte              `json:"-"` // Truncated body for tech detection (not serialised)
 	Body                []byte              `json:"-"` // Full body for storage upload (not serialised)
 }

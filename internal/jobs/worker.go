@@ -3540,7 +3540,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 
 func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
 	task.RequestDiagnostics = []byte("{}")
-	if result == nil {
+	if result == nil || result.RequestDiagnostics == nil {
 		return
 	}
 
