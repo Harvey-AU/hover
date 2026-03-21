@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -36,21 +35,13 @@ func New(supabaseURL, serviceKey string) *Client {
 	}
 }
 
-func isJWTAPIKey(key string) bool {
-	return strings.HasPrefix(key, "eyJ")
-}
-
 func (c *Client) setAuthHeaders(req *http.Request) {
 	if c.serviceKey == "" {
 		return
 	}
 
 	req.Header.Set("apikey", c.serviceKey)
-	if isJWTAPIKey(c.serviceKey) {
-		req.Header.Set("Authorization", "Bearer "+c.serviceKey)
-		return
-	}
-	req.Header.Set("Authorization", c.serviceKey)
+	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
 }
 
 // Upload uploads a file to the specified bucket and path
