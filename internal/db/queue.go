@@ -1712,7 +1712,18 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			return fmt.Errorf("failed to read task HTML metadata update result: %w", err)
 		}
 		if rowsAffected == 0 {
-			return fmt.Errorf("%w: %s", ErrTaskNotReadyForHTMLMetadata, taskID)
+			var status string
+			err = tx.QueryRowContext(ctx, `SELECT status FROM tasks WHERE id = $1`, taskID).Scan(&status)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("task %s not found: %w", taskID, sql.ErrNoRows)
+			case err != nil:
+				return fmt.Errorf("failed to inspect task HTML metadata state: %w", err)
+			case status == "pending" || status == "running" || status == "waiting":
+				return fmt.Errorf("%w: %s", ErrTaskNotReadyForHTMLMetadata, taskID)
+			default:
+				return fmt.Errorf("task %s is not eligible for HTML metadata updates in status %q", taskID, status)
+			}
 		}
 		return nil
 	})
