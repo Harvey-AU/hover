@@ -53,10 +53,11 @@ type RequestAttemptDiagnostics struct {
 
 // CacheCheckAttempt stores the result of a single cache status check.
 type CacheCheckAttempt struct {
-	Attempt     int              `json:"attempt"`
-	CacheStatus string           `json:"cache_status"`
-	Delay       int              `json:"delay_ms"`
-	Diagnostics ProbeDiagnostics `json:"diagnostics,omitempty"`
+	Attempt     int    `json:"attempt"`
+	CacheStatus string `json:"cache_status"`
+	Delay       int    `json:"delay_ms"`
+	// Diagnostics duplicates attempt metadata for backward-compatible probe history.
+	Diagnostics *ProbeDiagnostics `json:"diagnostics,omitempty"`
 }
 
 // ProbeDiagnostics stores diagnostics for a cache probe attempt.

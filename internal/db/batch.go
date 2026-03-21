@@ -619,6 +619,8 @@ func (bm *BatchManager) flushIndividualUpdates(ctx context.Context, updates []*T
 				updateErr = bm.batchUpdateSkipped(txCtx, tx, []*Task{task})
 			case "pending":
 				updateErr = bm.batchUpdatePending(txCtx, tx, []*Task{task})
+			case "waiting":
+				updateErr = bm.batchUpdateWaiting(txCtx, tx, []*Task{task})
 			default:
 				return fmt.Errorf("unknown status: %s", task.Status)
 			}

@@ -637,20 +637,21 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 
 	// Check cache status with HEAD requests in a loop
 	maxChecks := 3
-	checkDelay := 700 // Start with 700ms delay between HEAD checks
+	delayBeforeAttempt := jitteredDelay
+	nextCheckDelay := 700 // Delay between subsequent HEAD checks
 	cacheHit := false
 
 	for i := range maxChecks {
 		probe, err := c.CheckCacheStatus(ctx, targetURL)
 		probe.Attempt = i + 1
-		probe.DelayMS = checkDelay
+		probe.DelayMS = delayBeforeAttempt
 		cacheStatus := probe.Cache.NormalisedStatus
 
 		attempt := CacheCheckAttempt{
 			Attempt:     i + 1,
 			CacheStatus: cacheStatus,
-			Delay:       checkDelay,
-			Diagnostics: probe,
+			Delay:       delayBeforeAttempt,
+			Diagnostics: &probe,
 		}
 		res.CacheCheckAttempts = append(res.CacheCheckAttempts, attempt)
 		if res.RequestDiagnostics != nil {
@@ -690,14 +691,15 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		// If not the last check, wait before next attempt
 		if i < maxChecks-1 {
 			select {
-			case <-time.After(time.Duration(checkDelay) * time.Millisecond):
+			case <-time.After(time.Duration(nextCheckDelay) * time.Millisecond):
+				delayBeforeAttempt = nextCheckDelay
 				// Continue to next check
 			case <-ctx.Done():
 				log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during check loop")
 				return nil
 			}
 			// Increase delay for the next iteration
-			checkDelay += 300
+			nextCheckDelay += 300
 		}
 	}
 
