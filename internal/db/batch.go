@@ -483,6 +483,9 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 		for _, task := range skippedTasks {
 			jobIDsToPromote[task.JobID] = true
 		}
+		for _, task := range waitingTasks {
+			jobIDsToPromote[task.JobID] = true
+		}
 
 		// Call promote_waiting_task_for_job() for each affected job
 		promotedCount := 0
