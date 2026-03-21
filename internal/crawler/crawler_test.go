@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -84,6 +85,129 @@ func TestPerformanceMetrics(t *testing.T) {
 	// Verify total response time is reasonable
 	if result.ResponseTime < 10 {
 		t.Error("Response time should be at least 10ms due to server delay")
+	}
+}
+
+func TestWarmURLCapturesPrimaryDiagnostics(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("CF-Cache-Status", "HIT")
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.Header().Set("Age", "42")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Hello, diagnostics!"))
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if result.RequestDiagnostics.Primary == nil {
+		t.Fatal("Expected primary request diagnostics to be populated")
+	}
+
+	primary := result.RequestDiagnostics.Primary
+	if primary.Request.Method != http.MethodGet {
+		t.Fatalf("Expected primary method %s, got %s", http.MethodGet, primary.Request.Method)
+	}
+	if primary.Request.Provenance != "primary" {
+		t.Fatalf("Expected primary provenance, got %s", primary.Request.Provenance)
+	}
+	if primary.Cache.HeaderSource != "CF-Cache-Status" {
+		t.Fatalf("Expected cache header source CF-Cache-Status, got %s", primary.Cache.HeaderSource)
+	}
+	if primary.Cache.NormalisedStatus != "HIT" {
+		t.Fatalf("Expected normalised cache status HIT, got %s", primary.Cache.NormalisedStatus)
+	}
+	if primary.ResponseHeaders.Get("CF-Cache-Status") != "HIT" {
+		t.Fatalf("Expected response headers to include CF-Cache-Status")
+	}
+	if primary.RequestHeaders.Get("Accept") == "" {
+		t.Fatalf("Expected request headers to include Accept")
+	}
+}
+
+func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
+	var getCount atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			count := getCount.Add(1)
+			if count == 1 {
+				w.Header().Set("CF-Cache-Status", "MISS")
+			} else {
+				w.Header().Set("CF-Cache-Status", "HIT")
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("cache me"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if len(result.RequestDiagnostics.Probes) == 0 {
+		t.Fatal("Expected at least one probe diagnostic entry")
+	}
+
+	probe := result.RequestDiagnostics.Probes[0]
+	if probe.Request.Method != http.MethodHead {
+		t.Fatalf("Expected probe method %s, got %s", http.MethodHead, probe.Request.Method)
+	}
+	if probe.Cache.NormalisedStatus != "HIT" {
+		t.Fatalf("Expected probe cache status HIT, got %s", probe.Cache.NormalisedStatus)
+	}
+
+	if result.RequestDiagnostics.Secondary == nil {
+		t.Fatal("Expected secondary request diagnostics to be populated")
+	}
+
+	secondary := result.RequestDiagnostics.Secondary
+	if secondary.Request.Provenance != "secondary" {
+		t.Fatalf("Expected secondary provenance, got %s", secondary.Request.Provenance)
+	}
+	if secondary.Cache.NormalisedStatus != "HIT" {
+		t.Fatalf("Expected secondary cache status HIT, got %s", secondary.Cache.NormalisedStatus)
+	}
+}
+
+func TestCheckCacheStatusCapturesDiagnostics(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Cache-Status", `"Netlify Edge"; hit`)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	probe, err := crawler.CheckCacheStatus(context.Background(), ts.URL)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if probe.Request.Method != http.MethodHead {
+		t.Fatalf("Expected HEAD probe, got %s", probe.Request.Method)
+	}
+	if probe.Cache.HeaderSource != "Cache-Status" {
+		t.Fatalf("Expected Cache-Status header source, got %s", probe.Cache.HeaderSource)
+	}
+	if probe.Cache.NormalisedStatus != "HIT" {
+		t.Fatalf("Expected HIT cache status, got %s", probe.Cache.NormalisedStatus)
 	}
 }
 
