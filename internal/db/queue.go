@@ -864,6 +864,14 @@ type Task struct {
 	SecondContentTransferTime int64
 	CacheCheckAttempts        []byte // Stored as JSONB
 	RequestDiagnostics        []byte // Stored as JSONB
+	HTMLStorageBucket         string
+	HTMLStoragePath           string
+	HTMLContentType           string
+	HTMLContentEncoding       string
+	HTMLSizeBytes             int64
+	HTMLCompressedSizeBytes   int64
+	HTMLSHA256                string
+	HTMLCapturedAt            time.Time
 
 	// Priority
 	PriorityScore float64
@@ -1525,6 +1533,11 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				requestDiagnostics = []byte("{}")
 			}
 
+			var htmlCapturedAt any
+			if !task.HTMLCapturedAt.IsZero() {
+				htmlCapturedAt = task.HTMLCapturedAt
+			}
+
 			// Log the actual values being passed for debugging
 			log.Debug().
 				Str("task_id", task.ID).
@@ -1532,26 +1545,35 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				Int("second_headers_bytes", len(secondHeaders)).
 				Int("cache_check_attempts_bytes", len(cacheCheckAttempts)).
 				Int("request_diagnostics_bytes", len(requestDiagnostics)).
+				Str("html_storage_path", task.HTMLStoragePath).
 				Msg("Updating task with JSONB fields")
 
-			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
+				// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
 			err = tx.QueryRowContext(ctx, `
-				UPDATE tasks
-				SET status = $1, completed_at = $2, status_code = $3,
-					response_time = $4, cache_status = $5, content_type = $6,
-					content_length = $7, headers = $8::jsonb, redirect_url = $9,
-					dns_lookup_time = $10, tcp_connection_time = $11, tls_handshake_time = $12,
-					ttfb = $13, content_transfer_time = $14,
-					second_response_time = $15, second_cache_status = $16,
-					second_content_length = $17, second_headers = $18::jsonb,
-					second_dns_lookup_time = $19, second_tcp_connection_time = $20,
-					second_tls_handshake_time = $21, second_ttfb = $22,
-					second_content_transfer_time = $23,
-					retry_count = $24, cache_check_attempts = $25::jsonb,
-					request_diagnostics = $26::jsonb
-				WHERE id = $27
-				RETURNING job_id
-			`, task.Status, task.CompletedAt, task.StatusCode,
+					UPDATE tasks
+					SET status = $1, completed_at = $2, status_code = $3,
+						response_time = $4, cache_status = $5, content_type = $6,
+						content_length = $7, headers = $8::jsonb, redirect_url = $9,
+						dns_lookup_time = $10, tcp_connection_time = $11, tls_handshake_time = $12,
+						ttfb = $13, content_transfer_time = $14,
+						second_response_time = $15, second_cache_status = $16,
+						second_content_length = $17, second_headers = $18::jsonb,
+						second_dns_lookup_time = $19, second_tcp_connection_time = $20,
+						second_tls_handshake_time = $21, second_ttfb = $22,
+						second_content_transfer_time = $23,
+						retry_count = $24, cache_check_attempts = $25::jsonb,
+						request_diagnostics = $26::jsonb,
+						html_storage_bucket = $27,
+						html_storage_path = $28,
+						html_content_type = $29,
+						html_content_encoding = $30,
+						html_size_bytes = $31,
+						html_compressed_size_bytes = $32,
+						html_sha256 = $33,
+						html_captured_at = $34
+					WHERE id = $35
+					RETURNING job_id
+				`, task.Status, task.CompletedAt, task.StatusCode,
 				task.ResponseTime, task.CacheStatus, task.ContentType,
 				task.ContentLength, string(headers), task.RedirectURL,
 				task.DNSLookupTime, task.TCPConnectionTime, task.TLSHandshakeTime,
@@ -1561,7 +1583,10 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				task.SecondDNSLookupTime, task.SecondTCPConnectionTime,
 				task.SecondTLSHandshakeTime, task.SecondTTFB,
 				task.SecondContentTransferTime,
-				task.RetryCount, string(cacheCheckAttempts), string(requestDiagnostics), task.ID).Scan(&jobID)
+				task.RetryCount, string(cacheCheckAttempts), string(requestDiagnostics),
+				task.HTMLStorageBucket, task.HTMLStoragePath, task.HTMLContentType,
+				task.HTMLContentEncoding, task.HTMLSizeBytes, task.HTMLCompressedSizeBytes,
+				task.HTMLSHA256, htmlCapturedAt, task.ID).Scan(&jobID)
 
 		case "failed":
 			requestDiagnostics := task.RequestDiagnostics

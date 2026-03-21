@@ -682,6 +682,14 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 	retryCounts := make([]int, len(tasks))
 	cacheCheckAttempts := make([]string, len(tasks))
 	requestDiagnostics := make([]string, len(tasks))
+	htmlStorageBuckets := make([]string, len(tasks))
+	htmlStoragePaths := make([]string, len(tasks))
+	htmlContentTypes := make([]string, len(tasks))
+	htmlContentEncodings := make([]string, len(tasks))
+	htmlSizeBytes := make([]int64, len(tasks))
+	htmlCompressedSizeBytes := make([]int64, len(tasks))
+	htmlSHA256s := make([]string, len(tasks))
+	htmlCapturedAts := make([]string, len(tasks))
 
 	for i, task := range tasks {
 		ids[i] = task.ID
@@ -733,6 +741,17 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		} else {
 			requestDiagnostics[i] = string(task.RequestDiagnostics)
 		}
+
+		htmlStorageBuckets[i] = task.HTMLStorageBucket
+		htmlStoragePaths[i] = task.HTMLStoragePath
+		htmlContentTypes[i] = task.HTMLContentType
+		htmlContentEncodings[i] = task.HTMLContentEncoding
+		htmlSizeBytes[i] = task.HTMLSizeBytes
+		htmlCompressedSizeBytes[i] = task.HTMLCompressedSizeBytes
+		htmlSHA256s[i] = task.HTMLSHA256
+		if !task.HTMLCapturedAt.IsZero() {
+			htmlCapturedAts[i] = task.HTMLCapturedAt.UTC().Format(time.RFC3339Nano)
+		}
 	}
 
 	// Single UPDATE statement using unnest to batch update all tasks
@@ -764,7 +783,15 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 			second_content_transfer_time = updates.second_content_transfer_time,
 			retry_count = updates.retry_count,
 			cache_check_attempts = updates.cache_check_attempts::jsonb,
-			request_diagnostics = updates.request_diagnostics::jsonb
+			request_diagnostics = updates.request_diagnostics::jsonb,
+			html_storage_bucket = updates.html_storage_bucket,
+			html_storage_path = updates.html_storage_path,
+			html_content_type = updates.html_content_type,
+			html_content_encoding = updates.html_content_encoding,
+			html_size_bytes = updates.html_size_bytes,
+			html_compressed_size_bytes = updates.html_compressed_size_bytes,
+			html_sha256 = updates.html_sha256,
+			html_captured_at = updates.html_captured_at
 		FROM (
 			SELECT
 				unnest($1::text[]) AS id,
@@ -792,7 +819,15 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 				unnest($23::bigint[]) AS second_content_transfer_time,
 				unnest($24::integer[]) AS retry_count,
 				unnest($25::text[]) AS cache_check_attempts,
-				unnest($26::text[]) AS request_diagnostics
+				unnest($26::text[]) AS request_diagnostics,
+				unnest($27::text[]) AS html_storage_bucket,
+				unnest($28::text[]) AS html_storage_path,
+				unnest($29::text[]) AS html_content_type,
+				unnest($30::text[]) AS html_content_encoding,
+				unnest($31::bigint[]) AS html_size_bytes,
+				unnest($32::bigint[]) AS html_compressed_size_bytes,
+				unnest($33::text[]) AS html_sha256,
+				NULLIF(unnest($34::text[]), '')::timestamptz AS html_captured_at
 		) AS updates
 		WHERE tasks.id = updates.id
 	`
@@ -824,6 +859,14 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		pq.Array(retryCounts),
 		pq.Array(cacheCheckAttempts),
 		pq.Array(requestDiagnostics),
+		pq.Array(htmlStorageBuckets),
+		pq.Array(htmlStoragePaths),
+		pq.Array(htmlContentTypes),
+		pq.Array(htmlContentEncodings),
+		pq.Array(htmlSizeBytes),
+		pq.Array(htmlCompressedSizeBytes),
+		pq.Array(htmlSHA256s),
+		pq.Array(htmlCapturedAts),
 	)
 
 	if err != nil {
