@@ -1,14 +1,20 @@
 package jobs
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"math"
 	"math/rand"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -63,7 +69,26 @@ const (
 	pendingRebalanceInterval = 5 * time.Minute
 	pendingRebalanceJobLimit = 25
 	pendingUnlimitedCap      = 100
+	taskHTMLStorageBucket    = "task-html"
+	taskHTMLContentEncoding  = "gzip"
 )
+
+type storageUploader interface {
+	Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error)
+	UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
+}
+
+type taskHTMLUpload struct {
+	Bucket              string
+	Path                string
+	ContentType         string
+	ContentEncoding     string
+	SizeBytes           int64
+	CompressedSizeBytes int64
+	SHA256              string
+	CapturedAt          time.Time
+	Payload             []byte
+}
 
 type WaitingReason string
 
@@ -151,7 +176,7 @@ type WorkerPool struct {
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
-	storageClient       *storage.Client // For uploading HTML samples
+	storageClient       storageUploader // For uploading HTML samples
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -542,7 +567,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	supabaseServiceKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseServiceKey != "" {
 		wp.storageClient = storage.New(supabaseURL, supabaseServiceKey)
-		log.Info().Msg("Storage client initialised for page crawl uploads")
+		log.Info().Msg("Storage client initialised for HTML uploads")
 	} else {
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
 	}
@@ -3555,6 +3580,121 @@ func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.
 	}
 }
 
+func canonicalTaskHTMLContentType(contentType string) string {
+	trimmed := strings.TrimSpace(contentType)
+	if trimmed == "" {
+		return ""
+	}
+
+	mediaType, _, err := mime.ParseMediaType(trimmed)
+	if err != nil {
+		return strings.ToLower(trimmed)
+	}
+
+	return strings.ToLower(mediaType)
+}
+
+func canStoreTaskHTML(contentType string, body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	mediaType := canonicalTaskHTMLContentType(contentType)
+	if mediaType == "" {
+		return false
+	}
+
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+
+	return mediaType == "application/xhtml+xml"
+}
+
+func gzipTaskHTML(body []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	if _, err := gzipWriter.Write(body); err != nil {
+		return nil, fmt.Errorf("write gzip html: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, fmt.Errorf("close gzip html: %w", err)
+	}
+	return io.ReadAll(&buffer)
+}
+
+func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) (*taskHTMLUpload, bool, error) {
+	if task == nil || result == nil {
+		return nil, false, nil
+	}
+	if !canStoreTaskHTML(result.ContentType, result.Body) {
+		return nil, false, nil
+	}
+
+	payload, err := gzipTaskHTML(result.Body)
+	if err != nil {
+		return nil, false, err
+	}
+
+	contentType := canonicalTaskHTMLContentType(result.ContentType)
+	checksum := sha256.Sum256(result.Body)
+
+	return &taskHTMLUpload{
+		Bucket:              taskHTMLStorageBucket,
+		Path:                fmt.Sprintf("jobs/%s/tasks/%s.html.gz", task.JobID, task.ID),
+		ContentType:         contentType,
+		ContentEncoding:     taskHTMLContentEncoding,
+		SizeBytes:           int64(len(result.Body)),
+		CompressedSizeBytes: int64(len(payload)),
+		SHA256:              hex.EncodeToString(checksum[:]),
+		CapturedAt:          capturedAt,
+		Payload:             payload,
+	}, true, nil
+}
+
+func (wp *WorkerPool) storeTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
+	if wp.storageClient == nil {
+		return
+	}
+
+	upload, ok, err := buildTaskHTMLUpload(task, result, capturedAt)
+	if err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Msg("Failed to prepare task HTML for storage")
+		return
+	}
+	if !ok {
+		return
+	}
+
+	uploadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+
+	if _, err := wp.storageClient.UploadWithOptions(uploadCtx, upload.Bucket, upload.Path, upload.Payload, storage.UploadOptions{
+		ContentType:     upload.ContentType,
+		ContentEncoding: upload.ContentEncoding,
+	}); err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to upload task HTML to storage")
+		return
+	}
+
+	task.HTMLStorageBucket = upload.Bucket
+	task.HTMLStoragePath = upload.Path
+	task.HTMLContentType = upload.ContentType
+	task.HTMLContentEncoding = upload.ContentEncoding
+	task.HTMLSizeBytes = upload.SizeBytes
+	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
+	task.HTMLSHA256 = upload.SHA256
+	task.HTMLCapturedAt = upload.CapturedAt
+
+	log.Debug().
+		Str("task_id", task.ID).
+		Str("job_id", task.JobID).
+		Str("storage_path", upload.Path).
+		Int64("html_size_bytes", upload.SizeBytes).
+		Int64("html_compressed_size_bytes", upload.CompressedSizeBytes).
+		Msg("Stored task HTML in storage")
+}
+
 // handleTaskSuccess processes successful task completion with metrics and database updates
 func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, result *crawler.CrawlResult) error {
 	now := time.Now().UTC()
@@ -3648,6 +3788,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			Msg("Failed to decrement running_tasks counter")
 		// Don't return error here; failed decrements are buffered/retried and reconciliation keeps counters accurate
 	}
+
+	wp.storeTaskHTML(ctx, task, result, now)
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)

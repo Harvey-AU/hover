@@ -18,6 +18,12 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// UploadOptions configures a storage upload request.
+type UploadOptions struct {
+	ContentType     string
+	ContentEncoding string
+}
+
 // New creates a new Storage client
 func New(supabaseURL, serviceKey string) *Client {
 	return &Client{
@@ -32,6 +38,12 @@ func New(supabaseURL, serviceKey string) *Client {
 // Upload uploads a file to the specified bucket and path
 // Returns the full path of the uploaded file
 func (c *Client) Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error) {
+	return c.UploadWithOptions(ctx, bucket, path, data, UploadOptions{ContentType: contentType})
+}
+
+// UploadWithOptions uploads a file to the specified bucket and path with optional headers.
+// Returns the full path of the uploaded file.
+func (c *Client) UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options UploadOptions) (string, error) {
 	url := fmt.Sprintf("%s/object/%s/%s", c.baseURL, bucket, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
@@ -40,7 +52,13 @@ func (c *Client) Upload(ctx context.Context, bucket, path string, data []byte, c
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
-	req.Header.Set("Content-Type", contentType)
+	if options.ContentType == "" {
+		options.ContentType = "application/octet-stream"
+	}
+	req.Header.Set("Content-Type", options.ContentType)
+	if options.ContentEncoding != "" {
+		req.Header.Set("Content-Encoding", options.ContentEncoding)
+	}
 	req.Header.Set("x-upsert", "true") // Overwrite if exists
 
 	resp, err := c.httpClient.Do(req)
