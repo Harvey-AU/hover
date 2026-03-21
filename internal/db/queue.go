@@ -1528,10 +1528,10 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 			// Log the actual values being passed for debugging
 			log.Debug().
 				Str("task_id", task.ID).
-				Str("headers", string(headers)).
-				Str("second_headers", string(secondHeaders)).
-				Str("cache_check_attempts", string(cacheCheckAttempts)).
-				Str("request_diagnostics", string(requestDiagnostics)).
+				Int("headers_bytes", len(headers)).
+				Int("second_headers_bytes", len(secondHeaders)).
+				Int("cache_check_attempts_bytes", len(cacheCheckAttempts)).
+				Int("request_diagnostics_bytes", len(requestDiagnostics)).
 				Msg("Updating task with JSONB fields")
 
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
