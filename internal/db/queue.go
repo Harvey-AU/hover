@@ -1685,15 +1685,15 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 	}
 
 	return q.Execute(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		result, err := tx.ExecContext(ctx, `
 			UPDATE tasks
-			SET html_storage_bucket = $2,
-				html_storage_path = $3,
-				html_content_type = $4,
-				html_content_encoding = $5,
+			SET html_storage_bucket = COALESCE(NULLIF($2, ''), html_storage_bucket),
+				html_storage_path = COALESCE(NULLIF($3, ''), html_storage_path),
+				html_content_type = COALESCE(NULLIF($4, ''), html_content_type),
+				html_content_encoding = COALESCE(NULLIF($5, ''), html_content_encoding),
 				html_size_bytes = $6,
 				html_compressed_size_bytes = $7,
-				html_sha256 = $8,
+				html_sha256 = COALESCE(NULLIF($8, ''), html_sha256),
 				html_captured_at = COALESCE($9, html_captured_at)
 			WHERE id = $1
 		`, taskID, metadata.StorageBucket, metadata.StoragePath, metadata.ContentType,
@@ -1701,6 +1701,13 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			metadata.SHA256, capturedAt)
 		if err != nil {
 			return fmt.Errorf("failed to update task HTML metadata: %w", err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to read task HTML metadata update result: %w", err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("no task updated for id %s", taskID)
 		}
 		return nil
 	})

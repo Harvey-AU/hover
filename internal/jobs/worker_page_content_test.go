@@ -153,8 +153,13 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 }
 
 func TestProcessTaskHTMLPersistenceLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
+	metadataCalled := false
+
 	wp := &WorkerPool{
-		dbQueue: &MockDbQueue{},
+		dbQueue: &MockDbQueue{UpdateTaskHTMLMetadataFunc: func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error {
+			metadataCalled = true
+			return nil
+		}},
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
 			return "", errors.New("upload failed")
 		}},
@@ -166,6 +171,8 @@ func TestProcessTaskHTMLPersistenceLeavesMetadataEmptyOnUploadFailure(t *testing
 		Body:        []byte("<html></html>"),
 		CapturedAt:  time.Now().UTC(),
 	})
+
+	assert.False(t, metadataCalled)
 }
 
 func TestProcessTaskHTMLPersistenceDeletesUploadWhenMetadataPersistenceFails(t *testing.T) {
