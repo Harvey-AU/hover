@@ -122,7 +122,7 @@ Alternative if multiple versions per task are needed later:
 Store content only when:
 
 - response body is non-empty
-- content type is HTML or text-like
+- content type is HTML or XHTML page content
 - task completed successfully enough to produce a body
 
 Skip storage when:

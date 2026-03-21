@@ -784,14 +784,14 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 			retry_count = updates.retry_count,
 			cache_check_attempts = updates.cache_check_attempts::jsonb,
 			request_diagnostics = updates.request_diagnostics::jsonb,
-			html_storage_bucket = updates.html_storage_bucket,
-			html_storage_path = updates.html_storage_path,
-			html_content_type = updates.html_content_type,
-			html_content_encoding = updates.html_content_encoding,
-			html_size_bytes = updates.html_size_bytes,
-			html_compressed_size_bytes = updates.html_compressed_size_bytes,
-			html_sha256 = updates.html_sha256,
-			html_captured_at = updates.html_captured_at
+			html_storage_bucket = COALESCE(NULLIF(updates.html_storage_bucket, ''), tasks.html_storage_bucket),
+			html_storage_path = COALESCE(NULLIF(updates.html_storage_path, ''), tasks.html_storage_path),
+			html_content_type = COALESCE(NULLIF(updates.html_content_type, ''), tasks.html_content_type),
+			html_content_encoding = COALESCE(NULLIF(updates.html_content_encoding, ''), tasks.html_content_encoding),
+			html_size_bytes = CASE WHEN updates.html_size_bytes > 0 THEN updates.html_size_bytes ELSE tasks.html_size_bytes END,
+			html_compressed_size_bytes = CASE WHEN updates.html_compressed_size_bytes > 0 THEN updates.html_compressed_size_bytes ELSE tasks.html_compressed_size_bytes END,
+			html_sha256 = COALESCE(NULLIF(updates.html_sha256, ''), tasks.html_sha256),
+			html_captured_at = COALESCE(updates.html_captured_at, tasks.html_captured_at)
 		FROM (
 			SELECT
 				unnest($1::text[]) AS id,

@@ -76,6 +76,7 @@ func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
 	}{
 		{name: "empty body", contentType: "text/html", body: nil},
 		{name: "binary content", contentType: "image/png", body: []byte("binary")},
+		{name: "non-html text content", contentType: "text/plain", body: []byte("hello")},
 		{name: "missing content type", contentType: "", body: []byte("hello")},
 	}
 
@@ -93,17 +94,23 @@ func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
 	}
 }
 
-func TestStoreTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
+func TestPersistTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
 	task := &db.Task{ID: "task-123", JobID: "job-456"}
 	result := &crawler.CrawlResult{
-		ContentType: "text/plain; charset=utf-8",
-		Body:        []byte("plain text body"),
+		ContentType: "text/html; charset=utf-8",
+		Body:        []byte("<html><body>ok</body></html>"),
 	}
 	capturedAt := time.Date(2026, time.March, 21, 8, 0, 0, 0, time.UTC)
 
 	var capturedOptions storage.UploadOptions
 	var capturedPayload []byte
+	var persistedTask *db.Task
 	wp := &WorkerPool{
+		dbQueue: &MockDbQueue{UpdateTaskStatusFunc: func(ctx context.Context, task *db.Task) error {
+			persisted := *task
+			persistedTask = &persisted
+			return nil
+		}},
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
 			capturedOptions = options
 			capturedPayload = append([]byte(nil), data...)
@@ -113,30 +120,34 @@ func TestStoreTaskHTMLPersistsMetadataOnSuccess(t *testing.T) {
 		}},
 	}
 
-	wp.storeTaskHTML(context.Background(), task, result, capturedAt)
+	wp.persistTaskHTML(context.Background(), task, result, capturedAt)
 
-	assert.Equal(t, taskHTMLStorageBucket, task.HTMLStorageBucket)
-	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", task.HTMLStoragePath)
-	assert.Equal(t, "text/plain", task.HTMLContentType)
-	assert.Equal(t, taskHTMLContentEncoding, task.HTMLContentEncoding)
-	assert.Equal(t, int64(len(result.Body)), task.HTMLSizeBytes)
-	assert.Equal(t, int64(len(capturedPayload)), task.HTMLCompressedSizeBytes)
-	assert.Equal(t, capturedAt, task.HTMLCapturedAt)
-	assert.Len(t, task.HTMLSHA256, 64)
-	assert.Equal(t, "text/plain", capturedOptions.ContentType)
+	require.NotNil(t, persistedTask)
+	assert.Equal(t, taskHTMLStorageBucket, persistedTask.HTMLStorageBucket)
+	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", persistedTask.HTMLStoragePath)
+	assert.Equal(t, "text/html", persistedTask.HTMLContentType)
+	assert.Equal(t, taskHTMLContentEncoding, persistedTask.HTMLContentEncoding)
+	assert.Equal(t, int64(len(result.Body)), persistedTask.HTMLSizeBytes)
+	assert.Equal(t, int64(len(capturedPayload)), persistedTask.HTMLCompressedSizeBytes)
+	assert.Equal(t, capturedAt, persistedTask.HTMLCapturedAt)
+	assert.Len(t, persistedTask.HTMLSHA256, 64)
+	assert.Equal(t, "text/html", capturedOptions.ContentType)
 	assert.Equal(t, taskHTMLContentEncoding, capturedOptions.ContentEncoding)
 	assert.Equal(t, result.Body, gunzipTestPayload(t, capturedPayload))
+	assert.Empty(t, task.HTMLStorageBucket)
+	assert.True(t, task.HTMLCapturedAt.IsZero())
 }
 
-func TestStoreTaskHTMLLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
+func TestPersistTaskHTMLLeavesMetadataEmptyOnUploadFailure(t *testing.T) {
 	task := &db.Task{ID: "task-123", JobID: "job-456"}
 	wp := &WorkerPool{
+		dbQueue: &MockDbQueue{},
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
 			return "", errors.New("upload failed")
 		}},
 	}
 
-	wp.storeTaskHTML(context.Background(), task, &crawler.CrawlResult{
+	wp.persistTaskHTML(context.Background(), task, &crawler.CrawlResult{
 		ContentType: "text/html",
 		Body:        []byte("<html></html>"),
 	}, time.Now().UTC())

@@ -3600,15 +3600,7 @@ func canStoreTaskHTML(contentType string, body []byte) bool {
 	}
 
 	mediaType := canonicalTaskHTMLContentType(contentType)
-	if mediaType == "" {
-		return false
-	}
-
-	if strings.HasPrefix(mediaType, "text/") {
-		return true
-	}
-
-	return mediaType == "application/xhtml+xml"
+	return mediaType == "text/html" || mediaType == "application/xhtml+xml"
 }
 
 func gzipTaskHTML(body []byte) ([]byte, error) {
@@ -3652,7 +3644,22 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 	}, true, nil
 }
 
-func (wp *WorkerPool) storeTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
+func applyTaskHTMLMetadata(task *db.Task, upload *taskHTMLUpload) {
+	if task == nil || upload == nil {
+		return
+	}
+
+	task.HTMLStorageBucket = upload.Bucket
+	task.HTMLStoragePath = upload.Path
+	task.HTMLContentType = upload.ContentType
+	task.HTMLContentEncoding = upload.ContentEncoding
+	task.HTMLSizeBytes = upload.SizeBytes
+	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
+	task.HTMLSHA256 = upload.SHA256
+	task.HTMLCapturedAt = upload.CapturedAt
+}
+
+func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
 	if wp.storageClient == nil {
 		return
 	}
@@ -3677,19 +3684,20 @@ func (wp *WorkerPool) storeTaskHTML(ctx context.Context, task *db.Task, result *
 		return
 	}
 
-	task.HTMLStorageBucket = upload.Bucket
-	task.HTMLStoragePath = upload.Path
-	task.HTMLContentType = upload.ContentType
-	task.HTMLContentEncoding = upload.ContentEncoding
-	task.HTMLSizeBytes = upload.SizeBytes
-	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
-	task.HTMLSHA256 = upload.SHA256
-	task.HTMLCapturedAt = upload.CapturedAt
+	htmlTask := *task
+	applyTaskHTMLMetadata(&htmlTask, upload)
+
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer persistCancel()
+
+	if err := wp.dbQueue.UpdateTaskStatus(persistCtx, &htmlTask); err != nil {
+		log.Warn().Err(err).Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Failed to persist task HTML metadata")
+		return
+	}
 
 	log.Debug().
 		Str("task_id", task.ID).
 		Str("job_id", task.JobID).
-		Str("storage_path", upload.Path).
 		Int64("html_size_bytes", upload.SizeBytes).
 		Int64("html_compressed_size_bytes", upload.CompressedSizeBytes).
 		Msg("Stored task HTML in storage")
@@ -3789,10 +3797,10 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 		// Don't return error here; failed decrements are buffered/retried and reconciliation keeps counters accurate
 	}
 
-	wp.storeTaskHTML(ctx, task, result, now)
-
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
+
+	wp.persistTaskHTML(ctx, task, result, now)
 
 	// Evaluate job performance for scaling
 	if result.ResponseTime > 0 {

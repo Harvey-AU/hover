@@ -1548,7 +1548,7 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				Str("html_storage_path", task.HTMLStoragePath).
 				Msg("Updating task with JSONB fields")
 
-				// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
+			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
 			err = tx.QueryRowContext(ctx, `
 					UPDATE tasks
 					SET status = $1, completed_at = $2, status_code = $3,
@@ -1563,14 +1563,14 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 						second_content_transfer_time = $23,
 						retry_count = $24, cache_check_attempts = $25::jsonb,
 						request_diagnostics = $26::jsonb,
-						html_storage_bucket = $27,
-						html_storage_path = $28,
-						html_content_type = $29,
-						html_content_encoding = $30,
-						html_size_bytes = $31,
-						html_compressed_size_bytes = $32,
-						html_sha256 = $33,
-						html_captured_at = $34
+						html_storage_bucket = COALESCE(NULLIF($27, ''), html_storage_bucket),
+						html_storage_path = COALESCE(NULLIF($28, ''), html_storage_path),
+						html_content_type = COALESCE(NULLIF($29, ''), html_content_type),
+						html_content_encoding = COALESCE(NULLIF($30, ''), html_content_encoding),
+						html_size_bytes = CASE WHEN $31 > 0 THEN $31 ELSE html_size_bytes END,
+						html_compressed_size_bytes = CASE WHEN $32 > 0 THEN $32 ELSE html_compressed_size_bytes END,
+						html_sha256 = COALESCE(NULLIF($33, ''), html_sha256),
+						html_captured_at = COALESCE($34, html_captured_at)
 					WHERE id = $35
 					RETURNING job_id
 				`, task.Status, task.CompletedAt, task.StatusCode,
