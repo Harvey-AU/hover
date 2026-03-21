@@ -28,6 +28,26 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Added
+
+- **Per-request crawl diagnostics**: Tasks now persist a structured
+  `request_diagnostics` JSONB payload covering primary requests, cache probe
+  attempts, and secondary requests for later inspection without storing page
+  bodies.
+
+### Changed
+
+- **Diagnostics hygiene**: Stored crawl diagnostics now redact sensitive headers,
+  scrub query strings and fragments from recorded URLs, avoid duplicating full
+  probe payloads, and preserve retry/waiting-state diagnostics safely through
+  batch promotion paths.
+
+### Fixed
+
+- **Supabase preview seed compatibility**: `auth.identities` seed inserts now
+  use the current conflict key `(provider_id, provider)`, restoring preview
+  branch seeding on fresh initialisation.
+
 ## [0.27.2] – 2026-03-15
 
 ### Changed
