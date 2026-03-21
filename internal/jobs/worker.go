@@ -87,6 +87,7 @@ type taskHTMLUpload struct {
 	Bucket              string
 	Path                string
 	ContentType         string
+	UploadContentType   string
 	ContentEncoding     string
 	SizeBytes           int64
 	CompressedSizeBytes int64
@@ -3654,12 +3655,17 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 	}
 
 	contentType := normalisedTaskHTMLContentType(result.ContentType)
+	uploadContentType := canonicalTaskHTMLContentType(result.ContentType)
+	if uploadContentType == "" {
+		uploadContentType = "text/html"
+	}
 	checksum := sha256.Sum256(result.Body)
 
 	return &taskHTMLUpload{
 		Bucket:              taskHTMLStorageBucket,
 		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
 		ContentType:         contentType,
+		UploadContentType:   uploadContentType,
 		ContentEncoding:     taskHTMLContentEncoding,
 		SizeBytes:           int64(len(result.Body)),
 		CompressedSizeBytes: int64(len(payload)),
@@ -3780,7 +3786,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	defer cancel()
 
 	if _, err := wp.storageClient.UploadWithOptions(uploadCtx, upload.Bucket, upload.Path, upload.Payload, storage.UploadOptions{
-		ContentType:     upload.ContentType,
+		ContentType:     upload.UploadContentType,
 		ContentEncoding: upload.ContentEncoding,
 	}); err != nil {
 		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to upload task HTML to storage")

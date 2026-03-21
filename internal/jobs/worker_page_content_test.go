@@ -68,6 +68,7 @@ func TestBuildTaskHTMLUpload(t *testing.T) {
 	assert.Equal(t, taskHTMLStorageBucket, upload.Bucket)
 	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", upload.Path)
 	assert.Equal(t, "text/html; charset=utf-8", upload.ContentType)
+	assert.Equal(t, "text/html", upload.UploadContentType)
 	assert.Equal(t, taskHTMLContentEncoding, upload.ContentEncoding)
 	assert.Equal(t, int64(len(body)), upload.SizeBytes)
 	assert.Equal(t, capturedAt, upload.CapturedAt)
@@ -145,7 +146,7 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 	assert.Equal(t, int64(len(capturedPayload)), persistedMetadata.CompressedSizeBytes)
 	assert.Equal(t, capturedAt, persistedMetadata.CapturedAt)
 	assert.Len(t, persistedMetadata.SHA256, 64)
-	assert.Equal(t, "text/html; charset=utf-8", capturedOptions.ContentType)
+	assert.Equal(t, "text/html", capturedOptions.ContentType)
 	assert.Equal(t, taskHTMLContentEncoding, capturedOptions.ContentEncoding)
 	assert.Equal(t, request.Body, gunzipTestPayload(t, capturedPayload))
 }
