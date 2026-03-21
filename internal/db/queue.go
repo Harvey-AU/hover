@@ -863,6 +863,7 @@ type Task struct {
 	SecondTTFB                int64
 	SecondContentTransferTime int64
 	CacheCheckAttempts        []byte // Stored as JSONB
+	RequestDiagnostics        []byte // Stored as JSONB
 
 	// Priority
 	PriorityScore float64
@@ -1519,13 +1520,18 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 			if len(cacheCheckAttempts) == 0 {
 				cacheCheckAttempts = []byte("[]")
 			}
+			requestDiagnostics := task.RequestDiagnostics
+			if len(requestDiagnostics) == 0 {
+				requestDiagnostics = []byte("{}")
+			}
 
 			// Log the actual values being passed for debugging
 			log.Debug().
 				Str("task_id", task.ID).
-				Str("headers", string(headers)).
-				Str("second_headers", string(secondHeaders)).
-				Str("cache_check_attempts", string(cacheCheckAttempts)).
+				Int("headers_bytes", len(headers)).
+				Int("second_headers_bytes", len(secondHeaders)).
+				Int("cache_check_attempts_bytes", len(cacheCheckAttempts)).
+				Int("request_diagnostics_bytes", len(requestDiagnostics)).
 				Msg("Updating task with JSONB fields")
 
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
@@ -1541,8 +1547,9 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 					second_dns_lookup_time = $19, second_tcp_connection_time = $20,
 					second_tls_handshake_time = $21, second_ttfb = $22,
 					second_content_transfer_time = $23,
-					retry_count = $24, cache_check_attempts = $25::jsonb
-				WHERE id = $26
+					retry_count = $24, cache_check_attempts = $25::jsonb,
+					request_diagnostics = $26::jsonb
+				WHERE id = $27
 				RETURNING job_id
 			`, task.Status, task.CompletedAt, task.StatusCode,
 				task.ResponseTime, task.CacheStatus, task.ContentType,
@@ -1554,16 +1561,36 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				task.SecondDNSLookupTime, task.SecondTCPConnectionTime,
 				task.SecondTLSHandshakeTime, task.SecondTTFB,
 				task.SecondContentTransferTime,
-				task.RetryCount, string(cacheCheckAttempts), task.ID).Scan(&jobID)
+				task.RetryCount, string(cacheCheckAttempts), string(requestDiagnostics), task.ID).Scan(&jobID)
 
 		case "failed":
+			requestDiagnostics := task.RequestDiagnostics
+			if len(requestDiagnostics) == 0 {
+				requestDiagnostics = []byte("{}")
+			}
+
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
 			err = tx.QueryRowContext(ctx, `
 				UPDATE tasks
-				SET status = $1, completed_at = $2, error = $3, retry_count = $4
+				SET status = $1, completed_at = $2, error = $3, retry_count = $4,
+					request_diagnostics = $5::jsonb
+				WHERE id = $6
+				RETURNING job_id
+			`, task.Status, task.CompletedAt, task.Error, task.RetryCount, string(requestDiagnostics), task.ID).Scan(&jobID)
+
+		case "waiting":
+			requestDiagnostics := task.RequestDiagnostics
+			if len(requestDiagnostics) == 0 {
+				requestDiagnostics = []byte("{}")
+			}
+
+			err = tx.QueryRowContext(ctx, `
+				UPDATE tasks
+				SET status = $1, started_at = NULL, error = $2, retry_count = $3,
+					request_diagnostics = $4::jsonb
 				WHERE id = $5
 				RETURNING job_id
-			`, task.Status, task.CompletedAt, task.Error, task.RetryCount, task.ID).Scan(&jobID)
+			`, task.Status, task.Error, task.RetryCount, string(requestDiagnostics), task.ID).Scan(&jobID)
 
 		case "skipped":
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
