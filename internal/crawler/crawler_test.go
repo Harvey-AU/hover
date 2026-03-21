@@ -135,6 +135,39 @@ func TestWarmURLCapturesPrimaryDiagnostics(t *testing.T) {
 	}
 }
 
+func TestWarmURLScrubsDiagnosticQueryStrings(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("CF-Cache-Status", "HIT")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Hello, scrubbed diagnostics!"))
+	}))
+	defer ts.Close()
+
+	targetURL := ts.URL + "/offers?token=secret#frag"
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), targetURL, false)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	primary := result.RequestDiagnostics.Primary
+	if primary == nil || primary.Request == nil || primary.Response == nil {
+		t.Fatal("Expected primary diagnostics to be populated")
+	}
+	if strings.Contains(primary.Request.URL, "?") || strings.Contains(primary.Request.URL, "#") {
+		t.Fatalf("Expected scrubbed request URL, got %s", primary.Request.URL)
+	}
+	if strings.Contains(primary.Request.FinalURL, "?") || strings.Contains(primary.Request.FinalURL, "#") {
+		t.Fatalf("Expected scrubbed final URL, got %s", primary.Request.FinalURL)
+	}
+	if primary.Request.Query != "" {
+		t.Fatalf("Expected empty diagnostic query, got %s", primary.Request.Query)
+	}
+	if strings.Contains(primary.Response.RedirectURL, "?") || strings.Contains(primary.Response.RedirectURL, "#") {
+		t.Fatalf("Expected scrubbed redirect URL, got %s", primary.Response.RedirectURL)
+	}
+}
+
 func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
 	var getCount atomic.Int32
 

@@ -118,24 +118,36 @@ func normaliseCacheStatus(status string) string {
 	return status
 }
 
+func stripDiagnosticURL(raw string) string {
+	parsedURL, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsedURL.RawQuery = ""
+	parsedURL.Fragment = ""
+	return parsedURL.String()
+}
+
 func buildRequestMetadata(method, targetURL, finalURL string, timestamp time.Time, provenance string) RequestMetadata {
+	scrubbedTargetURL := stripDiagnosticURL(targetURL)
+	scrubbedFinalURL := stripDiagnosticURL(finalURL)
 	meta := RequestMetadata{
 		Method:     method,
-		URL:        targetURL,
-		FinalURL:   finalURL,
+		URL:        scrubbedTargetURL,
+		FinalURL:   scrubbedFinalURL,
 		Timestamp:  timestamp.Unix(),
 		Provenance: provenance,
 	}
 
-	parsedURL, err := url.Parse(finalURL)
+	parsedURL, err := url.Parse(scrubbedFinalURL)
 	if err != nil {
-		parsedURL, err = url.Parse(targetURL)
+		parsedURL, err = url.Parse(scrubbedTargetURL)
 	}
 	if err == nil {
 		meta.Scheme = parsedURL.Scheme
 		meta.Host = parsedURL.Host
 		meta.Path = parsedURL.Path
-		meta.Query = parsedURL.RawQuery
+		meta.Query = ""
 	}
 
 	return meta
@@ -567,7 +579,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 				StatusCode:    result.StatusCode,
 				ContentType:   result.ContentType,
 				ContentLength: result.ContentLength,
-				RedirectURL:   result.RedirectURL,
+				RedirectURL:   stripDiagnosticURL(result.RedirectURL),
 				Warning:       result.Warning,
 				Error:         result.Error,
 			},
@@ -608,7 +620,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 				StatusCode:    result.StatusCode,
 				ContentType:   result.ContentType,
 				ContentLength: result.ContentLength,
-				RedirectURL:   result.RedirectURL,
+				RedirectURL:   stripDiagnosticURL(result.RedirectURL),
 				Warning:       result.Warning,
 				Error:         result.Error,
 			},
@@ -1026,10 +1038,7 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (Probe
 	responseHeaders := resp.Header.Clone()
 	cacheMeta := buildCacheMetadata(responseHeaders)
 	requestMeta := buildRequestMetadata(req.Method, targetURL, resp.Request.URL.String(), time.Now().UTC(), "probe")
-	responseMeta := ResponseMetadata{
-		StatusCode:  resp.StatusCode,
-		RedirectURL: resp.Request.URL.String(),
-	}
+	responseMeta := ResponseMetadata{StatusCode: resp.StatusCode, RedirectURL: stripDiagnosticURL(resp.Request.URL.String())}
 
 	return ProbeDiagnostics{
 		Request:  &requestMeta,
