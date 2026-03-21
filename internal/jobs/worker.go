@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"math"
 	"math/rand"
@@ -3625,7 +3624,7 @@ func gzipTaskHTML(body []byte) ([]byte, error) {
 	if err := gzipWriter.Close(); err != nil {
 		return nil, fmt.Errorf("close gzip html: %w", err)
 	}
-	return io.ReadAll(&buffer)
+	return buffer.Bytes(), nil
 }
 
 func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) (*taskHTMLUpload, bool, error) {
@@ -3704,6 +3703,7 @@ func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 			drain()
 			return
 		case <-ctx.Done():
+			drain()
 			return
 		}
 	}
@@ -3743,10 +3743,6 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 		return
 	}
 	if !ok {
-		return
-	}
-
-	if wp.storageClient == nil {
 		return
 	}
 

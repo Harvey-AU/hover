@@ -77,6 +77,8 @@ func TestBuildTaskHTMLUpload(t *testing.T) {
 }
 
 func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		contentType string
@@ -89,7 +91,11 @@ func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt
+
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			upload, ok, err := buildTaskHTMLUpload(&db.Task{ID: "task", JobID: "job"}, &crawler.CrawlResult{
 				ContentType: tt.contentType,
 				Body:        tt.body,
