@@ -185,6 +185,21 @@ func buildCacheMetadata(headers http.Header) CacheMetadata {
 	return cache
 }
 
+func redactDiagnosticHeaders(headers http.Header) http.Header {
+	cloned := headers.Clone()
+	for _, name := range []string{
+		"Authorization",
+		"Proxy-Authorization",
+		"Cookie",
+		"Set-Cookie",
+		"X-Api-Key",
+		"X-Auth-Token",
+	} {
+		cloned.Del(name)
+	}
+	return cloned
+}
+
 func buildRequestAttemptDiagnostics(
 	method string,
 	targetURL string,
@@ -196,16 +211,18 @@ func buildRequestAttemptDiagnostics(
 	response ResponseMetadata,
 	timing PerformanceMetrics,
 ) *RequestAttemptDiagnostics {
-	requestHeaders = requestHeaders.Clone()
-	responseHeaders = responseHeaders.Clone()
+	requestHeaders = redactDiagnosticHeaders(requestHeaders)
+	responseHeaders = redactDiagnosticHeaders(responseHeaders)
+	requestMeta := buildRequestMetadata(method, targetURL, finalURL, timestamp, provenance)
+	cacheMeta := buildCacheMetadata(responseHeaders)
 
 	return &RequestAttemptDiagnostics{
-		Request:         buildRequestMetadata(method, targetURL, finalURL, timestamp, provenance),
-		Response:        response,
+		Request:         &requestMeta,
+		Response:        &response,
 		RequestHeaders:  requestHeaders,
 		ResponseHeaders: responseHeaders,
-		Timing:          timing,
-		Cache:           buildCacheMetadata(responseHeaders),
+		Timing:          &timing,
+		Cache:           &cacheMeta,
 	}
 }
 
@@ -996,15 +1013,17 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (Probe
 
 	responseHeaders := resp.Header.Clone()
 	cacheMeta := buildCacheMetadata(responseHeaders)
+	requestMeta := buildRequestMetadata(req.Method, targetURL, resp.Request.URL.String(), time.Now().UTC(), "probe")
+	responseMeta := ResponseMetadata{
+		StatusCode:  resp.StatusCode,
+		RedirectURL: resp.Request.URL.String(),
+	}
 
 	return ProbeDiagnostics{
-		Request: buildRequestMetadata(req.Method, targetURL, resp.Request.URL.String(), time.Now().UTC(), "probe"),
-		Response: ResponseMetadata{
-			StatusCode:  resp.StatusCode,
-			RedirectURL: resp.Request.URL.String(),
-		},
-		Cache:   cacheMeta,
-		DelayMS: 0,
+		Request:  &requestMeta,
+		Response: &responseMeta,
+		Cache:    &cacheMeta,
+		DelayMS:  0,
 	}, nil
 }
 

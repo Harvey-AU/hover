@@ -9,53 +9,78 @@ import (
 )
 
 func TestPopulateRequestDiagnostics(t *testing.T) {
-	wp := &WorkerPool{}
-	task := &db.Task{ID: "task-1"}
-	result := &crawler.CrawlResult{
-		RequestDiagnostics: &crawler.RequestDiagnostics{
-			Primary: &crawler.RequestAttemptDiagnostics{
-				Request: crawler.RequestMetadata{
-					Method:     "GET",
-					URL:        "https://example.com/page",
-					Provenance: "primary",
-				},
-				Cache: crawler.CacheMetadata{
-					HeaderSource:     "CF-Cache-Status",
-					NormalisedStatus: "HIT",
+	requestMeta := &crawler.RequestMetadata{
+		Method:     "GET",
+		URL:        "https://example.com/page",
+		Provenance: "primary",
+	}
+	cacheMeta := &crawler.CacheMetadata{
+		HeaderSource:     "CF-Cache-Status",
+		NormalisedStatus: "HIT",
+	}
+
+	tests := []struct {
+		name          string
+		result        *crawler.CrawlResult
+		expectJSON    string
+		expectPrimary bool
+	}{
+		{
+			name: "populated diagnostics",
+			result: &crawler.CrawlResult{
+				RequestDiagnostics: &crawler.RequestDiagnostics{
+					Primary: &crawler.RequestAttemptDiagnostics{
+						Request: requestMeta,
+						Cache:   cacheMeta,
+					},
 				},
 			},
+			expectPrimary: true,
 		},
+		{name: "nil result", result: nil, expectJSON: "{}"},
+		{name: "nil request diagnostics", result: &crawler.CrawlResult{}, expectJSON: "{}"},
 	}
 
-	wp.populateRequestDiagnostics(task, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wp := &WorkerPool{}
+			task := &db.Task{ID: "task-1"}
 
-	if len(task.RequestDiagnostics) == 0 {
-		t.Fatal("expected request diagnostics to be marshalled")
-	}
+			wp.populateRequestDiagnostics(task, tt.result)
 
-	var stored crawler.RequestDiagnostics
-	if err := json.Unmarshal(task.RequestDiagnostics, &stored); err != nil {
-		t.Fatalf("expected valid JSON, got %v", err)
-	}
+			if tt.expectJSON != "" {
+				if string(task.RequestDiagnostics) != tt.expectJSON {
+					t.Fatalf("expected empty JSON object, got %s", string(task.RequestDiagnostics))
+				}
+				return
+			}
 
-	if stored.Primary == nil {
-		t.Fatal("expected primary diagnostics to be present")
-	}
-	if stored.Primary.Request.Method != "GET" {
-		t.Fatalf("expected request method GET, got %s", stored.Primary.Request.Method)
-	}
-	if stored.Primary.Cache.NormalisedStatus != "HIT" {
-		t.Fatalf("expected cache status HIT, got %s", stored.Primary.Cache.NormalisedStatus)
-	}
-}
+			if len(task.RequestDiagnostics) == 0 {
+				t.Fatal("expected request diagnostics to be marshalled")
+			}
 
-func TestPopulateRequestDiagnosticsWithNilResult(t *testing.T) {
-	wp := &WorkerPool{}
-	task := &db.Task{ID: "task-2"}
+			var stored crawler.RequestDiagnostics
+			if err := json.Unmarshal(task.RequestDiagnostics, &stored); err != nil {
+				t.Fatalf("expected valid JSON, got %v", err)
+			}
 
-	wp.populateRequestDiagnostics(task, nil)
-
-	if string(task.RequestDiagnostics) != "{}" {
-		t.Fatalf("expected empty JSON object, got %s", string(task.RequestDiagnostics))
+			if tt.expectPrimary {
+				if stored.Primary == nil {
+					t.Fatal("expected primary diagnostics to be present")
+				}
+				if stored.Primary.Request == nil {
+					t.Fatal("expected request metadata to be present")
+				}
+				if stored.Primary.Cache == nil {
+					t.Fatal("expected cache metadata to be present")
+				}
+				if stored.Primary.Request.Method != "GET" {
+					t.Fatalf("expected request method GET, got %s", stored.Primary.Request.Method)
+				}
+				if stored.Primary.Cache.NormalisedStatus != "HIT" {
+					t.Fatalf("expected cache status HIT, got %s", stored.Primary.Cache.NormalisedStatus)
+				}
+			}
+		})
 	}
 }

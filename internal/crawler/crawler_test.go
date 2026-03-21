@@ -109,8 +109,14 @@ func TestWarmURLCapturesPrimaryDiagnostics(t *testing.T) {
 	}
 
 	primary := result.RequestDiagnostics.Primary
+	if primary.Request == nil {
+		t.Fatal("Expected primary request metadata to be populated")
+	}
 	if primary.Request.Method != http.MethodGet {
 		t.Fatalf("Expected primary method %s, got %s", http.MethodGet, primary.Request.Method)
+	}
+	if primary.Cache == nil {
+		t.Fatal("Expected primary cache metadata to be populated")
 	}
 	if primary.Request.Provenance != "primary" {
 		t.Fatalf("Expected primary provenance, got %s", primary.Request.Provenance)
@@ -163,6 +169,12 @@ func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
 	}
 
 	probe := result.RequestDiagnostics.Probes[0]
+	if probe.Request == nil {
+		t.Fatal("Expected probe request metadata")
+	}
+	if probe.Cache == nil {
+		t.Fatal("Expected probe cache metadata")
+	}
 	if probe.Request.Method != http.MethodHead {
 		t.Fatalf("Expected probe method %s, got %s", http.MethodHead, probe.Request.Method)
 	}
@@ -175,6 +187,12 @@ func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
 	}
 
 	secondary := result.RequestDiagnostics.Secondary
+	if secondary.Request == nil {
+		t.Fatal("Expected secondary request metadata")
+	}
+	if secondary.Cache == nil {
+		t.Fatal("Expected secondary cache metadata")
+	}
 	if secondary.Request.Provenance != "secondary" {
 		t.Fatalf("Expected secondary provenance, got %s", secondary.Request.Provenance)
 	}
@@ -200,6 +218,12 @@ func TestCheckCacheStatusCapturesDiagnostics(t *testing.T) {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
+	if probe.Request == nil {
+		t.Fatal("Expected probe request metadata")
+	}
+	if probe.Cache == nil {
+		t.Fatal("Expected probe cache metadata")
+	}
 	if probe.Request.Method != http.MethodHead {
 		t.Fatalf("Expected HEAD probe, got %s", probe.Request.Method)
 	}

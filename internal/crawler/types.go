@@ -43,12 +43,12 @@ type CacheMetadata struct {
 
 // RequestAttemptDiagnostics stores the diagnostics for a full request attempt.
 type RequestAttemptDiagnostics struct {
-	Request         RequestMetadata    `json:"request,omitempty"`
-	Response        ResponseMetadata   `json:"response,omitempty"`
-	RequestHeaders  http.Header        `json:"request_headers,omitempty"`
-	ResponseHeaders http.Header        `json:"response_headers,omitempty"`
-	Timing          PerformanceMetrics `json:"timing,omitempty"`
-	Cache           CacheMetadata      `json:"cache,omitempty"`
+	Request         *RequestMetadata    `json:"request,omitempty"`
+	Response        *ResponseMetadata   `json:"response,omitempty"`
+	RequestHeaders  http.Header         `json:"request_headers,omitempty"`
+	ResponseHeaders http.Header         `json:"response_headers,omitempty"`
+	Timing          *PerformanceMetrics `json:"timing,omitempty"`
+	Cache           *CacheMetadata      `json:"cache,omitempty"`
 }
 
 // CacheCheckAttempt stores the result of a single cache status check.
@@ -62,11 +62,11 @@ type CacheCheckAttempt struct {
 
 // ProbeDiagnostics stores diagnostics for a cache probe attempt.
 type ProbeDiagnostics struct {
-	Attempt  int              `json:"attempt,omitempty"`
-	Request  RequestMetadata  `json:"request,omitempty"`
-	Response ResponseMetadata `json:"response,omitempty"`
-	Cache    CacheMetadata    `json:"cache,omitempty"`
-	DelayMS  int              `json:"delay_ms,omitempty"`
+	Attempt  int               `json:"attempt,omitempty"`
+	Request  *RequestMetadata  `json:"request,omitempty"`
+	Response *ResponseMetadata `json:"response,omitempty"`
+	Cache    *CacheMetadata    `json:"cache,omitempty"`
+	DelayMS  int               `json:"delay_ms,omitempty"`
 }
 
 // PerformanceMetrics holds detailed timing information for a request.
