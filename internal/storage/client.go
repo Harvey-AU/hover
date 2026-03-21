@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -35,6 +36,21 @@ func New(supabaseURL, serviceKey string) *Client {
 	}
 }
 
+func isJWTAPIKey(key string) bool {
+	return strings.HasPrefix(key, "eyJ")
+}
+
+func (c *Client) setAuthHeaders(req *http.Request) {
+	if c.serviceKey == "" {
+		return
+	}
+
+	req.Header.Set("apikey", c.serviceKey)
+	if isJWTAPIKey(c.serviceKey) {
+		req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	}
+}
+
 // Upload uploads a file to the specified bucket and path
 // Returns the full path of the uploaded file
 func (c *Client) Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error) {
@@ -51,7 +67,7 @@ func (c *Client) UploadWithOptions(ctx context.Context, bucket, path string, dat
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	c.setAuthHeaders(req)
 	if options.ContentType == "" {
 		options.ContentType = "application/octet-stream"
 	}
@@ -90,7 +106,7 @@ func (c *Client) GetSignedURL(ctx context.Context, bucket, path string, expiresI
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -125,7 +141,7 @@ func (c *Client) Delete(ctx context.Context, bucket, path string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
