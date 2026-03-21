@@ -127,14 +127,9 @@ jobs:
 
           # Create review app name
           APP_NAME="adapt-pr-${{ github.event.number }}"
-          SUPABASE_URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co"
-          SUPABASE_AUTH_URL="${{ secrets.SUPABASE_AUTH_URL }}"
-          if [ -z "$SUPABASE_AUTH_URL" ]; then
-            SUPABASE_AUTH_URL="https://adapt.auth.goodnative.co"
-          fi
           SUPABASE_FALLBACK_AUTH_URL="${{ secrets.SUPABASE_FALLBACK_AUTH_URL }}"
           SUPABASE_LEGACY_AUTH_URL="${{ secrets.SUPABASE_LEGACY_AUTH_URL }}"
-          AUTH_URL_FLAGS=(SUPABASE_AUTH_URL="$SUPABASE_AUTH_URL")
+          AUTH_URL_FLAGS=()
           if [ -n "$SUPABASE_FALLBACK_AUTH_URL" ]; then
             AUTH_URL_FLAGS+=(SUPABASE_FALLBACK_AUTH_URL="$SUPABASE_FALLBACK_AUTH_URL")
           fi
@@ -157,7 +152,6 @@ jobs:
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               DATABASE_DIRECT_URL="$DIRECT_URL" \
-              SUPABASE_URL="$SUPABASE_URL" \
               "${AUTH_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
               SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
@@ -177,7 +171,6 @@ jobs:
           else
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
-              SUPABASE_URL="$SUPABASE_URL" \
               "${AUTH_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
               SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
