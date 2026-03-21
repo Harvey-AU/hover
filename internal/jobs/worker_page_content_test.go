@@ -201,3 +201,36 @@ func TestProcessTaskHTMLPersistenceDeletesUploadWhenMetadataPersistenceFails(t *
 
 	assert.True(t, deleted)
 }
+
+func TestProcessTaskHTMLPersistenceRetriesWhenNotReadyForMetadata(t *testing.T) {
+	deleted := false
+	metadataCalls := 0
+	wp := &WorkerPool{
+		dbQueue: &MockDbQueue{UpdateTaskHTMLMetadataFunc: func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error {
+			metadataCalls++
+			return db.ErrTaskNotReadyForHTMLMetadata
+		}},
+		storageClient: &stubStorageUploader{
+			uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
+				return bucket + "/" + path, nil
+			},
+			deleteFunc: func(ctx context.Context, bucket, path string) error {
+				deleted = true
+				return nil
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+
+	wp.processTaskHTMLPersistence(ctx, &taskHTMLPersistRequest{
+		Task:        db.Task{ID: "task-123", JobID: "job-456"},
+		ContentType: "text/html",
+		Body:        []byte("<html></html>"),
+		CapturedAt:  time.Now().UTC(),
+	})
+
+	assert.False(t, deleted)
+	assert.GreaterOrEqual(t, metadataCalls, 2)
+}

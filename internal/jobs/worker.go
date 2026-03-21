@@ -3803,6 +3803,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 
 	readyCtx, readyCancel := context.WithTimeout(ctx, taskHTMLReadyMaxWait)
 	defer readyCancel()
+	sawNotReady := false
 
 	for {
 		persistCtx, persistCancel := context.WithTimeout(readyCtx, 10*time.Second)
@@ -3814,6 +3815,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 		if !errors.Is(err, db.ErrTaskNotReadyForHTMLMetadata) {
 			break
 		}
+		sawNotReady = true
 
 		select {
 		case <-readyCtx.Done():
@@ -3825,6 +3827,10 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	}
 
 	if err != nil {
+		if sawNotReady && errors.Is(err, context.DeadlineExceeded) {
+			log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Task HTML metadata still not ready after retries; leaving uploaded object in storage")
+			return
+		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cleanupCancel()
 		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
