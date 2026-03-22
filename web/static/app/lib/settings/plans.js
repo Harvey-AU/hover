@@ -27,7 +27,8 @@ export async function loadPlansAndUsage(container, options = {}) {
   const currentPlanUsage = root.querySelector("#planCurrentUsage");
   const currentPlanReset = root.querySelector("#planCurrentReset");
   const planList = root.querySelector("#planCards");
-  const planTemplate = root.querySelector("#planCardTemplate");
+  // Template lives outside the section in settings.html — always use document.
+  const planTemplate = document.querySelector("#planCardTemplate");
 
   try {
     const [usageResponse, plansResponse] = await Promise.all([

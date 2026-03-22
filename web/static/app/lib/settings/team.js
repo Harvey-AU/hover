@@ -40,7 +40,8 @@ export function getTeamState() {
 export async function loadMembers(container) {
   const root = container || document;
   const membersList = root.querySelector("#teamMembersList");
-  const memberTemplate = root.querySelector("#teamMemberTemplate");
+  // Templates live outside the section in settings.html — always use document.
+  const memberTemplate = document.querySelector("#teamMemberTemplate");
   const emptyState = root.querySelector("#teamMembersEmpty");
   if (!membersList || !memberTemplate) return;
 
@@ -162,7 +163,7 @@ async function updateMemberRole(memberId, role, container) {
 export async function loadInvites(container) {
   const root = container || document;
   const invitesList = root.querySelector("#teamInvitesList");
-  const inviteTemplate = root.querySelector("#teamInviteTemplate");
+  const inviteTemplate = document.querySelector("#teamInviteTemplate");
   const emptyState = root.querySelector("#teamInvitesEmpty");
   const defaultEmptyText =
     emptyState?.textContent?.trim() || "No pending invites.";
