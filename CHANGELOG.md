@@ -33,6 +33,8 @@ On merge, CI will:
 - **Function search_path pinning**: Set `search_path = public` on 29 database
   functions missing it, closing a theoretical schema-hijacking vector. Includes
   all `SECURITY DEFINER` functions handling tokens and auth.
+- **RLS on `domain_hosts`**: Enabled row-level security with deny-all default.
+  Table is backend-only (service role), so no policies needed.
 
 ### Changed
 
@@ -45,6 +47,8 @@ On merge, CI will:
   `organisation_members` (dropped redundant self-membership policy already
   covered by co-members policy). Split `jobs` FOR ALL into per-operation
   policies to avoid lint overlap.
+- **Index on `jobs.status`**: Added btree index per Supabase index advisor
+  recommendation, improving quota-blocked jobs query performance.
 
 ## [0.28.0] – 2026-03-22
 
