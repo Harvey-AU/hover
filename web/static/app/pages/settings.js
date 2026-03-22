@@ -212,17 +212,18 @@ window.__esRefreshSections = refreshSections;
 // ── Wait for bb-settings.js init ────────────────────────────────────────────────
 
 function waitForBbSettings() {
-  return new Promise((resolve) => {
-    // bb-settings.js calls window.__bbSettingsReady() when done.
-    window.__bbSettingsReady = resolve;
+  // bb-settings.js dispatches "bb:settings-ready" and sets __bbSettingsDone.
+  if (window.__bbSettingsDone) return Promise.resolve();
 
-    // Safety timeout — if bb-settings.js never signals, proceed anyway.
+  return new Promise((resolve) => {
+    document.addEventListener("bb:settings-ready", () => resolve(), {
+      once: true,
+    });
+    // Safety timeout — proceed after 10s even if signal never fires.
     setTimeout(() => {
-      if (window.__bbSettingsReady === resolve) {
-        console.warn("settings.js: bb-settings.js did not signal ready, proceeding.");
-        resolve();
-      }
-    }, 8000);
+      console.warn("settings.js: bb-settings.js ready timeout, proceeding.");
+      resolve();
+    }, 10000);
   });
 }
 

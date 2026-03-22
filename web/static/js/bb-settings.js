@@ -2279,9 +2279,6 @@
         }
       }
 
-      // Signal that bb-settings.js init is complete (modules wait for this).
-      window.__bbSettingsReady?.();
-
       if (window.setupSlackIntegration) {
         window.setupSlackIntegration();
       }
@@ -2303,6 +2300,10 @@
     } catch (error) {
       console.error("Failed to initialise settings:", error);
       showSettingsToast("error", "Failed to load settings. Please refresh.");
+    } finally {
+      // Signal completion for ES modules (event-based to avoid race conditions).
+      window.__bbSettingsDone = true;
+      document.dispatchEvent(new CustomEvent("bb:settings-ready"));
     }
   }
 

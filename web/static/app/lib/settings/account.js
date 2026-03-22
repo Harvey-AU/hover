@@ -264,10 +264,7 @@ export async function removeAuthMethod(method, connectedCount) {
     return;
   }
   if (method.provider === "email") {
-    toast(
-      "warning",
-      "Email/password removal isn't supported in settings yet."
-    );
+    toast("warning", "Email/password removal isn't supported in settings yet.");
     return;
   }
   if (!method.identity?.identity_id) {
@@ -352,8 +349,7 @@ export function renderAuthMethods(container, methods, options = {}) {
     actionBtn.textContent = method.connected ? "Remove" : "Connect";
 
     const permanentlyDisabled =
-      method.connected &&
-      (connectedCount <= 1 || method.provider === "email");
+      method.connected && (connectedCount <= 1 || method.provider === "email");
 
     if (permanentlyDisabled) {
       actionBtn.disabled = true;

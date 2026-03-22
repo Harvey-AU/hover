@@ -97,15 +97,9 @@ export async function loadSchedules(container) {
         nextRunContainer.appendChild(value);
       }
 
-      const toggleBtn = clone.querySelector(
-        '[data-schedule-action="toggle"]'
-      );
-      const deleteBtn = clone.querySelector(
-        '[data-schedule-action="delete"]'
-      );
-      const viewBtn = clone.querySelector(
-        '[data-schedule-action="view-jobs"]'
-      );
+      const toggleBtn = clone.querySelector('[data-schedule-action="toggle"]');
+      const deleteBtn = clone.querySelector('[data-schedule-action="delete"]');
+      const viewBtn = clone.querySelector('[data-schedule-action="view-jobs"]');
       if (toggleBtn) {
         toggleBtn.dataset.schedulerId = schedule.id;
         toggleBtn.textContent = schedule.is_enabled ? "Disable" : "Enable";
@@ -135,10 +129,7 @@ async function toggleSchedule(schedulerId, container) {
         expected_is_enabled: scheduler.is_enabled,
       }
     );
-    toast(
-      "success",
-      `Schedule ${updated.is_enabled ? "enabled" : "disabled"}`
-    );
+    toast("success", `Schedule ${updated.is_enabled ? "enabled" : "disabled"}`);
     await loadSchedules(container);
   } catch (err) {
     console.error("Failed to toggle schedule:", err);
