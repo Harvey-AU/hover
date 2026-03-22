@@ -38,10 +38,10 @@ jobs:
       GOFLAGS: "-mod=mod"
       GOPROXY: "https://proxy.golang.org,direct"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
           cache: true
@@ -53,7 +53,7 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ${{ steps.go-env.outputs.gomodcache }}
@@ -69,7 +69,7 @@ jobs:
         run: go list -deps -test ./...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v8
         with:
           version: v2.9.0
           args: --config .golangci.yml --modules-download-mode=mod
@@ -78,10 +78,10 @@ jobs:
     name: Format Check
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
           cache: true
@@ -100,7 +100,7 @@ jobs:
           echo "✅ All Go files are properly formatted"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -123,10 +123,10 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [lint, format]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
           cache: true
@@ -138,7 +138,7 @@ jobs:
           go test -v -race -short -shuffle=on -covermode=atomic -coverprofile=coverage-unit.out -coverpkg=./... ./...
 
       - name: Upload unit test coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-unit
           path: coverage-unit.out
@@ -157,10 +157,10 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: [lint, format]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
           cache: true
@@ -193,14 +193,14 @@ jobs:
 
       - name: Upload integration test coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-integration
           path: coverage-integration.out
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: junit.xml
@@ -230,16 +230,16 @@ jobs:
       always() && (needs.unit-tests.result == 'success' ||
       needs.integration-tests.result == 'success')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
           cache: true
 
       - name: Download coverage files
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: coverage-*
           merge-multiple: true
