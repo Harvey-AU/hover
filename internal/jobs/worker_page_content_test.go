@@ -222,6 +222,8 @@ func TestProcessTaskHTMLPersistenceRetriesWhenNotReadyForMetadata(t *testing.T) 
 		},
 	}
 
+	// 600ms timeout allows at least two retries at taskHTMLReadyRetryDelay (250ms)
+	// before the context expires, verifying the retry-then-give-up behaviour.
 	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 	defer cancel()
 
