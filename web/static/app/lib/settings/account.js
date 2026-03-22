@@ -18,7 +18,7 @@ import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 /** Adapter: bb-settings uses (variant, message); hover-toast uses (message, {variant}). */
 function toast(variant, message) {
-  _toast(message, { variant });
+  _showToast(message, { variant });
 }
 
 // ── Auth method definitions ────────────────────────────────────────────────────
