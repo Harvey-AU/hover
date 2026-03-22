@@ -3720,6 +3720,7 @@ func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 				if wp.taskHTMLPending.Load() == 0 {
 					return
 				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		}
 	}
