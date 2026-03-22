@@ -13,25 +13,54 @@ import (
 
 // Client provides methods to interact with Supabase Storage
 type Client struct {
-	baseURL    string
-	serviceKey string
-	httpClient *http.Client
+	baseURL        string
+	publishableKey string // identifies the project (apikey header)
+	secretKey      string // authenticates as service_role (Authorization header)
+	httpClient     *http.Client
 }
 
-// New creates a new Storage client
-func New(supabaseURL, serviceKey string) *Client {
+// UploadOptions configures a storage upload request.
+type UploadOptions struct {
+	ContentType     string
+	ContentEncoding string
+}
+
+// New creates a new Storage client.
+// publishableKey is used for the apikey header (project identification).
+// secretKey is used for the Authorization header (service_role access).
+// If publishableKey is empty, secretKey is used for both headers (legacy behaviour).
+func New(supabaseURL, publishableKey, secretKey string) *Client {
+	if publishableKey == "" {
+		publishableKey = secretKey
+	}
 	return &Client{
-		baseURL:    supabaseURL + "/storage/v1",
-		serviceKey: serviceKey,
+		baseURL:        supabaseURL + "/storage/v1",
+		publishableKey: publishableKey,
+		secretKey:      secretKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
 	}
 }
 
+func (c *Client) setAuthHeaders(req *http.Request) {
+	if c.secretKey == "" {
+		return
+	}
+
+	req.Header.Set("apikey", c.publishableKey)
+	req.Header.Set("Authorization", "Bearer "+c.secretKey)
+}
+
 // Upload uploads a file to the specified bucket and path
 // Returns the full path of the uploaded file
 func (c *Client) Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error) {
+	return c.UploadWithOptions(ctx, bucket, path, data, UploadOptions{ContentType: contentType})
+}
+
+// UploadWithOptions uploads a file to the specified bucket and path with optional headers.
+// Returns the full path of the uploaded file.
+func (c *Client) UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options UploadOptions) (string, error) {
 	url := fmt.Sprintf("%s/object/%s/%s", c.baseURL, bucket, path)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
@@ -39,8 +68,14 @@ func (c *Client) Upload(ctx context.Context, bucket, path string, data []byte, c
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
-	req.Header.Set("Content-Type", contentType)
+	c.setAuthHeaders(req)
+	if options.ContentType == "" {
+		options.ContentType = "application/octet-stream"
+	}
+	req.Header.Set("Content-Type", options.ContentType)
+	if options.ContentEncoding != "" {
+		req.Header.Set("Content-Encoding", options.ContentEncoding)
+	}
 	req.Header.Set("x-upsert", "true") // Overwrite if exists
 
 	resp, err := c.httpClient.Do(req)
@@ -72,7 +107,7 @@ func (c *Client) GetSignedURL(ctx context.Context, bucket, path string, expiresI
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
@@ -107,7 +142,7 @@ func (c *Client) Delete(ctx context.Context, bucket, path string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

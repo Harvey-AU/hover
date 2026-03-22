@@ -399,6 +399,7 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 	failedTasks := make([]*Task, 0, len(updates))
 	skippedTasks := make([]*Task, 0, len(updates))
 	pendingTasks := make([]*Task, 0, len(updates))
+	waitingTasks := make([]*Task, 0, len(updates))
 
 	for _, update := range updates {
 		task := update.Task
@@ -419,9 +420,7 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 		case "pending":
 			pendingTasks = append(pendingTasks, task)
 		case "waiting":
-			// Waiting tasks have not been promoted to pending yet. They should
-			// not be processed by the batch writer, so skip quietly.
-			continue
+			waitingTasks = append(waitingTasks, task)
 		default:
 			log.Warn().
 				Str("task_id", task.ID).
@@ -459,6 +458,12 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 			}
 		}
 
+		if len(waitingTasks) > 0 {
+			if err := bm.batchUpdateWaiting(txCtx, tx, waitingTasks); err != nil {
+				return fmt.Errorf("failed to batch update waiting tasks: %w", err)
+			}
+		}
+
 		// After updating task statuses, increment daily usage so subsequent quota checks see accurate values
 		if len(completedTasks) > 0 || len(failedTasks) > 0 {
 			if err := incrementDailyUsageForTasks(txCtx, tx, completedTasks, failedTasks); err != nil {
@@ -476,6 +481,9 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 			jobIDsToPromote[task.JobID] = true
 		}
 		for _, task := range skippedTasks {
+			jobIDsToPromote[task.JobID] = true
+		}
+		for _, task := range waitingTasks {
 			jobIDsToPromote[task.JobID] = true
 		}
 
@@ -614,6 +622,8 @@ func (bm *BatchManager) flushIndividualUpdates(ctx context.Context, updates []*T
 				updateErr = bm.batchUpdateSkipped(txCtx, tx, []*Task{task})
 			case "pending":
 				updateErr = bm.batchUpdatePending(txCtx, tx, []*Task{task})
+			case "waiting":
+				updateErr = bm.batchUpdateWaiting(txCtx, tx, []*Task{task})
 			default:
 				return fmt.Errorf("unknown status: %s", task.Status)
 			}
@@ -671,6 +681,15 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 	secondContentTransferTimes := make([]int64, len(tasks))
 	retryCounts := make([]int, len(tasks))
 	cacheCheckAttempts := make([]string, len(tasks))
+	requestDiagnostics := make([]string, len(tasks))
+	htmlStorageBuckets := make([]string, len(tasks))
+	htmlStoragePaths := make([]string, len(tasks))
+	htmlContentTypes := make([]string, len(tasks))
+	htmlContentEncodings := make([]string, len(tasks))
+	htmlSizeBytes := make([]int64, len(tasks))
+	htmlCompressedSizeBytes := make([]int64, len(tasks))
+	htmlSHA256s := make([]string, len(tasks))
+	htmlCapturedAts := make([]string, len(tasks))
 
 	for i, task := range tasks {
 		ids[i] = task.ID
@@ -716,6 +735,23 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		} else {
 			cacheCheckAttempts[i] = string(task.CacheCheckAttempts)
 		}
+
+		if len(task.RequestDiagnostics) == 0 {
+			requestDiagnostics[i] = "{}"
+		} else {
+			requestDiagnostics[i] = string(task.RequestDiagnostics)
+		}
+
+		htmlStorageBuckets[i] = task.HTMLStorageBucket
+		htmlStoragePaths[i] = task.HTMLStoragePath
+		htmlContentTypes[i] = task.HTMLContentType
+		htmlContentEncodings[i] = task.HTMLContentEncoding
+		htmlSizeBytes[i] = task.HTMLSizeBytes
+		htmlCompressedSizeBytes[i] = task.HTMLCompressedSizeBytes
+		htmlSHA256s[i] = task.HTMLSHA256
+		if !task.HTMLCapturedAt.IsZero() {
+			htmlCapturedAts[i] = task.HTMLCapturedAt.UTC().Format(time.RFC3339Nano)
+		}
 	}
 
 	// Single UPDATE statement using unnest to batch update all tasks
@@ -746,7 +782,16 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 			second_ttfb = updates.second_ttfb,
 			second_content_transfer_time = updates.second_content_transfer_time,
 			retry_count = updates.retry_count,
-			cache_check_attempts = updates.cache_check_attempts::jsonb
+			cache_check_attempts = updates.cache_check_attempts::jsonb,
+			request_diagnostics = updates.request_diagnostics::jsonb,
+			html_storage_bucket = COALESCE(NULLIF(updates.html_storage_bucket, ''), tasks.html_storage_bucket),
+			html_storage_path = COALESCE(NULLIF(updates.html_storage_path, ''), tasks.html_storage_path),
+			html_content_type = COALESCE(NULLIF(updates.html_content_type, ''), tasks.html_content_type),
+			html_content_encoding = COALESCE(NULLIF(updates.html_content_encoding, ''), tasks.html_content_encoding),
+			html_size_bytes = CASE WHEN updates.html_size_bytes > 0 THEN updates.html_size_bytes ELSE tasks.html_size_bytes END,
+			html_compressed_size_bytes = CASE WHEN updates.html_compressed_size_bytes > 0 THEN updates.html_compressed_size_bytes ELSE tasks.html_compressed_size_bytes END,
+			html_sha256 = COALESCE(NULLIF(updates.html_sha256, ''), tasks.html_sha256),
+			html_captured_at = COALESCE(updates.html_captured_at, tasks.html_captured_at)
 		FROM (
 			SELECT
 				unnest($1::text[]) AS id,
@@ -773,7 +818,16 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 				unnest($22::bigint[]) AS second_ttfb,
 				unnest($23::bigint[]) AS second_content_transfer_time,
 				unnest($24::integer[]) AS retry_count,
-				unnest($25::text[]) AS cache_check_attempts
+				unnest($25::text[]) AS cache_check_attempts,
+				unnest($26::text[]) AS request_diagnostics,
+				unnest($27::text[]) AS html_storage_bucket,
+				unnest($28::text[]) AS html_storage_path,
+				unnest($29::text[]) AS html_content_type,
+				unnest($30::text[]) AS html_content_encoding,
+				unnest($31::bigint[]) AS html_size_bytes,
+				unnest($32::bigint[]) AS html_compressed_size_bytes,
+				unnest($33::text[]) AS html_sha256,
+				NULLIF(unnest($34::text[]), '')::timestamptz AS html_captured_at
 		) AS updates
 		WHERE tasks.id = updates.id
 	`
@@ -804,6 +858,15 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		pq.Array(secondContentTransferTimes),
 		pq.Array(retryCounts),
 		pq.Array(cacheCheckAttempts),
+		pq.Array(requestDiagnostics),
+		pq.Array(htmlStorageBuckets),
+		pq.Array(htmlStoragePaths),
+		pq.Array(htmlContentTypes),
+		pq.Array(htmlContentEncodings),
+		pq.Array(htmlSizeBytes),
+		pq.Array(htmlCompressedSizeBytes),
+		pq.Array(htmlSHA256s),
+		pq.Array(htmlCapturedAts),
 	)
 
 	if err != nil {
@@ -828,6 +891,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 	errors := make([]string, len(tasks))
 	retryCounts := make([]int, len(tasks))
 	statuses := make([]string, len(tasks))
+	requestDiagnostics := make([]string, len(tasks))
 
 	for i, task := range tasks {
 		ids[i] = task.ID
@@ -835,6 +899,11 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 		errors[i] = task.Error
 		retryCounts[i] = task.RetryCount
 		statuses[i] = task.Status // Could be "failed" or "blocked"
+		if len(task.RequestDiagnostics) == 0 {
+			requestDiagnostics[i] = "{}"
+		} else {
+			requestDiagnostics[i] = string(task.RequestDiagnostics)
+		}
 	}
 
 	query := `
@@ -842,14 +911,16 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 		SET status = updates.status,
 			completed_at = updates.completed_at,
 			error = updates.error,
-			retry_count = updates.retry_count
+			retry_count = updates.retry_count,
+			request_diagnostics = updates.request_diagnostics::jsonb
 		FROM (
 			SELECT
 				unnest($1::text[]) AS id,
 				unnest($2::text[]) AS status,
 				unnest($3::timestamptz[]) AS completed_at,
 				unnest($4::text[]) AS error,
-				unnest($5::integer[]) AS retry_count
+				unnest($5::integer[]) AS retry_count,
+				unnest($6::text[]) AS request_diagnostics
 		) AS updates
 		WHERE tasks.id = updates.id
 	`
@@ -860,6 +931,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 		pq.Array(completedAts),
 		pq.Array(errors),
 		pq.Array(retryCounts),
+		pq.Array(requestDiagnostics),
 	)
 
 	if err != nil {
@@ -869,6 +941,66 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 	log.Debug().
 		Int("tasks_count", len(tasks)).
 		Msg("Batch updated failed tasks")
+
+	return nil
+}
+
+// batchUpdateWaiting updates waiting tasks while preserving retry diagnostics.
+func (bm *BatchManager) batchUpdateWaiting(ctx context.Context, tx *sql.Tx, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(tasks))
+	statuses := make([]string, len(tasks))
+	errors := make([]string, len(tasks))
+	retryCounts := make([]int, len(tasks))
+	requestDiagnostics := make([]string, len(tasks))
+
+	for i, task := range tasks {
+		ids[i] = task.ID
+		statuses[i] = task.Status
+		errors[i] = task.Error
+		retryCounts[i] = task.RetryCount
+		if len(task.RequestDiagnostics) == 0 {
+			requestDiagnostics[i] = "{}"
+		} else {
+			requestDiagnostics[i] = string(task.RequestDiagnostics)
+		}
+	}
+
+	query := `
+		UPDATE tasks
+		SET status = updates.status,
+			started_at = NULL,
+			error = updates.error,
+			retry_count = updates.retry_count,
+			request_diagnostics = updates.request_diagnostics::jsonb
+		FROM (
+			SELECT
+				unnest($1::text[]) AS id,
+				unnest($2::text[]) AS status,
+				unnest($3::text[]) AS error,
+				unnest($4::integer[]) AS retry_count,
+				unnest($5::text[]) AS request_diagnostics
+		) AS updates
+		WHERE tasks.id = updates.id
+	`
+
+	_, err := tx.ExecContext(ctx, query,
+		pq.Array(ids),
+		pq.Array(statuses),
+		pq.Array(errors),
+		pq.Array(retryCounts),
+		pq.Array(requestDiagnostics),
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Debug().
+		Int("tasks_count", len(tasks)).
+		Msg("Batch updated waiting tasks")
 
 	return nil
 }

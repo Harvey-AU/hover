@@ -90,6 +90,7 @@ type MockDbQueue struct {
 	DecrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
 	ExecuteFunc                 func(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteMaintenanceFunc      func(ctx context.Context, fn func(*sql.Tx) error) error
+	UpdateTaskHTMLMetadataFunc  func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
 }
 
 func (m *MockDbQueue) GetNextTask(ctx context.Context, jobID string) (*db.Task, error) {
@@ -153,6 +154,13 @@ func (m *MockDbQueue) SetConcurrencyOverride(fn db.ConcurrencyOverrideFunc) {
 }
 
 func (m *MockDbQueue) UpdateDomainTechnologies(ctx context.Context, domainID int, technologies, headers []byte, htmlPath string) error {
+	return nil
+}
+
+func (m *MockDbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error {
+	if m.UpdateTaskHTMLMetadataFunc != nil {
+		return m.UpdateTaskHTMLMetadataFunc(ctx, taskID, metadata)
+	}
 	return nil
 }
 

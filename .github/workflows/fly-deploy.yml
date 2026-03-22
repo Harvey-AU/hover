@@ -23,10 +23,10 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     concurrency: deploy-group # optional: ensure only one action runs at a time
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.0"
 

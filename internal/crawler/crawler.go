@@ -118,6 +118,135 @@ func normaliseCacheStatus(status string) string {
 	return status
 }
 
+func stripDiagnosticURL(raw string) string {
+	parsedURL, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsedURL.RawQuery = ""
+	parsedURL.Fragment = ""
+	return parsedURL.String()
+}
+
+func buildRequestMetadata(method, targetURL, finalURL string, timestamp time.Time, provenance string) RequestMetadata {
+	scrubbedTargetURL := stripDiagnosticURL(targetURL)
+	scrubbedFinalURL := stripDiagnosticURL(finalURL)
+	meta := RequestMetadata{
+		Method:     method,
+		URL:        scrubbedTargetURL,
+		FinalURL:   scrubbedFinalURL,
+		Timestamp:  timestamp.Unix(),
+		Provenance: provenance,
+	}
+
+	parsedURL, err := url.Parse(scrubbedFinalURL)
+	if err != nil {
+		parsedURL, err = url.Parse(scrubbedTargetURL)
+	}
+	if err == nil {
+		meta.Scheme = parsedURL.Scheme
+		meta.Host = parsedURL.Host
+		meta.Path = parsedURL.Path
+		meta.Query = ""
+	}
+
+	return meta
+}
+
+func buildCacheMetadata(headers http.Header) CacheMetadata {
+	cache := CacheMetadata{
+		Age:           headers.Get("Age"),
+		CacheControl:  headers.Get("Cache-Control"),
+		Vary:          headers.Get("Vary"),
+		CacheStatus:   headers.Get("Cache-Status"),
+		CFCacheStatus: headers.Get("CF-Cache-Status"),
+		XCache:        headers.Get("X-Cache"),
+		XCacheRemote:  headers.Get("X-Cache-Remote"),
+		XVercelCache:  headers.Get("x-vercel-cache"),
+		XVarnish:      headers.Get("X-Varnish"),
+	}
+
+	for _, candidate := range []struct {
+		name  string
+		value string
+	}{
+		{name: "CF-Cache-Status", value: cache.CFCacheStatus},
+		{name: "X-Cache", value: cache.XCache},
+		{name: "X-Cache-Remote", value: cache.XCacheRemote},
+		{name: "x-vercel-cache", value: cache.XVercelCache},
+		{name: "Cache-Status", value: cache.CacheStatus},
+	} {
+		if candidate.value != "" {
+			cache.HeaderSource = candidate.name
+			cache.RawValue = candidate.value
+			cache.NormalisedStatus = normaliseCacheStatus(candidate.value)
+			return cache
+		}
+	}
+
+	if cache.XVarnish != "" {
+		cache.HeaderSource = "X-Varnish"
+		cache.RawValue = cache.XVarnish
+		if strings.Contains(cache.XVarnish, " ") {
+			cache.NormalisedStatus = "HIT"
+		} else {
+			cache.NormalisedStatus = "MISS"
+		}
+	}
+
+	return cache
+}
+
+func redactDiagnosticHeaders(headers http.Header) http.Header {
+	cloned := headers.Clone()
+	for _, name := range []string{
+		"Authorization",
+		"Proxy-Authorization",
+		"Cookie",
+		"Set-Cookie",
+		"X-Api-Key",
+		"X-Auth-Token",
+	} {
+		cloned.Del(name)
+	}
+	return cloned
+}
+
+func buildProbeErrorDiagnostics(method, targetURL string, err error) ProbeDiagnostics {
+	requestMeta := buildRequestMetadata(method, targetURL, targetURL, time.Now().UTC(), "probe")
+	responseMeta := ResponseMetadata{Error: err.Error()}
+	return ProbeDiagnostics{
+		Request:  &requestMeta,
+		Response: &responseMeta,
+	}
+}
+
+func buildRequestAttemptDiagnostics(
+	method string,
+	targetURL string,
+	finalURL string,
+	timestamp time.Time,
+	provenance string,
+	requestHeaders http.Header,
+	responseHeaders http.Header,
+	response ResponseMetadata,
+	timing PerformanceMetrics,
+) *RequestAttemptDiagnostics {
+	requestHeaders = redactDiagnosticHeaders(requestHeaders)
+	responseHeaders = redactDiagnosticHeaders(responseHeaders)
+	requestMeta := buildRequestMetadata(method, targetURL, finalURL, timestamp, provenance)
+	cacheMeta := buildCacheMetadata(responseHeaders)
+
+	return &RequestAttemptDiagnostics{
+		Request:         &requestMeta,
+		Response:        &response,
+		RequestHeaders:  requestHeaders,
+		ResponseHeaders: responseHeaders,
+		Timing:          &timing,
+		Cache:           &cacheMeta,
+	}
+}
+
 // Crawler represents a URL crawler with configuration and metrics
 type Crawler struct {
 	config     *Config
@@ -402,6 +531,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		result.ContentLength = int64(len(r.Body))
 		result.Headers = r.Headers.Clone()
 		result.RedirectURL = r.Request.URL.String()
+		requestHeaders := r.Request.Headers.Clone()
 
 		// Store body for tech detection and storage upload
 		// BodySample is truncated for wappalyzer detection, Body is the full content
@@ -429,41 +559,32 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 			Int64("response_time_ms", result.ResponseTime).
 			Msg("Cloudflare headers analysis")
 
-		// Check for cache status headers from different CDNs
-		// Normalise all values to standard HIT/MISS/BYPASS format
-		// Cloudflare
-		if cacheStatus := r.Headers.Get("CF-Cache-Status"); cacheStatus != "" {
-			result.CacheStatus = normaliseCacheStatus(cacheStatus)
-		}
-		// CloudFront/Fastly (X-Cache: "Miss from cloudfront", "HIT", etc.)
-		if cacheStatus := r.Headers.Get("X-Cache"); cacheStatus != "" && result.CacheStatus == "" {
-			result.CacheStatus = normaliseCacheStatus(cacheStatus)
-		}
-		// Akamai (X-Cache-Remote: "TCP_HIT", "TCP_MISS", etc.)
-		if cacheStatus := r.Headers.Get("X-Cache-Remote"); cacheStatus != "" && result.CacheStatus == "" {
-			result.CacheStatus = normaliseCacheStatus(cacheStatus)
-		}
-		// Vercel
-		if cacheStatus := r.Headers.Get("x-vercel-cache"); cacheStatus != "" && result.CacheStatus == "" {
-			result.CacheStatus = normaliseCacheStatus(cacheStatus)
-		}
-		// Standard Cache-Status header (newer standardised approach)
-		if cacheStatus := r.Headers.Get("Cache-Status"); cacheStatus != "" && result.CacheStatus == "" {
-			result.CacheStatus = normaliseCacheStatus(cacheStatus)
-		}
-		// Varnish (the presence of X-Varnish indicates it was processed by Varnish)
-		if varnishID := r.Headers.Get("X-Varnish"); varnishID != "" && result.CacheStatus == "" {
-			if strings.Contains(varnishID, " ") {
-				result.CacheStatus = "HIT" // Multiple IDs indicate a cache hit
-			} else {
-				result.CacheStatus = "MISS" // Single ID indicates a cache miss
-			}
-		}
+		cacheMeta := buildCacheMetadata(result.Headers)
+		result.CacheStatus = cacheMeta.NormalisedStatus
 
 		// Set error for non-2xx status codes (to match test expectations)
 		if r.StatusCode < 200 || r.StatusCode >= 300 {
 			result.Error = fmt.Sprintf("non-success status code: %d", r.StatusCode)
 		}
+
+		result.RequestDiagnostics.Primary = buildRequestAttemptDiagnostics(
+			r.Request.Method,
+			targetURL,
+			result.RedirectURL,
+			startTime,
+			"primary",
+			requestHeaders,
+			result.Headers,
+			ResponseMetadata{
+				StatusCode:    result.StatusCode,
+				ContentType:   result.ContentType,
+				ContentLength: result.ContentLength,
+				RedirectURL:   stripDiagnosticURL(result.RedirectURL),
+				Warning:       result.Warning,
+				Error:         result.Error,
+			},
+			result.Performance,
+		)
 	})
 
 	// Handle errors
@@ -477,6 +598,34 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		startTime := r.Ctx.GetAny("start_time").(time.Time)
 		result.ResponseTime = time.Since(startTime).Milliseconds()
 		result.StatusCode = r.StatusCode
+		requestHeaders := r.Request.Headers.Clone()
+		responseHeaders := http.Header{}
+		if r.Headers != nil {
+			responseHeaders = r.Headers.Clone()
+		}
+		result.Headers = responseHeaders
+		if r.Request != nil && r.Request.URL != nil {
+			result.RedirectURL = r.Request.URL.String()
+		}
+
+		result.RequestDiagnostics.Primary = buildRequestAttemptDiagnostics(
+			r.Request.Method,
+			targetURL,
+			result.RedirectURL,
+			startTime,
+			"primary",
+			requestHeaders,
+			responseHeaders,
+			ResponseMetadata{
+				StatusCode:    result.StatusCode,
+				ContentType:   result.ContentType,
+				ContentLength: result.ContentLength,
+				RedirectURL:   stripDiagnosticURL(result.RedirectURL),
+				Warning:       result.Warning,
+				Error:         result.Error,
+			},
+			result.Performance,
+		)
 
 		log.Debug().
 			Err(err).
@@ -526,20 +675,28 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 
 	// Check cache status with HEAD requests in a loop
 	maxChecks := 3
-	checkDelay := 700 // Start with 700ms delay between HEAD checks
+	delayBeforeAttempt := jitteredDelay
+	nextCheckDelay := 700 // Delay between subsequent HEAD checks
 	cacheHit := false
 
 	for i := range maxChecks {
-		// Check cache status with HEAD request
-		cacheStatus, err := c.CheckCacheStatus(ctx, targetURL)
+		probe, err := c.CheckCacheStatus(ctx, targetURL)
+		probe.Attempt = i + 1
+		probe.DelayMS = delayBeforeAttempt
+		cacheStatus := ""
+		if probe.Cache != nil {
+			cacheStatus = probe.Cache.NormalisedStatus
+		}
 
-		// Record the attempt
 		attempt := CacheCheckAttempt{
 			Attempt:     i + 1,
 			CacheStatus: cacheStatus,
-			Delay:       checkDelay,
+			Delay:       delayBeforeAttempt,
 		}
 		res.CacheCheckAttempts = append(res.CacheCheckAttempts, attempt)
+		if res.RequestDiagnostics != nil {
+			res.RequestDiagnostics.Probes = append(res.RequestDiagnostics.Probes, probe)
+		}
 
 		if err != nil {
 			log.Warn().
@@ -574,14 +731,15 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		// If not the last check, wait before next attempt
 		if i < maxChecks-1 {
 			select {
-			case <-time.After(time.Duration(checkDelay) * time.Millisecond):
+			case <-time.After(time.Duration(nextCheckDelay) * time.Millisecond):
+				delayBeforeAttempt = nextCheckDelay
 				// Continue to next check
 			case <-ctx.Done():
 				log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during check loop")
 				return nil
 			}
 			// Increase delay for the next iteration
-			checkDelay += 300
+			nextCheckDelay += 300
 		}
 	}
 
@@ -612,6 +770,17 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.SecondContentLength = secondResult.ContentLength
 			res.SecondHeaders = secondResult.Headers
 			res.SecondPerformance = &secondResult.Performance
+			if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
+				secondary := *secondResult.RequestDiagnostics.Primary
+				if secondary.Request != nil {
+					requestCopy := *secondary.Request
+					requestCopy.Provenance = "secondary"
+					secondary.Request = &requestCopy
+				}
+				if res.RequestDiagnostics != nil {
+					res.RequestDiagnostics.Secondary = &secondary
+				}
+			}
 
 			// Calculate improvement ratio for pattern analysis
 			improvementRatio := float64(res.ResponseTime) / float64(res.SecondResponseTime)
@@ -760,9 +929,10 @@ func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool)
 
 	start := time.Now()
 	res := &CrawlResult{
-		URL:       targetURL,
-		Timestamp: start.Unix(),
-		Links:     make(map[string][]string),
+		URL:                targetURL,
+		Timestamp:          start.Unix(),
+		Links:              make(map[string][]string),
+		RequestDiagnostics: &RequestDiagnostics{},
 	}
 
 	log.Debug().
@@ -837,10 +1007,10 @@ func (c *Crawler) makeSecondRequest(ctx context.Context, targetURL string) (*Cra
 	return c.WarmURL(ctx, targetURL, false)
 }
 
-func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (string, error) {
+func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (ProbeDiagnostics, error) {
 	req, err := http.NewRequestWithContext(ctx, "HEAD", targetURL, nil)
 	if err != nil {
-		return "", err
+		return buildProbeErrorDiagnostics(http.MethodHead, targetURL, err), err
 	}
 
 	req.Header.Set("User-Agent", c.config.UserAgent)
@@ -864,11 +1034,21 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (strin
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return buildProbeErrorDiagnostics(req.Method, targetURL, err), err
 	}
 	defer resp.Body.Close()
 
-	return resp.Header.Get("CF-Cache-Status"), nil
+	responseHeaders := resp.Header.Clone()
+	cacheMeta := buildCacheMetadata(responseHeaders)
+	requestMeta := buildRequestMetadata(req.Method, targetURL, resp.Request.URL.String(), time.Now().UTC(), "probe")
+	responseMeta := ResponseMetadata{StatusCode: resp.StatusCode, RedirectURL: stripDiagnosticURL(resp.Request.URL.String())}
+
+	return ProbeDiagnostics{
+		Request:  &requestMeta,
+		Response: &responseMeta,
+		Cache:    &cacheMeta,
+		DelayMS:  0,
+	}, nil
 }
 
 // CreateHTTPClient returns a configured HTTP client with SSRF protection

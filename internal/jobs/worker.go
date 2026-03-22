@@ -1,14 +1,19 @@
 package jobs
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"math/rand"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -63,7 +68,40 @@ const (
 	pendingRebalanceInterval = 5 * time.Minute
 	pendingRebalanceJobLimit = 25
 	pendingUnlimitedCap      = 100
+	taskHTMLStorageBucket    = "task-html"
+	taskHTMLContentEncoding  = "gzip"
+	taskHTMLPersistQueueSize = 128
+	taskHTMLPersistWorkers   = 2
+	taskHTMLDrainTimeout     = 15 * time.Second
+	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
+	taskHTMLReadyMaxWait     = 5 * time.Second
 )
+
+type storageUploader interface {
+	Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error)
+	UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
+	Delete(ctx context.Context, bucket, path string) error
+}
+
+type taskHTMLUpload struct {
+	Bucket              string
+	Path                string
+	ContentType         string
+	UploadContentType   string
+	ContentEncoding     string
+	SizeBytes           int64
+	CompressedSizeBytes int64
+	SHA256              string
+	CapturedAt          time.Time
+	Payload             []byte
+}
+
+type taskHTMLPersistRequest struct {
+	Task        db.Task
+	ContentType string
+	Body        []byte
+	CapturedAt  time.Time
+}
 
 type WaitingReason string
 
@@ -151,7 +189,9 @@ type WorkerPool struct {
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
-	storageClient       *storage.Client // For uploading HTML samples
+	storageClient       storageUploader // For uploading HTML samples
+	taskHTMLPersistCh   chan *taskHTMLPersistRequest
+	taskHTMLPending     atomic.Int64
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -539,10 +579,12 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	// Initialise storage client for HTML uploads (non-fatal if not configured)
 	// Uses existing SUPABASE_URL from project config
 	supabaseURL := strings.TrimSuffix(os.Getenv("SUPABASE_URL"), "/")
-	supabaseServiceKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
-	if supabaseURL != "" && supabaseServiceKey != "" {
-		wp.storageClient = storage.New(supabaseURL, supabaseServiceKey)
-		log.Info().Msg("Storage client initialised for page crawl uploads")
+	supabasePublishableKey := os.Getenv("SUPABASE_PUBLISHABLE_KEY")
+	supabaseSecretKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	if supabaseURL != "" && supabaseSecretKey != "" {
+		wp.storageClient = storage.New(supabaseURL, supabasePublishableKey, supabaseSecretKey)
+		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, taskHTMLPersistQueueSize)
+		log.Info().Msg("Storage client initialised for HTML uploads")
 	} else {
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
 	}
@@ -601,6 +643,7 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.StartCleanupMonitor(ctx)
 	wp.StartQuotaPromotionMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
+	wp.startTaskHTMLPersistenceLoop(ctx)
 
 	// Start orphaned task cleanup loop
 	wp.wg.Go(func() {
@@ -1562,7 +1605,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 
 		result, err := wp.processTask(taskCtx, jobsTask)
 		if err != nil {
-			return wp.handleTaskError(ctx, task, err)
+			return wp.handleTaskError(ctx, task, result, err)
 		} else {
 			return wp.handleTaskSuccess(ctx, task, result)
 		}
@@ -3448,9 +3491,10 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 }
 
 // handleTaskError processes task failures with appropriate retry logic and status updates
-func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskErr error) error {
+func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result *crawler.CrawlResult, taskErr error) error {
 	now := time.Now().UTC()
 	retryReason := "non_retryable"
+	wp.populateRequestDiagnostics(task, result)
 
 	// Check if this is a blocking error (403/429/503)
 	if isBlockingError(taskErr) {
@@ -3458,6 +3502,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 		if task.RetryCount < maxRetries {
 			retryReason = "blocking"
 			task.RetryCount++
+			task.Error = taskErr.Error()
 			// Route retries through waiting to respect pending queue cap
 			task.Status = string(TaskStatusWaiting)
 			task.StartedAt = time.Time{} // Reset started time
@@ -3486,6 +3531,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 		// For other retryable errors, use normal retry limit
 		retryReason = "retryable"
 		task.RetryCount++
+		task.Error = taskErr.Error()
 		// Route retries through waiting to respect pending queue cap
 		task.Status = string(TaskStatusWaiting)
 		task.StartedAt = time.Time{} // Reset started time
@@ -3535,6 +3581,276 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, taskEr
 	return nil
 }
 
+func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
+	task.RequestDiagnostics = []byte("{}")
+	if result == nil || result.RequestDiagnostics == nil {
+		return
+	}
+
+	if diagnosticsBytes, err := json.Marshal(result.RequestDiagnostics); err == nil {
+		if json.Valid(diagnosticsBytes) {
+			task.RequestDiagnostics = diagnosticsBytes
+		} else {
+			log.Warn().Str("task_id", task.ID).Msg("Request diagnostics produced invalid JSON, using empty object")
+		}
+	} else {
+		log.Error().Err(err).Str("task_id", task.ID).Interface("request_diagnostics", result.RequestDiagnostics).Msg("Failed to marshal request diagnostics")
+	}
+}
+
+func canonicalTaskHTMLContentType(contentType string) string {
+	trimmed := strings.TrimSpace(contentType)
+	if trimmed == "" {
+		return ""
+	}
+
+	mediaType, _, err := mime.ParseMediaType(trimmed)
+	if err != nil {
+		return strings.ToLower(trimmed)
+	}
+
+	return strings.ToLower(mediaType)
+}
+
+func normalisedTaskHTMLContentType(contentType string) string {
+	trimmed := strings.TrimSpace(contentType)
+	if trimmed == "" {
+		return "text/html"
+	}
+
+	return strings.ToLower(trimmed)
+}
+
+func canStoreTaskHTML(contentType string, body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+
+	mediaType := canonicalTaskHTMLContentType(contentType)
+	return mediaType == "text/html" || mediaType == "application/xhtml+xml"
+}
+
+func gzipTaskHTML(body []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	if _, err := gzipWriter.Write(body); err != nil {
+		return nil, fmt.Errorf("write gzip html: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, fmt.Errorf("close gzip html: %w", err)
+	}
+	return buffer.Bytes(), nil
+}
+
+func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) (*taskHTMLUpload, bool, error) {
+	if task == nil || result == nil {
+		return nil, false, nil
+	}
+	if !canStoreTaskHTML(result.ContentType, result.Body) {
+		return nil, false, nil
+	}
+
+	payload, err := gzipTaskHTML(result.Body)
+	if err != nil {
+		return nil, false, err
+	}
+
+	contentType := normalisedTaskHTMLContentType(result.ContentType)
+	uploadContentType := canonicalTaskHTMLContentType(result.ContentType)
+	if uploadContentType == "" {
+		uploadContentType = "text/html"
+	}
+	checksum := sha256.Sum256(result.Body)
+
+	return &taskHTMLUpload{
+		Bucket:              taskHTMLStorageBucket,
+		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
+		ContentType:         contentType,
+		UploadContentType:   uploadContentType,
+		ContentEncoding:     taskHTMLContentEncoding,
+		SizeBytes:           int64(len(result.Body)),
+		CompressedSizeBytes: int64(len(payload)),
+		SHA256:              hex.EncodeToString(checksum[:]),
+		CapturedAt:          capturedAt,
+		Payload:             payload,
+	}, true, nil
+}
+
+func applyTaskHTMLMetadata(task *db.Task, upload *taskHTMLUpload) {
+	if task == nil || upload == nil {
+		return
+	}
+
+	task.HTMLStorageBucket = upload.Bucket
+	task.HTMLStoragePath = upload.Path
+	task.HTMLContentType = upload.ContentType
+	task.HTMLContentEncoding = upload.ContentEncoding
+	task.HTMLSizeBytes = upload.SizeBytes
+	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
+	task.HTMLSHA256 = upload.SHA256
+	task.HTMLCapturedAt = upload.CapturedAt
+}
+
+func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
+	if wp.taskHTMLPersistCh == nil {
+		return
+	}
+
+	for range taskHTMLPersistWorkers {
+		wp.wg.Go(func() {
+			wp.taskHTMLPersistenceWorker(ctx)
+		})
+	}
+}
+
+func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
+	drain := func(drainCtx context.Context) {
+		for {
+			if wp.taskHTMLPending.Load() == 0 {
+				return
+			}
+			select {
+			case <-drainCtx.Done():
+				return
+			case request := <-wp.taskHTMLPersistCh:
+				wp.processTaskHTMLPersistence(drainCtx, request)
+			case <-time.After(50 * time.Millisecond):
+				// Backoff before re-checking pending count
+			}
+		}
+	}
+
+	for {
+		select {
+		case request := <-wp.taskHTMLPersistCh:
+			wp.processTaskHTMLPersistence(ctx, request)
+		case <-wp.stopCh:
+			drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
+			drain(drainCtx)
+			cancel()
+			return
+		case <-ctx.Done():
+			drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
+			drain(drainCtx)
+			cancel()
+			return
+		}
+	}
+}
+
+func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) {
+	if wp.storageClient == nil || wp.taskHTMLPersistCh == nil || task == nil || result == nil {
+		return
+	}
+	if !canStoreTaskHTML(result.ContentType, result.Body) {
+		return
+	}
+
+	request := &taskHTMLPersistRequest{
+		Task:        *task,
+		ContentType: result.ContentType,
+		Body:        append([]byte(nil), result.Body...),
+		CapturedAt:  capturedAt,
+	}
+	wp.taskHTMLPending.Add(1)
+
+	select {
+	case wp.taskHTMLPersistCh <- request:
+	default:
+		wp.taskHTMLPending.Add(-1)
+		log.Warn().Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Task HTML persistence queue is full, skipping HTML upload")
+	}
+}
+
+func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *taskHTMLPersistRequest) {
+	defer wp.taskHTMLPending.Add(-1)
+
+	if request == nil || wp.storageClient == nil {
+		return
+	}
+
+	result := &crawler.CrawlResult{ContentType: request.ContentType, Body: request.Body}
+	upload, ok, err := buildTaskHTMLUpload(&request.Task, result, request.CapturedAt)
+	if err != nil {
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Msg("Failed to prepare task HTML for storage")
+		return
+	}
+	if !ok {
+		return
+	}
+
+	uploadCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	if _, err := wp.storageClient.UploadWithOptions(uploadCtx, upload.Bucket, upload.Path, upload.Payload, storage.UploadOptions{
+		ContentType:     upload.UploadContentType,
+		ContentEncoding: upload.ContentEncoding,
+	}); err != nil {
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to upload task HTML to storage")
+		return
+	}
+
+	htmlTask := request.Task
+	applyTaskHTMLMetadata(&htmlTask, upload)
+
+	metadata := db.TaskHTMLMetadata{
+		StorageBucket:       upload.Bucket,
+		StoragePath:         upload.Path,
+		ContentType:         upload.ContentType,
+		ContentEncoding:     upload.ContentEncoding,
+		SizeBytes:           upload.SizeBytes,
+		CompressedSizeBytes: upload.CompressedSizeBytes,
+		SHA256:              upload.SHA256,
+		CapturedAt:          upload.CapturedAt,
+	}
+
+	readyCtx, readyCancel := context.WithTimeout(ctx, taskHTMLReadyMaxWait)
+	defer readyCancel()
+	sawNotReady := false
+
+	for {
+		persistCtx, persistCancel := context.WithTimeout(readyCtx, 10*time.Second)
+		err = wp.dbQueue.UpdateTaskHTMLMetadata(persistCtx, request.Task.ID, metadata)
+		persistCancel()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, db.ErrTaskNotReadyForHTMLMetadata) {
+			break
+		}
+		sawNotReady = true
+
+		select {
+		case <-readyCtx.Done():
+			err = readyCtx.Err()
+		case <-time.After(taskHTMLReadyRetryDelay):
+			continue
+		}
+		break
+	}
+
+	if err != nil {
+		if sawNotReady && errors.Is(err, context.DeadlineExceeded) {
+			log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Task HTML metadata still not ready after retries; leaving uploaded object in storage")
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cleanupCancel()
+		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
+			log.Warn().Err(deleteErr).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")
+		}
+		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to persist task HTML metadata")
+		return
+	}
+
+	log.Debug().
+		Str("task_id", request.Task.ID).
+		Str("job_id", request.Task.JobID).
+		Int64("html_size_bytes", upload.SizeBytes).
+		Int64("html_compressed_size_bytes", upload.CompressedSizeBytes).
+		Msg("Stored task HTML in storage")
+}
+
 // handleTaskSuccess processes successful task completion with metrics and database updates
 func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, result *crawler.CrawlResult) error {
 	now := time.Now().UTC()
@@ -3578,6 +3894,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 	task.Headers = []byte("{}")
 	task.SecondHeaders = []byte("{}")
 	task.CacheCheckAttempts = []byte("[]")
+	task.RequestDiagnostics = []byte("{}")
 
 	// Only attempt marshaling if data exists and is non-empty
 	if len(result.Headers) > 0 {
@@ -3619,6 +3936,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 		}
 	}
 
+	wp.populateRequestDiagnostics(task, result)
+
 	// Immediately queue running_tasks decrement to free concurrency slot
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
 		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
@@ -3628,6 +3947,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
+
+	wp.persistTaskHTML(ctx, task, result, now)
 
 	// Evaluate job performance for scaling
 	if result.ResponseTime > 0 {
@@ -3703,22 +4024,8 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 		return
 	}
 
-	// Upload full HTML body to storage if configured
-	var htmlPath string
-	if wp.storageClient != nil && len(result.Body) > 0 {
-		// Create a unique path: domains/{domain_id}/{timestamp}.html
-		storagePath := fmt.Sprintf("domains/%d/%d.html", domainID, time.Now().Unix())
-		path, uploadErr := wp.storageClient.Upload(ctx, "page-crawls", storagePath, result.Body, "text/html")
-		if uploadErr != nil {
-			log.Warn().Err(uploadErr).Int("domain_id", domainID).Msg("Failed to upload HTML to storage - continuing without")
-		} else {
-			htmlPath = path
-			log.Debug().Str("path", path).Int("size", len(result.Body)).Msg("Uploaded HTML sample to storage")
-		}
-	}
-
 	// Update domain with detection results
-	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, htmlPath); err != nil {
+	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, ""); err != nil {
 		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
 		return
 	}
@@ -3727,7 +4034,6 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 		Int("domain_id", domainID).
 		Str("domain", domainName).
 		Int("tech_count", len(detectResult.Technologies)).
-		Str("html_path", htmlPath).
 		Interface("technologies", detectResult.Technologies).
 		Msg("Technology detection completed")
 }

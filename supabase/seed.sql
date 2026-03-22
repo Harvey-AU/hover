@@ -26,7 +26,7 @@ INSERT INTO auth.identities (id, provider_id, user_id, identity_data, provider, 
 VALUES
     ('d3f737a6-359e-4375-9b94-67117c8dc963', '100000000000000000001', '64d361fa-23fc-4deb-8a1b-3016a6c2e339', '{"iss": "https://accounts.google.com", "sub": "100000000000000000001", "name": "Seed Admin", "email": "seed-admin@example.com", "full_name": "Seed Admin", "provider_id": "100000000000000000001", "email_verified": true}', 'google', '2025-08-06 10:21:07.690062+00', '2025-08-06 10:21:07.69012+00', '2025-08-06 10:21:07.69012+00'),
     ('f6b0435f-8e6d-4fab-9251-0f85e18ce601', '100000000000000000002', 'd65db18a-47f5-4c13-bf12-8fa5a432ec5e', '{"iss": "https://accounts.google.com", "sub": "100000000000000000002", "name": "Seed Member", "email": "seed-member@example.com", "full_name": "Seed Member", "provider_id": "100000000000000000002", "email_verified": true}', 'google', '2026-02-14 00:00:00+00', '2026-02-14 00:00:00+00', '2026-02-14 00:00:00+00')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (provider_id, provider) DO NOTHING;
 
 -- =============================================================================
 -- public.organisations

@@ -27,6 +27,7 @@ BBB_ENABLE_TURNSTILE = "true"
 # Explicitly source DATABASE_URL from secrets
 DATABASE_URL = { from_secret = "DATABASE_URL" }
 # Public configuration - same as production
+SUPABASE_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
 SUPABASE_AUTH_URL = "https://adapt.auth.goodnative.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xCn-z8wEo4MPJnbPq6cvXg_09fINjIp"
 
@@ -50,6 +51,7 @@ force_https = true
 auto_stop_machines = 'stop'
 auto_start_machines = true
 min_machines_running = 1
+max_machines_running = 1
 
 [[http_service.checks]]
 grace_period = "10s"  # Reduced from 30s for faster deployments

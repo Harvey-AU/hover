@@ -146,6 +146,83 @@ On merge, CI will:
   "Failed to load job details" toast on pages that have removed
   `bb-bootstrap.js`
 
+## [0.28.1] – 2026-03-22
+
+### Security
+
+- **Function search_path pinning**: Set `search_path = public` on 29 database
+  functions missing it, closing a theoretical schema-hijacking vector. Includes
+  all `SECURITY DEFINER` functions handling tokens and auth.
+- **RLS on `domain_hosts`**: Enabled row-level security with deny-all default.
+  Table is backend-only (service role), so no policies needed.
+
+### Changed
+
+- **RLS initplan optimisation**: Wrapped bare `auth.uid()` and `auth.role()`
+  calls in `(SELECT ...)` across 8 RLS policies on `jobs`, `slack_user_links`,
+  `notifications`, `domains`, and `pages` — evaluated once per query instead of
+  per row.
+- **Consolidated duplicate permissive policies**: Merged overlapping SELECT
+  policies on `jobs` (org-scoped + direct ownership into one) and
+  `organisation_members` (dropped redundant self-membership policy already
+  covered by co-members policy). Split `jobs` FOR ALL into per-operation
+  policies to avoid lint overlap.
+- **Index on `jobs.status`**: Added btree index per Supabase index advisor
+  recommendation, improving quota-blocked jobs query performance.
+
+## [0.28.0] – 2026-03-22
+
+### Added
+
+- **Task page HTML storage**: Crawled page HTML is now captured,
+  gzip-compressed, and uploaded to Supabase Storage (`task-html` bucket) with
+  full metadata tracked on the task row — content type, encoding, original and
+  compressed sizes, SHA-256 digest, and capture timestamp.
+- **Supabase preview branch keys in CI**: Review app deploys now extract
+  `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, and `SUPABASE_URL`
+  directly from the Supabase preview branch, eliminating the need for manual Fly
+  secret overrides.
+
+### Changed
+
+- **Storage bucket consolidation**: Removed the unused `page-crawls` bucket and
+  its upload code. All page HTML storage now uses the `task-html` bucket with
+  proper compression and metadata tracking.
+- **Bucket upsert on migration**: The `task-html` bucket INSERT now uses
+  `ON CONFLICT DO UPDATE SET` to enforce intended settings (privacy, size limit,
+  allowed MIME types) on existing buckets.
+
+### Fixed
+
+- **Storage auth for preview branches**: Preview app deploys previously used the
+  main project's service role key, causing `Invalid Compact JWS` and RLS errors
+  when the preview branch had its own keys.
+- **HTML persistence drain loop**: Removed busy-wait `default` case from the
+  shutdown drain select, preventing CPU spinning when pending items are being
+  processed by other workers.
+
+## [0.27.3] – 2026-03-21
+
+### Added
+
+- **Per-request crawl diagnostics**: Tasks now persist a structured
+  `request_diagnostics` JSONB payload covering primary requests, cache probe
+  attempts, and secondary requests for later inspection without storing page
+  bodies.
+
+### Changed
+
+- **Diagnostics hygiene**: Stored crawl diagnostics now redact sensitive
+  headers, scrub query strings and fragments from recorded URLs, avoid
+  duplicating full probe payloads, and preserve retry/waiting-state diagnostics
+  safely through batch promotion paths.
+
+### Fixed
+
+- **Supabase preview seed compatibility**: `auth.identities` seed inserts now
+  use the current conflict key `(provider_id, provider)`, restoring preview
+  branch seeding on fresh initialisation.
+
 ## [0.27.2] – 2026-03-15
 
 ### Changed

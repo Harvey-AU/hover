@@ -2,11 +2,71 @@ package crawler
 
 import "net/http"
 
+// RequestMetadata stores request details for a crawl attempt.
+type RequestMetadata struct {
+	Method     string `json:"method,omitempty"`
+	URL        string `json:"url,omitempty"`
+	FinalURL   string `json:"final_url,omitempty"`
+	Scheme     string `json:"scheme,omitempty"`
+	Host       string `json:"host,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Query      string `json:"query,omitempty"`
+	Timestamp  int64  `json:"timestamp,omitempty"`
+	Provenance string `json:"provenance,omitempty"`
+}
+
+// ResponseMetadata stores response details for a crawl attempt.
+type ResponseMetadata struct {
+	StatusCode    int    `json:"status_code,omitempty"`
+	ContentType   string `json:"content_type,omitempty"`
+	ContentLength int64  `json:"content_length,omitempty"`
+	RedirectURL   string `json:"redirect_url,omitempty"`
+	Warning       string `json:"warning,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+// CacheMetadata stores cache-related headers and interpretation.
+type CacheMetadata struct {
+	HeaderSource     string `json:"header_source,omitempty"`
+	RawValue         string `json:"raw_value,omitempty"`
+	NormalisedStatus string `json:"normalised_status,omitempty"`
+	Age              string `json:"age,omitempty"`
+	CacheControl     string `json:"cache_control,omitempty"`
+	Vary             string `json:"vary,omitempty"`
+	CacheStatus      string `json:"cache_status,omitempty"`
+	CFCacheStatus    string `json:"cf_cache_status,omitempty"`
+	XCache           string `json:"x_cache,omitempty"`
+	XCacheRemote     string `json:"x_cache_remote,omitempty"`
+	XVercelCache     string `json:"x_vercel_cache,omitempty"`
+	XVarnish         string `json:"x_varnish,omitempty"`
+}
+
+// RequestAttemptDiagnostics stores the diagnostics for a full request attempt.
+type RequestAttemptDiagnostics struct {
+	Request         *RequestMetadata    `json:"request,omitempty"`
+	Response        *ResponseMetadata   `json:"response,omitempty"`
+	RequestHeaders  http.Header         `json:"request_headers,omitempty"`
+	ResponseHeaders http.Header         `json:"response_headers,omitempty"`
+	Timing          *PerformanceMetrics `json:"timing,omitempty"`
+	Cache           *CacheMetadata      `json:"cache,omitempty"`
+}
+
 // CacheCheckAttempt stores the result of a single cache status check.
 type CacheCheckAttempt struct {
 	Attempt     int    `json:"attempt"`
 	CacheStatus string `json:"cache_status"`
 	Delay       int    `json:"delay_ms"`
+	// Diagnostics duplicates attempt metadata for backward-compatible probe history.
+	Diagnostics *ProbeDiagnostics `json:"diagnostics,omitempty"`
+}
+
+// ProbeDiagnostics stores diagnostics for a cache probe attempt.
+type ProbeDiagnostics struct {
+	Attempt  int               `json:"attempt,omitempty"`
+	Request  *RequestMetadata  `json:"request,omitempty"`
+	Response *ResponseMetadata `json:"response,omitempty"`
+	Cache    *CacheMetadata    `json:"cache,omitempty"`
+	DelayMS  int               `json:"delay_ms,omitempty"`
 }
 
 // PerformanceMetrics holds detailed timing information for a request.
@@ -44,8 +104,16 @@ type CrawlResult struct {
 	SecondHeaders       http.Header         `json:"second_headers,omitempty"`
 	SecondPerformance   *PerformanceMetrics `json:"second_performance,omitempty"`
 	CacheCheckAttempts  []CacheCheckAttempt `json:"cache_check_attempts,omitempty"`
+	RequestDiagnostics  *RequestDiagnostics `json:"request_diagnostics,omitempty"`
 	BodySample          []byte              `json:"-"` // Truncated body for tech detection (not serialised)
 	Body                []byte              `json:"-"` // Full body for storage upload (not serialised)
+}
+
+// RequestDiagnostics stores per-stage diagnostics for a crawl.
+type RequestDiagnostics struct {
+	Primary   *RequestAttemptDiagnostics `json:"primary,omitempty"`
+	Probes    []ProbeDiagnostics         `json:"probes,omitempty"`
+	Secondary *RequestAttemptDiagnostics `json:"secondary,omitempty"`
 }
 
 // CrawlOptions defines configuration options for a crawl operation

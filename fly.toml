@@ -25,6 +25,7 @@ primary_region = 'syd'
   BBB_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
   OBSERVABILITY_ENABLED = "true"
   SUPABASE_AUTH_URL = "https://adapt.auth.goodnative.co"
+  SUPABASE_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
 
   SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xCn-z8wEo4MPJnbPq6cvXg_09fINjIp"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp"
