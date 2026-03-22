@@ -28,6 +28,24 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Security
+
+- **Function search_path pinning**: Set `search_path = public` on 29 database
+  functions missing it, closing a theoretical schema-hijacking vector. Includes
+  all `SECURITY DEFINER` functions handling tokens and auth.
+
+### Changed
+
+- **RLS initplan optimisation**: Wrapped bare `auth.uid()` and `auth.role()`
+  calls in `(SELECT ...)` across 8 RLS policies on `jobs`, `slack_user_links`,
+  `notifications`, `domains`, and `pages` — evaluated once per query instead of
+  per row.
+- **Consolidated duplicate permissive policies**: Merged overlapping SELECT
+  policies on `jobs` (org-scoped + direct ownership into one) and
+  `organisation_members` (dropped redundant self-membership policy already
+  covered by co-members policy). Split `jobs` FOR ALL into per-operation
+  policies to avoid lint overlap.
+
 ## [0.28.0] – 2026-03-22
 
 ### Added
