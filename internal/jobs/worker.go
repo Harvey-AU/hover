@@ -3715,12 +3715,7 @@ func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
 			case request := <-wp.taskHTMLPersistCh:
 				wp.processTaskHTMLPersistence(drainCtx, request)
 			case <-time.After(50 * time.Millisecond):
-				continue
-			default:
-				if wp.taskHTMLPending.Load() == 0 {
-					return
-				}
-				time.Sleep(10 * time.Millisecond)
+				// Backoff before re-checking pending count
 			}
 		}
 	}
