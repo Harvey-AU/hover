@@ -121,7 +121,7 @@ async function switchPlan(planId, container, options = {}) {
   try {
     await put("/v1/organisations/plan", { plan_id: planId });
     toast("success", "Plan updated");
-    loadPlansAndUsage(container, options);
+    await loadPlansAndUsage(container, options);
     window.BBQuota?.refresh();
   } catch (err) {
     console.error("Failed to switch plan:", err);
