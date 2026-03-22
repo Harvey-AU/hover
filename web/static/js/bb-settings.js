@@ -1470,12 +1470,18 @@
   }
 
   async function refreshSettingsData() {
-    await loadOrganisationMembers();
-    await loadOrganisationInvites();
-    await loadPlansAndUsage();
-    await loadUsageHistory();
-    await loadSettingsSchedules();
+    if (window.__ES_SETTINGS && window.__esRefreshSections) {
+      // ES modules handle migrated sections.
+      await window.__esRefreshSections();
+    } else {
+      await loadOrganisationMembers();
+      await loadOrganisationInvites();
+      await loadPlansAndUsage();
+      await loadUsageHistory();
+      await loadSettingsSchedules();
+    }
 
+    // Integrations are NOT migrated yet — always call via window.
     if (window.loadSlackConnections) {
       await window.loadSlackConnections();
     }
@@ -2226,7 +2232,12 @@
       setupSettingsNavigation();
       setupPlanTabs();
       setupAutomationTabs();
-      setupSchedulesActions();
+
+      // When __ES_SETTINGS is set, ES modules handle these sections.
+      const esActive = !!window.__ES_SETTINGS;
+      if (!esActive) {
+        setupSchedulesActions();
+      }
 
       const sessionResult = await window.supabase.auth.getSession();
       const session = sessionResult?.data?.session;
@@ -2242,26 +2253,34 @@
         await initOrgSwitcher();
         initCreateOrgModal();
         initAdminSection(session);
-        await loadAccountDetails();
-        await refreshSettingsData();
+
+        if (!esActive) {
+          await loadAccountDetails();
+          await refreshSettingsData();
+        }
         await handleInviteToken();
       } else if (window.BBInviteFlow?.getInviteToken?.()) {
         await handleInviteToken();
       }
 
-      const inviteForm = document.getElementById("teamInviteForm");
-      if (inviteForm) {
-        inviteForm.addEventListener("submit", sendInvite);
+      if (!esActive) {
+        const inviteForm = document.getElementById("teamInviteForm");
+        if (inviteForm) {
+          inviteForm.addEventListener("submit", sendInvite);
+        }
+
+        const resetBtn = document.getElementById("settingsResetPassword");
+        if (resetBtn) {
+          resetBtn.addEventListener("click", sendPasswordReset);
+        }
+        const saveNameBtn = document.getElementById("settingsSaveName");
+        if (saveNameBtn) {
+          saveNameBtn.addEventListener("click", saveProfileName);
+        }
       }
 
-      const resetBtn = document.getElementById("settingsResetPassword");
-      if (resetBtn) {
-        resetBtn.addEventListener("click", sendPasswordReset);
-      }
-      const saveNameBtn = document.getElementById("settingsSaveName");
-      if (saveNameBtn) {
-        saveNameBtn.addEventListener("click", saveProfileName);
-      }
+      // Signal that bb-settings.js init is complete (modules wait for this).
+      window.__bbSettingsReady?.();
 
       if (window.setupSlackIntegration) {
         window.setupSlackIntegration();

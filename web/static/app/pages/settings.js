@@ -1,27 +1,42 @@
 /**
  * pages/settings.js — settings page module entrypoint
  *
- * Phase 5: orchestrates settings sections as ES modules. Co-exists with
- * remaining legacy bb-* scripts during migration.
+ * Orchestrates settings sections as ES modules. Co-exists with bb-settings.js
+ * which still handles global UI (org switcher, notifications, user menu,
+ * create org modal, integrations, admin section).
  *
- * Loading contract (settings.html):
- *   1. /js/bb-bootstrap.js         — sets window.BB_APP
- *   2. /js/core.js defer           — Supabase init, window.BBAuth, window.BBB_CONFIG
- *   3. <script type="module">      — this file (runs after all deferred scripts)
- *
- * Responsibilities:
- *   - Wait for core readiness, then initialise settings sections
- *   - Section navigation (hash routing, active link, tab groups)
- *   - Coordinate data refresh across all sections
- *   - Register hover-* Web Components used on settings page
- *
- * What this does NOT touch yet (still handled by legacy scripts):
- *   - Auth modal and session management (auth.js, bb-data-binder.js)
- *   - Global nav rendering (bb-global-nav.js)
- *   - All settings sections (bb-settings.js) — migrated incrementally
+ * Coordination with bb-settings.js:
+ *   1. settings.html sets window.__ES_SETTINGS = true (sync script)
+ *   2. bb-settings.js checks the flag and skips migrated section init
+ *   3. bb-settings.js calls window.__bbSettingsReady() when done
+ *   4. This module waits for that signal, then inits migrated sections
+ *   5. bb-settings.js calls window.__esRefreshSections() on org-switch
  */
 
-import { showToast } from "/app/components/hover-toast.js";
+import {
+  loadAccountDetails,
+  setupAccountActions,
+  getAccountState,
+} from "/app/lib/settings/account.js";
+import {
+  loadMembers,
+  loadInvites,
+  setupTeamActions,
+  getTeamState,
+} from "/app/lib/settings/team.js";
+import {
+  loadPlansAndUsage,
+  loadUsageHistory,
+} from "/app/lib/settings/plans.js";
+import {
+  loadSchedules,
+  setupSchedulesActions,
+} from "/app/lib/settings/schedules.js";
+import { showToast as _showToast } from "/app/components/hover-toast.js";
+
+function toast(variant, message) {
+  _showToast(message, { variant });
+}
 
 // ── Section navigation ─────────────────────────────────────────────────────────
 
@@ -137,16 +152,6 @@ function setActiveSection() {
   activateTabFromHash();
 }
 
-function setupNavigation() {
-  setActiveSettingsLink();
-  setActiveSection();
-  window.addEventListener("hashchange", setActiveSection);
-  window.addEventListener("popstate", () => {
-    setActiveSettingsLink();
-    setActiveSection();
-  });
-}
-
 function setupPlanTabs() {
   const section = document.getElementById("plans");
   if (!section) return;
@@ -171,6 +176,56 @@ function setupAutomationTabs() {
     });
 }
 
+// ── Section containers ──────────────────────────────────────────────────────────
+
+function getContainers() {
+  return {
+    account: document.getElementById("account"),
+    team: document.getElementById("team"),
+    plans: document.getElementById("plans"),
+    schedules: document.getElementById("automated-jobs"),
+  };
+}
+
+// ── Refresh (called by bb-settings.js on org-switch) ────────────────────────────
+
+async function refreshSections() {
+  const c = getContainers();
+  const teamState = getTeamState();
+  try {
+    await loadAccountDetails(c.account);
+    await loadMembers(c.team);
+    await loadInvites(c.team);
+    await loadPlansAndUsage(c.plans, {
+      currentUserRole: teamState.currentUserRole,
+    });
+    await loadUsageHistory(c.plans);
+    await loadSchedules(c.schedules);
+  } catch (err) {
+    console.error("ES module refresh failed:", err);
+  }
+}
+
+// Expose for bb-settings.js refreshSettingsData()
+window.__esRefreshSections = refreshSections;
+
+// ── Wait for bb-settings.js init ────────────────────────────────────────────────
+
+function waitForBbSettings() {
+  return new Promise((resolve) => {
+    // bb-settings.js calls window.__bbSettingsReady() when done.
+    window.__bbSettingsReady = resolve;
+
+    // Safety timeout — if bb-settings.js never signals, proceed anyway.
+    setTimeout(() => {
+      if (window.__bbSettingsReady === resolve) {
+        console.warn("settings.js: bb-settings.js did not signal ready, proceeding.");
+        resolve();
+      }
+    }, 8000);
+  });
+}
+
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
 
 let _initialised = false;
@@ -179,12 +234,37 @@ async function init() {
   if (_initialised) return;
   _initialised = true;
 
-  // Navigation is currently handled by bb-settings.js (legacy).
-  // The functions above are ready to take over once bb-settings.js is removed
-  // in Step 8. Until then, this module is a passive shell that section
-  // modules will import from.
-  //
-  // As sections are migrated (Steps 2–8), their init calls move here.
+  // Wait for bb-settings.js to finish its init (org switcher, notifications,
+  // user menu, integrations, admin — all the global UI we haven't migrated).
+  await waitForBbSettings();
+
+  const c = getContainers();
+
+  // Wire up event listeners for migrated sections.
+  setupAccountActions(c.account, {
+    onNameSaved: () => loadMembers(c.team),
+  });
+  setupTeamActions(c.team);
+  setupSchedulesActions(c.schedules);
+
+  // Load migrated section data.
+  try {
+    await loadAccountDetails(c.account);
+
+    // Team must load first (sets currentUserRole for plans).
+    await loadMembers(c.team);
+    await loadInvites(c.team);
+
+    const teamState = getTeamState();
+    await loadPlansAndUsage(c.plans, {
+      currentUserRole: teamState.currentUserRole,
+    });
+    await loadUsageHistory(c.plans);
+    await loadSchedules(c.schedules);
+  } catch (err) {
+    console.error("Failed to initialise ES settings sections:", err);
+    toast("error", "Some settings sections failed to load.");
+  }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
