@@ -20,6 +20,13 @@ const target = path.join(
   "../webflow-designer-extension-cli/public/hover-job-card.js"
 );
 
+if (!fs.existsSync(target)) {
+  throw new Error(
+    `patch-extension-components: target file not found at ${target}\n` +
+      "Ensure 'sync:components' copy step completed successfully."
+  );
+}
+
 let src = fs.readFileSync(target, "utf8");
 
 // Replace the defaultFetcher that imports from /app/lib/api-client.js
