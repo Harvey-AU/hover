@@ -787,7 +787,7 @@
                     </div>
                     <div class="bb-job-footer">
                       <div>
-                        <span style="font-weight: 500">Next run:</span>
+                        <span class="bb-schedule-label">Next run:</span>
                         <span>-</span>
                       </div>
                       <div class="bb-job-actions">
@@ -806,9 +806,8 @@
                           View Jobs
                         </button>
                         <button
-                          class="bb-job-link"
+                          class="bb-job-link bb-job-link--danger"
                           data-schedule-action="delete"
-                          style="color: #dc2626"
                           type="button"
                         >
                           Delete
@@ -816,15 +815,7 @@
                       </div>
                     </div>
                   </div>
-                  <div
-                    id="settingsSchedulesEmpty"
-                    style="
-                      text-align: center;
-                      padding: 32px;
-                      color: #6b7280;
-                      display: none;
-                    "
-                  >
+                  <div id="settingsSchedulesEmpty" class="bb-schedules-empty">
                     No schedules configured.
                   </div>
                 </div>
@@ -837,6 +828,7 @@
 
     <div id="authModalContainer"></div>
 
+    <!-- ── Templates (must be outside sections for document.querySelector access) ── -->
     <template id="teamMemberTemplate">
       <div class="settings-member-row">
         <div class="settings-member-details">
@@ -956,10 +948,6 @@
     <script src="/js/bb-google.js" defer></script>
     <script src="/js/bb-admin.js" defer></script>
     <script src="/js/bb-invite-flow.js" defer></script>
-    <!-- Sync flag: tells bb-settings.js that ES modules handle migrated sections -->
-    <script>
-      window.__ES_SETTINGS = true;
-    </script>
     <script src="/js/bb-settings.js" defer></script>
   </body>
 </html>

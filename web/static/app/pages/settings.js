@@ -209,24 +209,6 @@ async function refreshSections() {
 // Expose for bb-settings.js refreshSettingsData()
 window.__esRefreshSections = refreshSections;
 
-// ── Wait for bb-settings.js init ────────────────────────────────────────────────
-
-function waitForBbSettings() {
-  // bb-settings.js dispatches "bb:settings-ready" and sets __bbSettingsDone.
-  if (window.__bbSettingsDone) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    document.addEventListener("bb:settings-ready", () => resolve(), {
-      once: true,
-    });
-    // Safety timeout — proceed after 10s even if signal never fires.
-    setTimeout(() => {
-      console.warn("settings.js: bb-settings.js ready timeout, proceeding.");
-      resolve();
-    }, 10000);
-  });
-}
-
 // ── Bootstrap ──────────────────────────────────────────────────────────────────
 
 let _initialised = false;
@@ -235,9 +217,18 @@ async function init() {
   if (_initialised) return;
   _initialised = true;
 
-  // Wait for bb-settings.js to finish its init (org switcher, notifications,
-  // user menu, integrations, admin — all the global UI we haven't migrated).
-  await waitForBbSettings();
+  // Wait for core readiness (Supabase, org init, dataBinder).
+  if (window.BB_APP?.coreReady) {
+    await window.BB_APP.coreReady;
+  }
+
+  // Wait for supabase session to be available.
+  if (!window.supabase?.auth) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  const session = await window.supabase?.auth?.getSession?.();
+  if (!session?.data?.session?.user) return;
 
   const c = getContainers();
 

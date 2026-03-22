@@ -1142,6 +1142,25 @@ body.bb-auth-route-gated #authModalContainer {
   color: #2563eb;
 }
 
+.bb-job-link--danger {
+  color: #dc2626;
+}
+
+.bb-job-link--danger:hover {
+  color: #b91c1c;
+}
+
+.bb-schedule-label {
+  font-weight: 500;
+}
+
+.bb-schedules-empty {
+  text-align: center;
+  padding: 32px;
+  color: #6b7280;
+  display: none;
+}
+
 .bb-job-link[data-bb-show-if] {
   display: none;
 }
