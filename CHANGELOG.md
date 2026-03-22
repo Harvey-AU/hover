@@ -30,14 +30,14 @@ On merge, CI will:
 
 ### Added
 
-- **Task page HTML storage**: Crawled page HTML is now captured, gzip-compressed,
-  and uploaded to Supabase Storage (`task-html` bucket) with full metadata
-  tracked on the task row — content type, encoding, original and compressed
-  sizes, SHA-256 digest, and capture timestamp.
+- **Task page HTML storage**: Crawled page HTML is now captured,
+  gzip-compressed, and uploaded to Supabase Storage (`task-html` bucket) with
+  full metadata tracked on the task row — content type, encoding, original and
+  compressed sizes, SHA-256 digest, and capture timestamp.
 - **Supabase preview branch keys in CI**: Review app deploys now extract
   `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`, and `SUPABASE_URL`
-  directly from the Supabase preview branch, eliminating the need for manual
-  Fly secret overrides.
+  directly from the Supabase preview branch, eliminating the need for manual Fly
+  secret overrides.
 
 ### Changed
 
@@ -51,8 +51,8 @@ On merge, CI will:
 ### Fixed
 
 - **Storage auth for preview branches**: Preview app deploys previously used the
-  main project's service role key, causing `Invalid Compact JWS` and RLS
-  errors when the preview branch had its own keys.
+  main project's service role key, causing `Invalid Compact JWS` and RLS errors
+  when the preview branch had its own keys.
 - **HTML persistence drain loop**: Removed busy-wait `default` case from the
   shutdown drain select, preventing CPU spinning when pending items are being
   processed by other workers.
