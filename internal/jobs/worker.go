@@ -4024,22 +4024,8 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 		return
 	}
 
-	// Upload full HTML body to storage if configured
-	var htmlPath string
-	if wp.storageClient != nil && len(result.Body) > 0 {
-		// Create a unique path: domains/{domain_id}/{timestamp}.html
-		storagePath := fmt.Sprintf("domains/%d/%d.html", domainID, time.Now().Unix())
-		path, uploadErr := wp.storageClient.Upload(ctx, "page-crawls", storagePath, result.Body, "text/html")
-		if uploadErr != nil {
-			log.Warn().Err(uploadErr).Int("domain_id", domainID).Msg("Failed to upload HTML to storage - continuing without")
-		} else {
-			htmlPath = path
-			log.Debug().Str("path", path).Int("size", len(result.Body)).Msg("Uploaded HTML sample to storage")
-		}
-	}
-
 	// Update domain with detection results
-	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, htmlPath); err != nil {
+	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, ""); err != nil {
 		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
 		return
 	}
@@ -4048,7 +4034,6 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 		Int("domain_id", domainID).
 		Str("domain", domainName).
 		Int("tech_count", len(detectResult.Technologies)).
-		Str("html_path", htmlPath).
 		Interface("technologies", detectResult.Technologies).
 		Msg("Technology detection completed")
 }
