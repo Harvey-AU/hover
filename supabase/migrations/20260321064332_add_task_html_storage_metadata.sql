@@ -25,7 +25,10 @@ VALUES (
   10485760,
   ARRAY['text/html', 'application/xhtml+xml']::text[]
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS "Service role can manage task html" ON storage.objects;
 CREATE POLICY "Service role can manage task html"
