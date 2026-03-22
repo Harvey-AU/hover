@@ -28,6 +28,8 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.28.1] – 2026-03-22
+
 ### Security
 
 - **Function search_path pinning**: Set `search_path = public` on 29 database
