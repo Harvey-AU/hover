@@ -147,6 +147,14 @@ jobs:
               JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
               echo "🔑 Using main project JWT secret (branch secret not available)"
             fi
+            BRANCH_URL="${{ steps.supabase.outputs.branch_supabase_url }}"
+            if [ -n "$BRANCH_URL" ]; then
+              SUPABASE_URL="$BRANCH_URL"
+              echo "🔑 Using preview branch Supabase URL"
+            else
+              SUPABASE_URL=""
+              echo "🔑 Using default Supabase URL from review_apps.toml"
+            fi
             echo "🔀 Using Supabase PREVIEW database"
             echo "db_type=preview" >> $GITHUB_OUTPUT
           else
@@ -154,6 +162,7 @@ jobs:
             DIRECT_URL=""
             SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
             JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
+            SUPABASE_URL=""
             if [ -z "$DB_URL" ]; then
               DB_URL="${{ secrets.DATABASE_URL }}"
             fi
@@ -185,6 +194,12 @@ jobs:
             echo "Review app already exists: $APP_NAME"
           fi
 
+          # Override SUPABASE_URL if branch provides one
+          SUPABASE_URL_FLAGS=()
+          if [ -n "$SUPABASE_URL" ]; then
+            SUPABASE_URL_FLAGS+=(SUPABASE_URL="$SUPABASE_URL")
+          fi
+
           # Set secrets for Review App WITHOUT triggering deployment
           echo "Setting test database connection and auth secrets for review app..."
           if [ -n "$DIRECT_URL" ]; then
@@ -193,6 +208,7 @@ jobs:
               DATABASE_URL="$DB_URL" \
               DATABASE_DIRECT_URL="$DIRECT_URL" \
               "${AUTH_URL_FLAGS[@]}" \
+              "${SUPABASE_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
@@ -212,6 +228,7 @@ jobs:
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               "${AUTH_URL_FLAGS[@]}" \
+              "${SUPABASE_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
