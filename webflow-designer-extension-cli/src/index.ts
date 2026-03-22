@@ -1199,20 +1199,13 @@ function renderJobState(job: JobItem | null): void {
     : buildResultCardFallback(job, false);
 
   if (section) {
-    section.innerHTML = "";
-    section.appendChild(card);
-    section.addEventListener(
-      "hover-job-card:view",
-      (e: Event) => openSettingsPage((e as CustomEvent).detail.path),
-      { once: true }
+    section.replaceChildren(card);
+    card.addEventListener("hover-job-card:view", (e: Event) =>
+      openSettingsPage((e as CustomEvent).detail.path)
     );
-    section.addEventListener(
-      "hover-job-card:export",
-      (e: Event) => {
-        void exportJob((e as CustomEvent).detail.jobId);
-      },
-      { once: true }
-    );
+    card.addEventListener("hover-job-card:export", (e: Event) => {
+      void exportJob((e as CustomEvent).detail.jobId);
+    });
     show(section);
   }
 }
