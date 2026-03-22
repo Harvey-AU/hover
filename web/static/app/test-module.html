@@ -148,23 +148,23 @@
       });
     </script>
     <script type="module">
-        import { isConfigured, supabaseUrl } from "/app/lib/config.js";
-        import {
-          formatDate,
-          formatDateTime,
-          formatRelativeTime,
-          formatDuration,
-          formatCount,
-          formatPercent,
-          formatStatus,
-          statusCategory,
-          formatUrl,
-        } from "/app/lib/formatters.js";
-        import { ApiError } from "/app/lib/api-client.js";
-        import { getSession } from "/app/lib/auth-session.js";
+      import { isConfigured, supabaseUrl } from "/app/lib/config.js";
+      import {
+        formatDate,
+        formatDateTime,
+        formatRelativeTime,
+        formatDuration,
+        formatCount,
+        formatPercent,
+        formatStatus,
+        statusCategory,
+        formatUrl,
+      } from "/app/lib/formatters.js";
+      import { ApiError } from "/app/lib/api-client.js";
+      import { getSession } from "/app/lib/auth-session.js";
 
-        // ── Checks ──────────────────────────────────────────────────────────────
-        try {
+      // ── Checks ──────────────────────────────────────────────────────────────
+      try {
         const checks = [];
 
         function pass(label, detail = "") {
@@ -215,7 +215,10 @@
 
         // 5. Supabase SDK
         if (window.supabase?.createClient) {
-          pass("Supabase SDK present", "window.supabase.createClient available");
+          pass(
+            "Supabase SDK present",
+            "window.supabase.createClient available"
+          );
         } else {
           fail("Supabase SDK missing", "window.supabase not found");
         }
