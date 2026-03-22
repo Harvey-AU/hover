@@ -76,11 +76,32 @@ jobs:
           echo "  Pooler URL present: $([ -n "$PREVIEW_DB_URL" ] && echo 'yes' || echo 'no')"
           echo "  Direct URL present: $([ -n "$DIRECT_DB_URL" ] && echo 'yes' || echo 'no')"
 
+          # Extract branch-specific keys (each preview branch has its own)
+          BRANCH_SERVICE_ROLE_KEY=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY // empty' 2>/dev/null)
+          BRANCH_JWT_SECRET=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_JWT_SECRET // empty' 2>/dev/null)
+          BRANCH_SUPABASE_URL=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_URL // empty' 2>/dev/null)
+
+          echo "  Branch service role key present: $([ -n "$BRANCH_SERVICE_ROLE_KEY" ] && echo 'yes' || echo 'no')"
+          echo "  Branch JWT secret present: $([ -n "$BRANCH_JWT_SECRET" ] && echo 'yes' || echo 'no')"
+          echo "  Branch Supabase URL present: $([ -n "$BRANCH_SUPABASE_URL" ] && echo 'yes' || echo 'no')"
+
           if [ -n "$PREVIEW_DB_URL" ]; then
             echo "✅ Found Supabase preview branch!"
             echo "preview_db_url=$PREVIEW_DB_URL" >> $GITHUB_OUTPUT
             echo "direct_db_url=$DIRECT_DB_URL" >> $GITHUB_OUTPUT
             echo "branch_exists=true" >> $GITHUB_OUTPUT
+            # Mask and export branch-specific secrets
+            if [ -n "$BRANCH_SERVICE_ROLE_KEY" ]; then
+              echo "::add-mask::$BRANCH_SERVICE_ROLE_KEY"
+              echo "branch_service_role_key=$BRANCH_SERVICE_ROLE_KEY" >> $GITHUB_OUTPUT
+            fi
+            if [ -n "$BRANCH_JWT_SECRET" ]; then
+              echo "::add-mask::$BRANCH_JWT_SECRET"
+              echo "branch_jwt_secret=$BRANCH_JWT_SECRET" >> $GITHUB_OUTPUT
+            fi
+            if [ -n "$BRANCH_SUPABASE_URL" ]; then
+              echo "branch_supabase_url=$BRANCH_SUPABASE_URL" >> $GITHUB_OUTPUT
+            fi
           else
             echo "⚠️ No Supabase preview branch found"
             echo "branch_exists=false" >> $GITHUB_OUTPUT
@@ -109,11 +130,39 @@ jobs:
           if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
             DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
             DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
+            # Use the branch's own keys if available, fall back to main project
+            BRANCH_SRK="${{ steps.supabase.outputs.branch_service_role_key }}"
+            BRANCH_JWT="${{ steps.supabase.outputs.branch_jwt_secret }}"
+            if [ -n "$BRANCH_SRK" ]; then
+              SERVICE_ROLE_KEY="$BRANCH_SRK"
+              echo "🔑 Using preview branch service_role key"
+            else
+              SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+              echo "🔑 Using main project service_role key (branch key not available)"
+            fi
+            if [ -n "$BRANCH_JWT" ]; then
+              JWT_SECRET="$BRANCH_JWT"
+              echo "🔑 Using preview branch JWT secret"
+            else
+              JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
+              echo "🔑 Using main project JWT secret (branch secret not available)"
+            fi
+            BRANCH_URL="${{ steps.supabase.outputs.branch_supabase_url }}"
+            if [ -n "$BRANCH_URL" ]; then
+              SUPABASE_URL="$BRANCH_URL"
+              echo "🔑 Using preview branch Supabase URL"
+            else
+              SUPABASE_URL=""
+              echo "🔑 Using default Supabase URL from review_apps.toml"
+            fi
             echo "🔀 Using Supabase PREVIEW database"
             echo "db_type=preview" >> $GITHUB_OUTPUT
           else
             DB_URL="${{ secrets.TEST_DATABASE_URL }}"
             DIRECT_URL=""
+            SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+            JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
+            SUPABASE_URL=""
             if [ -z "$DB_URL" ]; then
               DB_URL="${{ secrets.DATABASE_URL }}"
             fi
@@ -127,13 +176,9 @@ jobs:
 
           # Create review app name
           APP_NAME="adapt-pr-${{ github.event.number }}"
-          SUPABASE_AUTH_URL="${{ secrets.SUPABASE_AUTH_URL }}"
-          if [ -z "$SUPABASE_AUTH_URL" ]; then
-            SUPABASE_AUTH_URL="https://adapt.auth.goodnative.co"
-          fi
           SUPABASE_FALLBACK_AUTH_URL="${{ secrets.SUPABASE_FALLBACK_AUTH_URL }}"
           SUPABASE_LEGACY_AUTH_URL="${{ secrets.SUPABASE_LEGACY_AUTH_URL }}"
-          AUTH_URL_FLAGS=(SUPABASE_AUTH_URL="$SUPABASE_AUTH_URL")
+          AUTH_URL_FLAGS=()
           if [ -n "$SUPABASE_FALLBACK_AUTH_URL" ]; then
             AUTH_URL_FLAGS+=(SUPABASE_FALLBACK_AUTH_URL="$SUPABASE_FALLBACK_AUTH_URL")
           fi
@@ -149,6 +194,12 @@ jobs:
             echo "Review app already exists: $APP_NAME"
           fi
 
+          # Override SUPABASE_URL if branch provides one
+          SUPABASE_URL_FLAGS=()
+          if [ -n "$SUPABASE_URL" ]; then
+            SUPABASE_URL_FLAGS+=(SUPABASE_URL="$SUPABASE_URL")
+          fi
+
           # Set secrets for Review App WITHOUT triggering deployment
           echo "Setting test database connection and auth secrets for review app..."
           if [ -n "$DIRECT_URL" ]; then
@@ -157,8 +208,9 @@ jobs:
               DATABASE_URL="$DB_URL" \
               DATABASE_DIRECT_URL="$DIRECT_URL" \
               "${AUTH_URL_FLAGS[@]}" \
-              SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
-              SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+              "${SUPABASE_URL_FLAGS[@]}" \
+              SUPABASE_JWT_SECRET="$JWT_SECRET" \
+              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
               LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
               SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \
@@ -176,8 +228,9 @@ jobs:
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               "${AUTH_URL_FLAGS[@]}" \
-              SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
-              SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+              "${SUPABASE_URL_FLAGS[@]}" \
+              SUPABASE_JWT_SECRET="$JWT_SECRET" \
+              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
               LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
               SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \

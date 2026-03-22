@@ -23,6 +23,8 @@ import (
 	"github.com/Harvey-AU/adapt/internal/observability"
 )
 
+var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")
+
 // ConcurrencyOverrideFunc is a callback to get effective concurrency for a job
 // Returns the effective concurrency limit, or 0 if no override exists
 type ConcurrencyOverrideFunc func(jobID string, domain string) int
@@ -864,9 +866,29 @@ type Task struct {
 	SecondContentTransferTime int64
 	CacheCheckAttempts        []byte // Stored as JSONB
 	RequestDiagnostics        []byte // Stored as JSONB
+	HTMLStorageBucket         string
+	HTMLStoragePath           string
+	HTMLContentType           string
+	HTMLContentEncoding       string
+	HTMLSizeBytes             int64
+	HTMLCompressedSizeBytes   int64
+	HTMLSHA256                string
+	HTMLCapturedAt            time.Time
 
 	// Priority
 	PriorityScore float64
+}
+
+// TaskHTMLMetadata stores storage metadata for captured task HTML.
+type TaskHTMLMetadata struct {
+	StorageBucket       string
+	StoragePath         string
+	ContentType         string
+	ContentEncoding     string
+	SizeBytes           int64
+	CompressedSizeBytes int64
+	SHA256              string
+	CapturedAt          time.Time
 }
 
 // GetNextTask gets a pending task using row-level locking
@@ -1525,6 +1547,11 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				requestDiagnostics = []byte("{}")
 			}
 
+			var htmlCapturedAt any
+			if !task.HTMLCapturedAt.IsZero() {
+				htmlCapturedAt = task.HTMLCapturedAt
+			}
+
 			// Log the actual values being passed for debugging
 			log.Debug().
 				Str("task_id", task.ID).
@@ -1536,22 +1563,30 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
 			err = tx.QueryRowContext(ctx, `
-				UPDATE tasks
-				SET status = $1, completed_at = $2, status_code = $3,
-					response_time = $4, cache_status = $5, content_type = $6,
-					content_length = $7, headers = $8::jsonb, redirect_url = $9,
-					dns_lookup_time = $10, tcp_connection_time = $11, tls_handshake_time = $12,
-					ttfb = $13, content_transfer_time = $14,
-					second_response_time = $15, second_cache_status = $16,
-					second_content_length = $17, second_headers = $18::jsonb,
-					second_dns_lookup_time = $19, second_tcp_connection_time = $20,
-					second_tls_handshake_time = $21, second_ttfb = $22,
-					second_content_transfer_time = $23,
-					retry_count = $24, cache_check_attempts = $25::jsonb,
-					request_diagnostics = $26::jsonb
-				WHERE id = $27
-				RETURNING job_id
-			`, task.Status, task.CompletedAt, task.StatusCode,
+					UPDATE tasks
+					SET status = $1, completed_at = $2, status_code = $3,
+						response_time = $4, cache_status = $5, content_type = $6,
+						content_length = $7, headers = $8::jsonb, redirect_url = $9,
+						dns_lookup_time = $10, tcp_connection_time = $11, tls_handshake_time = $12,
+						ttfb = $13, content_transfer_time = $14,
+						second_response_time = $15, second_cache_status = $16,
+						second_content_length = $17, second_headers = $18::jsonb,
+						second_dns_lookup_time = $19, second_tcp_connection_time = $20,
+						second_tls_handshake_time = $21, second_ttfb = $22,
+						second_content_transfer_time = $23,
+						retry_count = $24, cache_check_attempts = $25::jsonb,
+						request_diagnostics = $26::jsonb,
+						html_storage_bucket = COALESCE(NULLIF($27, ''), html_storage_bucket),
+						html_storage_path = COALESCE(NULLIF($28, ''), html_storage_path),
+						html_content_type = COALESCE(NULLIF($29, ''), html_content_type),
+						html_content_encoding = COALESCE(NULLIF($30, ''), html_content_encoding),
+						html_size_bytes = CASE WHEN $31 > 0 THEN $31 ELSE html_size_bytes END,
+						html_compressed_size_bytes = CASE WHEN $32 > 0 THEN $32 ELSE html_compressed_size_bytes END,
+						html_sha256 = COALESCE(NULLIF($33, ''), html_sha256),
+						html_captured_at = COALESCE($34, html_captured_at)
+					WHERE id = $35
+					RETURNING job_id
+				`, task.Status, task.CompletedAt, task.StatusCode,
 				task.ResponseTime, task.CacheStatus, task.ContentType,
 				task.ContentLength, string(headers), task.RedirectURL,
 				task.DNSLookupTime, task.TCPConnectionTime, task.TLSHandshakeTime,
@@ -1561,7 +1596,10 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 				task.SecondDNSLookupTime, task.SecondTCPConnectionTime,
 				task.SecondTLSHandshakeTime, task.SecondTTFB,
 				task.SecondContentTransferTime,
-				task.RetryCount, string(cacheCheckAttempts), string(requestDiagnostics), task.ID).Scan(&jobID)
+				task.RetryCount, string(cacheCheckAttempts), string(requestDiagnostics),
+				task.HTMLStorageBucket, task.HTMLStoragePath, task.HTMLContentType,
+				task.HTMLContentEncoding, task.HTMLSizeBytes, task.HTMLCompressedSizeBytes,
+				task.HTMLSHA256, htmlCapturedAt, task.ID).Scan(&jobID)
 
 		case "failed":
 			requestDiagnostics := task.RequestDiagnostics
@@ -1632,6 +1670,63 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 	}
 
 	return nil
+}
+
+// UpdateTaskHTMLMetadata persists storage metadata for an already completed task.
+func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata TaskHTMLMetadata) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("taskID cannot be empty")
+	}
+	if strings.TrimSpace(metadata.StorageBucket) == "" {
+		return fmt.Errorf("storage bucket cannot be empty")
+	}
+	if strings.TrimSpace(metadata.StoragePath) == "" {
+		return fmt.Errorf("storage path cannot be empty")
+	}
+
+	var capturedAt any
+	if !metadata.CapturedAt.IsZero() {
+		capturedAt = metadata.CapturedAt
+	}
+
+	return q.Execute(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE tasks
+			SET html_storage_bucket = COALESCE(NULLIF($2, ''), html_storage_bucket),
+				html_storage_path = COALESCE(NULLIF($3, ''), html_storage_path),
+				html_content_type = COALESCE(NULLIF($4, ''), html_content_type),
+				html_content_encoding = COALESCE(NULLIF($5, ''), html_content_encoding),
+				html_size_bytes = CASE WHEN $6 > 0 THEN $6 ELSE html_size_bytes END,
+				html_compressed_size_bytes = CASE WHEN $7 > 0 THEN $7 ELSE html_compressed_size_bytes END,
+				html_sha256 = COALESCE(NULLIF($8, ''), html_sha256),
+				html_captured_at = COALESCE($9, html_captured_at)
+			WHERE id = $1 AND status IN ('running', 'completed')
+		`, taskID, metadata.StorageBucket, metadata.StoragePath, metadata.ContentType,
+			metadata.ContentEncoding, metadata.SizeBytes, metadata.CompressedSizeBytes,
+			metadata.SHA256, capturedAt)
+		if err != nil {
+			return fmt.Errorf("failed to update task HTML metadata: %w", err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to read task HTML metadata update result: %w", err)
+		}
+		if rowsAffected == 0 {
+			var status string
+			err = tx.QueryRowContext(ctx, `SELECT status FROM tasks WHERE id = $1`, taskID).Scan(&status)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("task %s not found: %w", taskID, sql.ErrNoRows)
+			case err != nil:
+				return fmt.Errorf("failed to inspect task HTML metadata state: %w", err)
+			case status == "pending" || status == "waiting":
+				return fmt.Errorf("%w: %s", ErrTaskNotReadyForHTMLMetadata, taskID)
+			default:
+				return fmt.Errorf("task %s is not eligible for HTML metadata updates in status %q", taskID, status)
+			}
+		}
+		return nil
+	})
 }
 
 // DecrementRunningTasks immediately decrements the running_tasks counter for a job.
