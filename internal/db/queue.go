@@ -1700,7 +1700,7 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 				html_compressed_size_bytes = CASE WHEN $7 > 0 THEN $7 ELSE html_compressed_size_bytes END,
 				html_sha256 = COALESCE(NULLIF($8, ''), html_sha256),
 				html_captured_at = COALESCE($9, html_captured_at)
-			WHERE id = $1 AND status = 'completed'
+			WHERE id = $1 AND status IN ('running', 'completed')
 		`, taskID, metadata.StorageBucket, metadata.StoragePath, metadata.ContentType,
 			metadata.ContentEncoding, metadata.SizeBytes, metadata.CompressedSizeBytes,
 			metadata.SHA256, capturedAt)
@@ -1719,7 +1719,7 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 				return fmt.Errorf("task %s not found: %w", taskID, sql.ErrNoRows)
 			case err != nil:
 				return fmt.Errorf("failed to inspect task HTML metadata state: %w", err)
-			case status == "pending" || status == "running" || status == "waiting":
+			case status == "pending" || status == "waiting":
 				return fmt.Errorf("%w: %s", ErrTaskNotReadyForHTMLMetadata, taskID)
 			default:
 				return fmt.Errorf("task %s is not eligible for HTML metadata updates in status %q", taskID, status)
