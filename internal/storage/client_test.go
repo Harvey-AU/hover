@@ -36,7 +36,7 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New(server.URL, "service-role-key")
+	client := New(server.URL, "sb_publishable_test", "sb_secret_test")
 	path, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/page-path/task.html.gz", []byte("payload"), UploadOptions{
 		ContentType:     "text/html",
 		ContentEncoding: "gzip",
@@ -47,12 +47,12 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	assert.Equal(t, "task-html/jobs/job/tasks/page-path/task.html.gz", path)
 	assert.Equal(t, "text/html", receivedContentType)
 	assert.Equal(t, "gzip", receivedContentEncoding)
-	assert.Equal(t, "service-role-key", receivedAPIKey)
-	assert.Equal(t, "Bearer service-role-key", receivedAuthorization)
+	assert.Equal(t, "sb_publishable_test", receivedAPIKey)
+	assert.Equal(t, "Bearer sb_secret_test", receivedAuthorization)
 	assert.Equal(t, []byte("payload"), receivedBody)
 }
 
-func TestUploadWithOptionsSetsBearerForJWTKeys(t *testing.T) {
+func TestUploadWithOptionsFallsBackToSecretKeyForApikey(t *testing.T) {
 	t.Parallel()
 
 	var receivedAPIKey string
@@ -65,13 +65,13 @@ func TestUploadWithOptionsSetsBearerForJWTKeys(t *testing.T) {
 	}))
 	defer server.Close()
 
-	jwtKey := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
-	client := New(server.URL, jwtKey)
+	// Empty publishable key falls back to using secret key for both headers
+	client := New(server.URL, "", "sb_secret_fallback")
 	_, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/page-path/task.html.gz", []byte("payload"), UploadOptions{
 		ContentType: "text/html",
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, jwtKey, receivedAPIKey)
-	assert.Equal(t, "Bearer "+jwtKey, receivedAuthorization)
+	assert.Equal(t, "sb_secret_fallback", receivedAPIKey)
+	assert.Equal(t, "Bearer sb_secret_fallback", receivedAuthorization)
 }

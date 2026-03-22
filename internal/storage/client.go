@@ -13,9 +13,10 @@ import (
 
 // Client provides methods to interact with Supabase Storage
 type Client struct {
-	baseURL    string
-	serviceKey string
-	httpClient *http.Client
+	baseURL        string
+	publishableKey string // identifies the project (apikey header)
+	secretKey      string // authenticates as service_role (Authorization header)
+	httpClient     *http.Client
 }
 
 // UploadOptions configures a storage upload request.
@@ -24,11 +25,18 @@ type UploadOptions struct {
 	ContentEncoding string
 }
 
-// New creates a new Storage client
-func New(supabaseURL, serviceKey string) *Client {
+// New creates a new Storage client.
+// publishableKey is used for the apikey header (project identification).
+// secretKey is used for the Authorization header (service_role access).
+// If publishableKey is empty, secretKey is used for both headers (legacy behaviour).
+func New(supabaseURL, publishableKey, secretKey string) *Client {
+	if publishableKey == "" {
+		publishableKey = secretKey
+	}
 	return &Client{
-		baseURL:    supabaseURL + "/storage/v1",
-		serviceKey: serviceKey,
+		baseURL:        supabaseURL + "/storage/v1",
+		publishableKey: publishableKey,
+		secretKey:      secretKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -36,12 +44,12 @@ func New(supabaseURL, serviceKey string) *Client {
 }
 
 func (c *Client) setAuthHeaders(req *http.Request) {
-	if c.serviceKey == "" {
+	if c.secretKey == "" {
 		return
 	}
 
-	req.Header.Set("apikey", c.serviceKey)
-	req.Header.Set("Authorization", "Bearer "+c.serviceKey)
+	req.Header.Set("apikey", c.publishableKey)
+	req.Header.Set("Authorization", "Bearer "+c.secretKey)
 }
 
 // Upload uploads a file to the specified bucket and path

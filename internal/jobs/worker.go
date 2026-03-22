@@ -579,9 +579,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	// Initialise storage client for HTML uploads (non-fatal if not configured)
 	// Uses existing SUPABASE_URL from project config
 	supabaseURL := strings.TrimSuffix(os.Getenv("SUPABASE_URL"), "/")
-	supabaseServiceKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
-	if supabaseURL != "" && supabaseServiceKey != "" {
-		wp.storageClient = storage.New(supabaseURL, supabaseServiceKey)
+	supabasePublishableKey := os.Getenv("SUPABASE_PUBLISHABLE_KEY")
+	supabaseSecretKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
+	if supabaseURL != "" && supabaseSecretKey != "" {
+		wp.storageClient = storage.New(supabaseURL, supabasePublishableKey, supabaseSecretKey)
 		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, taskHTMLPersistQueueSize)
 		log.Info().Msg("Storage client initialised for HTML uploads")
 	} else {
