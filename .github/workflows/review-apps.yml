@@ -81,6 +81,21 @@ jobs:
             echo "preview_db_url=$PREVIEW_DB_URL" >> $GITHUB_OUTPUT
             echo "direct_db_url=$DIRECT_DB_URL" >> $GITHUB_OUTPUT
             echo "branch_exists=true" >> $GITHUB_OUTPUT
+
+            # Extract the branch project ref for API key lookup
+            BRANCH_REF=$(echo "$BRANCH_JSON" | jq -r '.project_ref // .ref // .id // empty' 2>/dev/null)
+            echo "  Branch project ref present: $([ -n "$BRANCH_REF" ] && echo 'yes' || echo 'no')"
+
+            if [ -n "$BRANCH_REF" ]; then
+              # Fetch the branch's own service_role key via Management API
+              BRANCH_KEYS=$(curl -s -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+                "https://api.supabase.com/v1/projects/$BRANCH_REF/api-keys?reveal=true")
+              BRANCH_SERVICE_KEY=$(echo "$BRANCH_KEYS" | jq -r '.[] | select(.name == "service_role") | .api_key // empty' 2>/dev/null)
+              echo "  Branch service_role key present: $([ -n "$BRANCH_SERVICE_KEY" ] && echo 'yes' || echo 'no')"
+              if [ -n "$BRANCH_SERVICE_KEY" ]; then
+                echo "branch_service_role_key=$BRANCH_SERVICE_KEY" >> $GITHUB_OUTPUT
+              fi
+            fi
           else
             echo "⚠️ No Supabase preview branch found"
             echo "branch_exists=false" >> $GITHUB_OUTPUT
@@ -109,11 +124,21 @@ jobs:
           if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
             DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
             DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
+            # Use the branch's own service_role key if extracted, fall back to main
+            BRANCH_SRK="${{ steps.supabase.outputs.branch_service_role_key }}"
+            if [ -n "$BRANCH_SRK" ]; then
+              SERVICE_ROLE_KEY="$BRANCH_SRK"
+              echo "🔑 Using preview branch service_role key"
+            else
+              SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+              echo "🔑 Using main project service_role key (branch key not available)"
+            fi
             echo "🔀 Using Supabase PREVIEW database"
             echo "db_type=preview" >> $GITHUB_OUTPUT
           else
             DB_URL="${{ secrets.TEST_DATABASE_URL }}"
             DIRECT_URL=""
+            SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
             if [ -z "$DB_URL" ]; then
               DB_URL="${{ secrets.DATABASE_URL }}"
             fi
@@ -154,7 +179,7 @@ jobs:
               DATABASE_DIRECT_URL="$DIRECT_URL" \
               "${AUTH_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
-              SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
               LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
               SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \
@@ -173,7 +198,7 @@ jobs:
               DATABASE_URL="$DB_URL" \
               "${AUTH_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}" \
-              SUPABASE_SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
               LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
               SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \
