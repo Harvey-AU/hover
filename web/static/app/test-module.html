@@ -164,7 +164,7 @@
         import { getSession } from "/app/lib/auth-session.js";
 
         // ── Checks ──────────────────────────────────────────────────────────────
-
+        try {
         const checks = [];
 
         function pass(label, detail = "") {
