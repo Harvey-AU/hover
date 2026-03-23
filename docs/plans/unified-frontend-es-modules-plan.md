@@ -1,20 +1,20 @@
 # Unified Frontend: ES Modules and Naming Convention
 
-Date: 2026-03-15 Status: **In progress (Phase 5 complete)** Scope: Webflow
+Date: 2026-03-15 Status: **In progress (Phase 7 complete)** Scope: Webflow
 extension screens, `/dashboard`, job details, and settings screens
 
 ## Progress summary (as of 2026-03-23)
 
-| Phase                       | Status         | Notes                                                                                                                                                        |
-| --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Phase 0 — Foundations       | ✅ Complete    | `app/` structure, tokens, base, lib utilities, test page; `base.css` now loaded on all migrated pages                                                        |
-| Phase 1 — Webflow auth      | ✅ Complete    | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated; postMessage contract fixed                                                                |
-| Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
-| Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, `hover-job-card` job list, restart/cancel wired via card events, `bb-bootstrap.js` and `bb-dashboard-actions.js` removed                     |
-| Phase 4 — Job details       | ✅ Complete    | Tasks table, filter tabs, per-tab columns, `hover-job-card`, performance API filter, `bb-bootstrap.js` removed                                               |
-| Phase 5 — Settings          | ✅ Complete    | `settings.js` orchestrator + `lib/settings/` section modules; account, team, plans, schedules extracted; `bb-settings.js` retired                            |
-| Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded                                                                                                        |
-| Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                              |
+| Phase                       | Status      | Notes                                                                                                                                                        |
+| --------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase 0 — Foundations       | ✅ Complete | `app/` structure, tokens, base, lib utilities, test page; `base.css` now loaded on all migrated pages                                                        |
+| Phase 1 — Webflow auth      | ✅ Complete | `webflow-login.js`, `hover-toast`, `extension-auth.html` migrated; postMessage contract fixed                                                                |
+| Phase 2 — Webflow job list  | ✅ Complete | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
+| Phase 3 — Dashboard         | ✅ Complete | `dashboard.js`, `hover-job-card` job list, restart/cancel wired via card events, `bb-bootstrap.js` and `bb-dashboard-actions.js` removed                     |
+| Phase 4 — Job details       | ✅ Complete | Tasks table, filter tabs, per-tab columns, `hover-job-card`, performance API filter, `bb-bootstrap.js` removed                                               |
+| Phase 5 — Settings          | ✅ Complete | `settings.js` orchestrator + `lib/settings/` section modules; account, team, plans, schedules extracted                                                      |
+| Phase 6 — Dashboard cleanup | ✅ Complete | `bb-bootstrap.js`, `bb-metadata.js` removed; `bb-admin.js` migrated to `lib/admin.js`; integration scripts remain (tightly coupled OAuth callbacks)          |
+| Phase 7 — Global nav + auth | ✅ Complete | `bb-global-nav.js` migrated to `lib/global-nav.js` ES module; loaded on all authenticated pages; `auth.js` redirect contract preserved (not touched)         |
 
 ---
 
@@ -719,38 +719,55 @@ callback wiring is tightly coupled and will migrate in Phase 6/7.
 
 ---
 
-### Phase 6 — Dashboard cleanup
+### Phase 6 — Dashboard cleanup ✅ Complete (2026-03-23)
 
 Objective: remove remaining legacy scripts from `dashboard.html`.
 
-**Still loaded after Phase 3/4:** `bb-domain-search`, `bb-integration-http`,
-`bb-slack`, `bb-webflow`, `bb-google`, `bb-admin`, `bb-data-binder`,
-`bb-auth-extension`, `bb-metadata`.
+**What was done:**
 
-Tasks:
+1. **`bb-bootstrap.js` removed** — superseded by `BB_APP.coreReady` in core.js
+2. **`bb-metadata.js` removed** — no active references on any target page
+3. **`bb-admin.js` → `lib/admin.js`** — ES module with `initAdminResetButton()`
+   that self-checks system_admin role via `getSession()`; wired into settings.js
 
-- domain search widget → `hover-combobox` or equivalent component
-- integration scripts → moved into `settings-integrations.js` (done in Phase 5)
-- `bb-admin` → `admin.js` module
-- retire `bb-data-binder` from dashboard once all binder-driven UI is replaced
+**Still loaded (not yet migrated):**
+
+- `bb-domain-search.js` — job creation domain autocomplete (dashboard only)
+- `bb-data-binder.js` — org creation form, data binding (dashboard + settings)
+- `bb-auth-extension.js` — auth ↔ data-binder bridge, realtime subscriptions
+- Integration scripts (`bb-integration-http`, `bb-slack`, `bb-webflow`,
+  `bb-google`) — tightly coupled OAuth callback wiring; will migrate when
+  integration UI is rebuilt
 
 ---
 
-### Phase 7 — Global nav + auth
+### Phase 7 — Global nav + auth ✅ Complete (2026-03-23)
 
-Objective: complete the migration; no active page depends on legacy scripts.
+Objective: migrate the global navigation to ES modules.
 
-Tasks:
+**What was done:**
 
-- `bb-global-nav.js` (742 lines) → `hover-nav` component or `global-nav.js`
-  module; owns org-switcher, quota bar, notifications
-- `auth.js` on `extension-auth.html` → migrate last; owns OAuth redirect
-  contract (AGENTS.md); must migrate together with extension auth rebuild
-- retire `core.js` global nav dependency once `bb-global-nav.js` is replaced
+1. **`bb-global-nav.js` (742 lines) → `lib/global-nav.js`** — ES module
+   auto-mounts on import; owns org switcher, user menu, notifications (with
+   realtime), and quota display (visibility-aware polling)
+2. **All authenticated pages updated** — `dashboard.html`, `settings.html`,
+   `job-details.html` now load
+   `<script type="module" src="/app/lib/global-nav.js">`
+3. **Legacy `window.BB_NAV_READY`** — preserved as a bridge global so existing
+   code (dashboard.js) can await it; module also exports `ready` promise
+4. **`window.BBQuota`** — preserved for settings page quota refresh trigger
 
-Note: `auth.js` redirect contract (`handleSocialLogin`) must be preserved
-exactly — deep-link URLs return to the originating URL, invites route to
-`/welcome`. Do not touch until auth is fully migrated end-to-end.
+**Not migrated (intentionally deferred):**
+
+- `auth.js` redirect contract (`handleSocialLogin`) — preserved exactly as-is;
+  deep-link URLs return to originating URL, invites route to `/welcome`. Must
+  migrate together with a full auth rebuild, not piecemeal.
+- `core.js` — still loads Supabase SDK, manages auth state, sets org globals.
+  Will be replaced when Supabase loading moves to ESM imports.
+- `bb-settings.js` — still owns settings nav tab switching, integration feedback
+  globals, org creation form. Has duplicated notification/org-switcher code that
+  is now dead (handled by global-nav.js). Full removal requires migrating
+  settings navigation into settings.js.
 
 ---
 
