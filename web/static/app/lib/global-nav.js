@@ -39,9 +39,7 @@ function closeOverlays(navEl, { except } = {}) {
   const orgBtn = navEl.querySelector("#orgSwitcherBtn");
   const userMenuDropdown = navEl.querySelector("#userMenuDropdown");
   const userAvatar = navEl.querySelector("#userAvatar");
-  const notificationsContainer = navEl.querySelector(
-    "#notificationsContainer"
-  );
+  const notificationsContainer = navEl.querySelector("#notificationsContainer");
   const notificationsBtn = navEl.querySelector("#notificationsBtn");
 
   if (except !== "org") {
@@ -105,8 +103,7 @@ function initOrgSwitcher(navEl) {
       await window.BB_APP.switchOrg(item.dataset.orgId);
     } catch (err) {
       console.warn("Failed to switch organisation:", err);
-      currentOrgName.textContent =
-        window.BB_ACTIVE_ORG?.name || "Organisation";
+      currentOrgName.textContent = window.BB_ACTIVE_ORG?.name || "Organisation";
     }
   });
 
@@ -559,9 +556,7 @@ function initQuota() {
 
   // Start after core is ready
   if (window.BB_APP?.coreReady) {
-    window.BB_APP.coreReady
-      .then(startPolling)
-      .catch(() => startPolling());
+    window.BB_APP.coreReady.then(startPolling).catch(() => startPolling());
   } else {
     const check = setInterval(() => {
       if (window.supabase) {
