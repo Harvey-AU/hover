@@ -25,6 +25,7 @@ import {
   loadSchedules,
   setupSchedulesActions,
 } from "/app/lib/settings/schedules.js";
+import { initAdminResetButton } from "/app/lib/admin.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 function toast(variant, message) {
@@ -116,6 +117,11 @@ async function init() {
     console.error("Failed to initialise ES settings sections:", err);
     toast("error", "Some settings sections failed to load.");
   }
+
+  // Admin section (only visible to system_admin users).
+  await initAdminResetButton("resetDbBtn", {
+    containerSelector: "#adminGroup",
+  });
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
