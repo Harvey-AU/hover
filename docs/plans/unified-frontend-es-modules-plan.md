@@ -771,6 +771,345 @@ Objective: migrate the global navigation to ES modules.
 
 ---
 
+## Remaining legacy files — technical migration plan
+
+Six legacy files (plus integration group) remain loaded on authenticated pages.
+Each section below describes exactly what the file does, what blocks its
+removal, and the technical steps to migrate it.
+
+### Dependency chain
+
+```text
+core.js
+  └→ auth.js (loaded dynamically via ensureAuthBundle)
+       └→ bb-auth-extension.js
+            ├→ bb-data-binder.js (instantiates window.dataBinder)
+            ├→ bb-settings.js (settings page init, nav tabs, toast feedback)
+            └→ integration group
+                 ├→ bb-integration-http.js
+                 ├→ bb-slack.js
+                 ├→ bb-webflow.js
+                 └→ bb-google.js
+```
+
+Migrations must proceed bottom-up: integrations first, then bb-settings.js, then
+bb-auth-extension + bb-data-binder, then auth.js, and finally core.js.
+
+---
+
+### 1. Integration group (bb-slack, bb-webflow, bb-google, bb-integration-http)
+
+**What they do:** Each integration file manages OAuth connect/disconnect,
+renders connected-service UI (workspaces, sites, properties), and handles OAuth
+callback query params on page load. `bb-integration-http.js` provides shared
+`fetchWithTimeout()` and error normalisation.
+
+**What blocks removal:**
+
+- Each file sets `window.setup*Integration()` and
+  `window.handle*OAuthCallback()` globals that `bb-settings.js` calls during
+  settings init
+- Each file reads `window.dataBinder.fetchData()` for API calls
+- Each file reads `window.showIntegrationFeedback()` and per-integration toast
+  wrappers set by `bb-settings.js`
+- `bb-webflow.js` has ~860 lines including site pagination, search, schedule
+  management, and auto-publish toggles
+
+**Migration steps:**
+
+1. Create `lib/settings/integrations/slack.js`, `webflow.js`, `google.js` as ES
+   modules
+2. Replace `window.dataBinder.fetchData()` calls with `api-client.js`
+   `get`/`post`/`patch`/`del`
+3. Replace `window.BBIntegrationHttp.fetchWithTimeout()` with the existing ES
+   module `lib/integration-http.js`
+4. Replace `window.showIntegrationFeedback()` calls with
+   `showToast(message, { variant })`
+5. Export `setup*()` and `handleOAuthCallback()` from each module
+6. Import and call from `settings.js` orchestrator
+7. Remove `window.*` globals and script tags from `settings.html` and
+   `dashboard.html`
+8. Delete `bb-integration-http.js`, `bb-slack.js`, `bb-webflow.js`,
+   `bb-google.js`
+
+**OAuth callback contract:** Each integration checks URL query params on page
+load (e.g. `?slack_auth=success`). The new modules must replicate this check in
+`settings.js` init — call `handleSlackOAuthCallback()` etc. if the matching
+param is present.
+
+**Estimated scope:** ~2,500 lines across 4 files. Largest is `bb-webflow.js`
+(~860 lines) due to site management UI.
+
+---
+
+### 2. bb-settings.js — settings navigation and integration glue
+
+**What it does:** Settings page sidebar navigation (section switching,
+hash-based deep linking, plan/automation tab groups), integration feedback toast
+wrappers (`window.showSlackSuccess` etc.), org creation modal, notification
+dropdown in settings, invite token handling on page load.
+
+**What blocks removal:**
+
+- Settings sidebar navigation (`setupSettingsNavigation`,
+  `setActiveSettingsLink`, `setActiveSection`, `activateTabFromHash`) is not yet
+  in any ES module
+- Toast feedback wrappers (`window.showIntegrationFeedback`,
+  `window.showDashboardSuccess`, `window.showDashboardError`) are called by
+  integration scripts and `bb-auth-extension.js`
+- `initCreateOrgModal()` handles the organisation creation form
+- Notification/user-menu code is now duplicated by `global-nav.js` but still
+  runs
+
+**Migration steps:**
+
+1. Move settings navigation logic into `pages/settings.js`:
+   - `setupSettingsNavigation()` — sidebar link clicks, `popstate` handler
+   - `setActiveSection()` / `resolveTargetSectionId()` — section visibility
+   - `activateTabFromHash()` — deep-link support
+   - Plan and automation tab groups
+2. Move `initCreateOrgModal()` into `lib/settings/organisations.js`
+3. Move invite token handling into `lib/settings/team.js` (already partially
+   there)
+4. Replace toast wrappers with direct `showToast()` calls from each consumer
+5. Remove duplicated notification and user-menu code (now in `global-nav.js`)
+6. Remove `bb-settings.js` script tag from `settings.html`
+7. Delete `bb-settings.js`
+
+**Prerequisite:** Integration group must be migrated first (step 1 above),
+because integration scripts currently call the toast wrappers set by
+`bb-settings.js`.
+
+**Estimated scope:** ~300 lines of unique logic (nav, tabs, org modal). The rest
+is already migrated or duplicated.
+
+---
+
+### 3. bb-auth-extension.js — auth bridge and dashboard wiring
+
+**What it does:** Bridges `auth.js` auth state with `bb-data-binder.js` for
+dashboard refresh; handles dashboard job creation form submission; manages
+realtime job update subscriptions via Supabase channels; provides network
+monitoring; handles time range changes for dashboard data.
+
+**What blocks removal:**
+
+- `initializeDashboard(config)` is called from an inline `<script>` in
+  `dashboard.html` — it creates `window.dataBinder`, wires auth state, and kicks
+  off the initial data load
+- `subscribeToJobUpdates()` manages Supabase realtime channels for live job
+  updates
+- Dashboard job creation form submission (domain validation, API call, modal
+  close)
+- Time range selector (`changeTimeRange()`)
+- Network monitoring (online/offline detection)
+
+**Migration steps:**
+
+1. Move dashboard init logic into `pages/dashboard.js`:
+   - Auth state detection → use `auth-session.js` `getSession()` /
+     `onAuthStateChange()`
+   - Job creation form → new function in `dashboard.js` using `api-client.js`
+     `post()`
+   - Time range selector → already partially in `dashboard.js`
+2. Move realtime subscription into `lib/realtime.js`:
+   - `subscribeToJobUpdates()` — generic channel management
+   - Throttled refresh logic
+   - Fallback polling
+3. Move network monitoring into `lib/network-status.js` (or inline in
+   dashboard.js if only used there)
+4. Remove the inline `<script>` in `dashboard.html` that calls
+   `initializeDashboard()`
+5. Remove `bb-auth-extension.js` script tags from `dashboard.html` and
+   `job-details.html`
+6. Delete `bb-auth-extension.js`
+
+**Prerequisite:** `bb-data-binder.js` must be retired first (step 4 below),
+because `bb-auth-extension.js` instantiates `BBDataBinder` and calls
+`dataBinder.refresh()` / `dataBinder.fetchData()` extensively.
+
+**Estimated scope:** ~900 lines. Most complex part is the realtime subscription
+with throttling and fallback polling.
+
+---
+
+### 4. bb-data-binder.js — template engine and data binding
+
+**What it does:** DOM data binding system that scans for `bbb-text`, `bbb-attr`,
+`bbb-style`, `bbb-template` attributes and populates them from API responses.
+Also provides `fetchData()` for authenticated API calls and manages form
+submission with validation.
+
+**What blocks removal:**
+
+- Dashboard stats cards and header use `bbb-text` attributes for data binding
+- Organisation creation form uses `bbb-action="create-organisation"` form
+  handling
+- `window.dataBinder.fetchData()` is called by integration scripts and
+  `bb-auth-extension.js`
+- `window.dataBinder.refresh()` is called for dashboard data reload
+
+**Migration steps:**
+
+1. Replace `bbb-text` bindings in `dashboard.html` with explicit DOM updates in
+   `pages/dashboard.js` (most stats are already rendered by the ES module)
+2. Replace `bbb-template` usage with explicit `document.createElement()` or
+   `<template>` cloning in the relevant page module
+3. Replace `dataBinder.fetchData()` calls with `api-client.js` `get()`/`post()`
+   (already done in all ES module code)
+4. Replace `dataBinder.refresh()` calls with explicit fetch-and-render in each
+   page module
+5. Move org creation form handling to `lib/settings/organisations.js` using
+   `api-client.js`
+6. Remove `bbb-*` attributes from HTML files
+7. Remove `bb-data-binder.js` script tags from all pages
+8. Delete `bb-data-binder.js`
+
+**Prerequisite:** `bb-auth-extension.js` must be migrated first (step 3 above).
+
+**Estimated scope:** ~1,150 lines. The file is large but most of its
+functionality is already superseded by `api-client.js` and explicit DOM updates
+in ES modules. The main work is removing `bbb-*` attributes from HTML and
+replacing the remaining template-driven rendering.
+
+---
+
+### 5. auth.js — authentication system
+
+**What it does:** Complete auth UI and logic: Supabase client initialisation,
+email/password login and signup, social OAuth login (`handleSocialLogin`),
+password strength validation (zxcvbn), Cloudflare Turnstile CAPTCHA, auth modal
+rendering, auth callback handling, user registration with backend, auth state
+sync, CLI auth flow, extension auth flow, gravatar/avatar rendering.
+
+**What blocks removal:**
+
+- `window.BBAuth` is the single auth entry point called by `core.js`
+- `handleSocialLogin()` implements the redirect contract (deep links return to
+  origin, invites route to `/welcome`) documented in CLAUDE.md
+- Auth modal HTML is injected dynamically — every authenticated page depends on
+  it for login/signup
+- Extension auth page (`initExtensionAuthPage`) uses a `postMessage` contract
+  with the Webflow extension
+- CLI auth page (`initCliAuthPage`) handles loopback redirect for CLI login
+- Turnstile CAPTCHA integration is tightly coupled to signup flow
+- Backend user registration (`registerUserWithBackend`) runs on first login
+
+**Migration steps:**
+
+1. Create `lib/auth.js` as the ES module replacement — NOT a rename, a
+   progressive rebuild:
+   - `initSupabase()` — Supabase client creation (currently in
+     `initialiseSupabase()`)
+   - `handleAuthCallback()` — OAuth callback processing
+   - `handleSocialLogin(provider, options)` — OAuth redirect with exact contract
+     preservation
+   - `registerUser(user)` — backend registration
+   - `updateAuthState(isAuthenticated)` — UI state sync
+2. Create `lib/auth-modal.js` for modal rendering and form handling:
+   - Login form, signup form, password reset form
+   - Turnstile CAPTCHA integration
+   - Password strength meter
+3. Create `lib/auth-avatar.js` for gravatar and initials rendering
+4. Move extension auth into `pages/webflow-login.js` (already partially done)
+5. Move CLI auth into `pages/cli-auth.js`
+6. Bridge: keep `window.BBAuth` as a thin wrapper that delegates to the ES
+   modules during transition
+7. Once all consumers import directly, remove `window.BBAuth` and delete
+   `auth.js`
+
+**Critical contract:** `handleSocialLogin()` redirect behaviour must be
+preserved exactly. Test with: Google OAuth, GitHub OAuth, invite acceptance,
+deep-link return, extension auth postMessage.
+
+**Prerequisite:** All other legacy files must be migrated first. `auth.js` is
+the deepest dependency after `core.js`.
+
+**Estimated scope:** ~2,300 lines. Largest and most sensitive migration. Should
+be done as a dedicated PR with thorough testing.
+
+---
+
+### 6. core.js — bootstrap and Supabase loader
+
+**What it does:** Runtime config loading (`BBB_CONFIG`), dynamic script loading
+(Supabase SDK, zxcvbn, Turnstile), `BB_APP.coreReady` promise gate, auth bundle
+loading, organisation initialisation (`initialiseOrg`, `switchOrg`),
+`BB_ACTIVE_ORG` / `BB_ORGANISATIONS` state management, auth state change
+monitoring, route-gating for protected pages.
+
+**What blocks removal:**
+
+- Every authenticated page loads `core.js` first — it is the bootstrap
+- `window.BB_APP.coreReady` is awaited by `global-nav.js`, `dashboard.js`,
+  `settings.js`, and all legacy files
+- `window.BB_ACTIVE_ORG` and `window.BB_ORGANISATIONS` are read by global-nav,
+  settings, integrations, and realtime subscriptions
+- Supabase SDK is loaded via `loadScript()` with SRI hash — this cannot be
+  replaced with a simple ESM import without reviewing CDN/SRI policy
+- `BB_APP.switchOrg()` and `BB_APP.initialiseOrg()` manage org state and fire
+  `bb:org-switched` / `bb:org-ready` events consumed across the app
+
+**Migration steps:**
+
+1. Create `lib/core.js` ES module:
+   - `loadConfig()` — read `BBB_CONFIG` from inline script
+   - `loadSupabase()` — dynamic script injection with SRI (or switch to ESM
+     import from `esm.sh` if SRI policy allows)
+   - `initOrg()` / `switchOrg()` — org state management
+   - Export `coreReady` promise, `getActiveOrg()`, `getOrganisations()`
+2. Create `lib/config.js` (already exists) — extend to fully replace
+   `BBB_CONFIG` reading
+3. Migrate org state to a reactive pattern:
+   - `lib/org-state.js` — `getActiveOrg()`, `switchOrg()`,
+     `onOrgChange(callback)`
+   - Replace `bb:org-switched` / `bb:org-ready` CustomEvents with the callback
+     pattern (or keep events as a compatibility layer)
+4. Update all ES modules to import from `lib/core.js` instead of reading
+   `window.BB_APP`
+5. Keep `window.BB_APP` as a bridge during transition
+6. Once no consumer reads `window.BB_APP` directly, remove bridge and delete
+   legacy `core.js`
+7. Move `BBB_CONFIG` inline script from HTML `<head>` to a data attribute or
+   JSON script tag pattern
+
+**Supabase loading decision:** The current CDN + SRI approach is secure but
+incompatible with ESM imports. Options:
+
+- **Keep CDN script tag** and access `window.supabase` (current approach, works)
+- **Switch to `esm.sh`** import:
+  `import { createClient } from "https://esm.sh/@supabase/supabase-js@2"` —
+  cleaner but loses SRI, adds CDN dependency
+- **Self-host ESM build** in `web/static/vendor/` — best control, needs version
+  management
+
+Recommended: keep CDN script tag for now (it works), migrate everything else
+around it, revisit Supabase loading as the final step.
+
+**Prerequisite:** All other files must be migrated first. `core.js` is the root
+of the dependency chain.
+
+**Estimated scope:** ~450 lines. Small file but high-impact — every page depends
+on it.
+
+---
+
+### Recommended migration order
+
+| Step | Files                                            | Estimated effort                | Prerequisite |
+| ---- | ------------------------------------------------ | ------------------------------- | ------------ |
+| 1    | Integration group (slack, webflow, google, http) | Medium (2,500 lines)            | None         |
+| 2    | bb-settings.js                                   | Small (300 lines unique)        | Step 1       |
+| 3    | bb-auth-extension.js                             | Medium (900 lines)              | Step 2       |
+| 4    | bb-data-binder.js                                | Medium (1,150 lines)            | Step 3       |
+| 5    | auth.js                                          | Large (2,300 lines)             | Step 4       |
+| 6    | core.js                                          | Small but sensitive (450 lines) | Step 5       |
+
+Steps 1–2 can be done in this PR or the next. Steps 3–6 should each be their own
+PR with dedicated testing.
+
+---
+
 ### Ongoing — New screens
 
 Any screen added after Phase 7 must use the ES module architecture and new
