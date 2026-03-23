@@ -1,9 +1,9 @@
 # Unified Frontend: ES Modules and Naming Convention
 
-Date: 2026-03-15 Status: **In progress (Phase 4 complete)** Scope: Webflow
+Date: 2026-03-15 Status: **In progress (Phase 5 complete)** Scope: Webflow
 extension screens, `/dashboard`, job details, and settings screens
 
-## Progress summary (as of 2026-03-16)
+## Progress summary (as of 2026-03-23)
 
 | Phase                       | Status         | Notes                                                                                                                                                        |
 | --------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -12,7 +12,7 @@ extension screens, `/dashboard`, job details, and settings screens
 | Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
 | Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, `hover-job-card` job list, restart/cancel wired via card events, `bb-bootstrap.js` and `bb-dashboard-actions.js` removed                     |
 | Phase 4 — Job details       | ✅ Complete    | Tasks table, filter tabs, per-tab columns, `hover-job-card`, performance API filter, `bb-bootstrap.js` removed                                               |
-| Phase 5 — Settings          | 🔲 Not started | `bb-settings.js` 2,293 lines, 8 legacy scripts to remove                                                                                                     |
+| Phase 5 — Settings          | ✅ Complete    | `settings.js` orchestrator + `lib/settings/` section modules; account, team, plans, schedules extracted; `bb-settings.js` retired                             |
 | Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded                                                                                                        |
 | Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                              |
 
@@ -302,6 +302,12 @@ web/static/
       auth-session.js             ✅
       config.js                   ✅
       formatters.js               ✅
+      integration-http.js         ✅ (Phase 5)
+      settings/
+        account.js                ✅ (Phase 5)
+        team.js                   ✅ (Phase 5)
+        plans.js                  ✅ (Phase 5)
+        schedules.js              ✅ (Phase 5)
     components/
       hover-data-table.js         ✅ (with sort support)
       hover-job-card.js           ✅ (domain component, Phase 4)
@@ -314,12 +320,9 @@ web/static/
     pages/
       dashboard.js                ✅
       job-details.js              ✅
+      settings.js                 ✅ (Phase 5 — single orchestrator)
       webflow-jobs.js             ✅
       webflow-login.js            ✅
-      settings-account.js         🔲 Phase 5
-      settings-billing.js         🔲 Phase 5
-      settings-integrations.js    🔲 Phase 5
-      settings-team.js            🔲 Phase 5
     styles/
       base.css                    ✅
       components.css              ✅
@@ -676,26 +679,42 @@ Validation:
 
 ---
 
-### Phase 5 — Settings
+### Phase 5 — Settings ✅ Complete (2026-03-23)
 
 Objective: make settings feel like part of the same product, not a separate UI.
 
-**Scope:** `settings.html` currently loads 8 legacy scripts: `bb-data-binder`,
+**Scope:** `settings.html` previously loaded 8 legacy scripts: `bb-data-binder`,
 `bb-auth-extension`, `bb-integration-http`, `bb-slack`, `bb-webflow`,
 `bb-google`, `bb-invite-flow`, `bb-settings` (2,293 lines).
 
-Tasks:
+**What was built:**
 
-- create per-section page modules: `settings-account.js`, `settings-team.js`,
-  `settings-billing.js`, `settings-integrations.js`
-- the integrations section (Slack, Webflow, Google) each have their own OAuth
-  flows — extract each into its own module carefully
-- reuse `hover-modal`, `hover-tabs`, `hover-toast`, and card primitives already
-  established
-- retire `bb-settings.js` once all sections are migrated
+1. **`pages/settings.js`** — single orchestrator module; imports section modules,
+   wires nav, handles init timing with Supabase/org readiness
+2. **`lib/settings/account.js`** — profile name, auth method connect/remove,
+   password reset; surface-agnostic (accepts container param)
+3. **`lib/settings/team.js`** — member list, role changes, removal, invite send;
+   uses `<template>` cloning for member rows
+4. **`lib/settings/plans.js`** — current plan display, plan cards, usage history
+   chart; plan selection via API
+5. **`lib/settings/schedules.js`** — automated jobs CRUD, cron schedule
+   management
+6. **`lib/integration-http.js`** — shared fetch wrapper for integration endpoints
+7. **`bb-settings.js` retired** — all section logic extracted to ES modules
 
-Risk: highest-risk phase — OAuth callback wiring in `bb-settings.js` is tightly
-coupled and must be extracted carefully to avoid breaking OAuth flows.
+**Architectural decision:** Used `lib/settings/*.js` section modules rather than
+separate `pages/settings-*.js` files. Settings is one HTML page with nav tabs,
+so a single orchestrator + section modules is cleaner than multiple page modules
+fighting over the same DOM.
+
+**Key pattern for extension reuse:** All section modules accept a `container`
+parameter for rendering, making them surface-agnostic. The extension can import
+the same logic modules and pass its own container element. Render functions will
+need extension-specific variants or a layout config object (Phase 1 task).
+
+**Still loaded (not yet migrated):** Integration OAuth scripts (`bb-slack`,
+`bb-webflow`, `bb-google`) remain as separate legacy scripts — their OAuth
+callback wiring is tightly coupled and will migrate in Phase 6/7.
 
 ---
 
