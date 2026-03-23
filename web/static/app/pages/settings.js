@@ -1,22 +1,15 @@
 /**
- * pages/settings.js — settings page module entrypoint
+ * pages/settings.js — settings page orchestrator
  *
- * Orchestrates settings sections as ES modules. Co-exists with bb-settings.js
- * which still handles global UI (org switcher, notifications, user menu,
- * create org modal, integrations, admin section).
- *
- * Coordination with bb-settings.js:
- *   1. settings.html sets window.__ES_SETTINGS = true (sync script)
- *   2. bb-settings.js checks the flag and skips migrated section init
- *   3. bb-settings.js calls window.__bbSettingsReady() when done
- *   4. This module waits for that signal, then inits migrated sections
- *   5. bb-settings.js calls window.__esRefreshSections() on org-switch
+ * Imports section modules from lib/settings/ and wires them into
+ * settings.html containers. Each section module is surface-agnostic
+ * (accepts a container param) so the same logic can render in the
+ * Webflow extension or other surfaces.
  */
 
 import {
   loadAccountDetails,
   setupAccountActions,
-  getAccountState,
 } from "/app/lib/settings/account.js";
 import {
   loadMembers,
@@ -37,9 +30,6 @@ import { showToast as _showToast } from "/app/components/hover-toast.js";
 function toast(variant, message) {
   _showToast(message, { variant });
 }
-
-// Navigation (tabs, section routing) is handled by bb-settings.js.
-// When bb-settings.js is fully retired, move navigation here.
 
 // ── Section containers ──────────────────────────────────────────────────────────
 
@@ -71,7 +61,7 @@ async function refreshSections() {
   }
 }
 
-// Expose for bb-settings.js refreshSettingsData()
+// Expose for org-switch refresh (called by bb-settings.js).
 window.__esRefreshSections = refreshSections;
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────────

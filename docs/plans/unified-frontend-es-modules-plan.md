@@ -12,7 +12,7 @@ extension screens, `/dashboard`, job details, and settings screens
 | Phase 2 — Webflow job list  | ✅ Complete    | `webflow-jobs.js`, `hover-data-table`, `hover-status-pill`, `hover-job-card` wired into extension; `buildResultCard` retired; `sync:components` script added |
 | Phase 3 — Dashboard         | ✅ Complete    | `dashboard.js`, `hover-job-card` job list, restart/cancel wired via card events, `bb-bootstrap.js` and `bb-dashboard-actions.js` removed                     |
 | Phase 4 — Job details       | ✅ Complete    | Tasks table, filter tabs, per-tab columns, `hover-job-card`, performance API filter, `bb-bootstrap.js` removed                                               |
-| Phase 5 — Settings          | ✅ Complete    | `settings.js` orchestrator + `lib/settings/` section modules; account, team, plans, schedules extracted; `bb-settings.js` retired                             |
+| Phase 5 — Settings          | ✅ Complete    | `settings.js` orchestrator + `lib/settings/` section modules; account, team, plans, schedules extracted; `bb-settings.js` retired                            |
 | Phase 6 — Dashboard cleanup | 🔲 Not started | `bb-domain-search`, integrations scripts still loaded                                                                                                        |
 | Phase 7 — Global nav + auth | 🔲 Not started | `bb-global-nav.js`, `auth.js` on extension-auth                                                                                                              |
 
@@ -689,8 +689,8 @@ Objective: make settings feel like part of the same product, not a separate UI.
 
 **What was built:**
 
-1. **`pages/settings.js`** — single orchestrator module; imports section modules,
-   wires nav, handles init timing with Supabase/org readiness
+1. **`pages/settings.js`** — single orchestrator module; imports section
+   modules, wires nav, handles init timing with Supabase/org readiness
 2. **`lib/settings/account.js`** — profile name, auth method connect/remove,
    password reset; surface-agnostic (accepts container param)
 3. **`lib/settings/team.js`** — member list, role changes, removal, invite send;
@@ -699,7 +699,8 @@ Objective: make settings feel like part of the same product, not a separate UI.
    chart; plan selection via API
 5. **`lib/settings/schedules.js`** — automated jobs CRUD, cron schedule
    management
-6. **`lib/integration-http.js`** — shared fetch wrapper for integration endpoints
+6. **`lib/integration-http.js`** — shared fetch wrapper for integration
+   endpoints
 7. **`bb-settings.js` retired** — all section logic extracted to ES modules
 
 **Architectural decision:** Used `lib/settings/*.js` section modules rather than

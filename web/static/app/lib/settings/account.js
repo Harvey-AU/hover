@@ -62,20 +62,9 @@ const AUTH_METHOD_DEFS = [
   },
 ];
 
-// ── Module state ───────────────────────────────────────────────────────────────
-
-let authMethods = [];
-let authIdentities = [];
-let authUserEmail = "";
-
-/** @returns {{ authMethods: string[], authIdentities: object[], authUserEmail: string }} */
-export function getAccountState() {
-  return { authMethods, authIdentities, authUserEmail };
-}
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-export function normaliseAuthProvider(provider) {
+function normaliseAuthProvider(provider) {
   const value = (provider || "").trim().toLowerCase();
   if (value === "slack") return "slack_oidc";
   if (
@@ -102,7 +91,7 @@ function getAuthMethodDef(provider) {
   );
 }
 
-export function formatAuthMethod(method) {
+function formatAuthMethod(method) {
   const value = normaliseAuthProvider(method) || method;
   return getAuthMethodDef(value).label;
 }
@@ -463,10 +452,6 @@ export async function loadAccountDetails(container) {
       if (normalised) connectedProviders.add(normalised);
     });
   }
-
-  authMethods = Array.from(connectedProviders);
-  authIdentities = identities;
-  authUserEmail = email;
 
   // Build method models for rendering
   const methodModels = AUTH_METHOD_DEFS.map((def) => {
