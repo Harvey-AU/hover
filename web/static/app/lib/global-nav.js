@@ -442,8 +442,21 @@ function initNotifications(navEl) {
     await refreshBadge();
     await subscribeRealtime();
   });
-  refreshBadge();
-  subscribeRealtime();
+  // Wait for Supabase SDK before first fetch (avoids auth-session init error).
+  if (window.BB_APP?.coreReady) {
+    window.BB_APP.coreReady
+      .then(() => {
+        refreshBadge();
+        subscribeRealtime();
+      })
+      .catch(() => {
+        refreshBadge();
+        subscribeRealtime();
+      });
+  } else {
+    refreshBadge();
+    subscribeRealtime();
+  }
 }
 
 // ── Quota display ──────────────────────────────────────────────────────────────
