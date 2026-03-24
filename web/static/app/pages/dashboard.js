@@ -5,8 +5,7 @@
  * (hover-job-card), job creation form, org creation modal, admin
  * actions, and realtime subscriptions.
  *
- * Remaining legacy dependency: bb-domain-search.js (provides
- * window.BBDomainSearch for job creation autocomplete).
+ * No remaining legacy script dependencies.
  */
 
 import { get, post, put, del } from "/app/lib/api-client.js";
@@ -16,6 +15,10 @@ import { showToast } from "/app/components/hover-toast.js";
 import { formatCount } from "/app/lib/formatters.js";
 import { initCreateOrgModal } from "/app/lib/settings/organisations.js";
 import { initAdminResetButton } from "/app/lib/admin.js";
+import {
+  ensureDomainByName,
+  setupDomainSearchInput,
+} from "/app/lib/domain-search.js";
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -63,11 +66,11 @@ async function init() {
     if (form) form.addEventListener("submit", handleJobCreation);
   }
 
-  // Domain search autocomplete (bb-domain-search.js provides BBDomainSearch)
+  // Domain search autocomplete
   const domainInput = document.getElementById("jobDomain");
-  if (domainInput && window.BBDomainSearch) {
+  if (domainInput) {
     const container = domainInput.closest(".bb-domain-search");
-    window.BBDomainSearch.setupDomainSearchInput({
+    setupDomainSearchInput({
       input: domainInput,
       container: container || domainInput.parentElement,
       clearOnSelect: false,
@@ -327,20 +330,17 @@ async function handleJobCreation(event) {
     return;
   }
 
-  // Domain search integration (if loaded)
-  if (window.BBDomainSearch) {
-    try {
-      const ensuredDomain = await window.BBDomainSearch.ensureDomainByName(
-        domain,
-        { allowCreate: true }
-      );
-      if (ensuredDomain?.name) domain = ensuredDomain.name;
-    } catch (error) {
-      showToast(error.message || "Failed to create domain.", {
-        variant: "error",
-      });
-      return;
-    }
+  // Ensure domain exists (creates if needed)
+  try {
+    const ensuredDomain = await ensureDomainByName(domain, {
+      allowCreate: true,
+    });
+    if (ensuredDomain?.name) domain = ensuredDomain.name;
+  } catch (error) {
+    showToast(error.message || "Failed to create domain.", {
+      variant: "error",
+    });
+    return;
   }
 
   const domainField = document.getElementById("jobDomain");

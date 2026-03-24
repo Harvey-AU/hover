@@ -45,6 +45,7 @@ import {
 } from "/app/lib/settings/integrations/google.js";
 import { initCreateOrgModal } from "/app/lib/settings/organisations.js";
 import { initAdminResetButton } from "/app/lib/admin.js";
+import { handleInviteTokenFlow } from "/app/lib/invite-flow.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 function toast(variant, message) {
@@ -213,9 +214,7 @@ function setupAutomationTabs() {
 // ── Invite token handling ───────────────────────────────────────────────────────
 
 async function handleInviteToken() {
-  if (!window.BBInviteFlow?.handleInviteTokenFlow) return;
-
-  const result = await window.BBInviteFlow.handleInviteTokenFlow({
+  const result = await handleInviteTokenFlow({
     onAccepted: async () => {
       toast("success", "Invite accepted");
       await refreshSections();
