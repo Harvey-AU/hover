@@ -34,12 +34,38 @@ export class ApiError extends Error {
   }
 }
 
+// ── Configuration ──────────────────────────────────────────────────────────────
+
 /**
- * Retrieves the current Supabase bearer token.
+ * @typedef {object} ApiClientConfig
+ * @property {string} [baseUrl] — prepended to all paths (e.g. "https://adapt.app.goodnative.co")
+ * @property {() => Promise<string|null>} [tokenProvider] — custom token provider
+ */
+
+/** @type {ApiClientConfig} */
+let _config = {};
+
+/**
+ * Configure the API client for cross-origin use (e.g. Webflow extension).
+ * Call once at startup. Dashboard pages don't need this — defaults use
+ * same-origin requests with Supabase session auth.
+ *
+ * @param {ApiClientConfig} config
+ */
+export function configure(config) {
+  _config = { ..._config, ...config };
+}
+
+/**
+ * Retrieves the current bearer token.
+ * Uses custom tokenProvider if configured, otherwise falls back to Supabase session.
  * Returns null when no session is active (unauthenticated).
  * @returns {Promise<string|null>}
  */
 async function getBearerToken() {
+  if (_config.tokenProvider) {
+    return _config.tokenProvider();
+  }
   if (!window.supabase?.auth) {
     return null;
   }
@@ -93,11 +119,17 @@ async function buildHeaders(path, extra, body) {
 
   const token = await getBearerToken();
   if (token) {
-    // Only attach the bearer token for same-origin requests to avoid
-    // accidentally leaking credentials to third-party hosts.
-    const requestUrl = new URL(path, window.location.origin);
-    if (requestUrl.origin === window.location.origin) {
+    if (_config.baseUrl) {
+      // Cross-origin mode (e.g. extension): always attach token — the
+      // baseUrl is the trusted API host configured at startup.
       headers.set("Authorization", `Bearer ${token}`);
+    } else {
+      // Same-origin mode (dashboard): only attach for same-origin requests
+      // to avoid accidentally leaking credentials to third-party hosts.
+      const requestUrl = new URL(path, window.location.origin);
+      if (requestUrl.origin === window.location.origin) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
     }
   }
 
@@ -136,7 +168,9 @@ export async function request(path, init = {}) {
     rawBodyForHeaders
   );
 
-  const response = await fetch(path, {
+  const url = _config.baseUrl ? `${_config.baseUrl}${path}` : path;
+
+  const response = await fetch(url, {
     ...fetchInit,
     headers,
     body: bodyToSend,
@@ -243,4 +277,4 @@ export function del(path, init = {}) {
   return request(path, { ...init, method: "DELETE" });
 }
 
-export default { request, get, post, put, patch, del, ApiError };
+export default { configure, request, get, post, put, patch, del, ApiError };

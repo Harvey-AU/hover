@@ -224,6 +224,72 @@ export function formatUrl(url) {
   return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 }
 
+// ─── CSV / Export ─────────────────────────────────────────────────────────────
+
+/**
+ * Escapes a value for safe inclusion in a CSV cell.
+ * Wraps in double-quotes and escapes internal quotes when the value
+ * contains commas, quotes, or newlines.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function escapeCSVValue(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+/**
+ * Sanitises a string for use in a filename.
+ * Replaces unsafe characters with hyphens and collapses runs.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function sanitiseForFilename(value) {
+  return value
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "")
+    .substring(0, 100);
+}
+
+/**
+ * Triggers a browser file download from in-memory content.
+ *
+ * @param {string} content — file content
+ * @param {string} mimeType — e.g. "text/csv"
+ * @param {string} filename — e.g. "export.csv"
+ */
+export function triggerFileDownload(content, mimeType, filename) {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Returns initials from a name string.
+ * e.g. "Simon Smallchua" → "SS", "simon" → "S"
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+export function getInitials(value) {
+  if (!value) return "?";
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0][0].toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default {
   formatDate,
   formatDateTime,
@@ -234,4 +300,8 @@ export default {
   formatStatus,
   statusCategory,
   formatUrl,
+  escapeCSVValue,
+  sanitiseForFilename,
+  triggerFileDownload,
+  getInitials,
 };
