@@ -57,10 +57,10 @@ async function init() {
     }
   });
 
-  // Job creation form
-  const createJobForm = document.getElementById("createJobForm");
-  if (createJobForm) {
-    createJobForm.addEventListener("submit", handleJobCreation);
+  // Job creation forms (inline "Start Crawl" + modal "Create Job")
+  for (const formId of ["dashboardJobForm", "createJobForm"]) {
+    const form = document.getElementById(formId);
+    if (form) form.addEventListener("submit", handleJobCreation);
   }
 
   // Org creation modal
