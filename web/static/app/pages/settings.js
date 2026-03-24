@@ -25,6 +25,21 @@ import {
   loadSchedules,
   setupSchedulesActions,
 } from "/app/lib/settings/schedules.js";
+import {
+  setupSlackIntegration,
+  loadSlackConnections,
+  handleSlackOAuthCallback,
+} from "/app/lib/settings/integrations/slack.js";
+import {
+  setupWebflowIntegration,
+  loadWebflowConnections,
+  handleWebflowOAuthCallback,
+} from "/app/lib/settings/integrations/webflow.js";
+import {
+  setupGoogleIntegration,
+  loadGoogleConnections,
+  handleGoogleOAuthCallback,
+} from "/app/lib/settings/integrations/google.js";
 import { initAdminResetButton } from "/app/lib/admin.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
@@ -57,6 +72,9 @@ async function refreshSections() {
     });
     await loadUsageHistory(c.plans);
     await loadSchedules(c.schedules);
+    await loadSlackConnections();
+    await loadWebflowConnections();
+    await loadGoogleConnections();
   } catch (err) {
     console.error("ES module refresh failed:", err);
   }
@@ -116,6 +134,23 @@ async function init() {
   } catch (err) {
     console.error("Failed to initialise ES settings sections:", err);
     toast("error", "Some settings sections failed to load.");
+  }
+
+  // Integration setup and OAuth callbacks.
+  setupSlackIntegration();
+  setupWebflowIntegration();
+  setupGoogleIntegration();
+  handleSlackOAuthCallback();
+  handleWebflowOAuthCallback();
+  await handleGoogleOAuthCallback();
+
+  // Load integration connections.
+  try {
+    await loadSlackConnections();
+    await loadWebflowConnections();
+    await loadGoogleConnections();
+  } catch (err) {
+    console.error("Failed to load integration connections:", err);
   }
 
   // Admin section (only visible to system_admin users).
