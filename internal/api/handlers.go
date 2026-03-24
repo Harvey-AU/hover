@@ -422,13 +422,13 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
 	mux.HandleFunc("/jobs/", h.ServeJobDetails)
 
-	// Web Components static files
-	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir("./web/static/js/"))))
-	mux.Handle("/styles/", http.StripPrefix("/styles/", http.FileServer(http.Dir("./web/static/styles/"))))
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("./web/static/assets/"))))
+	// Static assets — served with cache headers to reduce request volume.
+	mux.Handle("/js/", withCacheControl(http.StripPrefix("/js/", http.FileServer(http.Dir("./web/static/js/")))))
+	mux.Handle("/styles/", withCacheControl(http.StripPrefix("/styles/", http.FileServer(http.Dir("./web/static/styles/")))))
+	mux.Handle("/assets/", withCacheControl(http.StripPrefix("/assets/", http.FileServer(http.Dir("./web/static/assets/")))))
 	// ES module app — new frontend architecture (Phase 0+)
-	mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.Dir("./web/static/app/"))))
-	mux.Handle("/web/", http.StripPrefix("/web/", h.jsFileServer(http.Dir("./web/"))))
+	mux.Handle("/app/", withCacheControl(http.StripPrefix("/app/", http.FileServer(http.Dir("./web/static/app/")))))
+	mux.Handle("/web/", withCacheControl(http.StripPrefix("/web/", h.jsFileServer(http.Dir("./web/")))))
 }
 
 // requireSystemAdmin ensures the current request is authenticated and performed by a system administrator.
@@ -803,6 +803,16 @@ func calculateDateRange(dateRange, timezone string) (*time.Time, *time.Time) {
 	}
 
 	return startDate, endDate
+}
+
+// withCacheControl wraps a handler to set Cache-Control on static assets.
+// Uses a short max-age so browsers cache modules between navigations but
+// still revalidate within a reasonable window on deploy.
+func withCacheControl(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=60")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // jsFileServer creates a file server that sets correct MIME types for JavaScript files
