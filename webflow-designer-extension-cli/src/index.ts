@@ -87,6 +87,58 @@ declare const webflow: {
   setExtensionSize: (size: ExtensionPanelSize) => Promise<null>;
 };
 
+// Shared modules exposed by lib/bridge.js via window.HoverLib
+declare const HoverLib: {
+  api: {
+    configure: (config: {
+      baseUrl?: string;
+      tokenProvider?: () => Promise<string | null>;
+    }) => void;
+    get: (path: string, init?: RequestInit) => Promise<unknown>;
+    post: (
+      path: string,
+      body?: unknown,
+      init?: RequestInit
+    ) => Promise<unknown>;
+    patch: (
+      path: string,
+      body?: unknown,
+      init?: RequestInit
+    ) => Promise<unknown>;
+    del: (path: string, init?: RequestInit) => Promise<unknown>;
+    request: (path: string, init?: RequestInit) => Promise<unknown>;
+  };
+  fmt: {
+    formatDate: (value: string | null | undefined) => string;
+    formatDateTime: (value: string | null | undefined) => string;
+    formatRelativeTime: (value: string | null | undefined) => string;
+    formatDuration: (ms: number | null | undefined) => string;
+    formatCount: (value: number | null | undefined) => string;
+    formatPercent: (
+      value: number | null | undefined,
+      decimals?: number
+    ) => string;
+    formatStatus: (status: string) => string;
+    statusCategory: (status: string) => string;
+    formatUrl: (url: string | null | undefined) => string;
+    escapeCSVValue: (value: unknown) => string;
+    sanitiseForFilename: (value: string) => string;
+    triggerFileDownload: (
+      content: string,
+      mimeType: string,
+      filename: string
+    ) => void;
+    getInitials: (value: string) => string;
+  };
+  http: {
+    fetchWithTimeout: (
+      url: string,
+      options?: RequestInit,
+      context?: string
+    ) => Promise<Response>;
+  };
+};
+
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
 
 type SuccessResponse<T> = {
@@ -1438,41 +1490,22 @@ function prepareExportColumns(
   return { keys, headers: keys };
 }
 
-function escapeCSVValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  const text = String(value);
-  if (/[",\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-
-  return text;
-}
+// CSV/file utilities — delegated to shared formatters via HoverLib bridge
+const escapeCSVValue = (value: unknown): string =>
+  HoverLib?.fmt?.escapeCSVValue?.(value) ?? String(value ?? "");
 
 function triggerFileDownload(
   content: string,
   mimeType: string,
   filename: string
 ): void {
-  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  if (HoverLib?.fmt?.triggerFileDownload) {
+    HoverLib.fmt.triggerFileDownload(content, mimeType, filename);
+  }
 }
 
-function sanitizeForFilename(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+const sanitizeForFilename = (value: string): string =>
+  HoverLib?.fmt?.sanitiseForFilename?.(value) ?? value;
 
 // ---------------------------------------------------------------------------
 // Mini chart
@@ -2335,6 +2368,15 @@ async function initialise(): Promise<void> {
     localStorage.setItem(API_BASE_STORAGE_KEY, state.apiBaseUrl);
   } catch (_error) {
     // ignore
+  }
+
+  // Configure shared API client for cross-origin extension use.
+  // This enables progressive migration of apiRequest() calls to HoverLib.api.
+  if (typeof HoverLib !== "undefined" && HoverLib?.api?.configure) {
+    HoverLib.api.configure({
+      baseUrl: state.apiBaseUrl,
+      tokenProvider: async () => getStoredToken(),
+    });
   }
 
   initHoverJobCard();

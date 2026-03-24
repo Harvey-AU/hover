@@ -9,14 +9,12 @@
  */
 
 import * as apiClient from "/app/lib/api-client.js";
-import * as authSession from "/app/lib/auth-session.js";
 import * as formatters from "/app/lib/formatters.js";
 import * as integrationHttp from "/app/lib/integration-http.js";
 
 // Expose shared modules for index.js consumption
 window.HoverLib = {
   api: apiClient,
-  auth: authSession,
   fmt: formatters,
   http: integrationHttp,
 };
