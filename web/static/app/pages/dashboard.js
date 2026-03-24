@@ -63,6 +63,26 @@ async function init() {
     if (form) form.addEventListener("submit", handleJobCreation);
   }
 
+  // Domain search autocomplete (bb-domain-search.js provides BBDomainSearch)
+  const domainInput = document.getElementById("jobDomain");
+  if (domainInput && window.BBDomainSearch) {
+    const container = domainInput.closest(".bb-domain-search");
+    window.BBDomainSearch.setupDomainSearchInput({
+      input: domainInput,
+      container: container || domainInput.parentElement,
+      clearOnSelect: false,
+      onSelectDomain: (domain) => {
+        domainInput.value = domain.name;
+      },
+      onCreateDomain: (domain) => {
+        domainInput.value = domain.name;
+      },
+      onError: (message) => {
+        showToast(message || "Failed to create domain.", { variant: "error" });
+      },
+    });
+  }
+
   // Org creation modal
   initCreateOrgModal({ onCreated: () => refresh() });
 
