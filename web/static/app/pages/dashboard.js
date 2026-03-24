@@ -66,13 +66,13 @@ async function init() {
   // Org creation modal
   initCreateOrgModal({ onCreated: () => refresh() });
 
-  // Admin section
+  // Initial render (waitForSession inside refresh handles Supabase timing)
+  await refresh();
+
+  // Admin section (must run after refresh so Supabase session is available)
   await initAdminResetButton("resetDbBtn", {
     containerSelector: "#adminGroup",
   });
-
-  // Initial render
-  await refresh();
 
   // Subscribe to realtime job updates (falls back to 10 s polling when
   // Supabase realtime is unavailable, e.g. on preview branches).
