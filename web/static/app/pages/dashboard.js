@@ -86,6 +86,9 @@ async function init() {
   // Org creation modal
   initCreateOrgModal({ onCreated: () => refresh() });
 
+  // Network monitoring
+  setupNetworkMonitoring();
+
   // Initial render (waitForSession inside refresh handles Supabase timing)
   await refresh();
 
@@ -453,6 +456,50 @@ async function cancelJob(jobId) {
   } catch (err) {
     showToast(`Failed to cancel job: ${err.message}`, { variant: "error" });
   }
+}
+
+// ── Network monitoring ──────────────────────────────────────────────────────────
+
+function updateNetworkStatus() {
+  const indicator = document.querySelector(".status-indicator");
+  if (!indicator) return;
+  if (navigator.onLine) {
+    indicator.textContent = "";
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    const label = document.createElement("span");
+    label.textContent = "Live";
+    indicator.appendChild(dot);
+    indicator.appendChild(label);
+  } else {
+    indicator.textContent = "";
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    dot.style.background = "#ef4444";
+    const label = document.createElement("span");
+    label.textContent = "Offline";
+    indicator.appendChild(dot);
+    indicator.appendChild(label);
+  }
+}
+
+function setupNetworkMonitoring() {
+  updateNetworkStatus();
+
+  window.addEventListener("online", () => {
+    updateNetworkStatus();
+    showToast("Connection restored. Refreshing data...", {
+      variant: "success",
+    });
+    setTimeout(() => refresh(), 500);
+  });
+
+  window.addEventListener("offline", () => {
+    updateNetworkStatus();
+    showToast("Connection lost. Some features may not work.", {
+      variant: "error",
+    });
+  });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
