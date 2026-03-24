@@ -1,36 +1,21 @@
 /**
- * pages/dashboard.js — dashboard module entrypoint
+ * pages/dashboard.js — dashboard page orchestrator
  *
- * Phase 3: registers shared Web Components and provides the stats/jobs
- * rendering layer for the dashboard surface. Co-exists with remaining
- * legacy bb-* scripts (bb-data-binder, bb-global-nav, integrations).
+ * Owns all dashboard rendering and interaction: stats cards, job list
+ * (hover-job-card), job creation form, org creation modal, admin
+ * actions, and realtime subscriptions.
  *
- * Loading contract (dashboard.html):
- *   1. /config.js              — sets window.BBB_CONFIG
- *   2. /js/core.js defer       — Supabase init, window.BBAuth, window.BBB_CONFIG
- *   3. Supabase SDK            — loaded by core.js
- *   4. <script type="module">  — this file (runs after all deferred scripts)
- *
- * Responsibilities:
- *   - Register hover-* Web Components for use anywhere in the page
- *   - Render the jobs list using hover-job-card
- *   - Render stats cards using shared formatters
- *   - Handle create-job / close-create-job-modal / refresh-dashboard actions
- *   - restart-job and cancel-job actions
- *
- * What this does NOT touch (still handled by legacy scripts):
- *   - Auth modal and session management (auth.js, bb-data-binder.js)
- *   - Org switching (bb-global-nav.js, bb-data-binder.js)
- *   - Integrations (bb-slack.js, bb-webflow.js, bb-google.js)
- *   - Job creation form submission (bb-auth-extension.js handleDashboardJobCreation)
- *   - Admin functions (bb-admin.js)
+ * Remaining legacy dependency: bb-domain-search.js (provides
+ * window.BBDomainSearch for job creation autocomplete).
  */
 
-import { get, post, put } from "/app/lib/api-client.js";
+import { get, post, put, del } from "/app/lib/api-client.js";
 import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
 import { createJobCard } from "/app/components/hover-job-card.js";
 import { showToast } from "/app/components/hover-toast.js";
 import { formatCount } from "/app/lib/formatters.js";
+import { initCreateOrgModal } from "/app/lib/settings/organisations.js";
+import { initAdminResetButton } from "/app/lib/admin.js";
 
 // ── State ──────────────────────────────────────────────────────────────────────
 
@@ -46,24 +31,6 @@ let _initialised = false;
 async function init() {
   if (_initialised) return;
   _initialised = true;
-  // Suppress legacy binder-inserted job cards — the binder clones
-  // bbb-template="job" elements and inserts them as siblings; hide on arrival.
-  const jobsList = document.querySelector(".bb-jobs-list");
-  if (jobsList) {
-    new MutationObserver((mutations) => {
-      mutations.forEach((m) => {
-        m.addedNodes.forEach((node) => {
-          if (
-            node instanceof HTMLElement &&
-            node.classList.contains("bb-job-card")
-          ) {
-            node.style.display = "none";
-          }
-        });
-      });
-    }).observe(jobsList, { childList: true });
-  }
-
   // Wire date range selector
   const dateRange = document.getElementById("dateRange");
   if (dateRange) {
@@ -88,6 +55,20 @@ async function init() {
       e.preventDefault();
       closeCreateJobModal();
     }
+  });
+
+  // Job creation form
+  const createJobForm = document.getElementById("createJobForm");
+  if (createJobForm) {
+    createJobForm.addEventListener("submit", handleJobCreation);
+  }
+
+  // Org creation modal
+  initCreateOrgModal({ onCreated: () => refresh() });
+
+  // Admin section
+  await initAdminResetButton("resetDbBtn", {
+    containerSelector: "#adminGroup",
   });
 
   // Initial render
@@ -175,11 +156,6 @@ async function refreshJobs() {
 }
 
 function renderJobCards(container, jobs) {
-  // Hide legacy bbb-template cards inserted by bb-data-binder
-  container
-    .querySelectorAll("[bbb-template='job'], .bb-job-card")
-    .forEach((el) => (el.style.display = "none"));
-
   // Empty state
   if (jobs.length === 0) {
     _jobCards.forEach((card) => card.remove());
@@ -312,6 +288,125 @@ function closeCreateJobModal() {
   }
 }
 
+// ── Job creation ────────────────────────────────────────────────────────────────
+
+async function handleJobCreation(event) {
+  event.preventDefault();
+  const formData = new FormData(event.target);
+
+  let domain = formData.get("domain");
+  const maxPages = parseInt(formData.get("max_pages"));
+  const concurrencyValue = formData.get("concurrency");
+  const scheduleInterval = formData.get("schedule_interval_hours");
+
+  if (!domain) {
+    showToast("Domain is required", { variant: "error" });
+    return;
+  }
+
+  // Domain search integration (if loaded)
+  if (window.BBDomainSearch) {
+    try {
+      const ensuredDomain = await window.BBDomainSearch.ensureDomainByName(
+        domain,
+        { allowCreate: true }
+      );
+      if (ensuredDomain?.name) domain = ensuredDomain.name;
+    } catch (error) {
+      showToast(error.message || "Failed to create domain.", {
+        variant: "error",
+      });
+      return;
+    }
+  }
+
+  const domainField = document.getElementById("jobDomain");
+  if (domainField) domainField.value = domain;
+
+  if (maxPages < 0 || maxPages > 10000) {
+    showToast("Maximum pages must be between 0 and 10,000", {
+      variant: "error",
+    });
+    return;
+  }
+
+  const requestBody = {
+    domain,
+    max_pages: maxPages,
+    use_sitemap: true,
+    find_links: true,
+  };
+  if (
+    concurrencyValue &&
+    concurrencyValue !== "" &&
+    concurrencyValue !== "default"
+  ) {
+    requestBody.concurrency = parseInt(concurrencyValue);
+  }
+
+  try {
+    if (scheduleInterval && scheduleInterval !== "") {
+      const hours = parseInt(scheduleInterval);
+      if (isNaN(hours) || ![6, 12, 24, 48].includes(hours)) {
+        showToast(
+          "Invalid schedule interval. Must be 6, 12, 24, or 48 hours.",
+          {
+            variant: "error",
+          }
+        );
+        return;
+      }
+
+      const scheduler = await post("/v1/schedulers", {
+        domain,
+        schedule_interval_hours: hours,
+        max_pages: maxPages,
+        find_links: true,
+        concurrency: requestBody.concurrency || 20,
+      });
+
+      try {
+        await post("/v1/jobs", { ...requestBody, scheduler_id: scheduler.id });
+      } catch (jobError) {
+        console.error(
+          "Failed to create initial job, cleaning up scheduler:",
+          jobError
+        );
+        try {
+          await del(`/v1/schedulers/${encodeURIComponent(scheduler.id)}`);
+        } catch (cleanupError) {
+          console.error("Failed to clean up scheduler:", cleanupError);
+        }
+        throw jobError;
+      }
+
+      closeCreateJobModal();
+      showToast(`Scheduled job created for ${domain} (every ${hours} hours)`, {
+        variant: "success",
+      });
+    } else {
+      await post("/v1/jobs", requestBody);
+
+      const df = document.getElementById("jobDomain");
+      const mp = document.getElementById("maxPages");
+      const si = document.getElementById("scheduleInterval");
+      if (df) df.value = "";
+      if (mp) mp.value = "0";
+      if (si) si.value = "";
+
+      closeCreateJobModal();
+      showToast(`Job created for ${domain}`, { variant: "success" });
+    }
+
+    await refresh();
+  } catch (error) {
+    console.error("Failed to create job:", error);
+    showToast(error.message || "Failed to create job. Please try again.", {
+      variant: "error",
+    });
+  }
+}
+
 // ── Job actions ────────────────────────────────────────────────────────────────
 
 async function restartJob(job) {
@@ -385,8 +480,5 @@ if (document.readyState === "loading") {
 }
 
 // ── Legacy bridges ─────────────────────────────────────────────────────────────
-// bb-auth-extension.js calls these globals after job creation.
-// Expose them so the legacy script can close the modal and trigger a refresh
-// without depending on bb-dashboard-actions.js.
-window.closeCreateJobModal = closeCreateJobModal;
+// Expose refresh for external callers (e.g. global-nav org-switch).
 window.HoverDashboard = { refresh };
