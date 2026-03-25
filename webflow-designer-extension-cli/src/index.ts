@@ -2375,7 +2375,7 @@ async function initialise(): Promise<void> {
   if (typeof HoverLib !== "undefined" && HoverLib?.api?.configure) {
     HoverLib.api.configure({
       baseUrl: state.apiBaseUrl,
-      tokenProvider: async () => getStoredToken(),
+      tokenProvider: () => Promise.resolve(getStoredToken()),
     });
   }
 
