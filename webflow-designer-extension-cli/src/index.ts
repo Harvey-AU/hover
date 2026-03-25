@@ -105,6 +105,7 @@ declare const HoverLib: {
       body?: unknown,
       init?: RequestInit
     ) => Promise<unknown>;
+    put: (path: string, body?: unknown, init?: RequestInit) => Promise<unknown>;
     del: (path: string, init?: RequestInit) => Promise<unknown>;
     request: (path: string, init?: RequestInit) => Promise<unknown>;
   };
@@ -140,13 +141,6 @@ declare const HoverLib: {
 };
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
-
-type SuccessResponse<T> = {
-  status: string;
-  data?: T;
-  message?: string;
-  request_id?: string;
-};
 
 type ApiError = {
   status: number;
@@ -299,31 +293,8 @@ function extractErrorMessage(rawBody?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Avatar helpers — mirrors auth.js getInitials / setUserAvatar / getGravatarUrl
+// Avatar helpers
 // ---------------------------------------------------------------------------
-
-function getInitials(value: string): string {
-  const raw = (value || "").trim();
-  if (!raw) return "?";
-
-  if (raw.includes(" ")) {
-    const parts = raw.split(/\s+/).filter(Boolean).slice(0, 2);
-    if (parts.length) {
-      return parts.map((p) => p.charAt(0).toUpperCase()).join("");
-    }
-  }
-
-  const emailPrefix = raw.includes("@") ? raw.split("@")[0] : raw;
-  const parts = emailPrefix.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return parts
-      .slice(0, 2)
-      .map((p) => p.charAt(0).toUpperCase())
-      .join("");
-  }
-
-  return emailPrefix.slice(0, 2).toUpperCase();
-}
 
 async function getGravatarUrl(email: string, size = 80): Promise<string> {
   const normalised = (email || "").trim().toLowerCase();
@@ -384,7 +355,7 @@ async function updateAvatarFromState(): Promise<void> {
   if (!avatarEl) return;
 
   const displayName = state.userDisplayName || state.userEmail || "";
-  const initials = displayName ? getInitials(displayName) : "?";
+  const initials = displayName ? HoverLib.fmt.getInitials(displayName) : "?";
 
   // Use the OAuth avatar_url from the auth postMessage if available,
   // otherwise fall back to Gravatar via the shared renderAvatar helper.
@@ -775,9 +746,7 @@ async function refreshUsage(): Promise<void> {
   if (!state.token) return;
 
   try {
-    const usageData = await apiRequest<UsageResponse>("/v1/usage", {
-      method: "GET",
-    });
+    const usageData = (await HoverLib.api.get("/v1/usage")) as UsageResponse;
     state.usage = usageData.usage || null;
     renderUsage(state.usage);
   } catch (error) {
@@ -947,12 +916,9 @@ async function refreshCurrentJob(): Promise<void> {
 
   try {
     jobPollInFlight = true;
-    const response = await apiRequest<JobListResponse>(
-      "/v1/jobs?limit=50&include=stats",
-      {
-        method: "GET",
-      }
-    );
+    const response = (await HoverLib.api.get(
+      "/v1/jobs?limit=50&include=stats"
+    )) as JobListResponse;
     const latest = pickLatestJobForCurrentSite(response.jobs);
     state.currentJob = latest;
     renderJobState(state.currentJob);
@@ -989,72 +955,12 @@ async function refreshCurrentJob(): Promise<void> {
   }
 }
 
-function parseApiResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const error: ApiError = {
-      status: response.status,
-      message: response.statusText || "Request failed",
-      body: "",
-    };
-    return response
-      .text()
-      .then((bodyText) => {
-        error.body = bodyText;
-        throw error;
-      })
-      .catch(() => {
-        throw error;
-      });
-  }
-
-  return response
-    .json()
-    .then((payload: SuccessResponse<T>) => {
-      if (!payload || payload.status !== "success") {
-        throw new Error(payload.message || "Unexpected response format");
-      }
-
-      if (payload.data === undefined) {
-        throw new Error("Missing response data");
-      }
-
-      return payload.data;
-    })
-    .catch((error) => {
-      if (error instanceof SyntaxError) {
-        throw new Error("Failed to parse API response");
-      }
-      throw error;
-    });
-}
-
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const headers = new Headers(options.headers as HeadersInit);
-  headers.set("Accept", "application/json");
-
-  if (state.token) {
-    headers.set("Authorization", `Bearer ${state.token}`);
-  }
-
-  const response = await fetch(`${state.apiBaseUrl}${path}`, {
-    ...options,
-    headers,
-  });
-
-  return parseApiResponse<T>(response);
-}
-
-// Wire hover-job-card's issue-tab fetcher to the extension's apiRequest.
+// Wire hover-job-card's issue-tab fetcher to the shared API client.
 // window.HoverJobCard is set by hover-job-card.js (module script, loaded before index.ts).
 function initHoverJobCard(): void {
   const hoverJobCard = (window as any).HoverJobCard;
   if (hoverJobCard?.setApiFetcher) {
-    hoverJobCard.setApiFetcher((path: string) =>
-      apiRequest(path, { method: "GET" })
-    );
+    hoverJobCard.setApiFetcher((path: string) => HoverLib.api.get(path));
   }
 }
 
@@ -1296,53 +1202,6 @@ function getIssueCounts(job: JobItem): {
 }
 
 // ---------------------------------------------------------------------------
-// Date formatting
-// ---------------------------------------------------------------------------
-
-function formatShortDate(value?: string): string {
-  if (!value) {
-    return "";
-  }
-
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    return "";
-  }
-
-  const day = d.getDate();
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const month = months[d.getMonth()];
-  const hours = d.getHours();
-  const minutes = d.getMinutes().toString().padStart(2, "0");
-  const ampm = hours >= 12 ? "pm" : "am";
-  const h = hours % 12 || 12;
-
-  const suffix =
-    day % 10 === 1 && day !== 11
-      ? "st"
-      : day % 10 === 2 && day !== 12
-        ? "nd"
-        : day % 10 === 3 && day !== 13
-          ? "rd"
-          : "th";
-
-  return `${day}${suffix} ${month} ${h}:${minutes}${ampm}`;
-}
-
-// ---------------------------------------------------------------------------
 // Recent results list (completed jobs only)
 // ---------------------------------------------------------------------------
 
@@ -1441,13 +1300,9 @@ function buildResultCardFallback(job: JobItem, compact = false): HTMLElement {
 
 async function exportJob(jobId: string): Promise<void> {
   try {
-    const payload = await apiRequest<JobExportPayload>(
-      `/v1/jobs/${jobId}/export`,
-      {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      }
-    );
+    const payload = (await HoverLib.api.get(
+      `/v1/jobs/${jobId}/export`
+    )) as JobExportPayload;
 
     const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
     const { keys, headers } = prepareExportColumns(payload.columns, tasks);
@@ -1580,7 +1435,9 @@ function renderMiniChart(jobs: JobItem[]): void {
     bar.className = "chart-bar";
     bar.role = "button";
     bar.tabIndex = 0;
-    const dateStr = formatShortDate(job.completed_at || job.created_at);
+    const dateStr = HoverLib.fmt.formatDateTime(
+      job.completed_at || job.created_at
+    );
     bar.title = `${dateStr}\nStatus: Completed\nOK: ${row.okCount}\nError: ${row.errorCount}\nTotal pages: ${job.total_tasks.toLocaleString()}`;
 
     const detailPath = `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`;
@@ -1780,12 +1637,9 @@ async function loadLatestJob(): Promise<void> {
   }
 
   try {
-    const response = await apiRequest<JobListResponse>(
-      "/v1/jobs?limit=50&include=stats",
-      {
-        method: "GET",
-      }
-    );
+    const response = (await HoverLib.api.get(
+      "/v1/jobs?limit=50&include=stats"
+    )) as JobListResponse;
 
     const latest = pickLatestJobForCurrentSite(response.jobs);
 
@@ -1816,10 +1670,10 @@ async function loadUsageAndOrgs(): Promise<void> {
     return;
   }
 
-  const [orgData, usageData] = await Promise.all([
-    apiRequest<OrganisationsResponse>("/v1/organisations", { method: "GET" }),
-    apiRequest<UsageResponse>("/v1/usage", { method: "GET" }),
-  ]);
+  const [orgData, usageData] = (await Promise.all([
+    HoverLib.api.get("/v1/organisations"),
+    HoverLib.api.get("/v1/usage"),
+  ])) as [OrganisationsResponse, UsageResponse];
 
   state.organisations = orgData.organisations || [];
   state.activeOrganisationId =
@@ -1835,9 +1689,7 @@ async function loadCurrentSchedule(): Promise<void> {
   }
 
   const siteDomain = normalizeDomain(state.siteDomain);
-  const schedulers = await apiRequest<Scheduler[]>("/v1/schedulers", {
-    method: "GET",
-  });
+  const schedulers = (await HoverLib.api.get("/v1/schedulers")) as Scheduler[];
   const matching = schedulers.find(
     (scheduler) => normalizeDomain(scheduler.domain) === siteDomain
   );
@@ -1851,10 +1703,9 @@ async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
     return null;
   }
 
-  const connections = await apiRequest<WebflowConnection[]>(
-    "/v1/integrations/webflow",
-    { method: "GET" }
-  );
+  const connections = (await HoverLib.api.get(
+    "/v1/integrations/webflow"
+  )) as WebflowConnection[];
 
   if (!connections || connections.length === 0) {
     state.webflowConnected = false;
@@ -1872,10 +1723,9 @@ async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
     let page = 1;
 
     while (true) {
-      const sites = await apiRequest<WebflowSitesResponse>(
-        `/v1/integrations/webflow/${connection.id}/sites?page=${page}&limit=50`,
-        { method: "GET" }
-      );
+      const sites = (await HoverLib.api.get(
+        `/v1/integrations/webflow/${connection.id}/sites?page=${page}&limit=50`
+      )) as WebflowSitesResponse;
 
       const candidate = sites.sites?.find((site) => {
         const domain = normalizeDomain(site.primary_domain);
@@ -1936,13 +1786,9 @@ async function setWebflowAutoPublish(enabled: boolean): Promise<void> {
   };
 
   try {
-    await apiRequest<WebflowSiteSetting>(
+    await HoverLib.api.put(
       `/v1/integrations/webflow/sites/${siteSetting.webflow_site_id}/auto-publish`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
+      payload
     );
   } catch (error) {
     // Revert on failure.
@@ -1973,12 +1819,8 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const domain = state.siteDomain;
   if (value === "off") {
     if (state.currentScheduler) {
-      await apiRequest<any>(`/v1/schedulers/${state.currentScheduler.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          is_enabled: false,
-        }),
+      await HoverLib.api.put(`/v1/schedulers/${state.currentScheduler.id}`, {
+        is_enabled: false,
       });
     }
     state.currentScheduler = null;
@@ -1990,28 +1832,17 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const scheduleHours = Number(value);
 
   if (!state.currentScheduler) {
-    const created = await apiRequest<Scheduler>("/v1/schedulers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        domain,
-        schedule_interval_hours: scheduleHours,
-      }),
-    });
+    const created = (await HoverLib.api.post("/v1/schedulers", {
+      domain,
+      schedule_interval_hours: scheduleHours,
+    })) as Scheduler;
     state.currentScheduler = created;
     setStatus("Schedule enabled.", "");
   } else {
-    const updated = await apiRequest<Scheduler>(
+    const updated = (await HoverLib.api.put(
       `/v1/schedulers/${state.currentScheduler.id}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          schedule_interval_hours: scheduleHours,
-          is_enabled: true,
-        }),
-      }
-    );
+      { schedule_interval_hours: scheduleHours, is_enabled: true }
+    )) as Scheduler;
     state.currentScheduler = updated;
     setStatus("Schedule updated.", "");
   }
@@ -2042,11 +1873,7 @@ async function runScanForCurrentSite(): Promise<void> {
     source_detail: "webflow_designer_check",
   };
 
-  const created = await apiRequest<JobItem>("/v1/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
+  const created = (await HoverLib.api.post("/v1/jobs", request)) as JobItem;
 
   state.currentJob = created;
   renderJobState(created);
@@ -2149,12 +1976,8 @@ async function switchOrganisation(): Promise<void> {
 
   setDisabledAll(true);
   try {
-    await apiRequest<{ organisation: unknown }>("/v1/organisations/switch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        organisation_id: select.value,
-      }),
+    await HoverLib.api.post("/v1/organisations/switch", {
+      organisation_id: select.value,
     });
     state.activeOrganisationId = select.value;
     await refreshDashboard();
@@ -2179,13 +2002,9 @@ async function connectWebflow(): Promise<void> {
     }
   }
 
-  const response = await apiRequest<{ auth_url: string }>(
-    "/v1/integrations/webflow",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    }
-  );
+  const response = (await HoverLib.api.post("/v1/integrations/webflow")) as {
+    auth_url: string;
+  };
 
   const popup = window.open(
     response.auth_url,
@@ -2371,7 +2190,6 @@ async function initialise(): Promise<void> {
   }
 
   // Configure shared API client for cross-origin extension use.
-  // This enables progressive migration of apiRequest() calls to HoverLib.api.
   if (typeof HoverLib !== "undefined" && HoverLib?.api?.configure) {
     HoverLib.api.configure({
       baseUrl: state.apiBaseUrl,
