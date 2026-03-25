@@ -112,15 +112,20 @@ function applyProtectedRouteAuthGate(isAuthenticated) {
 
   if (shouldGate) {
     setPostAuthReturnTargetFromCurrentPath();
-    // Show login modal as the only visible UI while preserving current URL.
-    setTimeout(() => {
+    // Ensure the auth modal HTML is loaded, then show it.
+    (async () => {
+      await loadAuthModal();
+      await waitForAuthScript();
+      if (typeof window.setupAuthHandlers === "function") {
+        window.setupAuthHandlers();
+      }
       if (typeof window.showAuthModal === "function") {
         window.showAuthModal();
       }
       if (typeof window.showLoginForm === "function") {
         window.showLoginForm();
       }
-    }, 0);
+    })();
   }
 }
 
