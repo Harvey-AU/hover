@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "go-server",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/app"],
+      "port": 8080
+    },
+    {
+      "name": "webflow-extension",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "webflow-designer-extension-cli",
+      "port": 1337
+    }
+  ]
+}
