@@ -639,12 +639,13 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 
 // TaskQueryParams holds parameters for task listing queries
 type TaskQueryParams struct {
-	Limit       int
-	Offset      int
-	Status      string
-	CacheFilter string
-	PathFilter  string
-	OrderBy     string
+	Limit             int
+	Offset            int
+	Status            string
+	CacheFilter       string
+	PathFilter        string
+	PerformanceFilter string // "slow" (>1500ms) or "very_slow" (>4000ms)
+	OrderBy           string
 }
 
 // parseTaskQueryParams extracts and validates query parameters for task listing
@@ -669,6 +670,12 @@ func parseTaskQueryParams(r *http.Request) TaskQueryParams {
 	status := r.URL.Query().Get("status")     // Optional status filter
 	cacheFilter := r.URL.Query().Get("cache") // Optional cache filter (hit/miss)
 	pathFilter := r.URL.Query().Get("path")   // Optional path keyword filter
+
+	// Parse performance filter: "slow" (>1500ms) or "very_slow" (>4000ms)
+	performanceFilter := r.URL.Query().Get("performance")
+	if performanceFilter != "slow" && performanceFilter != "very_slow" {
+		performanceFilter = ""
+	}
 
 	// Parse sort parameter
 	sortParam := r.URL.Query().Get("sort") // Optional sort parameter
@@ -713,12 +720,13 @@ func parseTaskQueryParams(r *http.Request) TaskQueryParams {
 	}
 
 	return TaskQueryParams{
-		Limit:       limit,
-		Offset:      offset,
-		Status:      status,
-		CacheFilter: cacheFilter,
-		PathFilter:  pathFilter,
-		OrderBy:     orderBy,
+		Limit:             limit,
+		Offset:            offset,
+		Status:            status,
+		CacheFilter:       cacheFilter,
+		PathFilter:        pathFilter,
+		PerformanceFilter: performanceFilter,
+		OrderBy:           orderBy,
 	}
 }
 
@@ -797,6 +805,18 @@ func buildTaskQuery(jobID string, params TaskQueryParams) TaskQueryBuilder {
 		// HIT or DYNAMIC: cache performing optimally (cached, or inherently uncacheable)
 		baseQuery += ` AND (t.cache_status = 'HIT' OR t.cache_status = 'DYNAMIC')`
 		countQuery += ` AND (t.cache_status = 'HIT' OR t.cache_status = 'DYNAMIC')`
+	}
+
+	// Add performance filter: slow (>1500ms) or very_slow (>4000ms).
+	// NULLIF treats a stored 0 as absent so pages that were warmed but recorded
+	// 0 ms for second_response_time fall back to response_time correctly.
+	switch params.PerformanceFilter {
+	case "slow":
+		baseQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 1500`
+		countQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 1500`
+	case "very_slow":
+		baseQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 4000`
+		countQuery += ` AND COALESCE(NULLIF(t.second_response_time, 0), t.response_time) > 4000`
 	}
 
 	// Add path filter if provided (case-insensitive partial match)

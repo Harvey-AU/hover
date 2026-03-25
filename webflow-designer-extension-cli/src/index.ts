@@ -87,14 +87,60 @@ declare const webflow: {
   setExtensionSize: (size: ExtensionPanelSize) => Promise<null>;
 };
 
-type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
-
-type SuccessResponse<T> = {
-  status: string;
-  data?: T;
-  message?: string;
-  request_id?: string;
+// Shared modules exposed by lib/bridge.js via window.HoverLib
+declare const HoverLib: {
+  api: {
+    configure: (config: {
+      baseUrl?: string;
+      tokenProvider?: () => Promise<string | null>;
+    }) => void;
+    get: (path: string, init?: RequestInit) => Promise<unknown>;
+    post: (
+      path: string,
+      body?: unknown,
+      init?: RequestInit
+    ) => Promise<unknown>;
+    patch: (
+      path: string,
+      body?: unknown,
+      init?: RequestInit
+    ) => Promise<unknown>;
+    put: (path: string, body?: unknown, init?: RequestInit) => Promise<unknown>;
+    del: (path: string, init?: RequestInit) => Promise<unknown>;
+    request: (path: string, init?: RequestInit) => Promise<unknown>;
+  };
+  fmt: {
+    formatDate: (value: string | null | undefined) => string;
+    formatDateTime: (value: string | null | undefined) => string;
+    formatRelativeTime: (value: string | null | undefined) => string;
+    formatDuration: (ms: number | null | undefined) => string;
+    formatCount: (value: number | null | undefined) => string;
+    formatPercent: (
+      value: number | null | undefined,
+      decimals?: number
+    ) => string;
+    formatStatus: (status: string) => string;
+    statusCategory: (status: string) => string;
+    formatUrl: (url: string | null | undefined) => string;
+    escapeCSVValue: (value: unknown) => string;
+    sanitiseForFilename: (value: string) => string;
+    triggerFileDownload: (
+      content: string,
+      mimeType: string,
+      filename: string
+    ) => void;
+    getInitials: (value: string) => string;
+  };
+  http: {
+    fetchWithTimeout: (
+      url: string,
+      options?: RequestInit,
+      context?: string
+    ) => Promise<Response>;
+  };
 };
+
+type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
 
 type ApiError = {
   status: number;
@@ -175,23 +221,6 @@ type JobListResponse = {
   jobs: JobItem[];
 };
 
-type JobTask = {
-  id: string;
-  path: string;
-  url: string;
-  status: string;
-  response_time?: number;
-  second_response_time?: number;
-  source_url?: string;
-};
-
-type JobTasksResponse = {
-  tasks: JobTask[];
-  pagination?: {
-    total?: number;
-  };
-};
-
 type Scheduler = {
   id: string;
   domain: string;
@@ -264,31 +293,8 @@ function extractErrorMessage(rawBody?: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Avatar helpers — mirrors auth.js getInitials / setUserAvatar / getGravatarUrl
+// Avatar helpers
 // ---------------------------------------------------------------------------
-
-function getInitials(value: string): string {
-  const raw = (value || "").trim();
-  if (!raw) return "?";
-
-  if (raw.includes(" ")) {
-    const parts = raw.split(/\s+/).filter(Boolean).slice(0, 2);
-    if (parts.length) {
-      return parts.map((p) => p.charAt(0).toUpperCase()).join("");
-    }
-  }
-
-  const emailPrefix = raw.includes("@") ? raw.split("@")[0] : raw;
-  const parts = emailPrefix.split(/[._-]+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return parts
-      .slice(0, 2)
-      .map((p) => p.charAt(0).toUpperCase())
-      .join("");
-  }
-
-  return emailPrefix.slice(0, 2).toUpperCase();
-}
 
 async function getGravatarUrl(email: string, size = 80): Promise<string> {
   const normalised = (email || "").trim().toLowerCase();
@@ -349,7 +355,7 @@ async function updateAvatarFromState(): Promise<void> {
   if (!avatarEl) return;
 
   const displayName = state.userDisplayName || state.userEmail || "";
-  const initials = displayName ? getInitials(displayName) : "?";
+  const initials = displayName ? HoverLib.fmt.getInitials(displayName) : "?";
 
   // Use the OAuth avatar_url from the auth postMessage if available,
   // otherwise fall back to Gravatar via the shared renderAvatar helper.
@@ -644,26 +650,6 @@ function normalizeDomain(input: string): string {
   return trimmed.split("/")[0] || trimmed;
 }
 
-function statusLabelForJob(status: string): string {
-  if (status === "completed") {
-    return "Done";
-  }
-
-  if (status === "running" || status === "initializing") {
-    return "In progress";
-  }
-
-  if (status === "pending") {
-    return "Starting up";
-  }
-
-  if (status === "cancelled") {
-    return "Cancelled";
-  }
-
-  return "Error";
-}
-
 function normalizeJobStatus(status: string): string {
   return status.trim().toLowerCase();
 }
@@ -760,9 +746,7 @@ async function refreshUsage(): Promise<void> {
   if (!state.token) return;
 
   try {
-    const usageData = await apiRequest<UsageResponse>("/v1/usage", {
-      method: "GET",
-    });
+    const usageData = (await HoverLib.api.get("/v1/usage")) as UsageResponse;
     state.usage = usageData.usage || null;
     renderUsage(state.usage);
   } catch (error) {
@@ -932,12 +916,9 @@ async function refreshCurrentJob(): Promise<void> {
 
   try {
     jobPollInFlight = true;
-    const response = await apiRequest<JobListResponse>(
-      "/v1/jobs?limit=50&include=stats",
-      {
-        method: "GET",
-      }
-    );
+    const response = (await HoverLib.api.get(
+      "/v1/jobs?limit=50&include=stats"
+    )) as JobListResponse;
     const latest = pickLatestJobForCurrentSite(response.jobs);
     state.currentJob = latest;
     renderJobState(state.currentJob);
@@ -974,62 +955,13 @@ async function refreshCurrentJob(): Promise<void> {
   }
 }
 
-function parseApiResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const error: ApiError = {
-      status: response.status,
-      message: response.statusText || "Request failed",
-      body: "",
-    };
-    return response
-      .text()
-      .then((bodyText) => {
-        error.body = bodyText;
-        throw error;
-      })
-      .catch(() => {
-        throw error;
-      });
+// Wire hover-job-card's issue-tab fetcher to the shared API client.
+// window.HoverJobCard is set by hover-job-card.js (module script, loaded before index.ts).
+function initHoverJobCard(): void {
+  const hoverJobCard = (window as any).HoverJobCard;
+  if (hoverJobCard?.setApiFetcher) {
+    hoverJobCard.setApiFetcher((path: string) => HoverLib.api.get(path));
   }
-
-  return response
-    .json()
-    .then((payload: SuccessResponse<T>) => {
-      if (!payload || payload.status !== "success") {
-        throw new Error(payload.message || "Unexpected response format");
-      }
-
-      if (payload.data === undefined) {
-        throw new Error("Missing response data");
-      }
-
-      return payload.data;
-    })
-    .catch((error) => {
-      if (error instanceof SyntaxError) {
-        throw new Error("Failed to parse API response");
-      }
-      throw error;
-    });
-}
-
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const headers = new Headers(options.headers as HeadersInit);
-  headers.set("Accept", "application/json");
-
-  if (state.token) {
-    headers.set("Authorization", `Bearer ${state.token}`);
-  }
-
-  const response = await fetch(`${state.apiBaseUrl}${path}`, {
-    ...options,
-    headers,
-  });
-
-  return parseApiResponse<T>(response);
 }
 
 function getPopupPosition() {
@@ -1210,20 +1142,6 @@ function renderAuthState(isAuthed: boolean): void {
 // Rendering helpers
 // ---------------------------------------------------------------------------
 
-function iconClassForJob(status: string): string {
-  const base = "job-status-icon";
-  if (status === "completed") {
-    return `${base} ${base}--completed`;
-  }
-  if (status === "running" || status === "initializing") {
-    return `${base} ${base}--running`;
-  }
-  if (status === "pending" || status === "queued") {
-    return `${base} ${base}--pending`;
-  }
-  return `${base} ${base}--error`;
-}
-
 /** Show the in-progress card only for active jobs; hide for completed/none. */
 function renderJobState(job: JobItem | null): void {
   const section = asNode(ui.jobSection);
@@ -1233,12 +1151,19 @@ function renderJobState(job: JobItem | null): void {
     return;
   }
 
-  // Build the card using the same function as completed cards.
-  // buildResultCard handles active status: spinner icon, "In progress" / "Starting up" label.
-  const card = buildResultCard(job);
+  const hoverJobCard = (window as any).HoverJobCard;
+  const card: HTMLElement = hoverJobCard
+    ? hoverJobCard.createJobCard(job, { context: "extension" })
+    : buildResultCardFallback(job, false);
+
   if (section) {
-    section.innerHTML = "";
-    section.appendChild(card);
+    section.replaceChildren(card);
+    card.addEventListener("hover-job-card:view", (e: Event) =>
+      openSettingsPage((e as CustomEvent).detail.path)
+    );
+    card.addEventListener("hover-job-card:export", (e: Event) => {
+      void exportJob((e as CustomEvent).detail.jobId);
+    });
     show(section);
   }
 }
@@ -1274,110 +1199,6 @@ function getIssueCounts(job: JobItem): {
     verySlow: 0,
     slow: 0,
   };
-}
-
-function getSavedTimeMs(job: JobItem): number | null {
-  const statsSavedMs = job.stats?.cache_warming_effect?.total_time_saved_ms;
-  if (typeof statsSavedMs === "number" && Number.isFinite(statsSavedMs)) {
-    return Math.max(0, Math.round(statsSavedMs));
-  }
-
-  const statsSavedSeconds =
-    job.stats?.cache_warming_effect?.total_time_saved_seconds;
-  if (
-    typeof statsSavedSeconds === "number" &&
-    Number.isFinite(statsSavedSeconds)
-  ) {
-    return Math.max(0, Math.round(statsSavedSeconds * 1000));
-  }
-
-  if (
-    typeof job.duration_seconds === "number" &&
-    Number.isFinite(job.duration_seconds)
-  ) {
-    return Math.max(0, Math.round(job.duration_seconds * 1000));
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Date formatting
-// ---------------------------------------------------------------------------
-
-function formatShortDate(value?: string): string {
-  if (!value) {
-    return "";
-  }
-
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) {
-    return "";
-  }
-
-  const day = d.getDate();
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const month = months[d.getMonth()];
-  const hours = d.getHours();
-  const minutes = d.getMinutes().toString().padStart(2, "0");
-  const ampm = hours >= 12 ? "pm" : "am";
-  const h = hours % 12 || 12;
-
-  const suffix =
-    day % 10 === 1 && day !== 11
-      ? "st"
-      : day % 10 === 2 && day !== 12
-        ? "nd"
-        : day % 10 === 3 && day !== 13
-          ? "rd"
-          : "th";
-
-  return `${day}${suffix} ${month} ${h}:${minutes}${ampm}`;
-}
-
-function formatMetricMilliseconds(value: number | null): string | null {
-  if (value === null || !Number.isFinite(value)) {
-    return null;
-  }
-
-  return `${Math.max(0, Math.round(value)).toLocaleString()}ms`;
-}
-
-function getCompletedCardMetrics(
-  job: JobItem
-): Array<{ label: string; value: string }> {
-  const metrics: Array<{ label: string; value: string }> = [];
-
-  if (
-    typeof job.avg_time_per_task_seconds === "number" &&
-    Number.isFinite(job.avg_time_per_task_seconds) &&
-    job.avg_time_per_task_seconds > 0
-  ) {
-    metrics.push({
-      label: "Avg",
-      value: `${Math.round(job.avg_time_per_task_seconds * 1000).toLocaleString()}ms`,
-    });
-  }
-
-  const savedMs = formatMetricMilliseconds(getSavedTimeMs(job));
-  if (savedMs) {
-    metrics.push({ label: "Saved", value: savedMs });
-  }
-
-  return metrics;
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,605 +1254,55 @@ function renderRecentResults(jobs: JobItem[]): void {
   const latestJob = groupedJobs[0] || null;
   const recentJobs = groupedJobs.slice(1, 6);
 
+  const hoverJobCard = (window as any).HoverJobCard;
+
+  function makeCard(cardJob: JobItem, compact: boolean): HTMLElement {
+    const card: HTMLElement = hoverJobCard
+      ? hoverJobCard.createJobCard(cardJob, { context: "extension", compact })
+      : buildResultCardFallback(cardJob, compact);
+    card.addEventListener("hover-job-card:view", (e: Event) =>
+      openSettingsPage((e as CustomEvent).detail.path)
+    );
+    card.addEventListener("hover-job-card:export", (e: Event) => {
+      void exportJob((e as CustomEvent).detail.jobId);
+    });
+    return card;
+  }
+
   if (latestJob) {
-    latestContainer.appendChild(buildResultCard(latestJob));
+    latestContainer.appendChild(makeCard(latestJob, false));
   }
 
   if (recentJobs.length > 0) {
     for (const job of recentJobs) {
-      recentContainer.appendChild(buildResultCard(job, false, true));
+      recentContainer.appendChild(makeCard(job, true));
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Result card builder
+// Result card fallback (used only if hover-job-card.js fails to load)
 // ---------------------------------------------------------------------------
 
-function buildResultCard(
-  job: JobItem,
-  startExpanded = false,
-  compact = false
-): HTMLElement {
+function buildResultCardFallback(job: JobItem, compact = false): HTMLElement {
+  // Minimal fallback used only if hover-job-card.js fails to load.
   const card = document.createElement("div");
   card.className = compact
     ? "result-card result-card--complete result-card--compact"
     : "result-card result-card--complete";
-
-  const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-  const normalisedStatus = normalizeJobStatus(job.status);
-  const isActive = isActiveJobStatus(normalisedStatus);
-
-  // For active jobs use live task counters; for completed use issue-bucket counts.
-  const failCount = isActive ? job.failed_tasks : brokenLinks;
-  const warnCount = isActive ? 0 : verySlow + slow;
-  const successCount = isActive
-    ? Math.max(0, job.completed_tasks - job.failed_tasks)
-    : Math.max(0, job.total_tasks - brokenLinks - verySlow - slow);
-  const dateStr = formatShortDate(job.completed_at || job.created_at);
-  const metrics = getCompletedCardMetrics(job);
-
-  let outcomeDotClass = "dot--success";
-  let outcomeLabel = "Completed";
-  let statusColour = "var(--status-colour--success)";
-
-  if (normalisedStatus === "cancelled") {
-    outcomeDotClass = "dot--neutral";
-    outcomeLabel = "Cancelled";
-    statusColour = "var(--status-colour--neutral)";
-  } else if (isActive) {
-    outcomeDotClass = "dot--warning";
-    outcomeLabel = statusLabelForJob(normalisedStatus);
-    statusColour =
-      normalisedStatus === "running" || normalisedStatus === "initializing"
-        ? "var(--status-colour--success)"
-        : "var(--status-colour--warning)";
-  } else if (normalisedStatus !== "completed") {
-    outcomeDotClass = "dot--danger";
-    outcomeLabel = "Error";
-    statusColour = "var(--status-colour--danger)";
-  }
-
-  if (job.total_tasks > 0) {
-    outcomeLabel = `${job.total_tasks} ${outcomeLabel}`;
-  }
-
-  const main = document.createElement("div");
-  main.className = "result-card-main";
-
-  const header = document.createElement("div");
-  header.className = "result-card-header";
-  const status = document.createElement("div");
-  status.className = "result-card-status";
-
-  const statusLine = document.createElement("div");
-  statusLine.className = "result-card-status-line";
-
-  const statusIcon = document.createElement("span");
-  statusIcon.setAttribute("aria-hidden", "true");
-  statusIcon.style.color = statusColour;
-
-  if (normalisedStatus === "completed") {
-    statusIcon.className =
-      "icon icon--small icon--tick result-card-status-icon";
-  } else if (isActiveJobStatus(normalisedStatus)) {
-    statusIcon.className = iconClassForJob(normalisedStatus);
-  } else {
-    statusIcon.className = `dot ${outcomeDotClass} result-card-status-dot`;
-  }
-
-  const statusLabel = document.createElement("span");
-  statusLabel.className = "result-card-status-label";
-  statusLabel.textContent = outcomeLabel;
-  statusLabel.style.color = statusColour;
-
-  statusLine.appendChild(statusIcon);
-  statusLine.appendChild(statusLabel);
-
-  const timestamp = document.createElement("p");
-  timestamp.className = "result-card-timestamp";
-  timestamp.textContent = dateStr;
-
-  status.appendChild(statusLine);
-  status.appendChild(timestamp);
-  header.appendChild(status);
-
-  const summary = document.createElement("div");
-  summary.className = "result-card-summary";
-
-  const summaryRow = document.createElement("div");
-  summaryRow.className = "result-card-summary-row";
-
-  const summaryItems: Array<{
-    dotClass: string;
-    label: string;
-    value: number;
-  }> = [
-    { dotClass: "dot--success", label: "good", value: successCount },
-    { dotClass: "dot--warning", label: "ok", value: warnCount },
-    { dotClass: "dot--danger", label: "error", value: failCount },
-  ];
-
-  for (const item of summaryItems) {
-    const summaryItem = document.createElement("span");
-    summaryItem.className = "result-card-summary-stat";
-    summaryItem.innerHTML = `<span class="dot ${item.dotClass}"></span> ${item.value.toLocaleString()} ${item.label}`;
-    summaryRow.appendChild(summaryItem);
-  }
-
-  summary.appendChild(summaryRow);
-
-  if (!compact && metrics.length > 0) {
-    const metaRow = document.createElement("div");
-    metaRow.className = "result-card-summary-meta";
-
-    for (const metric of metrics) {
-      const metricItem = document.createElement("span");
-      metricItem.className = "result-card-summary-meta-item";
-      metricItem.textContent = `${metric.label}: ${metric.value}`;
-      metaRow.appendChild(metricItem);
-    }
-
-    summary.appendChild(metaRow);
-  }
-
-  header.appendChild(summary);
-  main.appendChild(header);
-  card.appendChild(main);
-
-  if (compact) {
-    return card;
-  }
-
-  const footer = document.createElement("div");
-  footer.className = "result-card-footer";
-
-  const issuesRow = document.createElement("div");
-  issuesRow.className = "result-card-issues";
-
-  const details = document.createElement("div");
-  details.className = `result-card-details${startExpanded ? "" : " hidden"}`;
-
-  // ── Row 3: issue pills (tabs) + issues detail table ──
-
-  const issuesContainer = document.createElement("div");
-  issuesContainer.className = "issues-detail";
-
-  type TabDef = { dotClass: string; label: string; count: number; key: string };
-  const tabDefs: TabDef[] = [
-    {
-      dotClass: "dot--danger",
-      label: "missing",
-      count: brokenLinks,
-      key: "broken",
-    },
-    {
-      dotClass: "dot--danger",
-      label: "very slow",
-      count: verySlow,
-      key: "veryslow",
-    },
-    { dotClass: "dot--warning", label: "slow", count: slow, key: "slow" },
-  ];
-
-  // Detail table panel (hidden by default, shown on tab click)
-  const tablePanel = document.createElement("div");
-  tablePanel.className = "issues-table hidden";
-
-  let hasAnyIssues = false;
-  const tabElements: HTMLElement[] = [];
-  let firstTab: HTMLButtonElement | null = null;
-  let firstTabKey: string | null = null;
-  const issueRowsCache = new Map<string, JobTask[]>();
-  let activeTabKey: string | null = null;
-
-  const activateIssueTab = (tab: HTMLElement, tabKey: string): void => {
-    activeTabKey = tabKey;
-
-    for (const t of tabElements) {
-      t.setAttribute("aria-pressed", "false");
-    }
-
-    tab.setAttribute("aria-pressed", "true");
-    show(tablePanel);
-    void renderIssuesTable(tablePanel, job, tabKey, issueRowsCache, () => {
-      return activeTabKey === tabKey;
-    });
-  };
-
-  for (const def of tabDefs) {
-    if (def.count <= 0) {
-      continue;
-    }
-    hasAnyIssues = true;
-
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = "btn btn--text";
-    tab.dataset.tabKey = def.key;
-    tab.setAttribute("aria-pressed", "false");
-    const label = `${def.count} ${def.label}`;
-    tab.innerHTML = `<span class="dot ${def.dotClass}"></span><span>${label}</span><span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span>`;
-
-    tab.addEventListener("click", () => {
-      const wasActive = tab.getAttribute("aria-pressed") === "true";
-
-      for (const t of tabElements) {
-        t.setAttribute("aria-pressed", "false");
-      }
-
-      if (wasActive) {
-        hide(tablePanel);
-        details.classList.add("hidden");
-        card.classList.remove("result-card-expanded");
-        activeTabKey = null;
-        return;
-      }
-
-      details.classList.remove("hidden");
-      card.classList.add("result-card-expanded");
-      activateIssueTab(tab, def.key);
-    });
-
-    issuesRow.appendChild(tab);
-    tabElements.push(tab);
-
-    if (!firstTab) {
-      firstTab = tab;
-      firstTabKey = def.key;
-    }
-  }
-
-  if (hasAnyIssues) {
-    issuesContainer.appendChild(tablePanel);
-    details.appendChild(issuesContainer);
-  }
-
-  footer.appendChild(issuesRow);
-
-  if (!isActiveJobStatus(normalisedStatus)) {
-    const actions = document.createElement("div");
-    actions.className = "result-card-actions";
-
-    const viewFullResultsBtn = document.createElement("button");
-    viewFullResultsBtn.type = "button";
-    viewFullResultsBtn.className = "btn btn--secondary btn--sm corners--right";
-    viewFullResultsBtn.innerHTML = `<span class="icon icon--small icon--arrow icon--arrow--right" aria-hidden="true"></span><span>All</span>`;
-    viewFullResultsBtn.addEventListener("click", () => {
-      const detailPath = job.id
-        ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-        : APP_ROUTES.dashboard;
-      openSettingsPage(detailPath);
-    });
-    actions.appendChild(viewFullResultsBtn);
-    footer.appendChild(actions);
-  }
-
-  // Only append footer if it has content
-  if (hasAnyIssues || !isActiveJobStatus(normalisedStatus)) {
-    card.appendChild(footer);
-  }
-
-  const csvBtn = document.createElement("button");
-  csvBtn.type = "button";
-  csvBtn.className = "btn btn--ghost btn--xs";
-  csvBtn.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 18v2h16v-2"/></svg> Export Results`;
-  csvBtn.addEventListener("click", () => {
-    void exportJob(job.id);
-  });
-
-  const detailActions = document.createElement("div");
-  detailActions.className = "result-card-pills";
-  detailActions.appendChild(csvBtn);
-  details.appendChild(detailActions);
-  card.appendChild(details);
-
-  if (startExpanded) {
-    card.classList.add("result-card-expanded");
-    details.classList.remove("hidden");
-    if (hasAnyIssues && firstTab && firstTabKey) {
-      activateIssueTab(firstTab, firstTabKey);
-    }
-  }
-
+  const label = document.createElement("p");
+  label.textContent = String(job.status || "unknown");
+  card.appendChild(label);
   return card;
 }
-
-// ---------------------------------------------------------------------------
-// Issues detail table (inside a result card, toggled by tab click)
-// ---------------------------------------------------------------------------
-
-function taskResponseTime(task: JobTask): number | null {
-  if (
-    typeof task.second_response_time === "number" &&
-    Number.isFinite(task.second_response_time) &&
-    task.second_response_time > 0
-  ) {
-    return task.second_response_time;
-  }
-
-  if (
-    typeof task.response_time === "number" &&
-    Number.isFinite(task.response_time) &&
-    task.response_time > 0
-  ) {
-    return task.response_time;
-  }
-
-  return null;
-}
-
-function toPathDisplay(value: string | undefined): string {
-  if (!value) {
-    return "-";
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "-";
-  }
-
-  if (trimmed.startsWith("/")) {
-    return trimmed;
-  }
-
-  try {
-    const parsed = new URL(trimmed);
-    const path = `${parsed.pathname || "/"}${parsed.search}${parsed.hash}`;
-    return path || "/";
-  } catch {
-    return trimmed;
-  }
-}
-
-function toAbsoluteUrl(
-  value: string | undefined,
-  fallbackUrl?: string
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.toString();
-  } catch {
-    // continue
-  }
-
-  if (!trimmed.startsWith("/")) {
-    return null;
-  }
-
-  if (fallbackUrl) {
-    try {
-      const base = new URL(fallbackUrl);
-      return new URL(trimmed, `${base.protocol}//${base.host}`).toString();
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
-}
-
-async function fetchIssueTasks(
-  jobId: string,
-  tabKey: string
-): Promise<JobTask[]> {
-  const basePath = `/v1/jobs/${encodeURIComponent(jobId)}/tasks?limit=200`;
-
-  const query =
-    tabKey === "broken"
-      ? `${basePath}&status=failed&sort=-created_at`
-      : `${basePath}&sort=-second_response_time`;
-
-  const response = await apiRequest<JobTasksResponse>(query, { method: "GET" });
-  const tasks = Array.isArray(response.tasks) ? response.tasks : [];
-
-  if (tabKey === "broken") {
-    return tasks;
-  }
-
-  const withTimes = tasks
-    .map((task) => ({ task, responseTime: taskResponseTime(task) }))
-    .filter(
-      (item): item is { task: JobTask; responseTime: number } =>
-        item.responseTime !== null
-    );
-
-  if (tabKey === "veryslow") {
-    return withTimes
-      .filter((item) => item.responseTime >= 5000)
-      .sort((a, b) => b.responseTime - a.responseTime)
-      .map((item) => item.task);
-  }
-
-  return withTimes
-    .filter((item) => item.responseTime >= 3000 && item.responseTime < 5000)
-    .sort((a, b) => b.responseTime - a.responseTime)
-    .map((item) => item.task);
-}
-
-async function renderIssuesTable(
-  panel: HTMLElement,
-  job: JobItem,
-  tabKey: string,
-  cache: Map<string, JobTask[]>,
-  isStillActive: () => boolean
-): Promise<void> {
-  while (panel.firstChild) {
-    panel.removeChild(panel.firstChild);
-  }
-
-  const loading = document.createElement("p");
-  loading.className = "detail";
-  loading.textContent = "Loading...";
-  panel.appendChild(loading);
-
-  let tasks: JobTask[];
-  try {
-    if (cache.has(tabKey)) {
-      tasks = cache.get(tabKey) || [];
-    } else {
-      tasks = await fetchIssueTasks(job.id, tabKey);
-      cache.set(tabKey, tasks);
-    }
-  } catch (error) {
-    if (!isStillActive()) {
-      return;
-    }
-
-    while (panel.firstChild) {
-      panel.removeChild(panel.firstChild);
-    }
-    const failed = document.createElement("p");
-    failed.className = "detail";
-    failed.textContent = "Could not load issue details.";
-    panel.appendChild(failed);
-    return;
-  }
-
-  if (!isStillActive()) {
-    return;
-  }
-
-  while (panel.firstChild) {
-    panel.removeChild(panel.firstChild);
-  }
-
-  const columnLabels: Record<string, [string, string]> = {
-    broken: ["Broken URL", "Found at"],
-    veryslow: ["URL", "Response time"],
-    slow: ["URL", "Response time"],
-  };
-
-  const [col1Label, col2Label] = columnLabels[tabKey] || ["URL", "Details"];
-
-  const body = document.createElement("div");
-  body.className = "issues-table-body";
-
-  const col1 = document.createElement("div");
-  col1.className = "issues-table-col";
-  const col1Heading = document.createElement("div");
-  col1Heading.className = "issues-table-heading";
-  col1Heading.textContent = col1Label;
-  col1.appendChild(col1Heading);
-
-  const col2 = document.createElement("div");
-  col2.className = "issues-table-col";
-  const col2Heading = document.createElement("div");
-  col2Heading.className = "issues-table-heading";
-  col2Heading.textContent = col2Label;
-  col2.appendChild(col2Heading);
-
-  const rows = tasks.slice(0, 20);
-
-  if (rows.length === 0) {
-    const noData = document.createElement("p");
-    noData.className = "detail";
-    noData.textContent =
-      tabKey === "broken"
-        ? "No broken links found for this run."
-        : tabKey === "veryslow"
-          ? "No very slow pages found for this run."
-          : "No slow pages found for this run.";
-    panel.appendChild(noData);
-  } else {
-    for (const task of rows) {
-      const leftText = toPathDisplay(task.path || task.url);
-      const rightText =
-        tabKey === "broken"
-          ? toPathDisplay(task.source_url)
-          : (() => {
-              const responseTime = taskResponseTime(task);
-              return responseTime !== null
-                ? `${responseTime.toLocaleString()}ms`
-                : "-";
-            })();
-
-      const row1 = document.createElement("div");
-      row1.className = "issues-table-row";
-      const cell1 = document.createElement("span");
-      cell1.className = "issues-table-cell";
-      const leftHref = toAbsoluteUrl(task.url || task.path, task.url);
-      if (leftHref) {
-        const leftLink = document.createElement("a");
-        leftLink.className = "issues-table-link";
-        leftLink.href = leftHref;
-        leftLink.target = "_blank";
-        leftLink.rel = "noopener noreferrer";
-        leftLink.textContent = leftText;
-        cell1.appendChild(leftLink);
-      } else {
-        cell1.textContent = leftText;
-      }
-      row1.appendChild(cell1);
-      col1.appendChild(row1);
-
-      const row2 = document.createElement("div");
-      row2.className = "issues-table-row";
-      const cell2 = document.createElement("span");
-      cell2.className = "issues-table-cell";
-      if (tabKey === "broken") {
-        const rightHref = toAbsoluteUrl(task.source_url);
-        if (rightHref) {
-          const rightLink = document.createElement("a");
-          rightLink.className = "issues-table-link";
-          rightLink.href = rightHref;
-          rightLink.target = "_blank";
-          rightLink.rel = "noopener noreferrer";
-          rightLink.textContent = rightText;
-          cell2.appendChild(rightLink);
-        } else {
-          cell2.textContent = rightText;
-        }
-      } else {
-        cell2.textContent = rightText;
-      }
-      row2.appendChild(cell2);
-      col2.appendChild(row2);
-    }
-
-    body.appendChild(col1);
-    body.appendChild(col2);
-    panel.appendChild(body);
-  }
-
-  const footer = document.createElement("div");
-  footer.className = "issues-table-footer";
-  const viewAllBtn = document.createElement("button");
-  viewAllBtn.type = "button";
-  viewAllBtn.className = "btn btn--tertiary btn--sm";
-  viewAllBtn.textContent = `View all ${tabKey === "broken" ? "broken links" : tabKey === "veryslow" ? "very slow pages" : "slow pages"}`;
-  viewAllBtn.addEventListener("click", () => {
-    const detailPath = job.id
-      ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-      : APP_ROUTES.dashboard;
-    openSettingsPage(detailPath);
-  });
-  footer.appendChild(viewAllBtn);
-  panel.appendChild(footer);
-}
-
-// ---------------------------------------------------------------------------
 // Job export
 // ---------------------------------------------------------------------------
 
 async function exportJob(jobId: string): Promise<void> {
   try {
-    const payload = await apiRequest<JobExportPayload>(
-      `/v1/jobs/${jobId}/export`,
-      {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      }
-    );
+    const payload = (await HoverLib.api.get(
+      `/v1/jobs/${jobId}/export`
+    )) as JobExportPayload;
 
     const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
     const { keys, headers } = prepareExportColumns(payload.columns, tasks);
@@ -2074,41 +1345,22 @@ function prepareExportColumns(
   return { keys, headers: keys };
 }
 
-function escapeCSVValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  const text = String(value);
-  if (/[",\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-
-  return text;
-}
+// CSV/file utilities — delegated to shared formatters via HoverLib bridge
+const escapeCSVValue = (value: unknown): string =>
+  HoverLib?.fmt?.escapeCSVValue?.(value) ?? String(value ?? "");
 
 function triggerFileDownload(
   content: string,
   mimeType: string,
   filename: string
 ): void {
-  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  if (HoverLib?.fmt?.triggerFileDownload) {
+    HoverLib.fmt.triggerFileDownload(content, mimeType, filename);
+  }
 }
 
-function sanitizeForFilename(value: string): string {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+const sanitizeForFilename = (value: string): string =>
+  HoverLib?.fmt?.sanitiseForFilename?.(value) ?? value;
 
 // ---------------------------------------------------------------------------
 // Mini chart
@@ -2183,7 +1435,9 @@ function renderMiniChart(jobs: JobItem[]): void {
     bar.className = "chart-bar";
     bar.role = "button";
     bar.tabIndex = 0;
-    const dateStr = formatShortDate(job.completed_at || job.created_at);
+    const dateStr = HoverLib.fmt.formatDateTime(
+      job.completed_at || job.created_at
+    );
     bar.title = `${dateStr}\nStatus: Completed\nOK: ${row.okCount}\nError: ${row.errorCount}\nTotal pages: ${job.total_tasks.toLocaleString()}`;
 
     const detailPath = `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`;
@@ -2383,12 +1637,9 @@ async function loadLatestJob(): Promise<void> {
   }
 
   try {
-    const response = await apiRequest<JobListResponse>(
-      "/v1/jobs?limit=50&include=stats",
-      {
-        method: "GET",
-      }
-    );
+    const response = (await HoverLib.api.get(
+      "/v1/jobs?limit=50&include=stats"
+    )) as JobListResponse;
 
     const latest = pickLatestJobForCurrentSite(response.jobs);
 
@@ -2419,10 +1670,10 @@ async function loadUsageAndOrgs(): Promise<void> {
     return;
   }
 
-  const [orgData, usageData] = await Promise.all([
-    apiRequest<OrganisationsResponse>("/v1/organisations", { method: "GET" }),
-    apiRequest<UsageResponse>("/v1/usage", { method: "GET" }),
-  ]);
+  const [orgData, usageData] = (await Promise.all([
+    HoverLib.api.get("/v1/organisations"),
+    HoverLib.api.get("/v1/usage"),
+  ])) as [OrganisationsResponse, UsageResponse];
 
   state.organisations = orgData.organisations || [];
   state.activeOrganisationId =
@@ -2438,9 +1689,7 @@ async function loadCurrentSchedule(): Promise<void> {
   }
 
   const siteDomain = normalizeDomain(state.siteDomain);
-  const schedulers = await apiRequest<Scheduler[]>("/v1/schedulers", {
-    method: "GET",
-  });
+  const schedulers = (await HoverLib.api.get("/v1/schedulers")) as Scheduler[];
   const matching = schedulers.find(
     (scheduler) => normalizeDomain(scheduler.domain) === siteDomain
   );
@@ -2454,10 +1703,9 @@ async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
     return null;
   }
 
-  const connections = await apiRequest<WebflowConnection[]>(
-    "/v1/integrations/webflow",
-    { method: "GET" }
-  );
+  const connections = (await HoverLib.api.get(
+    "/v1/integrations/webflow"
+  )) as WebflowConnection[];
 
   if (!connections || connections.length === 0) {
     state.webflowConnected = false;
@@ -2475,10 +1723,9 @@ async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
     let page = 1;
 
     while (true) {
-      const sites = await apiRequest<WebflowSitesResponse>(
-        `/v1/integrations/webflow/${connection.id}/sites?page=${page}&limit=50`,
-        { method: "GET" }
-      );
+      const sites = (await HoverLib.api.get(
+        `/v1/integrations/webflow/${connection.id}/sites?page=${page}&limit=50`
+      )) as WebflowSitesResponse;
 
       const candidate = sites.sites?.find((site) => {
         const domain = normalizeDomain(site.primary_domain);
@@ -2539,13 +1786,9 @@ async function setWebflowAutoPublish(enabled: boolean): Promise<void> {
   };
 
   try {
-    await apiRequest<WebflowSiteSetting>(
+    await HoverLib.api.put(
       `/v1/integrations/webflow/sites/${siteSetting.webflow_site_id}/auto-publish`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
+      payload
     );
   } catch (error) {
     // Revert on failure.
@@ -2576,12 +1819,8 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const domain = state.siteDomain;
   if (value === "off") {
     if (state.currentScheduler) {
-      await apiRequest<any>(`/v1/schedulers/${state.currentScheduler.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          is_enabled: false,
-        }),
+      await HoverLib.api.put(`/v1/schedulers/${state.currentScheduler.id}`, {
+        is_enabled: false,
       });
     }
     state.currentScheduler = null;
@@ -2593,28 +1832,17 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const scheduleHours = Number(value);
 
   if (!state.currentScheduler) {
-    const created = await apiRequest<Scheduler>("/v1/schedulers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        domain,
-        schedule_interval_hours: scheduleHours,
-      }),
-    });
+    const created = (await HoverLib.api.post("/v1/schedulers", {
+      domain,
+      schedule_interval_hours: scheduleHours,
+    })) as Scheduler;
     state.currentScheduler = created;
     setStatus("Schedule enabled.", "");
   } else {
-    const updated = await apiRequest<Scheduler>(
+    const updated = (await HoverLib.api.put(
       `/v1/schedulers/${state.currentScheduler.id}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          schedule_interval_hours: scheduleHours,
-          is_enabled: true,
-        }),
-      }
-    );
+      { schedule_interval_hours: scheduleHours, is_enabled: true }
+    )) as Scheduler;
     state.currentScheduler = updated;
     setStatus("Schedule updated.", "");
   }
@@ -2645,11 +1873,7 @@ async function runScanForCurrentSite(): Promise<void> {
     source_detail: "webflow_designer_check",
   };
 
-  const created = await apiRequest<JobItem>("/v1/jobs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
+  const created = (await HoverLib.api.post("/v1/jobs", request)) as JobItem;
 
   state.currentJob = created;
   renderJobState(created);
@@ -2752,12 +1976,8 @@ async function switchOrganisation(): Promise<void> {
 
   setDisabledAll(true);
   try {
-    await apiRequest<{ organisation: unknown }>("/v1/organisations/switch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        organisation_id: select.value,
-      }),
+    await HoverLib.api.post("/v1/organisations/switch", {
+      organisation_id: select.value,
     });
     state.activeOrganisationId = select.value;
     await refreshDashboard();
@@ -2782,13 +2002,9 @@ async function connectWebflow(): Promise<void> {
     }
   }
 
-  const response = await apiRequest<{ auth_url: string }>(
-    "/v1/integrations/webflow",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    }
-  );
+  const response = (await HoverLib.api.post("/v1/integrations/webflow")) as {
+    auth_url: string;
+  };
 
   const popup = window.open(
     response.auth_url,
@@ -2973,6 +2189,15 @@ async function initialise(): Promise<void> {
     // ignore
   }
 
+  // Configure shared API client for cross-origin extension use.
+  if (typeof HoverLib !== "undefined" && HoverLib?.api?.configure) {
+    HoverLib.api.configure({
+      baseUrl: state.apiBaseUrl,
+      tokenProvider: () => Promise.resolve(getStoredToken()),
+    });
+  }
+
+  initHoverJobCard();
   initEventHandlers();
   await refreshDashboard();
   renderAuthState(Boolean(state.token));
