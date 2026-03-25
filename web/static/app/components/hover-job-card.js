@@ -363,46 +363,21 @@ class HoverJobCard extends HTMLElement {
 
     const isExtension = this.context === "extension";
 
-    if (!isActive) {
-      // Completed jobs: Restart (not in extension — no restart API there) + All
-      if (!isExtension) {
-        const restartBtn = el("button", "btn btn--ghost btn--sm");
-        restartBtn.type = "button";
-        restartBtn.textContent = "Restart";
-        restartBtn.addEventListener("click", () => {
-          this.dispatchEvent(
-            new CustomEvent("hover-job-card:restart", {
-              bubbles: true,
-              detail: { jobId: job.id, job },
-            })
-          );
-        });
-        actions.appendChild(restartBtn);
-      }
-
-      const viewBtn = el("button", "btn btn--secondary btn--sm corners--right");
-      viewBtn.type = "button";
-      const viewArrow = el(
-        "span",
-        "icon icon--small icon--arrow icon--arrow--right"
-      );
-      viewArrow.setAttribute("aria-hidden", "true");
-      const viewLabel = el("span");
-      viewLabel.textContent = "All";
-      viewBtn.append(viewArrow, viewLabel);
-      viewBtn.addEventListener("click", () => {
-        const path = job.id
-          ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
-          : APP_ROUTES.dashboard;
+    if (!isActive && !isExtension) {
+      // Completed jobs: Restart (not in extension — no restart API there)
+      const restartBtn = el("button", "btn btn--ghost btn--sm");
+      restartBtn.type = "button";
+      restartBtn.textContent = "Restart";
+      restartBtn.addEventListener("click", () => {
         this.dispatchEvent(
-          new CustomEvent("hover-job-card:view", {
+          new CustomEvent("hover-job-card:restart", {
             bubbles: true,
-            detail: { jobId: job.id, path },
+            detail: { jobId: job.id, job },
           })
         );
       });
-      actions.appendChild(viewBtn);
-    } else if (!isExtension) {
+      actions.appendChild(restartBtn);
+    } else if (isActive && !isExtension) {
       // Active jobs: Cancel (not in extension — no cancel API there)
       const cancelBtn = el("button", "btn btn--ghost btn--sm");
       cancelBtn.type = "button";
@@ -417,6 +392,30 @@ class HoverJobCard extends HTMLElement {
       });
       actions.appendChild(cancelBtn);
     }
+
+    // All → button — always visible for every job state and context
+    const viewBtn = el("button", "btn btn--secondary btn--sm corners--right");
+    viewBtn.type = "button";
+    const viewArrow = el(
+      "span",
+      "icon icon--small icon--arrow icon--arrow--right"
+    );
+    viewArrow.setAttribute("aria-hidden", "true");
+    const viewLabel = el("span");
+    viewLabel.textContent = "All";
+    viewBtn.append(viewArrow, viewLabel);
+    viewBtn.addEventListener("click", () => {
+      const path = job.id
+        ? `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`
+        : APP_ROUTES.dashboard;
+      this.dispatchEvent(
+        new CustomEvent("hover-job-card:view", {
+          bubbles: true,
+          detail: { jobId: job.id, path },
+        })
+      );
+    });
+    actions.appendChild(viewBtn);
 
     footer.appendChild(actions);
 
