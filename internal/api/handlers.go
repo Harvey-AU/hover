@@ -422,6 +422,12 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
 	mux.HandleFunc("/jobs/", h.ServeJobDetails)
 
+	// Favicon — serve the app logo for browser tab icons.
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=604800")
+		http.ServeFile(w, r, "./web/static/assets/Good-Native_Hover_App_Logo_Webflow.png")
+	})
+
 	// Static assets — served with cache headers to reduce request volume.
 	mux.Handle("/js/", withCacheControl(http.StripPrefix("/js/", http.FileServer(http.Dir("./web/static/js/")))))
 	mux.Handle("/styles/", withCacheControl(http.StripPrefix("/styles/", http.FileServer(http.Dir("./web/static/styles/")))))
