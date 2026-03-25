@@ -3,8 +3,7 @@ name: Webflow Extension Checks
 on:
   pull_request:
     branches:
-      - main
-      - test-branch
+      - "**"
     paths:
       - "webflow-designer-extension-cli/**"
       - ".github/workflows/webflow-extension.yml"

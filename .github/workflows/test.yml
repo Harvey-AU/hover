@@ -2,8 +2,7 @@ name: Run Tests
 on:
   pull_request:
     branches:
-      - main
-      - test-branch
+      - "**"
     paths-ignore:
       - "**.md"
       - "docs/**"
