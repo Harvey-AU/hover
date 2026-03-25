@@ -16,6 +16,8 @@ import { get, patch } from "/app/lib/api-client.js";
 import { getSession } from "/app/lib/auth-session.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
+const MAX_NAME_LENGTH = 80;
+
 /** Adapter: bb-settings uses (variant, message); hover-toast uses (message, {variant}). */
 function toast(variant, message) {
   _showToast(message, { variant });
@@ -516,12 +518,12 @@ export async function saveProfileName(container, options = {}) {
   const lastName = lastNameEl.value.trim();
   const fullName = `${firstName} ${lastName}`.trim();
 
-  if (firstName.length > 80) {
-    toast("error", "First name must be 80 characters or fewer");
+  if (firstName.length > MAX_NAME_LENGTH) {
+    toast("error", `First name must be ${MAX_NAME_LENGTH} characters or fewer`);
     return;
   }
-  if (lastName.length > 80) {
-    toast("error", "Last name must be 80 characters or fewer");
+  if (lastName.length > MAX_NAME_LENGTH) {
+    toast("error", `Last name must be ${MAX_NAME_LENGTH} characters or fewer`);
     return;
   }
 

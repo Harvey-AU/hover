@@ -21,7 +21,7 @@
  *   - This module sets that flag before any auth action.
  */
 
-import { isConfigured } from "/app/lib/config.js";
+import { isConfigured, supabaseUrl, supabaseAnonKey } from "/app/lib/config.js";
 import {
   getSession,
   onAuthStateChange,
@@ -70,11 +70,7 @@ async function init() {
   // auth.js.initialiseSupabase() is still the canonical initialiser;
   // we call it here as a safety net in case core.js is not present.
   if (window.supabase?.createClient && !window.supabase?.auth) {
-    const { supabaseUrl, supabaseAnonKey } = await import("/app/lib/config.js");
-    window.supabase = window.supabase.createClient(
-      supabaseUrl,
-      supabaseAnonKey
-    );
+    window.supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
   }
 
   setStatus("Preparing sign-in…");

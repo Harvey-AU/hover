@@ -300,7 +300,14 @@ class HoverJobCard extends HTMLElement {
       for (const t of tabElements) t.setAttribute("aria-pressed", "false");
       tab.setAttribute("aria-pressed", "true");
       tablePanel.classList.remove("hidden");
-      this._renderIssuesTable(tablePanel, job, key).catch(console.error);
+      this._renderIssuesTable(tablePanel, job, key).catch((err) => {
+        console.error("Failed to load issues:", err);
+        tablePanel.replaceChildren();
+        const msg = el("p", "detail");
+        msg.textContent = "Could not load issues.";
+        msg.setAttribute("role", "alert");
+        tablePanel.appendChild(msg);
+      });
     };
 
     for (const def of tabDefs) {
@@ -465,9 +472,10 @@ class HoverJobCard extends HTMLElement {
         tasks = await fetchIssueTasks(job.id, tabKey);
         this._issueCache.set(tabKey, tasks);
       }
-    } catch {
+    } catch (err) {
       if (this._activeTabKey !== tabKey) return;
-      panel.innerHTML = "";
+      console.error("Failed to load issue tasks:", err);
+      panel.replaceChildren();
       const failed = el("p", "detail");
       failed.textContent = "Could not load issue details.";
       panel.appendChild(failed);

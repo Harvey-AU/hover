@@ -5,7 +5,7 @@
  * Uses api-client for the POST request.
  */
 
-import { getAccessToken } from "/app/lib/auth-session.js";
+import { post } from "/app/lib/api-client.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 function toast(variant, message) {
@@ -31,9 +31,9 @@ export function initCreateOrgModal(options = {}) {
 
   const openModal = () => {
     modal.classList.add("show");
-    nameInput.value = "";
-    errorDiv.style.display = "none";
-    nameInput.focus();
+    if (nameInput) nameInput.value = "";
+    if (errorDiv) errorDiv.style.display = "none";
+    nameInput?.focus();
   };
 
   const closeModal = () => {
@@ -72,48 +72,32 @@ export function initCreateOrgModal(options = {}) {
     errorDiv.style.display = "none";
 
     try {
-      const token = await getAccessToken();
-      if (!token) throw new Error("Not authenticated");
+      // api-client unwraps the { status, data } envelope — returns data directly.
+      const data = await post("/v1/organisations", { name });
+      closeModal();
 
-      const response = await fetch("/v1/organisations", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ name }),
-      });
+      const newOrg = data?.organisation;
 
-      const data = await response.json();
-
-      if (response.ok) {
-        closeModal();
-
-        const newOrg = data.data?.organisation;
-
-        // Update shared org data (bridge to legacy globals).
-        window.BB_ACTIVE_ORG = newOrg;
-        if (Array.isArray(window.BB_ORGANISATIONS)) {
-          window.BB_ORGANISATIONS.push(newOrg);
-        } else {
-          window.BB_ORGANISATIONS = [newOrg];
-        }
-
-        document.dispatchEvent(
-          new CustomEvent("bb:org-switched", {
-            detail: { organisation: newOrg },
-          })
-        );
-
-        if (options.onCreated) await options.onCreated(newOrg);
-        toast("success", `Organisation "${name}" created`);
+      // Update shared org data (bridge to legacy globals).
+      window.BB_ACTIVE_ORG = newOrg;
+      if (Array.isArray(window.BB_ORGANISATIONS)) {
+        window.BB_ORGANISATIONS.push(newOrg);
       } else {
-        errorDiv.textContent = data.message || "Failed to create organisation";
-        errorDiv.style.display = "block";
+        window.BB_ORGANISATIONS = [newOrg];
       }
+
+      document.dispatchEvent(
+        new CustomEvent("bb:org-switched", {
+          detail: { organisation: newOrg },
+        })
+      );
+
+      if (options.onCreated) await options.onCreated(newOrg);
+      toast("success", `Organisation "${name}" created`);
     } catch (err) {
       console.error("Error creating organisation:", err);
-      errorDiv.textContent = "An error occurred. Please try again.";
+      const message = err?.body?.message || "An error occurred. Please try again.";
+      errorDiv.textContent = message;
       errorDiv.style.display = "block";
     } finally {
       submitBtn.disabled = false;

@@ -29,7 +29,8 @@ if (!fs.existsSync(target)) {
 
 let src = fs.readFileSync(target, "utf8");
 
-// Replace the defaultFetcher that imports from /app/lib/api-client.js
+// Replace the defaultFetcher that imports from /app/lib/api-client.js.
+// Expects non-minified source: function body ends with } at column 0.
 src = src.replace(
   /async function defaultFetcher\(path\) \{[\s\S]*?^}/m,
   `async function defaultFetcher(path) {

@@ -370,11 +370,6 @@ hover-tabs,
 
 /* ─── hover-job-card ─────────────────────────────────────────────────────── */
 
-/* Utilities used by hover-job-card */
-.hidden {
-  display: none !important;
-}
-
 /* Icons — mask-based, same as extension */
 .icon {
   display: inline-block;

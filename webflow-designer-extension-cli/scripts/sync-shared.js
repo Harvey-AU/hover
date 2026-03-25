@@ -10,6 +10,12 @@ const path = require("path");
 const APP_ROOT = path.resolve(__dirname, "../../web/static/app");
 const PUBLIC = path.resolve(__dirname, "../public");
 
+if (!fs.existsSync(APP_ROOT)) {
+  console.error(`ERROR: Source directory not found: ${APP_ROOT}`);
+  console.error("Ensure web/static/app exists before running sync-shared.");
+  process.exit(1);
+}
+
 // Components — self-registering Web Components loaded as <script type="module">
 const COMPONENTS = [
   "components/hover-status-pill.js",

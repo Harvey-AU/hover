@@ -1143,7 +1143,7 @@ body.bb-auth-route-gated #authModalContainer {
 }
 
 .bb-job-link--danger {
-  color: #dc2626;
+  color: var(--color-error);
 }
 
 .bb-job-link--danger:hover {
@@ -1157,7 +1157,7 @@ body.bb-auth-route-gated #authModalContainer {
 .bb-schedules-empty {
   text-align: center;
   padding: 32px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   display: none;
 }
 
