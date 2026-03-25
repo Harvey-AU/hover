@@ -70,7 +70,10 @@ async function init() {
   // auth.js.initialiseSupabase() is still the canonical initialiser;
   // we call it here as a safety net in case core.js is not present.
   if (window.supabase?.createClient && !window.supabase?.auth) {
-    window.supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+    window.supabase = window.supabase.createClient(
+      supabaseUrl,
+      supabaseAnonKey
+    );
   }
 
   setStatus("Preparing sign-in…");

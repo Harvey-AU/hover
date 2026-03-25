@@ -96,7 +96,8 @@ export function initCreateOrgModal(options = {}) {
       toast("success", `Organisation "${name}" created`);
     } catch (err) {
       console.error("Error creating organisation:", err);
-      const message = err?.body?.message || "An error occurred. Please try again.";
+      const message =
+        err?.body?.message || "An error occurred. Please try again.";
       errorDiv.textContent = message;
       errorDiv.style.display = "block";
     } finally {
