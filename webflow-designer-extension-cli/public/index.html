@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="./styles.css" rel="stylesheet" />
     <title>Hover for Webflow</title>
+    <!-- Import map: remap /app/ paths used by shared modules to local copies -->
+    <script type="importmap">
+      {
+        "imports": {
+          "/app/lib/": "./lib/",
+          "/app/components/": "./"
+        }
+      }
+    </script>
   </head>
 
   <body>
@@ -276,6 +285,7 @@
     <script type="module" src="./hover-status-pill.js"></script>
     <script type="module" src="./hover-data-table.js"></script>
     <script type="module" src="./hover-job-card.js"></script>
+    <script type="module" src="./lib/bridge.js"></script>
     <script src="index.js" defer></script>
   </body>
 </html>
