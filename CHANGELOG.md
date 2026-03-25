@@ -28,171 +28,67 @@ On merge, CI will:
 
 ## [Unreleased:minor]
 
+Migrated the entire Hover frontend from legacy global scripts to ES modules and
+aligned the dashboard and Webflow Designer extension on a single shared
+codebase. Both surfaces now consume the same logic (`app/lib/`) and components
+(`app/components/`) — no duplicated application code remains between them.
+
 ### Added
 
-- **ES module frontend foundation (Phase 0)**: Established the new
-  `web/static/app/` architecture for all future Hover frontend work, replacing
-  the legacy global-script model
-  - `web/static/app/styles/tokens.css` — full dark-theme design token set
-    (primitive + semantic layers) mirroring the Webflow Designer extension
-    visual language; double-dash naming convention (`--colour--*`,
-    `--spacing--*`, `--font-family--*`)
-  - `web/static/app/styles/base.css` — box-model reset, scrollbar styling
-    (WebKit and Firefox), body base, core layout primitives, and utility classes
-    (`.hidden`, `.sr-only`, `.truncate`); all values reference semantic tokens
-    only
-  - `web/static/app/lib/config.js` — single import point for runtime config;
-    reads `window.BBB_CONFIG` and exports named values so new modules never
-    reference globals directly
-  - `web/static/app/lib/api-client.js` — `get/post/put/patch/del` fetch wrappers
-    with automatic JWT injection (same-origin only), correct `Content-Type`
-    handling for JSON vs FormData/Blob bodies, typed `ApiError` class
-  - `web/static/app/lib/auth-session.js` — `getSession`, `getUser`,
-    `getAccessToken`, `isAuthenticated`, `onAuthStateChange`, `signOut` wrappers
-    over `window.supabase.auth`; `onAuthStateChange` returns a plain unsubscribe
-    function
-  - `web/static/app/lib/formatters.js` — pure display formatting utilities with
-    no DOM dependency: `formatDate`, `formatDateTime`, `formatRelativeTime`
-    (sign-aware rounding, weeks branch), `formatDuration`, `formatCount`,
-    `formatPercent`, `formatStatus`, `statusCategory`, `formatUrl`
-  - `web/static/app/test-module.html` — Phase 0 validation page confirming
-    modules load with no `bb-bootstrap.js`, `core.js`, or `BB_APP.whenReady()`
-    dependency; accessible at `/app/test-module.html`
-  - `/app/` static route registered in `internal/api/handlers.go` alongside
-    existing `/js/`, `/styles/`, `/assets/` routes; no Dockerfile change
-    required
+- **Shared module architecture** (`web/static/app/`): Three-layer structure —
+  `lib/` (pure logic, zero DOM), `components/` (Web Components), `pages/` (thin
+  per-page orchestrators). All modules work identically in the dashboard and
+  Webflow extension.
+  - **Lib modules**: `api-client.js` (configurable fetch wrappers with JWT
+    injection), `auth-session.js`, `config.js`, `formatters.js` (14 pure
+    formatting functions + CSV/file export utilities), `integration-http.js`,
+    `domain-search.js`, `invite-flow.js`, `admin.js`, `global-nav.js`
+  - **Web Components**: `hover-job-card` (canonical job card with context-aware
+    layout), `hover-data-table` (sortable columns, skeleton/error states),
+    `hover-status-pill` (animated status indicator), `hover-tabs` (keyboard
+    navigation, fast-path diff), `hover-toast` (stacking, auto-dismiss)
+  - **Design tokens**: `tokens.css` (dark-theme primitives + semantics),
+    `base.css`, `components.css` — shared visual language across surfaces
 
-- **Domain component layer + job details (Phase 4)**: Introduced domain-level
-  Web Components shared between the dashboard and Webflow extension; completed
-  job details migration
-  - `hover-job-card` — canonical job card Web Component ported from the Webflow
-    extension's `buildResultCard()`; single source of truth for job card
-    rendering; `context` attribute (`extension` / `dashboard`) and `compact`
-    attribute for layout differences; emits `hover-job-card:view`, `:export`,
-    `:restart`, `:cancel` events; issue tabs (Broken Links / Slow / Very Slow),
-    expandable detail table; restart/cancel buttons hidden in extension context
-  - `hover-tabs` — tab bar Web Component with `tabs` property, `active`
-    attribute, `hover-tabs:change` event, keyboard navigation, and fast-path
-    diff that updates labels when keys match
-  - `hover-data-table` extended with sortable column support — `sortable: true`
-    column option, `hover-data-table:sort` event; string render fallback uses
-    `textContent` not `innerHTML`
-  - `pages/job-details.js` — full tasks section ownership: 6 filter tabs (All /
-    Broken Links / Success / Slow / Very Slow / In Progress) each with per-tab
-    column sets; `found-on` column with sitemap fallback; analytics columns
-    (Views 7d/28d/180d); sort, pagination, path search; adaptive fallback
-    polling (500ms active / 1s idle); `window.__hoverTasksOwned` gate prevents
-    double-render with `job-page.js`; `throttleTimer` cleared on unload
-  - Go tasks API: new `performance` query param (`slow` >1,500ms / `very_slow`
-    > 4,000ms) using `COALESCE(NULLIF(second_response_time, 0), response_time)`
-  - SVG icons copied to `web/static/app/icons/`; full button, dot, icon, and
-    card CSS ported from Webflow extension `styles.css` into `components.css`
-  - `bb-bootstrap.js` removed from `job-details.html`; `job-page.js` guarded to
-    fall back to `window.BB_APP?.coreReady` when `whenReady()` is unavailable
+- **Dashboard ES module migration**: `dashboard.html` and `settings.html` now
+  run entirely on ES modules with no legacy script dependencies
+  - Dashboard: job list via `hover-job-card`, stats cards, Supabase Realtime
+    with adaptive fallback polling, restart/cancel actions
+  - Settings: account, team, plans, schedules, integrations (Slack/Webflow/
+    Google), and organisations — each as a focused module under `lib/settings/`
+  - Job details: 6 filter tabs, sortable task table, analytics columns,
+    pagination, path search
 
-- **Dashboard ES module layer (Phase 3)**: `pages/dashboard.js` as ES module
-  entrypoint; job list rendered by `hover-job-card` with in-place Map-based card
-  updates (no flicker)
-  - Restart and cancel job actions wired via card events with `showToast`
-    feedback
-  - `bb-bootstrap.js` and `bb-dashboard-actions.js` removed from
-    `dashboard.html`; double-init guard on `init()`
-  - Stats cards via shared stats API; date range selector wired
-  - Supabase Realtime via `subscribeToJobUpdates` with adaptive fallback polling
-    (500ms active / 1s idle); debounce callback guarded against post-cleanup
-    fire
-  - `cancelJob` URL uses `encodeURIComponent`
-
-- **Shared job list components (Phase 2)**: Reusable Web Components shared
-  across dashboard and Webflow extension
-  - `hover-status-pill` — animated status indicator covering all job statuses
-  - `hover-data-table` — data table with custom column renderers, sortable
-    headers, skeleton rows, empty/error states
-  - `webflow-jobs.js` — shared job-list data fetching with Supabase Realtime
-    subscription, debounce, and fallback polling
-  - Webflow extension `index.ts`: `buildResultCard` retired (~370 lines
-    removed); replaced by `hover-job-card` via `window.HoverJobCard` bridge;
-    `initHoverJobCard()` wires `setApiFetcher` to extension's `apiRequest`
-  - `npm run sync:components` script copies all shared components from
-    `web/static/app/components/` to extension `public/` and patches
-    `hover-job-card.js` for the extension context; patch script asserts the
-    regex applied
-  - Webflow extension updated to Supabase SDK 2.95.3
-
-- **Webflow extension auth screen (Phase 1)**: Migrated
-  `web/templates/extension-auth.html` to the ES module pattern
-  - `hover-toast` — Web Component with `showToast()` API, 4 variants,
-    auto-dismiss, stacking, enter/leave animations
-  - `webflow-login.js` — session restore, OAuth callback, backend registration;
-    `postMessage` contract matches `index.ts` expectations
-    (`source: "bbb-extension-auth"`, `accessToken` camelCase,
-    `state`/`extensionState` from URL params); `window.opener` null guard; auth
-    modal loaded via `DOMParser` with script stripping
-
-- **ES module frontend foundation (Phase 0)**: `web/static/app/` architecture
-  - `tokens.css`, `base.css`, `components.css` loaded on all migrated pages
-    (dashboard, job details, extension auth, test page)
-  - `api-client.js`, `auth-session.js`, `config.js`, `formatters.js` — shared
-    lib modules with no DOM dependency
-  - `/app/` static route in `internal/api/handlers.go`
-
-- **Settings page ES module migration (Phases 5–7)**: Full migration of the
-  settings page from legacy globals to ES modules
-  - `pages/settings.js` — thin orchestrator importing all section modules
-  - `lib/settings/account.js` — profile, OAuth connect/remove, password reset
-  - `lib/settings/team.js` — member list, invite sending
-  - `lib/settings/plans.js` — plan cards, usage history
-  - `lib/settings/schedules.js` — automated job scheduling
-  - `lib/settings/integrations/slack.js`, `webflow.js`, `google.js`, `shared.js`
-    — integration OAuth flows
-  - `lib/settings/organisations.js` — organisation creation modal
-  - `lib/domain-search.js`, `lib/invite-flow.js`, `lib/admin.js` — migrated from
-    legacy `bb-*.js` files
-  - Legacy scripts (`bb-settings.js`, `bb-auth-extension.js`,
-    `bb-data-binder.js`) superseded; dashboard and settings pages now run
-    entirely on ES modules
-
-- **Webflow extension shared module adoption**: Extension now consumes the same
-  code as the dashboard via `window.HoverLib` bridge pattern
-  - `lib/bridge.js` loads shared modules and exposes `HoverLib.api`,
-    `HoverLib.fmt`, `HoverLib.http` on `window`
+- **Webflow extension shared module adoption**: Extension consumes the same
+  `app/lib/` and `app/components/` code as the dashboard via a bridge pattern
+  - `lib/bridge.js` exposes `window.HoverLib` (`api`, `fmt`, `http`) and
+    `window.HoverJobCard` for the non-module extension runtime
   - `api-client.js` made configurable with
-    `configure({ baseUrl, tokenProvider })` for cross-origin extension use
-    (stored bearer token vs Supabase session)
-  - All extension API calls route through `HoverLib.api.*`; all shared
-    formatters through `HoverLib.fmt.*`; job cards through `HoverJobCard` bridge
-  - `scripts/sync-shared.js` copies 5 components + 6 lib modules from the app
-    into the extension; synced files gitignored
-  - Import map in extension `index.html` remaps `/app/` paths to local copies
+    `configure({ baseUrl, tokenProvider })` for cross-origin use (stored bearer
+    token instead of Supabase session)
+  - `scripts/sync-shared.js` copies 5 components + 6 lib modules into the
+    extension at build time; import map remaps `/app/` paths to local copies
+  - All extension API calls, formatters, and job card rendering now delegate to
+    shared modules — ~370 lines of duplicate code removed from `index.ts`
 
-- **Favicon**: Added `<link rel="icon">` to all HTML pages and `/favicon.ico`
-  route serving the Hover app logo with 7-day cache
-
-- **Husky pre-commit hook**: Added `husky` + `lint-staged` to auto-format staged
-  files with Prettier on commit, preventing CI formatting failures
+- **Developer tooling**: Husky + lint-staged pre-commit hook auto-formats staged
+  files with Prettier; favicon added to all HTML pages; Go tasks API extended
+  with `performance` query param for slow/very-slow page filtering
 
 ### Changed
 
-- **CI workflow triggers**: Test and review app workflows now run on PRs
-  targeting any branch, not just `main`
-- **Static asset caching**: `/app/**` routes served with
-  `Cache-Control: public, max-age=86400` headers to reduce parallel HTTP request
-  volume from ES modules
+- CI workflows run on PRs targeting any branch, not just `main`
+- `/app/**` static routes served with `Cache-Control: public, max-age=86400` to
+  reduce request volume from ES module loading
+- Synced extension components gitignored (generated by `sync-shared.js`)
 
 ### Fixed
 
-- **Seed idempotency**: `auth.identities` `ON CONFLICT` column corrected from
-  `(provider, id)` to `(id)` — the row primary key — resolving a batch insert
-  error on preview branch seed runs
-- **Job details init crash**: `job-page.js` now falls back to
-  `window.BB_APP?.coreReady` when `bb-bootstrap.js` is not loaded, preventing
-  "Failed to load job details" toast on pages that have removed
-  `bb-bootstrap.js`
-- **Global nav race condition**: `refreshBadge()` guarded with
-  `BB_APP.coreReady` promise to prevent calls before Supabase loads
-- **Extension job cards**: Added `window.HoverJobCard` bridge export to
-  `hover-job-card.js` so the extension renders full cards instead of fallback
-  status text
+- Global nav race condition: notification badge guarded with `BB_APP.coreReady`
+- Extension job cards rendering as plain status text (missing
+  `window.HoverJobCard` bridge)
+- Job details init crash when `bb-bootstrap.js` not loaded
+- Seed idempotency: `auth.identities` `ON CONFLICT` column corrected
 
 ## [0.28.1] – 2026-03-22
 
