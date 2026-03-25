@@ -791,3 +791,6 @@ async function fetchIssueTasks(jobId, tabKey) {
 }
 
 export default { createJobCard };
+
+// Bridge: expose on window for non-module consumers (Webflow extension).
+window.HoverJobCard = { createJobCard, setApiFetcher };
