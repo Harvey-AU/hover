@@ -136,6 +136,49 @@ On merge, CI will:
     lib modules with no DOM dependency
   - `/app/` static route in `internal/api/handlers.go`
 
+- **Settings page ES module migration (Phases 5–7)**: Full migration of the
+  settings page from legacy globals to ES modules
+  - `pages/settings.js` — thin orchestrator importing all section modules
+  - `lib/settings/account.js` — profile, OAuth connect/remove, password reset
+  - `lib/settings/team.js` — member list, invite sending
+  - `lib/settings/plans.js` — plan cards, usage history
+  - `lib/settings/schedules.js` — automated job scheduling
+  - `lib/settings/integrations/slack.js`, `webflow.js`, `google.js`, `shared.js`
+    — integration OAuth flows
+  - `lib/settings/organisations.js` — organisation creation modal
+  - `lib/domain-search.js`, `lib/invite-flow.js`, `lib/admin.js` — migrated from
+    legacy `bb-*.js` files
+  - Legacy scripts (`bb-settings.js`, `bb-auth-extension.js`,
+    `bb-data-binder.js`) superseded; dashboard and settings pages now run
+    entirely on ES modules
+
+- **Webflow extension shared module adoption**: Extension now consumes the same
+  code as the dashboard via `window.HoverLib` bridge pattern
+  - `lib/bridge.js` loads shared modules and exposes `HoverLib.api`,
+    `HoverLib.fmt`, `HoverLib.http` on `window`
+  - `api-client.js` made configurable with
+    `configure({ baseUrl, tokenProvider })` for cross-origin extension use
+    (stored bearer token vs Supabase session)
+  - All extension API calls route through `HoverLib.api.*`; all shared
+    formatters through `HoverLib.fmt.*`; job cards through `HoverJobCard` bridge
+  - `scripts/sync-shared.js` copies 5 components + 6 lib modules from the app
+    into the extension; synced files gitignored
+  - Import map in extension `index.html` remaps `/app/` paths to local copies
+
+- **Favicon**: Added `<link rel="icon">` to all HTML pages and `/favicon.ico`
+  route serving the Hover app logo with 7-day cache
+
+- **Husky pre-commit hook**: Added `husky` + `lint-staged` to auto-format staged
+  files with Prettier on commit, preventing CI formatting failures
+
+### Changed
+
+- **CI workflow triggers**: Test and review app workflows now run on PRs
+  targeting any branch, not just `main`
+- **Static asset caching**: `/app/**` routes served with
+  `Cache-Control: public, max-age=86400` headers to reduce parallel HTTP request
+  volume from ES modules
+
 ### Fixed
 
 - **Seed idempotency**: `auth.identities` `ON CONFLICT` column corrected from
@@ -145,6 +188,11 @@ On merge, CI will:
   `window.BB_APP?.coreReady` when `bb-bootstrap.js` is not loaded, preventing
   "Failed to load job details" toast on pages that have removed
   `bb-bootstrap.js`
+- **Global nav race condition**: `refreshBadge()` guarded with
+  `BB_APP.coreReady` promise to prevent calls before Supabase loads
+- **Extension job cards**: Added `window.HoverJobCard` bridge export to
+  `hover-job-card.js` so the extension renders full cards instead of fallback
+  status text
 
 ## [0.28.1] – 2026-03-22
 
