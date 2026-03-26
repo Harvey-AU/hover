@@ -75,7 +75,7 @@ python3 scripts/auth/cli_auth.py login
 ```
 
 The helper stores your Supabase session under
-`~/.config/hover/auth/session.json` (or `%APPDATA%\HoverBot\auth\session.json`
+`~/.config/hover/auth/session.json` (or `%APPDATA%\Hover\auth\session.json`
 on Windows). All load-test scripts will reuse it automatically. Re-run the
 command any time you need to refresh the session. Ensure
 `http://127.0.0.1:8765/callback` (or your chosen callback port) is listed under
