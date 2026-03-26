@@ -400,7 +400,7 @@ articles above.
 
 ---
 
-## Adapt Context (For Reference)
+## Hover Context (For Reference)
 
 ### Current Architecture
 
