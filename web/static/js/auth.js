@@ -1,5 +1,5 @@
 /**
- * Adapt Unified Authentication System
+ * Hover Unified Authentication System
  * Core authentication logic extracted from dashboard.html
  *
  * Handles:

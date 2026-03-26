@@ -44,7 +44,7 @@ USING (organisation_id IN (
 Add WebSocket URL to Content Security Policy in `middleware.go`:
 
 ```go
-connect-src 'self' https://adapt.auth.goodnative.co wss://adapt.auth.goodnative.co ...
+connect-src 'self' https://hover.auth.goodnative.co wss://hover.auth.goodnative.co ...
 ```
 
 The `wss://` prefix is critical for WebSocket connections.

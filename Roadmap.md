@@ -220,7 +220,7 @@
 - [x] Set up user session handling and token validation
 - [x] Implement comprehensive auth error handling
 - [x] Create user registration with auto-organisation creation
-- [x] Configure custom domain authentication (adapt.auth.goodnative.co)
+- [x] Configure custom domain authentication (hover.auth.goodnative.co)
 - [x] Implement account linking for multiple auth providers per user (handled by
       Supabase Auth via auth.identities table)
 
@@ -537,7 +537,7 @@ Organisation model implemented:
 ### 🔴 WordPress Integration
 
 - [ ] **WordPress Plugin Development**
-  - [ ] Create basic WordPress plugin for Adapt
+  - [ ] Create basic WordPress plugin for Hover
   - [ ] Plugin configuration interface for domain settings
   - [ ] Display crawl results and statistics in WordPress admin
   - [ ] Trigger manual crawls from WordPress dashboard
@@ -655,7 +655,7 @@ Organisation model implemented:
 
 - [ ] **1Password Secrets Management** -
       [Implementation Plan](./docs/plans/1password-secrets-integration.md)
-  - [ ] Set up 1Password vault structure for Adapt
+  - [ ] Set up 1Password vault structure for Hover
   - [ ] Configure flyctl shell plugin for local development
   - [ ] Implement 1Password Service Account for GitHub Actions CI/CD
   - [ ] Migrate secrets from GitHub Secrets to 1Password

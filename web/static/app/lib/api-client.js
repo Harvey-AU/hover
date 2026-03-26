@@ -38,7 +38,7 @@ export class ApiError extends Error {
 
 /**
  * @typedef {object} ApiClientConfig
- * @property {string} [baseUrl] — prepended to all paths (e.g. "https://adapt.app.goodnative.co")
+ * @property {string} [baseUrl] — prepended to all paths (e.g. "https://hover.app.goodnative.co")
  * @property {() => Promise<string|null>} [tokenProvider] — custom token provider
  */
 

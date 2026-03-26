@@ -37,7 +37,7 @@ This prepares a `bundle.zip` for upload in Webflow App settings.
 
 The panel includes a basic read-only API check:
 
-1. Enter API base URL (for example `https://adapt.app.goodnative.co`).
+1. Enter API base URL (for example `https://hover.app.goodnative.co`).
 2. Click `Sign in / Create account` to open BBB auth popup and obtain token.
 3. Click `Check API`.
 

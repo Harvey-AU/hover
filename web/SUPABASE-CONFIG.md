@@ -5,7 +5,7 @@
 **ALL Supabase credentials MUST use these values:**
 
 ```javascript
-URL: https://adapt.auth.goodnative.co
+URL: https://hover.auth.goodnative.co
 ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI
 ```
 
@@ -34,7 +34,7 @@ window.supabase = window.supabase.createClient(
 
 ## Why We Use Custom Domain
 
-- **Domain**: `adapt.auth.goodnative.co` (NOT supabase.co)
+- **Domain**: `hover.auth.goodnative.co` (NOT supabase.co)
 - **Branding**: Professional, no "supabase" in user-facing URLs
 - **OAuth**: Google/social login configured for this domain
 - **Security**: Proper domain verification
@@ -49,7 +49,7 @@ window.supabase = window.supabase.createClient(
 
 To verify config is correct, check that:
 
-1. `https://adapt.auth.goodnative.co` resolves
+1. `https://hover.auth.goodnative.co` resolves
 2. Google login works
 3. API calls succeed
 4. No CORS errors

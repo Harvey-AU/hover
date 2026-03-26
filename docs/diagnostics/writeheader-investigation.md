@@ -73,13 +73,13 @@ LOG_LEVEL=debug
 Or use the CLI flag:
 
 ```bash
-./adapt --log-level debug
+./hover --log-level debug
 ```
 
 ### Step 2: Monitor Production Logs
 
 ```bash
-flyctl logs --app adapt | grep -E "DIAGNOSTIC|superfluous"
+flyctl logs --app hover | grep -E "DIAGNOSTIC|superfluous"
 ```
 
 ### Step 3: Analyse Stack Traces

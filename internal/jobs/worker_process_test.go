@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/Harvey-AU/adapt/internal/crawler"
-	"github.com/Harvey-AU/adapt/internal/db"
+	"github.com/Harvey-AU/hover/internal/crawler"
+	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

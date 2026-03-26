@@ -20,7 +20,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/rs/zerolog/log"
 
-	"github.com/Harvey-AU/adapt/internal/observability"
+	"github.com/Harvey-AU/hover/internal/observability"
 )
 
 var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")

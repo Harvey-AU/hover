@@ -2,7 +2,7 @@
 
 ## Overview
 
-Adapt provides a template + data binding system that allows users to build
+Hover provides a template + data binding system that allows users to build
 custom HTML layouts whilst the JavaScript handles data fetching, authentication,
 and real-time updates.
 
@@ -18,7 +18,7 @@ Bee's own product dashboard **Secondary Interfaces:**
 
 **Integration Philosophy:**
 
-- **Template binding** allows flexible dashboard design for Adapt's own product
+- **Template binding** allows flexible dashboard design for Hover's own product
 - **External integrations** provide simple, focused functionality within user's
   existing workflows
 
@@ -26,12 +26,12 @@ Bee's own product dashboard **Secondary Interfaces:**
 
 ### Template + Data Binding System
 
-Adapt's own dashboard pages use `data-bb-bind` attributes. The JavaScript
+Hover's own dashboard pages use `data-bb-bind` attributes. The JavaScript
 library finds these elements and populates them with live data from the API.
 
 **Template system controls:**
 
-- All HTML structure and CSS styling for Adapt's dashboard
+- All HTML structure and CSS styling for Hover's dashboard
 - Page layout and design positioning
 - Visual appearance and branding
 
@@ -45,7 +45,7 @@ library finds these elements and populates them with live data from the API.
 ### Integration Method
 
 ```html
-<!-- Adapt dashboard HTML design -->
+<!-- Hover dashboard HTML design -->
 <div class="bb-dashboard-design">
   <div class="stat-card">
     <h3>Total Jobs</h3>
@@ -64,7 +64,7 @@ library finds these elements and populates them with live data from the API.
 </div>
 
 <!-- Single script inclusion -->
-<script src="https://adapt.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
 ```
 
 ## Data Binding Attributes
@@ -181,7 +181,7 @@ UI Update ← Supabase Realtime ← Database Trigger
 
 **User Experience:**
 
-1. User installs Adapt app in their Webflow workspace
+1. User installs Hover app in their Webflow workspace
 2. Opens app within Webflow Designer interface
 3. Logs in with existing Supabase Auth (same as main website)
 4. Views last crawl status for current Webflow site
@@ -198,7 +198,7 @@ UI Update ← Supabase Realtime ← Database Trigger
 
 **User Experience:**
 
-1. Install Adapt Slack app in workspace
+1. Install Hover Slack app in workspace
 2. Use `/crawl sitedomain.com` command to start cache warming
 3. Receive progress updates as thread replies
 4. Get completion summary with link to main dashboard

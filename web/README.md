@@ -1,6 +1,6 @@
-# Adapt Frontend Libraries
+# Hover Frontend Libraries
 
-Frontend components and data binding library for Adapt dashboard integration
+Frontend components and data binding library for Hover dashboard integration
 with Webflow.
 
 ## Available Libraries
@@ -32,10 +32,10 @@ with Webflow.
   );
 </script>
 
-<!-- Adapt Libraries -->
-<script src="https://adapt.app.goodnative.co/js/bb-components.js"></script>
+<!-- Hover Libraries -->
+<script src="https://hover.app.goodnative.co/js/bb-components.js"></script>
 <!-- OR for data binding approach -->
-<script src="https://adapt.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
 ```
 
 2. **Design your templates in Webflow Designer:**
@@ -116,7 +116,7 @@ fetching, authentication, and real-time updates.
 
 ```html
 <!-- Include the library -->
-<script src="https://adapt.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
 
 <!-- Dashboard stats with data binding -->
 <div class="stats">
@@ -197,7 +197,7 @@ Authentication component with Supabase integration.
 
 The components are served as static files from your Fly.io app:
 
-- Production: `https://adapt.app.goodnative.co/js/bb-components.js`
+- Production: `https://hover.app.goodnative.co/js/bb-components.js`
 
 ## Architecture
 

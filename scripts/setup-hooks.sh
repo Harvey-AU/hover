@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup Git hooks for Adapt
+# Setup Git hooks for Hover
 # This configures Git to use hooks from the .githooks/ directory
 
 set -e

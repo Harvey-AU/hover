@@ -6,7 +6,7 @@ https://medium.com/@Nexumo_/7-postgres-pool-fixes-for-sudden-traffic-spikes-f54d
 ## Summary
 
 This document validates the Postgres and PgBouncer concepts raised from the
-source article against the actual Adapt codebase and committed configuration. It
+source article against the actual Hover codebase and committed configuration. It
 checks whether each concept is concretely present, whether it would be
 beneficial here, and what practical impact or improvement would be expected if
 applied. The conclusions are based on code and config paths only, not repo docs

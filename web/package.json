@@ -1,7 +1,7 @@
 {
   "name": "@goodnative/web-components",
   "version": "1.0.0",
-  "description": "Web Components for Adapt dashboard integration",
+  "description": "Web Components for Hover dashboard integration",
   "main": "static/js/bb-components.js",
   "scripts": {
     "serve": "serve static"
@@ -12,7 +12,7 @@
     "cache-warming",
     "dashboard"
   ],
-  "author": "Adapt",
+  "author": "Hover",
   "license": "MIT",
   "devDependencies": {
     "serve": "^14.0.0"

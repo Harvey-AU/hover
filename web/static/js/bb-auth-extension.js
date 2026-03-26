@@ -1,5 +1,5 @@
 /**
- * Adapt Authentication Extension
+ * Hover Authentication Extension
  * Data binding integration for the unified authentication system
  *
  * This module provides integration between the core auth system (auth.js)

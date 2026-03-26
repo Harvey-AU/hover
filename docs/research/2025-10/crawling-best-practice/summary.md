@@ -119,7 +119,7 @@ Based on these documents, here are the **very precise issues**:
 6. **User-Agent Rotation** → [Technical Brief](issue-6-user-agent-rotation.md) -
    ✅ **Current UA is fine**
    - **Priority**: Low - Static UA follows best practices
-   - **Current**: `AdaptBot/1.0 (+https://goodnative.co)`
+   - **Current**: `HoverBot/1.0 (+https://goodnative.co)`
    - **Verdict**: Keep current implementation (transparent, respectful)
 
 7. **Referer Header** → [Technical Brief](done/issue-7-referer-header.md) - ✅

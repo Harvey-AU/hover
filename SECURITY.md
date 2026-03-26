@@ -2,9 +2,9 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within Cache Warmer, please send an
-email to [hello@teamharvey.co](mailto:hello@teamharvey.co). All security
-vulnerabilities will be promptly addressed.
+If you discover a security vulnerability within Hover, please send an email to
+[hello@teamharvey.co](mailto:hello@teamharvey.co). All security vulnerabilities
+will be promptly addressed.
 
 Please do not report security vulnerabilities through public GitHub issues.
 
@@ -14,7 +14,7 @@ Only the latest version is currently supported with security updates.
 
 ## Security Best Practices
 
-When deploying Cache Warmer:
+When deploying Hover:
 
 1. Never commit environment files (.env)
 2. Use secure environment variables for all secrets
@@ -24,9 +24,9 @@ When deploying Cache Warmer:
 
 ## System Administrator Role
 
-Adapt distinguishes between two types of administrative access:
+Hover distinguishes between two types of administrative access:
 
-- **System Administrator** (`system_role: "system_admin"`) - Adapt operators
+- **System Administrator** (`system_role: "system_admin"`) - Hover operators
   with system-level access
 - **Organisation Administrator** (`role: "admin"` or `"owner"`) - Client
   administrators within their organisation

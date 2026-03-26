@@ -1,8 +1,8 @@
-# Adapt Architecture
+# Hover Architecture
 
 ## System Overview
 
-Adapt is a web cache warming service built in Go, designed for Webflow sites and
+Hover is a web cache warming service built in Go, designed for Webflow sites and
 other web applications. It uses a worker pool architecture for efficient URL
 crawling and cache warming, with a focus on reliability, performance, and
 observability.
@@ -174,7 +174,7 @@ CREATE TABLE tasks (
 
 ### Architectural Principles
 
-Adapt follows **focused, testable function design** established through
+Hover follows **focused, testable function design** established through
 systematic refactoring:
 
 - **Function Size**: Functions kept under 50 lines where possible
@@ -246,7 +246,7 @@ systematic refactoring:
 
 ### Sentry Integration Strategy
 
-Adapt uses Sentry for both error tracking and performance monitoring with a
+Hover uses Sentry for both error tracking and performance monitoring with a
 strategic approach to avoid over-logging.
 
 #### Configuration
@@ -303,7 +303,7 @@ helps diagnose:
 
 ### Template + Data Binding System
 
-Adapt uses a template-based approach that allows flexible HTML layouts whilst
+Hover uses a template-based approach that allows flexible HTML layouts whilst
 JavaScript provides functionality through attribute-based event handling.
 
 **Current Implementation (v0.5.3):**
@@ -472,7 +472,7 @@ patterns and lessons learned.
 
 - ✅ **Notification Badge**: Real-time updates when jobs complete (v0.20.0)
   - Postgres Changes subscription on `notifications` table
-  - WebSocket CSP configured for `wss://adapt.auth.goodnative.co`
+  - WebSocket CSP configured for `wss://hover.auth.goodnative.co`
   - 200ms query delay to avoid transaction visibility race condition
 
 **Planned:**

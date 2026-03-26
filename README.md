@@ -1,13 +1,13 @@
-[![Fly Deploy](https://github.com/Harvey-AU/adapt/actions/workflows/fly-deploy.yml/badge.svg)](https://github.com/Harvey-AU/adapt/actions/workflows/fly-deploy.yml)
-[![Tests](https://github.com/Harvey-AU/adapt/actions/workflows/test.yml/badge.svg)](https://github.com/Harvey-AU/adapt/actions/workflows/test.yml)
-[![codecov](https://codecov.io/github/harvey-au/adapt/graph/badge.svg?token=EC0JW5IU7X)](https://codecov.io/github/harvey-au/adapt)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Harvey-AU/adapt?style=flat)](https://goreportcard.com/report/github.com/Harvey-AU/adapt)
-[![Go Reference](https://pkg.go.dev/badge/github.com/Harvey-AU/adapt.svg)](https://pkg.go.dev/github.com/Harvey-AU/adapt)
+# Hover 🐝
+
+[![Fly Deploy](https://github.com/Harvey-AU/hover/actions/workflows/fly-deploy.yml/badge.svg)](https://github.com/Harvey-AU/hover/actions/workflows/fly-deploy.yml)
+[![Tests](https://github.com/Harvey-AU/hover/actions/workflows/test.yml/badge.svg)](https://github.com/Harvey-AU/hover/actions/workflows/test.yml)
+[![codecov](https://codecov.io/github/harvey-au/hover/graph/badge.svg?token=EC0JW5IU7X)](https://codecov.io/github/harvey-au/hover)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Harvey-AU/hover?style=flat)](https://goreportcard.com/report/github.com/Harvey-AU/hover)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Harvey-AU/hover.svg)](https://pkg.go.dev/github.com/Harvey-AU/hover)
 [![Go Version](https://img.shields.io/badge/go-1.26-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/Harvey-AU/adapt/graphs/commit-activity)
-
-# Adapt 🐝
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/Harvey-AU/hover/graphs/commit-activity)
 
 A comprehensive website health and performance tool that monitors site health,
 detects broken links, identifies slow pages, and warms cache for optimal
@@ -50,8 +50,8 @@ Built by the Good Native team in Castlemaine, Victoria, Australia.
 
 ```bash
 # Clone the repository
-git clone https://github.com/Harvey-AU/adapt.git adapt
-cd adapt
+git clone https://github.com/Harvey-AU/hover.git hover
+cd hover
 
 # Enable pre-commit hooks for automatic formatting
 git config core.hooksPath .githooks
@@ -76,7 +76,7 @@ One command starts everything:
 - 🚀 Completely isolated from production
 - 🔇 Clean logging by default, verbose mode available
 
-If you run without `DATABASE_URL`, ensure `POSTGRES_DB=adapt` for local
+If you run without `DATABASE_URL`, ensure `POSTGRES_DB=hover` for local
 defaults.
 
 ## Status
@@ -115,7 +115,7 @@ See [Roadmap.md](./Roadmap.md) for detailed progress tracking.
 
 ## Support
 
-- [Report Issues](https://github.com/Harvey-AU/adapt/issues)
+- [Report Issues](https://github.com/Harvey-AU/hover/issues)
 - [Security Policy](SECURITY.md)
 - Email: <hello@teamharvey.co>
 

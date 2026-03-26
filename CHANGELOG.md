@@ -28,6 +28,28 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.30.0] – 2026-03-26
+
+Rebranded from Adapt to Hover across the entire codebase, configuration, and
+infrastructure.
+
+### Changed
+
+- **Brand rename** — all user-facing text, HTML titles, nav, and page headings
+  updated from "Adapt" to "Hover"
+- **Crawler user-agent** — `AdaptBot/1.0` → `HoverBot/1.0`
+- **OpenTelemetry service identity** — service name, tracer names, and meter
+  names now use `hover/*`
+- **Fly.io app name** — `fly.toml` and review app config target the `hover` app
+- **GitHub URLs** — badges, workflow refs, and repository links point to
+  `Harvey-AU/hover`
+- **Go module** — `go.mod` module path updated
+- **Auth redirects** — `APP_URL` and OAuth callback references use
+  `hover.app.goodnative.co`
+- **Scripts and CI** — cleanup scripts, review-app workflows, and shell helpers
+  reference the renamed app
+- **Documentation** — all docs, plans, research summaries, and README updated
+
 ## [0.29.0] – 2026-03-25
 
 Migrated the Hover frontend from legacy global scripts to ES modules and

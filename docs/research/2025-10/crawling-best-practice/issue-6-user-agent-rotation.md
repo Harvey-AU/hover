@@ -9,7 +9,7 @@ minimal benefit **Status:** Current implementation is adequate
 
 ```go
 // internal/crawler/config.go
-UserAgent: "AdaptBot/1.0 (+https://goodnative.co)"
+UserAgent: "HoverBot/1.0 (+https://goodnative.co)"
 ```
 
 **Production configuration:**
@@ -17,7 +17,7 @@ UserAgent: "AdaptBot/1.0 (+https://goodnative.co)"
 ```go
 // cmd/app/main.go - Line 175
 cr := crawler.New(crawlerConfig)  // No ID parameter passed
-// Results in: "AdaptBot/1.0 (+https://goodnative.co)"
+// Results in: "HoverBot/1.0 (+https://goodnative.co)"
 // (Worker-N suffix not used in production)
 ```
 
@@ -57,7 +57,7 @@ Some best practices suggest rotating user-agents to:
 **What we have:**
 
 ```
-AdaptBot/1.0 (+https://goodnative.co)
+HoverBot/1.0 (+https://goodnative.co)
 ```
 
 **This is perfect because:**
@@ -121,7 +121,7 @@ c.OnRequest(func(r *colly.Request) {
 
 ### ⚠️ **If You Get Blocked Based on UA** (Unlikely)
 
-If a site blocks `AdaptBot` specifically:
+If a site blocks `HoverBot` specifically:
 
 1. **First**: Check if you're violating their robots.txt
 2. **Then**: Contact site operator (they may allowlist you)
@@ -130,11 +130,11 @@ If a site blocks `AdaptBot` specifically:
 ```go
 // Per-domain UA override
 if domain == "problem-site.com" {
-    ua = "AdaptBot/1.0 (compatible; Cache Warmer; +https://goodnative.co)"
+    ua = "HoverBot/1.0 (compatible; Cache Warmer; +https://goodnative.co)"
 }
 ```
 
-**Still identifies as AdaptBot, just different format.**
+**Still identifies as HoverBot, just different format.**
 
 ## Cost-Benefit Analysis
 

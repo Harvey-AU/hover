@@ -4,13 +4,13 @@ name: Auto Release
 # It uses a fine-grained Personal Access Token (PAT_TOKEN) to bypass branch protection.
 #
 # PAT Configuration:
-# - Name: "Adapt Release Automation"
+# - Name: "Hover Release Automation"
 # - Type: Fine-grained token
 # - Expiration: 365 days (expires ~1 year from creation)
-# - Repository: Harvey-AU/adapt
+# - Repository: Harvey-AU/hover
 # - Permissions: Contents (read/write), Pull requests (read/write)
 # - Location: https://github.com/settings/tokens?type=beta
-# - Secret: https://github.com/Harvey-AU/adapt/settings/secrets/actions
+# - Secret: https://github.com/Harvey-AU/hover/settings/secrets/actions
 #
 # When to renew:
 # - GitHub will email you before expiration

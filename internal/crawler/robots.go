@@ -29,7 +29,7 @@ type RobotsRules struct {
 // ParseRobotsTxt fetches and parses robots.txt for a domain
 //
 // The parser follows these rules in order of precedence:
-// 1. If there are specific rules for "AdaptBot", use those
+// 1. If there are specific rules for "HoverBot", use those
 // 2. Otherwise, fall back to wildcard (*) rules
 //
 // We intentionally don't match SEO crawler rules (AhrefsBot, MJ12bot, etc.) as those
@@ -118,7 +118,7 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 	var inWildcardSection bool
 	var foundSpecificSection bool // Track if we've found a specific section for our bot
 
-	// Extract bot name from user agent (e.g., "AdaptBot/1.0" -> "adaptbot")
+	// Extract bot name from user agent (e.g., "HoverBot/1.0" -> "hoverbot")
 	botName := strings.ToLower(strings.Split(userAgent, "/")[0])
 
 	// Temporary storage for wildcard rules

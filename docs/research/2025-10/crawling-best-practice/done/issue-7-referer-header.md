@@ -33,7 +33,7 @@ User on page A clicks link → request to page B includes "Referer: page A"
 GET /products HTTP/1.1
 Host: example.com
 Referer: https://example.com/
-User-Agent: AdaptBot/1.0
+User-Agent: HoverBot/1.0
 ```
 
 **Without Referer:**
@@ -41,7 +41,7 @@ User-Agent: AdaptBot/1.0
 ```
 GET /products HTTP/1.1
 Host: example.com
-User-Agent: AdaptBot/1.0  ← Looks like direct navigation
+User-Agent: HoverBot/1.0  ← Looks like direct navigation
 ```
 
 ### 2. Some Sites Check Referer for Hotlinking Protection
@@ -66,7 +66,7 @@ User-Agent: AdaptBot/1.0  ← Looks like direct navigation
 
 **Our identity is clear:**
 
-- `User-Agent: AdaptBot/1.0`
+- `User-Agent: HoverBot/1.0`
 - We're a crawler, not a browser
 - Setting Referer doesn't change that
 

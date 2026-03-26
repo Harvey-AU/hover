@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Harvey-AU/adapt/internal/util"
+	"github.com/Harvey-AU/hover/internal/util"
 )
 
 // CreateDomainRequest represents the request body for POST /v1/domains

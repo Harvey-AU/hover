@@ -2,7 +2,7 @@
 
 ## Overview
 
-Adapt uses PostgreSQL as its primary database with a normalised schema designed
+Hover uses PostgreSQL as its primary database with a normalised schema designed
 for efficiency and data integrity. The system leverages PostgreSQL-specific
 features like `FOR UPDATE SKIP LOCKED` for lock-free concurrent task processing.
 
@@ -10,7 +10,7 @@ As of 26th July 2025 we manage database schema/setup via migrations.
 
 ### Migration Workflow
 
-Adapt uses Supabase GitHub integration for automatic migration deployment:
+Hover uses Supabase GitHub integration for automatic migration deployment:
 
 1. **Create Migration Files**: Place new `.sql` files in `supabase/migrations/`
    with timestamp prefix
@@ -35,7 +35,7 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USER=your_user
 DB_PASSWORD=your_password
-DB_NAME=adaptappgoodnative
+DB_NAME=hoverappgoodnative
 DB_SSLMODE=prefer
 ```
 
@@ -53,7 +53,7 @@ client.SetConnMaxIdleTime(2 * time.Minute)  // Idle connection timeout
 
 ### Connection Pool Sizing Strategy
 
-Adapt uses conservative connection pool limits tuned for Supabase's shared
+Hover uses conservative connection pool limits tuned for Supabase's shared
 infrastructure:
 
 **Current Configuration:**
@@ -99,7 +99,7 @@ GROUP BY state;
 
 ### Connection Timeout Configuration
 
-Adapt configures PostgreSQL session timeouts to prevent resource leaks and
+Hover configures PostgreSQL session timeouts to prevent resource leaks and
 runaway queries:
 
 ```go
@@ -505,7 +505,7 @@ FOR ALL USING (
 
 ### Composite Indexes for Hot Paths
 
-Adapt uses composite indexes optimised for actual query patterns identified
+Hover uses composite indexes optimised for actual query patterns identified
 through EXPLAIN ANALYZE profiling:
 
 #### Task Claiming (Worker Pool)
@@ -787,7 +787,7 @@ updates and avoid frequent progress writes
 
 ## Performance Observability
 
-Adapt ships with the `pg_stat_statements` extension enabled so we can measure
+Hover ships with the `pg_stat_statements` extension enabled so we can measure
 the queries causing the highest load:
 
 - The migration `20251012070000_enable_pg_stat_statements.sql` enables the
@@ -814,10 +814,10 @@ the queries causing the highest load:
 
 ```bash
 # Create local database
-createdb adaptappgoodnative
+createdb hoverappgoodnative
 
 # Set environment variables
-export DATABASE_URL="postgres://localhost/adaptappgoodnative"
+export DATABASE_URL="postgres://localhost/hoverappgoodnative"
 
 # Run application (creates schema automatically)
 go run ./cmd/app/main.go
@@ -827,7 +827,7 @@ go run ./cmd/app/main.go
 
 ```bash
 # Run with test database
-export DATABASE_URL="postgres://localhost/adaptappgoodnative_test"
+export DATABASE_URL="postgres://localhost/hoverappgoodnative_test"
 export RUN_INTEGRATION_TESTS=true
 go test ./...
 ```
@@ -840,5 +840,5 @@ curl -X POST localhost:8080/admin/reset-db \
   -H "Authorization: Bearer admin-token"
 ```
 
-This database design provides a solid foundation for Adapt's cache warming
+This database design provides a solid foundation for Hover's cache warming
 operations while maintaining data integrity, performance, and security.

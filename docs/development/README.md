@@ -1,6 +1,6 @@
 # Development Documentation
 
-Setup guides, workflow processes, and debugging tools for Adapt development.
+Setup guides, workflow processes, and debugging tools for Hover development.
 
 ## 📄 Documents
 

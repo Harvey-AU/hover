@@ -2,7 +2,7 @@
 
 ## Overview
 
-Adapt will support multiple authentication entry points while maintaining a
+Hover will support multiple authentication entry points while maintaining a
 single unified user system. Users can access via the main dashboard, Shopify
 apps, or Webflow apps.
 

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Harvey-AU/adapt/internal/cache"
-	"github.com/Harvey-AU/adapt/internal/util"
+	"github.com/Harvey-AU/hover/internal/cache"
+	"github.com/Harvey-AU/hover/internal/util"
 )
 
 // Benchmark cache operations - hot path for URL deduplication

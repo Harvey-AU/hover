@@ -1,5 +1,5 @@
 /**
- * Adapt — Bootstrap
+ * Hover — Bootstrap
  *
  * Loaded WITHOUT defer so it executes immediately, before core.js.
  * Provides BB_APP.whenReady() so DOMContentLoaded handlers can safely

@@ -14,7 +14,7 @@ Execute the load test script to create test jobs at regular intervals.
 
 2. Configure (optional):
    ```bash
-   export API_URL="https://adapt.app.goodnative.co"  # Default: http://localhost:8080
+   export API_URL="https://hover.app.goodnative.co"  # Default: http://localhost:8080
    export BATCH_INTERVAL_MINUTES=30               # Default: 30
    export TEST_DURATION_HOURS=5                   # Default: 5
    export JOBS_PER_BATCH=7                        # Default: 7
@@ -40,7 +40,7 @@ export JOBS_PER_BATCH=5
 **Production (gentle):**
 
 ```bash
-export API_URL="https://adapt.app.goodnative.co"
+export API_URL="https://hover.app.goodnative.co"
 export BATCH_INTERVAL_MINUTES=60
 export JOBS_PER_BATCH=3
 ./scripts/generate-test-jobs.sh

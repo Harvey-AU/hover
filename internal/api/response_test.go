@@ -99,7 +99,7 @@ func TestResponseHelpers(t *testing.T) {
 		{
 			name: "write_healthy",
 			testFunc: func(w *httptest.ResponseRecorder, r *http.Request) {
-				WriteHealthy(w, r, "adapt", "1.0.0")
+				WriteHealthy(w, r, "hover", "1.0.0")
 			},
 			validateFunc: func(t *testing.T, w *httptest.ResponseRecorder) {
 				assert.Equal(t, http.StatusOK, w.Code)
@@ -110,7 +110,7 @@ func TestResponseHelpers(t *testing.T) {
 				assert.NoError(t, err)
 
 				assert.Equal(t, "healthy", response.Status)
-				assert.Equal(t, "adapt", response.Service)
+				assert.Equal(t, "hover", response.Service)
 				assert.Equal(t, "1.0.0", response.Version)
 				assert.NotEmpty(t, response.Timestamp)
 			},

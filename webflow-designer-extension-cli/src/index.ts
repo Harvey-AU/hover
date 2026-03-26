@@ -32,8 +32,8 @@ const API_BASE_STORAGE_KEY = "bbb_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
-const DEFAULT_BBB_APP_ORIGIN = "https://adapt.app.goodnative.co";
-const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://adapt-pr-255.fly.dev"]);
+const DEFAULT_BBB_APP_ORIGIN = "https://hover.app.goodnative.co";
+const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://hover-pr-255.fly.dev"]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
@@ -1315,7 +1315,7 @@ async function exportJob(jobId: string): Promise<void> {
 
     const csvContent = csvRows.join("\n");
     const filenameBase = sanitizeForFilename(payload.domain || `job-${jobId}`);
-    const filename = `${filenameBase}-adapt-export.csv`;
+    const filename = `${filenameBase}-hover-export.csv`;
     triggerFileDownload(csvContent, "text/csv", filename);
   } catch (error) {
     setStatus(

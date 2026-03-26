@@ -121,7 +121,7 @@ jobs:
           echo "========================================"
 
       - name: Build Docker image locally
-        run: docker build -t adapt:pr-${{ github.event.number }} .
+        run: docker build -t hover:pr-${{ github.event.number }} .
 
       - name: Deploy Review App
         id: deploy
@@ -175,7 +175,7 @@ jobs:
           fi
 
           # Create review app name
-          APP_NAME="adapt-pr-${{ github.event.number }}"
+          APP_NAME="hover-pr-${{ github.event.number }}"
           SUPABASE_FALLBACK_AUTH_URL="${{ secrets.SUPABASE_FALLBACK_AUTH_URL }}"
           SUPABASE_LEGACY_AUTH_URL="${{ secrets.SUPABASE_LEGACY_AUTH_URL }}"
           AUTH_URL_FLAGS=()
@@ -252,7 +252,7 @@ jobs:
             --app $APP_NAME \
             --config .fly/review_apps.toml \
             --local-only \
-            --image adapt:pr-${{ github.event.number }}
+            --image hover:pr-${{ github.event.number }}
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
@@ -260,7 +260,7 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const appName = `adapt-pr-${{ github.event.number }}`;
+            const appName = `hover-pr-${{ github.event.number }}`;
             const appUrl = `https://${appName}.fly.dev`;
             const dbType = `${{ steps.deploy.outputs.db_type }}`;
             const dbLabel = dbType === 'preview' ? 'Supabase preview branch' : 'Shared test database';
@@ -286,7 +286,7 @@ jobs:
 
       - name: Destroy Review App
         run: |
-          APP_NAME="adapt-pr-${{ github.event.number }}"
+          APP_NAME="hover-pr-${{ github.event.number }}"
           flyctl apps destroy $APP_NAME --yes || echo "App may not exist"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

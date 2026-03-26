@@ -141,7 +141,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOKEN_FILE="${TOKEN_FILE_PATH:-$REPO_ROOT/sb-auth-auth-token}"
 AUTH_HELPER="$REPO_ROOT/scripts/auth/cli_auth.py"
 
-API_URL="${API_URL:-https://adapt.fly.dev}"
+API_URL="${API_URL:-https://hover.fly.dev}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
 
 if [ -z "$AUTH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then

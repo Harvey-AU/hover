@@ -103,7 +103,7 @@ RandomDelay = 400ms  // Random 0-400ms on top
 
 1. **Scraping sites with bot detection** (not our use case)
 2. **Simulating user behaviour for testing** (not cache warming)
-3. **Avoiding pattern-based blocking** (we identify ourselves as AdaptBot)
+3. **Avoiding pattern-based blocking** (we identify ourselves as HoverBot)
 
 **None apply to cache warming.**
 

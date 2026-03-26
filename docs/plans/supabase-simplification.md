@@ -1,4 +1,4 @@
-# Supabase Simplification Analysis for Adapt
+# Supabase Simplification Analysis for Hover
 
 **Date**: 2026-01-03 **Status**: Approved for implementation
 
@@ -276,7 +276,7 @@ Deno.serve(async (req: Request) => {
         body: JSON.stringify({
           channel: slackUserId,
           blocks,
-          text: notification.subject || "Notification from Adapt",
+          text: notification.subject || "Notification from Hover",
         }),
       }
     );
