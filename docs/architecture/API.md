@@ -1146,7 +1146,7 @@ Authorization: Bearer <token>
 ```yaml
 - job_name: hover
   static_configs:
-    - targets: ["hover-prod.internal:9464"]
+    - targets: ["hover.internal:9464"]
 ```
 
 Worker task counters (`bee_worker_task_total`) and histograms
