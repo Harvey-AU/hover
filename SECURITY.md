@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within Cache Warmer, please send an
+If you discover a security vulnerability within Hover, please send an
 email to [hello@teamharvey.co](mailto:hello@teamharvey.co). All security
 vulnerabilities will be promptly addressed.
 
@@ -14,7 +14,7 @@ Only the latest version is currently supported with security updates.
 
 ## Security Best Practices
 
-When deploying Cache Warmer:
+When deploying Hover:
 
 1. Never commit environment files (.env)
 2. Use secure environment variables for all secrets
