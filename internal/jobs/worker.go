@@ -274,10 +274,10 @@ func (wp *WorkerPool) fetchJobInfoFromDB(ctx context.Context, jobID string) (*Jo
 		info.CrawlDelay = int(crawlDelay.Int64)
 	}
 	if adaptiveDelay.Valid {
-		info.HoveriveDelay = int(adaptiveDelay.Int64)
+		info.AdaptiveDelay = int(adaptiveDelay.Int64)
 	}
 	if adaptiveFloor.Valid {
-		info.HoveriveDelayFloor = int(adaptiveFloor.Int64)
+		info.AdaptiveDelayFloor = int(adaptiveFloor.Int64)
 	}
 
 	return info, nil
@@ -393,8 +393,8 @@ type JobInfo struct {
 	AllowCrossSubdomainLinks bool
 	CrawlDelay               int
 	Concurrency              int
-	HoveriveDelay            int
-	HoveriveDelayFloor       int
+	AdaptiveDelay            int
+	AdaptiveDelayFloor       int
 	RobotsRules              *crawler.RobotsRules // Cached robots.txt rules for URL filtering
 }
 
@@ -949,7 +949,7 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 	jobInfo, err := wp.loadJobInfo(ctx, jobID, options)
 
 	if err == nil {
-		wp.ensureDomainLimiter().Seed(jobInfo.DomainName, jobInfo.CrawlDelay, jobInfo.HoveriveDelay, jobInfo.HoveriveDelayFloor)
+		wp.ensureDomainLimiter().Seed(jobInfo.DomainName, jobInfo.CrawlDelay, jobInfo.AdaptiveDelay, jobInfo.AdaptiveDelayFloor)
 
 		// Parse robots.txt to get filtering rules
 		robotsRules, err := crawler.ParseRobotsTxt(ctx, jobInfo.DomainName, wp.crawler.GetUserAgent())
@@ -1538,8 +1538,8 @@ func (wp *WorkerPool) prepareTaskForProcessing(ctx context.Context, task *db.Tas
 		jobsTask.AllowCrossSubdomainLinks = jobInfo.AllowCrossSubdomainLinks
 		jobsTask.CrawlDelay = jobInfo.CrawlDelay
 		jobsTask.JobConcurrency = jobInfo.Concurrency
-		jobsTask.HoveriveDelay = jobInfo.HoveriveDelay
-		jobsTask.HoveriveDelayFloor = jobInfo.HoveriveDelayFloor
+		jobsTask.AdaptiveDelay = jobInfo.AdaptiveDelay
+		jobsTask.AdaptiveDelayFloor = jobInfo.AdaptiveDelayFloor
 	} else {
 		// Fallback to database if not in cache (shouldn't happen normally)
 		log.Warn().Str("job_id", task.JobID).Msg("Job info not in cache, querying database")
@@ -1554,9 +1554,9 @@ func (wp *WorkerPool) prepareTaskForProcessing(ctx context.Context, task *db.Tas
 			jobsTask.AllowCrossSubdomainLinks = info.AllowCrossSubdomainLinks
 			jobsTask.CrawlDelay = info.CrawlDelay
 			jobsTask.JobConcurrency = info.Concurrency
-			jobsTask.HoveriveDelay = info.HoveriveDelay
-			jobsTask.HoveriveDelayFloor = info.HoveriveDelayFloor
-			wp.ensureDomainLimiter().Seed(info.DomainName, info.CrawlDelay, info.HoveriveDelay, info.HoveriveDelayFloor)
+			jobsTask.AdaptiveDelay = info.AdaptiveDelay
+			jobsTask.AdaptiveDelayFloor = info.AdaptiveDelayFloor
+			wp.ensureDomainLimiter().Seed(info.DomainName, info.CrawlDelay, info.AdaptiveDelay, info.AdaptiveDelayFloor)
 		}
 	}
 	if jobsTask.JobConcurrency <= 0 {

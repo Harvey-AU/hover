@@ -139,7 +139,7 @@ type JobResponse struct {
 	MaxPages             int     `json:"max_pages"`
 	SourceType           *string `json:"source_type,omitempty"`
 	CrawlDelaySeconds    *int    `json:"crawl_delay_seconds,omitempty"`
-	HoveriveDelaySeconds int     `json:"adaptive_delay_seconds"`
+	AdaptiveDelaySeconds int     `json:"adaptive_delay_seconds"`
 }
 
 // listJobs handles GET /v1/jobs
@@ -489,7 +489,7 @@ func (h *Handler) fetchJobResponse(ctx context.Context, jobID string, organisati
 		Progress:             progress,
 		Concurrency:          concurrency,
 		MaxPages:             maxPages,
-		HoveriveDelaySeconds: adaptiveDelaySeconds,
+		AdaptiveDelaySeconds: adaptiveDelaySeconds,
 	}
 	if sourceType.Valid {
 		response.SourceType = &sourceType.String

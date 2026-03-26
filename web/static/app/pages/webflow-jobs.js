@@ -192,7 +192,7 @@ export function subscribeToJobUpdates(orgId, onUpdate) {
     }
   }
 
-  // Hoverive interval: 500 ms while jobs are active, 1 s when idle.
+  // Adaptive interval: 500 ms while jobs are active, 1 s when idle.
   // Matches the legacy bb-auth-extension.js dual-interval behaviour.
   function getFallbackInterval() {
     return window.dataBinder?.hasRealtimeActiveJobs
