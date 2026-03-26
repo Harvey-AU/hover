@@ -26,7 +26,11 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:patch]
+
+### Fixed
+
+- Trigger redeploy to Fly with correct `fly.toml` config
 
 ## [0.30.0] – 2026-03-26
 
