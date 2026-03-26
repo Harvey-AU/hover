@@ -698,7 +698,7 @@ runtime to access shared code.
   - New `users_own_jobs_simple` RLS policy for fast user-based filtering
 - **Realtime Notification Updates**: Badge updates instantly when jobs complete
   - Supabase Postgres Changes subscription for `notifications` table
-  - WebSocket CSP configured for `wss://hover.auth.goodnative.co`
+  - WebSocket CSP configured for `wss://adapt.auth.goodnative.co`
   - 200ms delay before querying to avoid transaction visibility race condition
 
 ### Changed
@@ -1774,7 +1774,7 @@ Series of minor optimisations to improve throughput and resource usage.
     in logs if context is logged
   - Addresses Dependabot security alert CVE (indirect dependency via
     OpenTelemetry)
-  - No impact on Hover as we don't log contexts containing gRPC metadata
+  - No impact on Adapt as we don't log contexts containing gRPC metadata
 
 ## [0.7.2] – 2025-10-14
 
@@ -2953,8 +2953,8 @@ Series of minor optimisations to improve throughput and resource usage.
 - **Domain References**: Corrected all application URLs to use proper domain
   structure
   - Updated authentication redirect URLs from `goodnative.co` to
-    `hover.app.goodnative.co`
-  - Fixed API base URLs in Web Components to point to `hover.app.goodnative.co`
+    `adapt.app.goodnative.co`
+  - Fixed API base URLs in Web Components to point to `adapt.app.goodnative.co`
   - Updated all script URLs and CDN references in examples and documentation
   - Rebuilt Web Components with correct production URLs
 
@@ -2962,13 +2962,13 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Domain Usage Clarification**: Comprehensive documentation of domain
   structure and usage
-  - **Local development**: `http://localhost:8080` - Hover application for local
+  - **Local development**: `http://localhost:8080` - Adapt application for local
     testing
   - **Production marketing site**: `https://goodnative.co` - Marketing website
     only
-  - **Production application**: `https://hover.app.goodnative.co` - Live
+  - **Production application**: `https://adapt.app.goodnative.co` - Live
     application, services, demo pages
-  - **Authentication service**: `https://hover.auth.goodnative.co` - Supabase
+  - **Authentication service**: `https://adapt.auth.goodnative.co` - Supabase
     authentication (unchanged)
   - Updated all documentation files to clearly specify domain purposes and usage
     contexts
@@ -3078,7 +3078,7 @@ Series of minor optimisations to improve throughput and resource usage.
   - JavaScript automatically scans for `bb-action` and `bb-data-*` attributes to
     provide functionality
   - Event delegation system allows any HTML element with `bb-action` to trigger
-    Hover features
+    Adapt features
   - Sets foundation for future template binding system where users control
     layout design
 
@@ -3217,7 +3217,7 @@ Series of minor optimisations to improve throughput and resource usage.
   application
   - Added `/js/` endpoint to serve Web Components as static files from Go app
   - Components now accessible at
-    `https://hover.app.goodnative.co/js/bb-components.min.js`
+    `https://adapt.app.goodnative.co/js/bb-components.min.js`
   - Docker container properly configured to include built components
 
 ### Enhanced
@@ -3465,7 +3465,7 @@ Series of minor optimisations to improve throughput and resource usage.
     validation
   - Support for 8 social login providers: Google, Facebook, Slack, GitHub,
     Microsoft, Figma, LinkedIn + Email/Password
-  - Custom domain authentication using `hover.auth.goodnative.co` for
+  - Custom domain authentication using `adapt.auth.goodnative.co` for
     professional OAuth flows
   - User and organisation management with automatic organisation creation on
     signup
