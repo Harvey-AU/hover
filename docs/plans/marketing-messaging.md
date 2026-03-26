@@ -1,8 +1,8 @@
-# Adapt - Product Strategy & Positioning
+# Hover - Product Strategy & Positioning
 
 ## Executive Summary
 
-Adapt is a post-publish quality assurance tool that automatically crawls
+Hover is a post-publish quality assurance tool that automatically crawls
 websites to detect broken links and warm caches after every update. Target
 market: websites with 300+ pages that publish frequently, where manual checking
 becomes impossible.
@@ -247,7 +247,7 @@ in marketing materials._
 
 ## Bottom Line
 
-Adapt can realistically achieve 1,000 paying customers in 12-18 months by:
+Hover can realistically achieve 1,000 paying customers in 12-18 months by:
 
 - Starting narrow (Webflow agencies) then expanding (Shopify stores).
 - Leading with understood value (broken links) while educating on advanced

@@ -90,7 +90,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 	}
 
 	if cfg.ServiceName == "" {
-		cfg.ServiceName = "adapt"
+		cfg.ServiceName = "hover"
 	}
 
 	res, err := resource.New(ctx,
@@ -166,7 +166,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 	otel.SetMeterProvider(meterProvider)
 
 	initOnce.Do(func() {
-		workerTracer = tracerProvider.Tracer("adapt/worker")
+		workerTracer = tracerProvider.Tracer("hover/worker")
 		_ = initWorkerInstruments(meterProvider)
 		_ = initJobInstruments(meterProvider)
 		_ = initDBPoolInstruments(meterProvider)
@@ -230,7 +230,7 @@ func initWorkerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return nil
 	}
 
-	meter := meterProvider.Meter("adapt/worker")
+	meter := meterProvider.Meter("hover/worker")
 
 	var err error
 	workerTaskDuration, err = meter.Float64Histogram(
@@ -321,7 +321,7 @@ func initJobInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return nil
 	}
 
-	meter := meterProvider.Meter("adapt/jobs")
+	meter := meterProvider.Meter("hover/jobs")
 
 	var err error
 	jobRunningTasksGauge, err = meter.Int64Gauge(
@@ -376,7 +376,7 @@ func initDBPoolInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return nil
 	}
 
-	meter := meterProvider.Meter("adapt/db_pool")
+	meter := meterProvider.Meter("hover/db_pool")
 
 	var err error
 	dbPoolInUseGauge, err = meter.Int64Gauge(
@@ -465,7 +465,7 @@ type WorkerTaskMetrics struct {
 func StartWorkerTaskSpan(ctx context.Context, info WorkerTaskSpanInfo) (context.Context, trace.Span) {
 	t := workerTracer
 	if t == nil {
-		t = otel.Tracer("adapt/worker")
+		t = otel.Tracer("hover/worker")
 	}
 
 	attrs := []attribute.KeyValue{

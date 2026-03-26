@@ -21,7 +21,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           echo "Listing all preview apps..."
-          APPS=$(flyctl apps list --json | jq -r '.[] | select(.Name | startswith("adapt-pr-")) | .Name')
+          APPS=$(flyctl apps list --json | jq -r '.[] | select(.Name | startswith("hover-pr-")) | .Name')
 
           if [ -z "$APPS" ]; then
             echo "No preview apps found"
@@ -33,8 +33,8 @@ jobs:
           echo ""
 
           for APP in $APPS; do
-            # Extract PR number from app name (adapt-pr-123 -> 123)
-            PR_NUMBER=$(echo "$APP" | sed 's/adapt-pr-//')
+            # Extract PR number from app name (hover-pr-123 -> 123)
+            PR_NUMBER=$(echo "$APP" | sed 's/hover-pr-//')
 
             echo "Checking PR #$PR_NUMBER for app $APP..."
 

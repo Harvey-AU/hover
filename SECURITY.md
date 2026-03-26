@@ -24,9 +24,9 @@ When deploying Cache Warmer:
 
 ## System Administrator Role
 
-Adapt distinguishes between two types of administrative access:
+Hover distinguishes between two types of administrative access:
 
-- **System Administrator** (`system_role: "system_admin"`) - Adapt operators
+- **System Administrator** (`system_role: "system_admin"`) - Hover operators
   with system-level access
 - **Organisation Administrator** (`role: "admin"` or `"owner"`) - Client
   administrators within their organisation

@@ -2,7 +2,7 @@
 
 ## Branch Structure
 
-Adapt uses a simplified branching strategy:
+Hover uses a simplified branching strategy:
 
 ```
 main (production) ← Direct PRs from feature branches
@@ -59,7 +59,7 @@ git push origin feature/your-feature
    - PR automatically triggers preview app deployment
    - Preview app gets isolated Supabase database with migrations applied
    - Tests run automatically via GitHub Actions
-   - Test your changes on preview URL: `adapt-pr-[number].fly.dev`
+   - Test your changes on preview URL: `hover-pr-[number].fly.dev`
    - Code review and approval
    - Merge and automatically delete feature branch
 

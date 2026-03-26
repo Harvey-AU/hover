@@ -22,7 +22,7 @@ export AUTH_TOKEN="your-jwt-token-here"
 Set environment variables to customise:
 
 ```bash
-export API_URL="https://adapt.app.goodnative.co"  # Default: http://localhost:8080
+export API_URL="https://hover.app.goodnative.co"  # Default: http://localhost:8080
 export AUTH_TOKEN="your-token"                  # Required!
 export BATCH_INTERVAL_MINUTES=30                # Default: 30
 export TEST_DURATION_HOURS=5                    # Default: 5
@@ -75,12 +75,12 @@ python3 scripts/auth/cli_auth.py login
 ```
 
 The helper stores your Supabase session under
-`~/.config/adapt/auth/session.json` (or `%APPDATA%\AdaptBot\auth\session.json`
+`~/.config/hover/auth/session.json` (or `%APPDATA%\HoverBot\auth\session.json`
 on Windows). All load-test scripts will reuse it automatically. Re-run the
 command any time you need to refresh the session. Ensure
 `http://127.0.0.1:8765/callback` (or your chosen callback port) is listed under
 **Redirect URLs** in Supabase Auth settings. The helper opens
-`https://adapt.app.goodnative.co/cli-login.html`, which loads the same sign-in
+`https://hover.app.goodnative.co/cli-login.html`, which loads the same sign-in
 modal (email/password, Google, GitHub) that the app uses; when the page reports
 success, return to your terminal. Make sure that file is deployed alongside the
 rest of the static assets.
@@ -137,7 +137,7 @@ Press `Ctrl+C` - current batch will finish, then script exits.
 For production testing:
 
 ```bash
-export API_URL="https://adapt.app.goodnative.co"
+export API_URL="https://hover.app.goodnative.co"
 export AUTH_TOKEN="your-production-token"
 export BATCH_INTERVAL_MINUTES=60  # Less aggressive
 export JOBS_PER_BATCH=3           # Fewer jobs

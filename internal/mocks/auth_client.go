@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Harvey-AU/adapt/internal/auth"
+	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/stretchr/testify/mock"
 )
 

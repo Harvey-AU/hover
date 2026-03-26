@@ -1,4 +1,4 @@
-module github.com/Harvey-AU/adapt
+module github.com/Harvey-AU/hover
 
 go 1.26.0
 

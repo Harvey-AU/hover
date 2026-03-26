@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Harvey-AU/adapt/internal/db"
-	"github.com/Harvey-AU/adapt/internal/util"
+	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/google/uuid"
 )
 

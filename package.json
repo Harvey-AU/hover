@@ -1,5 +1,5 @@
 {
-  "name": "adapt",
+  "name": "hover",
   "version": "1.0.0",
   "private": true,
   "description": "Web cache warming service",

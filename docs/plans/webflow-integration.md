@@ -2,7 +2,7 @@
 
 ## Overview
 
-Adapt integrates with Webflow to automatically warm site caches after
+Hover integrates with Webflow to automatically warm site caches after
 publishing, ensuring fast load times for real visitors and detecting errors
 before users encounter them.
 
@@ -127,7 +127,7 @@ class CacheWarmingSettings extends HTMLElement {
 
 **User Setup Process:**
 
-1. User installs Adapt from Webflow marketplace
+1. User installs Hover from Webflow marketplace
 2. OAuth flow grants access to user's Webflow sites
 3. User selects sites to enable cache warming
 4. Webhook subscriptions created automatically
@@ -275,7 +275,7 @@ schedule regular maintenance crawls."
 
 1. User clicks "Install" in Webflow marketplace
 2. OAuth flow grants necessary permissions
-3. Adapt automatically detects all user's sites
+3. Hover automatically detects all user's sites
 4. User selects which sites to enable
 5. Webhook subscriptions created
 6. First cache warming job triggered
@@ -386,5 +386,5 @@ const webflowClient = new WebflowClient(decryptedToken);
 - Performance analytics dashboard
 - Integration with Webflow's new features
 
-This integration strategy positions Adapt as an essential tool for Webflow
+This integration strategy positions Hover as an essential tool for Webflow
 users, providing immediate value while building toward more advanced features.

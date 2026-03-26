@@ -1,4 +1,4 @@
--- Adapt seed data
+-- Hover seed data
 -- Generated from production 2026-01-03
 -- Contains minimal reference data for preview branches
 

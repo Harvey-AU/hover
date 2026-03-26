@@ -28,7 +28,7 @@ DEFAULT_AUTH_URL = os.environ.get("SUPABASE_AUTH_URL", config.SUPABASE_URL)
 DEFAULT_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", config.DEFAULT_SUPABASE_ANON_KEY)
 DEFAULT_PROVIDER = os.environ.get("BBB_AUTH_PROVIDER", "google")
 DEFAULT_CALLBACK_PORT = int(os.environ.get("BBB_AUTH_CALLBACK_PORT", "8765"))
-LOGIN_PAGE_URL = os.environ.get("BBB_LOGIN_URL", "https://adapt.app.goodnative.co/cli-login.html")
+LOGIN_PAGE_URL = os.environ.get("BBB_LOGIN_URL", "https://hover.app.goodnative.co/cli-login.html")
 TOKEN_SKEW_SECONDS = 90
 
 
@@ -43,11 +43,11 @@ def _config_dir() -> Path:
             base = Path.home() / "AppData" / "Roaming"
         else:
             base = Path(base)
-        return Path(base) / "Adapt" / "auth"
+        return Path(base) / "Hover" / "auth"
 
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base_path = Path(xdg) if xdg else Path.home() / ".config"
-    return base_path / "adapt" / "auth"
+    return base_path / "hover" / "auth"
 
 
 CONFIG_DIR = _config_dir()

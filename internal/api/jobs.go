@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Harvey-AU/adapt/internal/db"
-	"github.com/Harvey-AU/adapt/internal/jobs"
-	"github.com/Harvey-AU/adapt/internal/util"
+	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/rs/zerolog"
 )
 
@@ -139,7 +139,7 @@ type JobResponse struct {
 	MaxPages             int     `json:"max_pages"`
 	SourceType           *string `json:"source_type,omitempty"`
 	CrawlDelaySeconds    *int    `json:"crawl_delay_seconds,omitempty"`
-	AdaptiveDelaySeconds int     `json:"adaptive_delay_seconds"`
+	HoveriveDelaySeconds int     `json:"adaptive_delay_seconds"`
 }
 
 // listJobs handles GET /v1/jobs
@@ -489,7 +489,7 @@ func (h *Handler) fetchJobResponse(ctx context.Context, jobID string, organisati
 		Progress:             progress,
 		Concurrency:          concurrency,
 		MaxPages:             maxPages,
-		AdaptiveDelaySeconds: adaptiveDelaySeconds,
+		HoveriveDelaySeconds: adaptiveDelaySeconds,
 	}
 	if sourceType.Valid {
 		response.SourceType = &sourceType.String

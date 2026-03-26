@@ -1,6 +1,6 @@
 # Worker Pool Architecture
 
-Adapt uses a PostgreSQL-backed worker pool for concurrent task processing.
+Hover uses a PostgreSQL-backed worker pool for concurrent task processing.
 
 ## Core concepts
 

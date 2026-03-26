@@ -210,7 +210,7 @@
     } catch (error) {
       window.BB_APP = window.BB_APP || {};
       window.BB_APP.coreReadyState = "error";
-      console.error("Failed to initialise Adapt core scripts", error);
+      console.error("Failed to initialise Hover core scripts", error);
       throw error;
     }
   })();

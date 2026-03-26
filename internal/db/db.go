@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Harvey-AU/adapt/internal/cache"
+	"github.com/Harvey-AU/hover/internal/cache"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/rs/zerolog/log"
@@ -129,9 +129,9 @@ func determineApplicationName() string {
 		return trimAppName(override)
 	}
 
-	base := "adapt"
+	base := "hover"
 	if env := sanitiseAppName(strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))); env != "" {
-		base = fmt.Sprintf("adapt-%s", env)
+		base = fmt.Sprintf("hover-%s", env)
 	}
 
 	var parts []string
@@ -508,7 +508,7 @@ func InitFromEnv() (*DB, error) {
 		config.User = "postgres"
 	}
 	if config.Database == "" {
-		config.Database = "adapt"
+		config.Database = "hover"
 	}
 
 	// Create the database connection

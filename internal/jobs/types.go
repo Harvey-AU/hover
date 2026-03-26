@@ -105,8 +105,8 @@ type Task struct {
 	FindLinks                bool `json:"-"`
 	CrawlDelay               int  `json:"-"` // Crawl delay in seconds from robots.txt
 	JobConcurrency           int  `json:"-"`
-	AdaptiveDelay            int  `json:"-"`
-	AdaptiveDelayFloor       int  `json:"-"`
+	HoveriveDelay            int  `json:"-"`
+	HoveriveDelayFloor       int  `json:"-"`
 	AllowCrossSubdomainLinks bool `json:"-"`
 }
 

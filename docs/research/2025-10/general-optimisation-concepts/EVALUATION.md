@@ -1,6 +1,6 @@
 # Reference Articles Evaluation
 
-**Project**: Adapt - Cache Warming Service **Evaluation Date**: 12 October 2025
+**Project**: Hover - Cache Warming Service **Evaluation Date**: 12 October 2025
 **Evaluator**: System Analysis
 
 ## Executive Summary
@@ -333,7 +333,7 @@ https://blog.stackademic.com/top-10-go-libraries-every-developer-should-know-in-
 
 - **GoQuery**: jQuery-like HTML parsing - alternative to Colly if static site
   needs arise [3 impact, 2 effort]
-- **Cobra CLI**: Build admin CLI tools - future `adapt migrate`, `seed` commands
+- **Cobra CLI**: Build admin CLI tools - future `hover migrate`, `seed` commands
   [2 impact, 3 effort]
 
 ### Recommendations
@@ -345,7 +345,7 @@ https://blog.stackademic.com/top-10-go-libraries-every-developer-should-know-in-
 | ✅                                  | GoQuery       | 3   | 5   | 3   | 2   | 0   | jQuery-style HTML parsing - Colly alternative for static sites              | • `crawler.go:14` imports goquery                                     |
 | • `go.mod:8` production dependency  |
 |                                     | Cobra CLI     | 2   | 0   | 2   | 3   | 1   | CLI builder with subcommands - admin tools for migrations and seeding       | • Stage 4+ admin CLI tools                                            |
-| • `adapt migrate`, `seed`, etc.     |
+| • `hover migrate`, `seed`, etc.     |
 | ✅                                  | Gin framework | 2   | 0   | 1   | 4   | 0   | Fast web framework with middleware - stdlib sufficient, high migration cost | Not needed - stdlib sufficient (low impact, high effort to switch)    |
 | ✅                                  | GORM          | 2   | 0   | 1   | 4   | 0   | ORM with migrations and relations - pgx gives better control                | Not needed - pgx provides control (low impact, high effort)           |
 | ✅                                  | GoDotEnv      | 2   | 5   | 2   | 0   | 0   | Load .env files into environment - Fly.io secrets handle config             | • `main.go:39` godotenv.Load()                                        |

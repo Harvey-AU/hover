@@ -1,17 +1,17 @@
-# fly.toml app configuration file generated for adapt on 2025-04-07T22:42:26+10:00
+# fly.toml app configuration file generated for hover on 2025-04-07T22:42:26+10:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'adapt'
+app = 'hover'
 primary_region = 'syd'
 
 [build]
 
 [env]
   APP_ENV = "production"
-  APP_URL = "https://adapt.app.goodnative.co"
-  SETTINGS_URL = "https://adapt.app.goodnative.co/settings"
+  APP_URL = "https://hover.app.goodnative.co"
+  SETTINGS_URL = "https://hover.app.goodnative.co/settings"
   WORKER_CONCURRENCY = "10"  # Increasing this pushes Supabase small plan past CPU limit
   ALLOW_DB_RESET = "true"
   BBB_HEALTH_PROBE_INTERVAL_SECONDS = "30"
@@ -24,7 +24,7 @@ primary_region = 'syd'
   BBB_RUNNING_TASK_BATCH_SIZE = "32"
   BBB_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
   OBSERVABILITY_ENABLED = "true"
-  SUPABASE_AUTH_URL = "https://adapt.auth.goodnative.co"
+  SUPABASE_AUTH_URL = "https://hover.auth.goodnative.co"
   SUPABASE_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
 
   SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xCn-z8wEo4MPJnbPq6cvXg_09fINjIp"

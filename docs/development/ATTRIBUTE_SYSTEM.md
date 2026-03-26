@@ -1,8 +1,8 @@
-# Adapt Attribute System
+# Hover Attribute System
 
 ## Overview
 
-Adapt uses a custom attribute system for data binding, templating, and
+Hover uses a custom attribute system for data binding, templating, and
 interactions. All custom attributes use the `bbb-` namespace prefix (Blue Banded
 Bee).
 

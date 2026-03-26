@@ -38,7 +38,7 @@ blocking.
 - We're helping CDNs by pre-warming caches
 - CDNs **want** traffic (that's their business model)
 - We respect robots.txt and rate limits
-- We identify ourselves (AdaptBot user-agent)
+- We identify ourselves (HoverBot user-agent)
 - Public content only (no scraping competitor data)
 
 **Contrast with scraping:**

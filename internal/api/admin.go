@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Harvey-AU/adapt/internal/auth"
+	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/getsentry/sentry-go"
 )
 
@@ -256,7 +256,7 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 }
 
 // hasSystemAdminRole checks if the user has system administrator privileges via app_metadata
-// This is distinct from organisation-level admin roles - system admins are Adapt operators
+// This is distinct from organisation-level admin roles - system admins are Hover operators
 // who have elevated privileges for system-level operations like database resets
 func hasSystemAdminRole(claims *auth.UserClaims) bool {
 	if claims == nil || claims.AppMetadata == nil {

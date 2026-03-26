@@ -748,7 +748,7 @@ shared CDN rate limiting:
 **Cloudflare Bot Detection Note**: While Cloudflare doesn't apply global rate
 limits, it CAN fingerprint bots across domains using:
 
-- User-Agent: `AdaptBot/1.0`
+- User-Agent: `HoverBot/1.0`
 - TLS fingerprint
 - Request patterns
 - Source IP
@@ -1221,5 +1221,5 @@ cache warming jobs.
 ---
 
 **Document Created**: 18 October 2025 **Load Test Date**: 18 October 2025
-09:45-10:15 AEDT **Production Environment**: adapt.fly.dev **Test Jobs**: 6
+09:45-10:15 AEDT **Production Environment**: hover.fly.dev **Test Jobs**: 6
 domains, 5,000 max pages each

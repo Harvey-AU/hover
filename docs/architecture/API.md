@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the comprehensive API design for Adapt's multi-interface
+This document defines the comprehensive API design for Hover's multi-interface
 architecture. The API follows RESTful principles with consistent response
 formats to support web applications, Slack integrations, Webflow extensions, and
 future interfaces.
@@ -42,15 +42,15 @@ future interfaces.
 ### Base URL
 
 ```
-Local Development: http://localhost:8080 (Adapt application)
-Production Application: https://adapt.app.goodnative.co (Live application, services, demo pages)
+Local Development: http://localhost:8080 (Hover application)
+Production Application: https://hover.app.goodnative.co (Live application, services, demo pages)
 Marketing Site: https://goodnative.co (Marketing website only)
 ```
 
 **Note**:
 
 - For local development and testing, use `http://localhost:8080`
-- For production application access, use `https://adapt.app.goodnative.co`
+- For production application access, use `https://hover.app.goodnative.co`
 - `https://goodnative.co` is only the marketing website
 
 ### Versioning
@@ -938,7 +938,7 @@ Authorization: Bearer <jwt_token>
 
 - Returns 404 in production environments
 - All reset actions are logged and tracked in Sentry
-- Only Adapt operators should have system administrator access
+- Only Hover operators should have system administrator access
 
 ## Error Handling
 
@@ -1007,7 +1007,7 @@ POST /v1/webhooks
 Authorization: Bearer <token>
 
 {
-  "url": "https://example.com/webhooks/adapt",
+  "url": "https://example.com/webhooks/hover",
   "events": ["job.completed", "job.failed"],
   "secret": "webhook_secret_123"
 }
@@ -1144,9 +1144,9 @@ Authorization: Bearer <token>
   (default `:9464`) under `/metrics`. Example scrape configuration:
 
 ```yaml
-- job_name: adapt
+- job_name: hover
   static_configs:
-    - targets: ["adapt-prod.internal:9464"]
+    - targets: ["hover-prod.internal:9464"]
 ```
 
 Worker task counters (`bee_worker_task_total`) and histograms

@@ -1,5 +1,5 @@
 /**
- * Adapt - Metrics Metadata System
+ * Hover - Metrics Metadata System
  *
  * Provides metadata (descriptions, help text, links) for all dashboard metrics.
  * Fetches from /v1/metadata/metrics and caches locally for performance.

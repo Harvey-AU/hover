@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Harvey-AU/adapt/internal/db"
+	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/rs/zerolog/log"
 	"github.com/slack-go/slack"
 )
@@ -198,7 +198,7 @@ func (c *SlackChannel) deliverToConnection(ctx context.Context, conn *db.SlackCo
 func (c *SlackChannel) buildMessageBlocks(n *db.Notification) []slack.Block {
 	appURL := os.Getenv("APP_URL")
 	if appURL == "" {
-		appURL = "https://adapt.app.goodnative.co"
+		appURL = "https://hover.app.goodnative.co"
 	}
 
 	// Subject block (already includes emoji from DB)

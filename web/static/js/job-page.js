@@ -217,7 +217,7 @@ function updatePageTitle(title) {
   if (!title) {
     return;
   }
-  document.title = `${title} · Adapt`;
+  document.title = `${title} · Hover`;
 
   const navTitle = document.getElementById("globalNavTitle");
   const navSeparator = document.getElementById("globalNavSeparator");

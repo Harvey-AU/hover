@@ -1,6 +1,6 @@
 # Documentation
 
-Complete documentation for the Adapt project.
+Complete documentation for the Hover project.
 
 ## 📁 Documentation Structure
 

@@ -43,7 +43,7 @@ will return the `trace.out` file, which can be analyzed using `go tool trace`.
 2.  **Download the trace data from your live application:**
 
     ```bash
-    curl -o trace.out https://adapt.fly.dev/debug/fgtrace
+    curl -o trace.out https://hover.fly.dev/debug/fgtrace
     ```
 
 3.  **Analyze the trace data:**

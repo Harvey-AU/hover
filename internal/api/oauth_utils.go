@@ -108,7 +108,7 @@ func getAppURL() string {
 		return appURL
 	}
 	// Production fallback for environments that haven't set APP_URL yet.
-	return "https://adapt.app.goodnative.co"
+	return "https://hover.app.goodnative.co"
 }
 
 // getSettingsURL returns the settings URL

@@ -1,6 +1,6 @@
 # Architecture Documentation
 
-System design, database schema, and API specifications for Adapt.
+System design, database schema, and API specifications for Hover.
 
 ## 📄 Documents
 
@@ -15,7 +15,7 @@ System design, database schema, and API specifications for Adapt.
 
 ## 🏗️ System Overview
 
-Adapt uses a PostgreSQL-backed worker pool architecture for efficient URL
+Hover uses a PostgreSQL-backed worker pool architecture for efficient URL
 crawling and cache warming.
 
 ### Key Components

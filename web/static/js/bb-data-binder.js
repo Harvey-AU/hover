@@ -1,7 +1,7 @@
 /**
- * Adapt Data Binding Library
+ * Hover Data Binding Library
  *
- * Provides template + data binding system for Adapt dashboard pages.
+ * Provides template + data binding system for Hover dashboard pages.
  * Automatically finds and populates elements with data-bb-bind attributes.
  */
 

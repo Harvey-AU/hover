@@ -19,10 +19,10 @@ else
 fi
 
 if [ "$DEBUG_MODE" = "debug" ]; then
-    echo "Starting Adapt development environment (platform: $PLATFORM, debug mode)..."
+    echo "Starting Hover development environment (platform: $PLATFORM, debug mode)..."
     export LOG_LEVEL=debug
 else
-    echo "Starting Adapt development environment (platform: $PLATFORM)..."
+    echo "Starting Hover development environment (platform: $PLATFORM)..."
     export LOG_LEVEL=info
 fi
 

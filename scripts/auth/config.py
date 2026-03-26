@@ -7,7 +7,7 @@ embedded in the web auth modal; rotate it here if Supabase credentials change.
 
 import os
 
-SUPABASE_URL = "https://adapt.auth.goodnative.co"
+SUPABASE_URL = "https://hover.auth.goodnative.co"
 # Anon key is a publishable key (like Stripe's pk_*), safe to include as fallback
 DEFAULT_SUPABASE_ANON_KEY = os.environ.get(
     "SUPABASE_ANON_KEY",
