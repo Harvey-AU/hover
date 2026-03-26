@@ -28,6 +28,12 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.30.1] – 2026-03-26
+
+### Fixed
+
+- Trigger redeploy to Fly with correct `fly.toml` config
+
 ## [0.30.0] – 2026-03-26
 
 Rebranded from Adapt to Hover across the entire codebase, configuration, and
