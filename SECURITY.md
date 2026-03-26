@@ -2,9 +2,9 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within Hover, please send an
-email to [hello@teamharvey.co](mailto:hello@teamharvey.co). All security
-vulnerabilities will be promptly addressed.
+If you discover a security vulnerability within Hover, please send an email to
+[hello@teamharvey.co](mailto:hello@teamharvey.co). All security vulnerabilities
+will be promptly addressed.
 
 Please do not report security vulnerabilities through public GitHub issues.
 
