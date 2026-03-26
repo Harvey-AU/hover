@@ -118,7 +118,7 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 	var inWildcardSection bool
 	var foundSpecificSection bool // Track if we've found a specific section for our bot
 
-	// Extract bot name from user agent (e.g., "HoverBot/1.0" -> "adaptbot")
+	// Extract bot name from user agent (e.g., "HoverBot/1.0" -> "hoverbot")
 	botName := strings.ToLower(strings.Split(userAgent, "/")[0])
 
 	// Temporary storage for wildcard rules
