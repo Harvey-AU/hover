@@ -19,7 +19,7 @@ if ! command -v gh &> /dev/null; then
 fi
 
 echo "🔍 Fetching all Fly.io apps..."
-FLY_APPS=$(flyctl apps list | grep "hover-pr-" | awk '{print $1}' || true)
+FLY_APPS=$(flyctl apps list | awk '/^hover-pr-[0-9]+[[:space:]]/ {print $1}' || true)
 
 if [ -z "$FLY_APPS" ]; then
     echo "✅ No PR apps found!"
