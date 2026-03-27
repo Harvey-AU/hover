@@ -5,13 +5,13 @@
 
 function setupDashboardActions() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[gnh-action], [gnh-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) {
       return;
     }
 
     const action =
-      element.getAttribute("gnh-action") || element.getAttribute("gnh-action");
+      element.getAttribute("gnh-action");
     if (!action) {
       return;
     }
