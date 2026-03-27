@@ -77,7 +77,7 @@
   }
 
   async function ensureConfig() {
-    if (window.BGNH_CONFIG) {
+    if (window.GNH_CONFIG) {
       return;
     }
     try {
@@ -87,8 +87,8 @@
         cause: error,
       });
     }
-    if (!window.BGNH_CONFIG) {
-      throw new Error("BGNH_CONFIG missing after loading /config.js");
+    if (!window.GNH_CONFIG) {
+      throw new Error("GNH_CONFIG missing after loading /config.js");
     }
   }
 
@@ -122,7 +122,7 @@
   }
 
   function ensureTurnstile() {
-    const config = window.BGNH_CONFIG || {};
+    const config = window.GNH_CONFIG || {};
     const shouldLoadTurnstile =
       window.GNH_APP?.enableTurnstile ?? config.enableTurnstile ?? false;
     if (!shouldLoadTurnstile) {

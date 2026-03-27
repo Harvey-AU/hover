@@ -32,7 +32,7 @@ const API_BASE_STORAGE_KEY = "gnh_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "gnh_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
-const DEFAULT_BGNH_APP_ORIGIN = "https://hover.app.goodnative.co";
+const DEFAULT_GNH_APP_ORIGIN = "https://hover.app.goodnative.co";
 const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://hover-pr-255.fly.dev"]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
@@ -498,11 +498,11 @@ let cleanupHandlerRegistered = false;
 function getStoredBaseUrl(): string {
   const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
   if (!storedBaseUrl) {
-    return DEFAULT_BGNH_APP_ORIGIN;
+    return DEFAULT_GNH_APP_ORIGIN;
   }
 
   if (LEGACY_EXTENSION_APP_ORIGINS.has(storedBaseUrl)) {
-    return DEFAULT_BGNH_APP_ORIGIN;
+    return DEFAULT_GNH_APP_ORIGIN;
   }
 
   return storedBaseUrl;
@@ -535,11 +535,11 @@ async function fetchSupabaseConfig(): Promise<SupabaseConfig | null> {
     }
 
     const scriptText = await response.text();
-    // config.js sets window.BGNH_CONFIG = { supabaseUrl, supabaseAnonKey, ... }
+    // config.js sets window.GNH_CONFIG = { supabaseUrl, supabaseAnonKey, ... }
     // Parse the JSON object from the assignment.
-    const match = scriptText.match(/window\.BGNH_CONFIG\s*=\s*(\{[\s\S]*?\});/);
+    const match = scriptText.match(/window\.GNH_CONFIG\s*=\s*(\{[\s\S]*?\});/);
     if (!match?.[1]) {
-      console.warn("Could not parse BGNH_CONFIG from config.js");
+      console.warn("Could not parse GNH_CONFIG from config.js");
       return null;
     }
 

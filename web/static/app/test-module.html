@@ -7,7 +7,7 @@
 
     <!--
       Phase 0 loading pattern:
-      1. /config.js    — sets window.BGNH_CONFIG (server-rendered)
+      1. /config.js    — sets window.GNH_CONFIG (server-rendered)
       2. Supabase SDK  — sets window.supabase (CDN, pre-module)
       3. module entry  — imports from app/lib/* via ES module
 
@@ -212,7 +212,7 @@
         } else {
           fail(
             "Config missing",
-            "window.BGNH_CONFIG not set — ensure /config.js loaded"
+            "window.GNH_CONFIG not set — ensure /config.js loaded"
           );
         }
 

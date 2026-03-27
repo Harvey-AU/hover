@@ -19,7 +19,7 @@
  *   - Shared/token-authenticated view
  *
  * Loading contract (job-details.html):
- *   1. /config.js              — sets window.BGNH_CONFIG
+ *   1. /config.js              — sets window.GNH_CONFIG
  *   2. /js/core.js defer       — Supabase init, window.GNH_APP
  *   3. /js/job-page.js defer   — job header, metrics, actions
  *   4. <script type="module">  — this file

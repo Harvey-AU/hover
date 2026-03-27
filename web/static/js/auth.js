@@ -19,7 +19,7 @@ const CLI_AUTH_STORAGE_KEY = "gnh_cli_auth_state";
 
 // Supabase configuration
 const runtimeConfig =
-  (typeof window !== "undefined" && window.BGNH_CONFIG) ||
+  (typeof window !== "undefined" && window.GNH_CONFIG) ||
   (typeof process !== "undefined"
     ? {
         supabaseUrl: process.env.SUPABASE_AUTH_URL,
@@ -36,7 +36,7 @@ function hasSupabaseRuntimeConfig() {
 
 if (!hasSupabaseRuntimeConfig()) {
   console.error(
-    "Supabase configuration unavailable — ensure BGNH_CONFIG or environment vars are set"
+    "Supabase configuration unavailable — ensure GNH_CONFIG or environment vars are set"
   );
 }
 
@@ -907,7 +907,7 @@ function setSignupButtonEnabled(enabled) {
 }
 
 function isTurnstileEnabled() {
-  const config = window.BGNH_CONFIG || {};
+  const config = window.GNH_CONFIG || {};
   return Boolean(window.GNH_APP?.enableTurnstile ?? config.enableTurnstile);
 }
 

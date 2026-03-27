@@ -6,7 +6,7 @@
  * global-script model for this surface.
  *
  * Loading contract (extension-auth.html):
- *   1. <script src="/config.js">          — sets window.BGNH_CONFIG
+ *   1. <script src="/config.js">          — sets window.GNH_CONFIG
  *   2. <script src="supabase.js">         — sets window.supabase (CDN UMD)
  *   3. <script type="module" src="/app/pages/webflow-login.js">
  *
