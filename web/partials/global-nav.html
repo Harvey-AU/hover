@@ -11,34 +11,34 @@
           <span class="nav-title" id="globalNavTitle"></span>
         </div>
         <div class="user-menu">
-          <div bbb-auth="guest" class="auth-buttons">
+          <div gnh-auth="guest" class="auth-buttons">
             <button
               id="loginBtn"
-              class="bb-button bb-button-primary"
+              class="gnh-button gnh-button-primary"
               aria-label="Sign in to your account"
             >
               Sign In
             </button>
           </div>
 
-          <div bbb-auth="required" class="user-info">
-            <div class="bb-org-switcher" id="orgSwitcher">
+          <div gnh-auth="required" class="user-info">
+            <div class="gnh-org-switcher" id="orgSwitcher">
               <button
-                class="bb-org-switcher-btn"
+                class="gnh-org-switcher-btn"
                 id="orgSwitcherBtn"
                 aria-label="Switch organisation"
                 aria-expanded="false"
                 aria-haspopup="true"
               >
-                <span class="bb-org-name" id="currentOrgName">Loading...</span>
-                <span class="bb-org-chevron">▼</span>
+                <span class="gnh-org-name" id="currentOrgName">Loading...</span>
+                <span class="gnh-org-chevron">▼</span>
               </button>
-              <div class="bb-org-dropdown" id="orgDropdown">
-                <div class="bb-org-dropdown-header">Switch Organisation</div>
-                <div class="bb-org-list" id="orgList"></div>
-                <div class="bb-org-dropdown-footer">
+              <div class="gnh-org-dropdown" id="orgDropdown">
+                <div class="gnh-org-dropdown-header">Switch Organisation</div>
+                <div class="gnh-org-list" id="orgList"></div>
+                <div class="gnh-org-dropdown-footer">
                   <button
-                    class="bb-org-create-btn"
+                    class="gnh-org-create-btn"
                     id="createOrgBtn"
                     aria-label="Create a new organisation"
                   >
@@ -48,7 +48,7 @@
               </div>
             </div>
 
-            <div class="bb-dropdown" id="userMenu">
+            <div class="gnh-dropdown" id="userMenu">
               <!-- Populated by auth.js updateUserInfo() via .global-nav scoped selectors -->
               <button
                 type="button"
@@ -60,59 +60,59 @@
               >
                 ?
               </button>
-              <div class="bb-dropdown-menu" id="userMenuDropdown">
-                <div class="bb-dropdown-item" style="cursor: default">
+              <div class="gnh-dropdown-menu" id="userMenuDropdown">
+                <div class="gnh-dropdown-item" style="cursor: default">
                   <strong id="userEmail">Loading...</strong>
                 </div>
-                <a class="bb-dropdown-item" href="/settings/account"
+                <a class="gnh-dropdown-item" href="/settings/account"
                   >Your account</a
                 >
-                <div class="bb-dropdown-divider"></div>
-                <div class="bb-dropdown-item" style="cursor: default">
+                <div class="gnh-dropdown-divider"></div>
+                <div class="gnh-dropdown-item" style="cursor: default">
                   <span id="userMenuOrgName">Organisation</span> settings
                 </div>
-                <div class="bb-dropdown-item" style="cursor: default">
+                <div class="gnh-dropdown-item" style="cursor: default">
                   <div
-                    class="bb-quota-display"
+                    class="gnh-quota-display"
                     id="quotaDisplay"
                     style="display: none"
                   >
-                    <span class="bb-quota-plan" id="quotaPlan">Free</span>
-                    <span class="bb-quota-usage">
-                      <span class="bb-quota-usage-count" id="quotaUsage"
+                    <span class="gnh-quota-plan" id="quotaPlan">Free</span>
+                    <span class="gnh-quota-usage">
+                      <span class="gnh-quota-usage-count" id="quotaUsage"
                         >0/1000</span
                       >
                     </span>
-                    <span class="bb-quota-reset" id="quotaReset"
+                    <span class="gnh-quota-reset" id="quotaReset"
                       >Resets in 12h</span
                     >
                   </div>
                 </div>
-                <a class="bb-dropdown-item" href="/settings/billing">Billing</a>
-                <a class="bb-dropdown-item" href="/settings/plans">Plans</a>
-                <a class="bb-dropdown-item" href="/settings/notifications"
+                <a class="gnh-dropdown-item" href="/settings/billing">Billing</a>
+                <a class="gnh-dropdown-item" href="/settings/plans">Plans</a>
+                <a class="gnh-dropdown-item" href="/settings/notifications"
                   >Notifications</a
                 >
-                <a class="bb-dropdown-item" href="/settings/analytics"
+                <a class="gnh-dropdown-item" href="/settings/analytics"
                   >Analytics</a
                 >
-                <a class="bb-dropdown-item" href="/settings/auto-crawl"
+                <a class="gnh-dropdown-item" href="/settings/auto-crawl"
                   >Auto-crawl</a
                 >
-                <a class="bb-dropdown-item" href="/settings/team">Team</a>
-                <div class="bb-dropdown-divider"></div>
+                <a class="gnh-dropdown-item" href="/settings/team">Team</a>
+                <div class="gnh-dropdown-divider"></div>
                 <button
                   id="logoutBtn"
-                  class="bb-dropdown-item"
+                  class="gnh-dropdown-item"
                   aria-label="Sign out of your account"
                   type="button"
                 >
                   Sign Out
                 </button>
-                <div class="bb-dropdown-divider"></div>
+                <div class="gnh-dropdown-divider"></div>
                 <button
                   id="resetDbBtn"
-                  class="bb-dropdown-item"
+                  class="gnh-dropdown-item"
                   style="display: none; color: #dc2626"
                   title="Delete all jobs and tasks - USE WITH CAUTION"
                   aria-label="Reset database - delete all jobs and tasks"
@@ -123,37 +123,37 @@
               </div>
             </div>
 
-            <div class="bb-notifications-container" id="notificationsContainer">
+            <div class="gnh-notifications-container" id="notificationsContainer">
               <button
                 id="notificationsBtn"
-                class="bb-button bb-button-outline bb-notifications-btn"
+                class="gnh-button gnh-button-outline gnh-notifications-btn"
                 aria-label="View notifications"
               >
                 🔔
-                <span class="bb-notifications-badge" id="notificationsBadge"
+                <span class="gnh-notifications-badge" id="notificationsBadge"
                   >0</span
                 >
               </button>
-              <div class="bb-notifications-dropdown" id="notificationsDropdown">
-                <div class="bb-notifications-header">
-                  <span class="bb-notifications-title">Notifications</span>
+              <div class="gnh-notifications-dropdown" id="notificationsDropdown">
+                <div class="gnh-notifications-header">
+                  <span class="gnh-notifications-title">Notifications</span>
                   <button
                     id="markAllReadBtn"
-                    class="bb-notifications-mark-read"
+                    class="gnh-notifications-mark-read"
                     aria-label="Mark all as read"
                   >
                     Mark all read
                   </button>
                 </div>
-                <div class="bb-notifications-list" id="notificationsList">
-                  <div class="bb-notifications-empty">
-                    <div class="bb-notifications-empty-icon">🔔</div>
+                <div class="gnh-notifications-list" id="notificationsList">
+                  <div class="gnh-notifications-empty">
+                    <div class="gnh-notifications-empty-icon">🔔</div>
                     <div>No notifications yet</div>
                   </div>
                 </div>
-                <div class="bb-notifications-footer">
+                <div class="gnh-notifications-footer">
                   <a
-                    class="bb-notifications-footer-btn bb-notifications-settings-btn"
+                    class="gnh-notifications-footer-btn gnh-notifications-settings-btn"
                     id="notificationsSettingsBtn"
                     href="/settings/notifications"
                   >
