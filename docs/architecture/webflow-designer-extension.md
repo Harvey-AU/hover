@@ -9,7 +9,7 @@ Designer. It does not contain backend business logic.
 
 1. Webflow loads the extension UI.
 2. Extension reads app context from Webflow APIs.
-3. Extension calls Blue Banded Bee backend APIs for data and actions.
+3. Extension calls Hover backend APIs for data and actions.
 4. Backend handles authentication, token storage, scheduling, jobs, and
    webhooks.
 

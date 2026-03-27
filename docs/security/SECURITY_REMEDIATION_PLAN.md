@@ -111,7 +111,7 @@ patterns.
 
 ---
 
-## Issue 4: ESLint - Non-literal RegExp (bb-data-binder.js:586)
+## Issue 4: ESLint - Non-literal RegExp (gnh-data-binder.js:586)
 
 **Severity**: MEDIUM **File**: `web/static/js/gnh-data-binder.js:586`
 

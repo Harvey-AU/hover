@@ -57,7 +57,7 @@ with Webflow.
 3. **Add data component via HTML Embed:**
 
 ```html
-<bb-data-loader
+<gnh-data-loader
   endpoint="/v1/jobs"
   template=".job-card.template"
   target=".jobs-grid"

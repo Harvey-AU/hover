@@ -1,4 +1,4 @@
-# Blue Banded Bee Webflow Designer Extension (Smoke Test)
+# Hover Webflow Designer Extension (Smoke Test)
 
 This is a valid Webflow CLI extension project used to smoke-test rendering in
 Webflow Designer before wiring OAuth/API calls.

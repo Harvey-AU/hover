@@ -3,8 +3,8 @@
 ## Overview
 
 Hover uses a custom attribute system for data binding, templating, and
-interactions. All custom attributes use the `gnh-` namespace prefix (Blue Banded
-Bee).
+interactions. All custom attributes use the `gnh-` namespace prefix (Good Native
+Hover).
 
 ## Design Principles
 
@@ -187,16 +187,16 @@ Key sections to review:
 
 ### Attribute Mapping
 
-| Old Attribute         | New Attribute                            | Notes                 |
-| --------------------- | ---------------------------------------- | --------------------- |
-| `data-gnh-bind`       | `gnh-text`                               | More semantic name    |
-| `data-gnh-bind-attr`  | `gnh-class`, `gnh-href`, `gnh-attr:name` | Simpler syntax        |
-| `data-gnh-bind-style` | `gnh-style:prop`                         | Property-specific     |
-| `data-gnh-template`   | `gnh-template`                           | Remove `data-` prefix |
-| `data-gnh-show-if`    | `gnh-show`                               | Shorter, clearer      |
-| `data-gnh-auth`       | `gnh-auth`                               | Remove `data-` prefix |
-| `gnh-action`          | `gnh-action`                             | Consistent prefix     |
-| `data-gnh-info`       | `gnh-help`                               | More accurate name    |
+| Old Attribute        | New Attribute                            | Notes                 |
+| -------------------- | ---------------------------------------- | --------------------- |
+| `data-bb-bind`       | `gnh-text`                               | More semantic name    |
+| `data-bb-bind-attr`  | `gnh-class`, `gnh-href`, `gnh-attr:name` | Simpler syntax        |
+| `data-bb-bind-style` | `gnh-style:prop`                         | Property-specific     |
+| `data-bb-template`   | `gnh-template`                           | Remove `data-` prefix |
+| `data-bb-show-if`    | `gnh-show`                               | Shorter, clearer      |
+| `data-bb-auth`       | `gnh-auth`                               | Remove `data-` prefix |
+| `bbb-action`         | `gnh-action`                             | Consistent prefix     |
+| `data-bb-info`       | `gnh-help`                               | More accurate name    |
 
 ### Migration Strategy
 
