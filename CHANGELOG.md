@@ -94,10 +94,9 @@ runtime to access shared code.
 
 ### Fixed
 
-- Global nav notification badge race condition (guarded with
-  `GNH_APP.coreReady`)
+- Global nav notification badge race condition (guarded with `BB_APP.coreReady`)
 - Extension job cards rendering as plain status text (missing bridge export)
-- Job details init crash when `gnh-bootstrap.js` not loaded
+- Job details init crash when `bb-bootstrap.js` not loaded
 - Seed idempotency: `auth.identities` `ON CONFLICT` column corrected
 
 ## [0.28.1] – 2026-03-22
@@ -181,14 +180,14 @@ runtime to access shared code.
 
 ### Changed
 
-- **Nav HTML moved to partial**: `gnh-global-nav.js` now fetches
+- **Nav HTML moved to partial**: `bb-global-nav.js` now fetches
   `/web/partials/global-nav.html` at runtime instead of embedding the nav markup
   as an inline string — `global-nav.html` is the single source of truth
 - **Binding convention gaps resolved**: Removed duplicate quota and notification
-  logic from `dashboard.html` (canonical in `gnh-global-nav.js`); create-org
-  modal now uses `gnh-form="create-organisation"`; `gnh-show` on top-level
+  logic from `dashboard.html` (canonical in `bb-global-nav.js`); create-org
+  modal now uses `bbb-form="create-organisation"`; `bbb-show` on top-level
   elements in `job-details.html` replaced with explicit `style="display:none"`
-  controlled by `job-page.js`; `settings.html` now loads `gnh-bootstrap.js`
+  controlled by `job-page.js`; `settings.html` now loads `bb-bootstrap.js`
 - **Avatar/email selectors scoped**: `auth.js updateUserInfo()` uses
   `.global-nav`-scoped `querySelector` instead of global `getElementById`
 
@@ -391,12 +390,12 @@ runtime to access shared code.
   error appearing on first page load (cold browser cache) across all authed
   pages
   - Root cause: `DOMContentLoaded` fired before deferred `core.js` had executed,
-    so `window.GNH_APP.coreReady` didn't exist yet and the await was silently
+    so `window.BB_APP.coreReady` didn't exist yet and the await was silently
     skipped
-  - New `gnh-bootstrap.js` provides `GNH_APP.whenReady()` — a polling wrapper
-    that waits for `core.js` to finish before proceeding
+  - New `bb-bootstrap.js` provides `BB_APP.whenReady()` — a polling wrapper that
+    waits for `core.js` to finish before proceeding
   - Loaded without `defer` so it's available immediately; all pages now use a
-    single `await window.GNH_APP.whenReady()` call
+    single `await window.BB_APP.whenReady()` call
   - Homepage now shows a visible error banner on timeout instead of silently
     leaving buttons non-functional
 - **Static Asset Rate Limiting**: Hard refresh no longer triggers 429 errors on
@@ -455,7 +454,7 @@ runtime to access shared code.
 ### Added
 
 - **Domain Search Attributes**: Shared domain search input with
-  `gnh-domain-create` and `gnh-domain-search` attributes to control create
+  `bbb-domain-create` and `bbb-domain-search` attributes to control create
   behaviour and dropdown visibility across dashboard and GA workflows
 - **GA4 Analytics Integration**: Full Google Analytics 4 Data API integration
   for page view analytics
@@ -1558,8 +1557,7 @@ Series of minor optimisations to improve throughput and resource usage.
     existing calendar-day filters
   - URL-encodes timezone parameter to handle special characters (`Etc/GMT+10` →
     `Etc%2FGMT%2B10`)
-  - Applied to both gnh-auth-extension.js and gnh-components.js integration
-    paths
+  - Applied to both bb-auth-extension.js and bb-components.js integration paths
 
 ## [0.11.0] – 2025-10-24
 
@@ -2118,7 +2116,7 @@ Series of minor optimisations to improve throughput and resource usage.
 ### Improved
 
 - **Dashboard Data Binding**: Enhanced attribute system for cleaner HTML
-  - Updated from `data-*` to `gnh-*` attributes across dashboard
+  - Updated from `data-*` to `bbb-*` attributes across dashboard
   - Backwards compatibility maintained during transition
   - Improved separation of concerns in frontend code
 - **External Links**: Dashboard preview links in PR comments open in new tabs
@@ -2870,9 +2868,9 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Data Binding Library Rebuild**: Updated and rebuilt all Web Components with
   fetchData fix
-  - Rebuilt `gnh-data-binder.js` and `gnh-data-binder.min.js` with corrected
+  - Rebuilt `bb-data-binder.js` and `bb-data-binder.min.js` with corrected
     method implementation
-  - Updated `gnh-components.js` and `gnh-components.min.js` for production
+  - Updated `bb-components.js` and `bb-components.min.js` for production
     deployment
   - All POST/PUT/DELETE API calls throughout the application now function
     correctly
@@ -3003,19 +3001,19 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Complete Data Binding Library**: Comprehensive template + data binding
   system for flexible dashboard development
-  - Built `BBDataBinder` JavaScript library with `data-gnh-bind` attribute
+  - Built `BBDataBinder` JavaScript library with `data-bb-bind` attribute
     processing for dynamic content
-  - Implemented template engine with `data-gnh-template` for repeated elements
+  - Implemented template engine with `data-bb-template` for repeated elements
     (job lists, tables, etc.)
-  - Added authentication integration with `data-gnh-auth` for conditional
-    element display
-  - Created comprehensive form handling with `data-gnh-form` attributes and
+  - Added authentication integration with `data-bb-auth` for conditional element
+    display
+  - Created comprehensive form handling with `data-bb-form` attributes and
     real-time validation
-  - Built style and attribute binding with `data-gnh-bind-style` and
-    `data-gnh-bind-attr` for dynamic CSS and attributes
+  - Built style and attribute binding with `data-bb-bind-style` and
+    `data-bb-bind-attr` for dynamic CSS and attributes
 - **Enhanced Form Processing**: Production-ready form handling with validation
   and error management
-  - Real-time field validation with `data-gnh-validate` attributes and custom
+  - Real-time field validation with `data-bb-validate` attributes and custom
     validation rules
   - Automatic form submission to API endpoints with authentication token
     handling
@@ -3034,9 +3032,9 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Build System**: Updated Rollup configuration to build data binding library
   alongside Web Components
-  - Added `gnh-data-binder.js` and `gnh-data-binder.min.js` builds for
-    production deployment
-  - Library available at `/js/gnh-data-binder.min.js` endpoint for CDN-style
+  - Added `bb-data-binder.js` and `bb-data-binder.min.js` builds for production
+    deployment
+  - Library available at `/js/bb-data-binder.min.js` endpoint for CDN-style
     usage
   - Zero runtime dependencies - works with vanilla JavaScript and Supabase
 
@@ -3047,12 +3045,12 @@ Series of minor optimisations to improve throughput and resource usage.
   - DOM scanning system finds and registers elements with data binding
     attributes
   - Efficient element updates with path-based data mapping and template caching
-  - Event delegation for `gnh-action` attributes combined with data binding for
+  - Event delegation for `bb-action` attributes combined with data binding for
     complete template system
 - **Authentication Integration**: Seamless Supabase Auth integration with
   conditional rendering
-  - Elements with `data-gnh-auth="required"` only show when authenticated
-  - Elements with `data-gnh-auth="guest"` only show when not authenticated
+  - Elements with `data-bb-auth="required"` only show when authenticated
+  - Elements with `data-bb-auth="guest"` only show when not authenticated
   - Automatic auth state monitoring and element visibility updates
 - **Form Processing Pipeline**: Complete form lifecycle management from
   validation to submission
@@ -3068,14 +3066,14 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Dashboard Architecture**: Replaced Web Components with vanilla JavaScript +
   attribute-based event handling
-  - Removed Web Components dependencies (`gnh-auth-login`, `gnh-job-dashboard`)
+  - Removed Web Components dependencies (`bb-auth-login`, `bb-job-dashboard`)
     from dashboard
   - Implemented vanilla JavaScript with modern styling for better reliability
     and maintainability
-  - Added attribute-based event system: elements with `gnh-action` attributes
+  - Added attribute-based event system: elements with `bb-action` attributes
     automatically handle functionality
-  - Replaced `onclick` handlers with `gnh-action="refresh-dashboard"`,
-    `gnh-action="create-job"` pattern
+  - Replaced `onclick` handlers with `bb-action="refresh-dashboard"`,
+    `bb-action="create-job"` pattern
   - Maintained modern UI design whilst switching to proven vanilla JavaScript
     approach
 
@@ -3085,9 +3083,9 @@ Series of minor optimisations to improve throughput and resource usage.
   dashboard development
   - Dashboard now demonstrates template approach where HTML layout is
     customisable
-  - JavaScript automatically scans for `gnh-action` and `gnh-data-*` attributes
-    to provide functionality
-  - Event delegation system allows any HTML element with `gnh-action` to trigger
+  - JavaScript automatically scans for `bb-action` and `bb-data-*` attributes to
+    provide functionality
+  - Event delegation system allows any HTML element with `bb-action` to trigger
     Adapt features
   - Sets foundation for future template binding system where users control
     layout design
@@ -3108,7 +3106,7 @@ Series of minor optimisations to improve throughput and resource usage.
 - Consolidated `dashboard-new.html` and `dashboard.html` into single vanilla
   JavaScript implementation
 - Added `setupAttributeHandlers()` function with event delegation for
-  `gnh-action` attributes
+  `bb-action` attributes
 - Maintained API integration with `/v1/dashboard/stats` and `/v1/jobs` endpoints
 - Preserved modern grid layout and responsive design from Web Components version
 
@@ -3161,7 +3159,7 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Web Components Testing Infrastructure**: Comprehensive test page
   improvements
-  - Added `test-mode` attribute to `gnh-auth-login` component to prevent
+  - Added `test-mode` attribute to `bb-auth-login` component to prevent
     automatic redirects during testing
   - Created logout functionality for testing different authentication states
   - Enhanced test page with authentication status display and manual controls
@@ -3171,7 +3169,7 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Authentication Component Redirect Logic**: Resolved automatic redirect
   problems
-  - Modified `gnh-auth-login` component to respect `test-mode="true"` attribute
+  - Modified `bb-auth-login` component to respect `test-mode="true"` attribute
   - Updated redirect logic to properly handle empty redirect URLs
   - Fixed issue where authenticated users were immediately redirected away from
     test pages
@@ -3212,23 +3210,22 @@ Series of minor optimisations to improve throughput and resource usage.
   integration
   - Built vanilla Web Components architecture using template + data slots
     pattern (industry best practice)
-  - Created `gnh-data-loader` core component for API data fetching and Webflow
+  - Created `bb-data-loader` core component for API data fetching and Webflow
     template population
-  - Implemented `gnh-auth-login` component with full Supabase authentication and
+  - Implemented `bb-auth-login` component with full Supabase authentication and
     social providers
   - Added `BBBaseComponent` base class with loading/error states, data binding,
     and event handling
 - **Production Build System**: Rollup-based build pipeline for component
   distribution
   - Zero runtime dependencies (vanilla JavaScript, Supabase via CDN)
-  - Minified production bundle (`gnh-components.min.js`) ready for CDN
-    deployment
+  - Minified production bundle (`bb-components.min.js`) ready for CDN deployment
   - Development and production builds with source maps and error handling
 - **Static File Serving**: Integrated component serving into existing Go
   application
   - Added `/js/` endpoint to serve Web Components as static files from Go app
   - Components now accessible at
-    `https://adapt.app.goodnative.co/js/gnh-components.min.js`
+    `https://adapt.app.goodnative.co/js/bb-components.min.js`
   - Docker container properly configured to include built components
 
 ### Enhanced
