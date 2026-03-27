@@ -313,11 +313,11 @@ JavaScript provides functionality through attribute-based event handling.
 <div class="dashboard">
   <button gnh-action="refresh-dashboard">↻ Refresh</button>
   <button gnh-action="create-job">+ New Job</button>
-  <div gnh-action="view-job-details" gnh-data-job-id="123">View Details</div>
+  <div gnh-action="view-job-details" gnh-id="123">View Details</div>
 </div>
 
 <!-- JavaScript automatically handles gnh-action attributes -->
-<script src="/dashboard.html"></script>
+<script src="/js/gnh-dashboard-actions.js"></script>
 ```
 
 **Current Data Binding (v0.5.4):**

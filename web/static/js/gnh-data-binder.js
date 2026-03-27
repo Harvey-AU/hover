@@ -461,8 +461,14 @@ class GNHDataBinder {
         return "/v1/organisations";
       default:
         // Custom endpoint from data-gnh-endpoint attribute
-        const form = document.querySelector(`[data-gnh-form="${action}"]`);
-        return form?.getAttribute("data-gnh-endpoint") || `/v1/${action}`;
+        const form = document.querySelector(
+          `[data-gnh-form="${action}"], [gnh-form="${action}"]`
+        );
+        return (
+          form?.getAttribute("data-gnh-endpoint") ||
+          form?.getAttribute("gnh-endpoint") ||
+          `/v1/${action}`
+        );
     }
   }
 
