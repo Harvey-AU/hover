@@ -698,9 +698,9 @@
     if (!switcher || !btn) return;
 
     // Ensure org is initialised (may already be done by dashboard or nav)
-    if (window.BB_APP?.initialiseOrg && !window.BB_ACTIVE_ORG?.name) {
+    if (window.GNH_APP?.initialiseOrg && !window.BB_ACTIVE_ORG?.name) {
       try {
-        await window.BB_APP.initialiseOrg();
+        await window.GNH_APP.initialiseOrg();
       } catch (err) {
         console.warn("Org init failed:", err);
       }
@@ -824,7 +824,7 @@
       if (settingsOrgNameRef) settingsOrgNameRef.textContent = "Switching...";
 
       try {
-        await window.BB_APP.switchOrg(org.id);
+        await window.GNH_APP.switchOrg(org.id);
         // bb:org-switched event will handle UI updates
       } catch (err) {
         console.error("Error switching organisation:", err);
@@ -1033,8 +1033,8 @@
 
   async function initSettingsPage() {
     try {
-      if (window.BB_APP?.coreReady) {
-        await window.BB_APP.coreReady;
+      if (window.GNH_APP?.coreReady) {
+        await window.GNH_APP.coreReady;
       }
 
       const dataBinder = new BBDataBinder({
@@ -1065,9 +1065,9 @@
       const session = sessionResult?.data?.session;
       if (session?.user) {
         // Initialise org using shared logic (single source of truth)
-        if (window.BB_APP?.initialiseOrg) {
+        if (window.GNH_APP?.initialiseOrg) {
           try {
-            await window.BB_APP.initialiseOrg();
+            await window.GNH_APP.initialiseOrg();
           } catch (err) {
             console.warn("Failed to initialise org:", err);
           }

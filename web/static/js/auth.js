@@ -19,7 +19,7 @@ const CLI_AUTH_STORAGE_KEY = "bbb_cli_auth_state";
 
 // Supabase configuration
 const runtimeConfig =
-  (typeof window !== "undefined" && window.BBB_CONFIG) ||
+  (typeof window !== "undefined" && window.BGNH_CONFIG) ||
   (typeof process !== "undefined"
     ? {
         supabaseUrl: process.env.SUPABASE_AUTH_URL,
@@ -36,7 +36,7 @@ function hasSupabaseRuntimeConfig() {
 
 if (!hasSupabaseRuntimeConfig()) {
   console.error(
-    "Supabase configuration unavailable — ensure BBB_CONFIG or environment vars are set"
+    "Supabase configuration unavailable — ensure BGNH_CONFIG or environment vars are set"
   );
 }
 
@@ -360,7 +360,7 @@ function waitForAuthScript(pollIntervalMs = 50, timeoutMs = 12000) {
  */
 async function handleAuthCallback() {
   try {
-    const isExtensionAuthFlow = Boolean(window.BB_APP?.extensionAuth);
+    const isExtensionAuthFlow = Boolean(window.GNH_APP?.extensionAuth);
 
     // Check for error parameters in URL (from OAuth failures)
     const urlParams = new URLSearchParams(window.location.search);
@@ -907,8 +907,8 @@ function setSignupButtonEnabled(enabled) {
 }
 
 function isTurnstileEnabled() {
-  const config = window.BBB_CONFIG || {};
-  return Boolean(window.BB_APP?.enableTurnstile ?? config.enableTurnstile);
+  const config = window.BGNH_CONFIG || {};
+  return Boolean(window.GNH_APP?.enableTurnstile ?? config.enableTurnstile);
 }
 
 function getTurnstileWidget() {
@@ -1308,8 +1308,8 @@ async function handleSocialLogin(provider, options = {}) {
 
     const redirectOverride =
       options.redirectTo ||
-      window.BB_APP?.oauthRedirectOverride ||
-      (window.BB_APP?.extensionAuth ? window.location.href : "");
+      window.GNH_APP?.oauthRedirectOverride ||
+      (window.GNH_APP?.extensionAuth ? window.location.href : "");
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider,
@@ -1332,8 +1332,8 @@ async function handleSocialLogin(provider, options = {}) {
     showAuthError(error.message || `${provider} login failed.`);
     hideAuthLoading();
   } finally {
-    if (window.BB_APP?.oauthRedirectOverride) {
-      delete window.BB_APP.oauthRedirectOverride;
+    if (window.GNH_APP?.oauthRedirectOverride) {
+      delete window.GNH_APP.oauthRedirectOverride;
     }
   }
 }

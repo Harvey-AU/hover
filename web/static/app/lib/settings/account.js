@@ -223,8 +223,8 @@ export async function connectAuthMethod(provider) {
 async function unlinkIdentityViaApi(identityId) {
   const session = await getSession();
   const accessToken = session?.access_token;
-  const authUrl = window.BBB_CONFIG?.supabaseUrl;
-  const anonKey = window.BBB_CONFIG?.supabaseAnonKey;
+  const authUrl = window.BGNH_CONFIG?.supabaseUrl;
+  const anonKey = window.BGNH_CONFIG?.supabaseAnonKey;
   if (!accessToken || !authUrl || !anonKey) {
     throw new Error("Missing auth session details");
   }

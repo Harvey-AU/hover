@@ -537,7 +537,7 @@ function waitForSession(timeoutMs = 8000) {
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 // Initialise after DOM is ready. waitForSession() inside refresh() handles
-// the Supabase timing — no dependency on bb-bootstrap.js or BB_APP.whenReady.
+// the Supabase timing — no dependency on bb-bootstrap.js or GNH_APP.whenReady.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () =>
     init().catch(console.error)

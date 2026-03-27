@@ -1116,10 +1116,10 @@ function setupInteractions(state) {
 
 async function initialiseAuth(state) {
   // Support both bb-bootstrap.js (whenReady) and core.js-only (coreReady)
-  if (window.BB_APP?.whenReady) {
-    await window.BB_APP.whenReady();
+  if (window.GNH_APP?.whenReady) {
+    await window.GNH_APP.whenReady();
   } else {
-    await window.BB_APP?.coreReady;
+    await window.GNH_APP?.coreReady;
   }
 
   if (!window.supabase) {
@@ -1285,7 +1285,7 @@ async function restartJobFromPage(state) {
   }
 
   // Create new job with same config
-  const payload = window.BB_APP.buildRestartJobPayload(job);
+  const payload = window.GNH_APP.buildRestartJobPayload(job);
   const response = await authorisedFetch(state, "/v1/jobs", {
     method: "POST",
     body: JSON.stringify(payload),

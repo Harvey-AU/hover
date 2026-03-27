@@ -7,7 +7,7 @@
  *   - notifications (badge, realtime, mark-read)
  *   - quota display (polling, visibility-aware)
  *
- * Still reads window.BB_APP / BB_ACTIVE_ORG / BB_ORGANISATIONS / supabase
+ * Still reads window.GNH_APP / BB_ACTIVE_ORG / BB_ORGANISATIONS / supabase
  * from core.js. Those globals will be retired when core.js is migrated.
  */
 
@@ -100,7 +100,7 @@ function initOrgSwitcher(navEl) {
     orgBtn?.setAttribute("aria-expanded", "false");
 
     try {
-      await window.BB_APP.switchOrg(item.dataset.orgId);
+      await window.GNH_APP.switchOrg(item.dataset.orgId);
     } catch (err) {
       console.warn("Failed to switch organisation:", err);
       currentOrgName.textContent = window.BB_ACTIVE_ORG?.name || "Organisation";
@@ -152,8 +152,8 @@ function initOrgSwitcher(navEl) {
   // Wait for core → init org → render
   (async () => {
     try {
-      if (window.BB_APP?.coreReady) await window.BB_APP.coreReady;
-      if (window.BB_APP?.initialiseOrg) await window.BB_APP.initialiseOrg();
+      if (window.GNH_APP?.coreReady) await window.GNH_APP.coreReady;
+      if (window.GNH_APP?.initialiseOrg) await window.GNH_APP.initialiseOrg();
       updateDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
     } catch (err) {
       console.warn("Organisation initialisation failed:", err);
@@ -443,8 +443,8 @@ function initNotifications(navEl) {
     await subscribeRealtime();
   });
   // Wait for Supabase SDK before first fetch (avoids auth-session init error).
-  if (window.BB_APP?.coreReady) {
-    window.BB_APP.coreReady
+  if (window.GNH_APP?.coreReady) {
+    window.GNH_APP.coreReady
       .then(() => {
         refreshBadge();
         subscribeRealtime();
@@ -568,8 +568,8 @@ function initQuota() {
   };
 
   // Start after core is ready
-  if (window.BB_APP?.coreReady) {
-    window.BB_APP.coreReady.then(startPolling).catch(() => startPolling());
+  if (window.GNH_APP?.coreReady) {
+    window.GNH_APP.coreReady.then(startPolling).catch(() => startPolling());
   } else {
     const check = setInterval(() => {
       if (window.supabase) {

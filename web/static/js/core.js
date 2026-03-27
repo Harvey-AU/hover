@@ -1,6 +1,6 @@
 (function () {
   const loadedScripts = new Map();
-  window.BB_APP = window.BB_APP || {};
+  window.GNH_APP = window.GNH_APP || {};
 
   function promiseWithResolvers() {
     if (typeof Promise.withResolvers === "function") {
@@ -77,7 +77,7 @@
   }
 
   async function ensureConfig() {
-    if (window.BBB_CONFIG) {
+    if (window.BGNH_CONFIG) {
       return;
     }
     try {
@@ -87,13 +87,13 @@
         cause: error,
       });
     }
-    if (!window.BBB_CONFIG) {
-      throw new Error("BBB_CONFIG missing after loading /config.js");
+    if (!window.BGNH_CONFIG) {
+      throw new Error("BGNH_CONFIG missing after loading /config.js");
     }
   }
 
   function ensureSupabase() {
-    const overrideSrc = window.BB_APP?.scripts?.supabase;
+    const overrideSrc = window.GNH_APP?.scripts?.supabase;
     const src =
       overrideSrc ||
       "https://unpkg.com/@supabase/supabase-js@2.80.0/dist/umd/supabase.js";
@@ -108,7 +108,7 @@
   }
 
   function ensurePasswordStrength() {
-    const overrideSrc = window.BB_APP?.scripts?.passwordStrength;
+    const overrideSrc = window.GNH_APP?.scripts?.passwordStrength;
     const src =
       overrideSrc || "https://cdn.jsdelivr.net/npm/zxcvbn@4.4.2/dist/zxcvbn.js";
     const attrs = overrideSrc
@@ -122,13 +122,13 @@
   }
 
   function ensureTurnstile() {
-    const config = window.BBB_CONFIG || {};
+    const config = window.BGNH_CONFIG || {};
     const shouldLoadTurnstile =
-      window.BB_APP?.enableTurnstile ?? config.enableTurnstile ?? false;
+      window.GNH_APP?.enableTurnstile ?? config.enableTurnstile ?? false;
     if (!shouldLoadTurnstile) {
       return Promise.resolve();
     }
-    const overrideSrc = window.BB_APP?.scripts?.turnstile;
+    const overrideSrc = window.GNH_APP?.scripts?.turnstile;
     const src =
       overrideSrc || "https://challenges.cloudflare.com/turnstile/v0/api.js";
     const attrs = overrideSrc
@@ -148,9 +148,9 @@
   async function initialise() {
     await ensureConfig();
     await ensureSupabase();
-    const isCliAuthPage = Boolean(window.BB_APP?.cliAuth);
-    const isAuthCallbackPage = Boolean(window.BB_APP?.authCallback);
-    const isExtensionAuthPage = Boolean(window.BB_APP?.extensionAuth);
+    const isCliAuthPage = Boolean(window.GNH_APP?.cliAuth);
+    const isAuthCallbackPage = Boolean(window.GNH_APP?.authCallback);
+    const isExtensionAuthPage = Boolean(window.GNH_APP?.extensionAuth);
 
     // Callback/CLI/extension auth pages must not block on optional third-party scripts.
     if (!isCliAuthPage && !isAuthCallbackPage && !isExtensionAuthPage) {
@@ -205,18 +205,18 @@
   const coreReady = (async () => {
     try {
       await initialise();
-      window.BB_APP = window.BB_APP || {};
-      window.BB_APP.coreReadyState = "ready";
+      window.GNH_APP = window.GNH_APP || {};
+      window.GNH_APP.coreReadyState = "ready";
     } catch (error) {
-      window.BB_APP = window.BB_APP || {};
-      window.BB_APP.coreReadyState = "error";
+      window.GNH_APP = window.GNH_APP || {};
+      window.GNH_APP.coreReadyState = "error";
       console.error("Failed to initialise Hover core scripts", error);
       throw error;
     }
   })();
 
-  window.BB_APP = window.BB_APP || {};
-  window.BB_APP.coreReady = coreReady;
+  window.GNH_APP = window.GNH_APP || {};
+  window.GNH_APP.coreReady = coreReady;
 
   // ========================================
   // Unified Organisation Initialisation
@@ -242,7 +242,7 @@
    * Sets window.BB_ACTIVE_ORG and resolves BB_ORG_READY.
    * @returns {Promise<Object|null>} The active organisation or null
    */
-  window.BB_APP.initialiseOrg = async function () {
+  window.GNH_APP.initialiseOrg = async function () {
     // Return cached result if we have a valid org
     if (
       orgInitialised &&
@@ -335,7 +335,7 @@
    * @returns {Promise<Object>} The new active organisation
    */
   // Listen for auth state changes to re-init org when user signs in
-  window.BB_APP.coreReady.then(() => {
+  window.GNH_APP.coreReady.then(() => {
     if (window.supabase?.auth) {
       window.supabase.auth.onAuthStateChange((event, session) => {
         if (event === "SIGNED_OUT") {
@@ -350,7 +350,7 @@
         } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           // Re-init org if we don't have one yet
           if (!window.BB_ACTIVE_ORG?.id) {
-            window.BB_APP.initialiseOrg()
+            window.GNH_APP.initialiseOrg()
               .then((org) => {
                 if (org) {
                   document.dispatchEvent(
@@ -369,7 +369,7 @@
     }
   });
 
-  window.BB_APP.switchOrg = async function (orgId) {
+  window.GNH_APP.switchOrg = async function (orgId) {
     if (!window.supabase?.auth) {
       throw new Error("Supabase not initialised");
     }
@@ -425,7 +425,7 @@
    * @param {Object} job - The job object to extract config from
    * @returns {Object} Payload for POST /v1/jobs
    */
-  window.BB_APP.buildRestartJobPayload = function (job) {
+  window.GNH_APP.buildRestartJobPayload = function (job) {
     return {
       domain: job.domain ?? job.domains?.name ?? job.domain_name,
       use_sitemap: true,

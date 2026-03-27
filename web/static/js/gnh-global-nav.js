@@ -180,7 +180,7 @@
 
           try {
             // Use shared switch function
-            await window.BB_APP.switchOrg(orgId);
+            await window.GNH_APP.switchOrg(orgId);
             // bb:org-switched event will update UI
           } catch (err) {
             console.warn("Failed to switch organisation:", err);
@@ -243,11 +243,11 @@
 
       // Wait for core (Supabase) to be ready, then init org
       try {
-        if (window.BB_APP?.coreReady) {
-          await window.BB_APP.coreReady;
+        if (window.GNH_APP?.coreReady) {
+          await window.GNH_APP.coreReady;
         }
-        if (window.BB_APP?.initialiseOrg) {
-          await window.BB_APP.initialiseOrg();
+        if (window.GNH_APP?.initialiseOrg) {
+          await window.GNH_APP.initialiseOrg();
         }
         updateNavOrgDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
       } catch (err) {
@@ -712,8 +712,8 @@
       };
 
       // Start after core (Supabase) is ready
-      if (window.BB_APP?.coreReady) {
-        window.BB_APP.coreReady
+      if (window.GNH_APP?.coreReady) {
+        window.GNH_APP.coreReady
           .then(startQuotaPolling)
           .catch(() => startQuotaPolling()); // still attempt polling on failure
       } else {

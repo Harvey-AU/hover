@@ -269,8 +269,8 @@ async function init() {
   _initialised = true;
 
   // Wait for core readiness (Supabase, org init).
-  if (window.BB_APP?.coreReady) {
-    await window.BB_APP.coreReady;
+  if (window.GNH_APP?.coreReady) {
+    await window.GNH_APP.coreReady;
   }
 
   // Wait for supabase auth (polling with timeout).

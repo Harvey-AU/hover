@@ -104,7 +104,7 @@ async function restartJob(jobId) {
     }
 
     // Create new job with same config
-    const payload = window.BB_APP.buildRestartJobPayload(job);
+    const payload = window.GNH_APP.buildRestartJobPayload(job);
     await window.dataBinder.fetchData("/v1/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

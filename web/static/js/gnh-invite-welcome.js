@@ -44,7 +44,7 @@
   }
 
   async function initialiseInviteWelcome() {
-    await window.BB_APP?.coreReady;
+    await window.GNH_APP?.coreReady;
     await ensureAuthModalReady();
 
     const inviteFlow = window.BBInviteFlow;

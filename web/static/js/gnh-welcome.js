@@ -4,11 +4,11 @@
     if (!titleEl) return;
 
     try {
-      if (window.BB_APP?.coreReady) {
-        await window.BB_APP.coreReady;
+      if (window.GNH_APP?.coreReady) {
+        await window.GNH_APP.coreReady;
       }
-      if (window.BB_APP?.initialiseOrg) {
-        await window.BB_APP.initialiseOrg();
+      if (window.GNH_APP?.initialiseOrg) {
+        await window.GNH_APP.initialiseOrg();
       }
 
       const orgName = window.BB_ACTIVE_ORG?.name;
