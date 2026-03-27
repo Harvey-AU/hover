@@ -61,7 +61,8 @@ This single command will:
 
 ### 3. Environment Configuration (Automatic)
 
-`dev.sh` generates `.env.local` automatically from `supabase status` on first run. It produces:
+`dev.sh` generates `.env.local` automatically from `supabase status` on first
+run. It produces:
 
 ```bash
 # Local development overrides — not committed to git
@@ -76,7 +77,8 @@ SUPABASE_AUTH_URL=http://127.0.0.1:54321
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_<project-specific>
 ```
 
-If `.env.local` already exists, `dev.sh` leaves it untouched. Do not commit it — it is gitignored.
+If `.env.local` already exists, `dev.sh` leaves it untouched. Do not commit it —
+it is gitignored.
 
 To regenerate (e.g. after a Supabase CLI upgrade changes the keys):
 
@@ -153,39 +155,50 @@ go run ./cmd/app/main.go
 
 ## Local Authentication
 
-The local Supabase instance is seeded with test users on every `supabase db reset`.
+The local Supabase instance is seeded with test users on every
+`supabase db reset`.
 
 ### Seed users
 
-| Email | Password | Role | Notes |
-|---|---|---|---|
-| `seed-admin@example.com` | — | system_admin | Google OAuth only — cannot use email/password |
-| `seed-member@example.com` | — | member | Google OAuth only |
-| `dev@example.com` | `devpassword` | system_admin | Email/password — use this for local login |
+| Email                     | Password      | Role         | Notes                                         |
+| ------------------------- | ------------- | ------------ | --------------------------------------------- |
+| `seed-admin@example.com`  | —             | system_admin | Google OAuth only — cannot use email/password |
+| `seed-member@example.com` | —             | member       | Google OAuth only                             |
+| `dev@example.com`         | `devpassword` | system_admin | Email/password — use this for local login     |
 
 ### Logging in
 
 **Real browser** (Chrome/Safari at `localhost:8847`):
 
-Navigate to `http://localhost:8847/dev/auto-login`. The server signs in as `dev@example.com` server-side, injects a valid Supabase session into `localStorage`, then redirects to `/dashboard`. Session lasts one hour and persists across page reloads.
+Navigate to `http://localhost:8847/dev/auto-login`. The server signs in as
+`dev@example.com` server-side, injects a valid Supabase session into
+`localStorage`, then redirects to `/dashboard`. Session lasts one hour and
+persists across page reloads.
 
 **Claude preview browser** (sandboxed — cannot reach Supabase directly):
 
-The `/dev/auto-login` endpoint is specifically designed for this. From a preview eval or by navigating directly:
+The `/dev/auto-login` endpoint is specifically designed for this. From a preview
+eval or by navigating directly:
 
 ```javascript
-window.location.replace('/dev/auto-login')
+window.location.replace("/dev/auto-login");
 ```
 
 ### Why `/dev/auto-login` exists
 
-The Claude app's preview browser can reach `localhost:8847` but not `127.0.0.1:54321` (the local Supabase instance). The Supabase JS client normally calls Supabase directly from the browser for auth. The endpoint bypasses this: the Go server fetches the session server-side (it can reach Supabase fine), then injects the tokens directly into `localStorage` before the redirect.
+The Claude app's preview browser can reach `localhost:8847` but not
+`127.0.0.1:54321` (the local Supabase instance). The Supabase JS client normally
+calls Supabase directly from the browser for auth. The endpoint bypasses this:
+the Go server fetches the session server-side (it can reach Supabase fine), then
+injects the tokens directly into `localStorage` before the redirect.
 
-The endpoint returns **404** outside `APP_ENV=development` — it cannot be accidentally exposed in production.
+The endpoint returns **404** outside `APP_ENV=development` — it cannot be
+accidentally exposed in production.
 
 ### After `supabase db reset`
 
-The `dev@example.com` user is recreated automatically by `supabase/seed.sql`. No manual steps needed — just navigate to `/dev/auto-login` again.
+The `dev@example.com` user is recreated automatically by `supabase/seed.sql`. No
+manual steps needed — just navigate to `/dev/auto-login` again.
 
 ## Testing
 
@@ -454,7 +467,8 @@ git push origin feature/your-feature
 
 ### Commit Messages
 
-Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI attribution.
+Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI
+attribution.
 
 ```
 Add cache warming endpoint

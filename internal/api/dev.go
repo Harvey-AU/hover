@@ -81,7 +81,7 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	storageKeyJSON, _ := json.Marshal(storageKey)
-	fmt.Fprintf(w, `<!doctype html>
+	_, _ = fmt.Fprintf(w, `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Dev login…</title></head>
 <body>

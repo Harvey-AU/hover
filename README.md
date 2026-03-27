@@ -77,7 +77,10 @@ One command starts everything:
 - 🚀 Completely isolated from production
 - 🔇 Clean logging by default, verbose mode available
 
-**Then log in:** navigate to `http://localhost:8847/dev/auto-login` — signs you in as the dev seed user instantly, no OAuth flow needed. See [Local Authentication](docs/development/DEVELOPMENT.md#local-authentication) for details.
+**Then log in:** navigate to `http://localhost:8847/dev/auto-login` — signs you
+in as the dev seed user instantly, no OAuth flow needed. See
+[Local Authentication](docs/development/DEVELOPMENT.md#local-authentication) for
+details.
 
 `.env.local` is generated automatically by `dev.sh` — do not commit it.
 

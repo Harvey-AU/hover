@@ -63,7 +63,8 @@ git push origin feature/your-feature
 
 ## Commit Message Convention
 
-Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI attribution.
+Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI
+attribution.
 
 ```
 Add user authentication flow
