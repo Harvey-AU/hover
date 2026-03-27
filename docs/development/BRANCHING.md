@@ -38,11 +38,9 @@ git checkout -b docs/what-you-are-documenting
 # Run tests locally
 ./run-tests.sh
 
-# Commit with conventional commits
-git add .
-git commit -m "feat: add new feature"
-# or
-git commit -m "fix: resolve issue with X"
+# Commit — short, plain messages (5-6 words)
+git add specific-file.go
+git commit -m "Add cache warming endpoint"
 ```
 
 ### 3. Push Feature Branch
@@ -65,17 +63,14 @@ git push origin feature/your-feature
 
 ## Commit Message Convention
 
-Follow conventional commits for clear history:
+Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI attribution.
 
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation only
-- `style:` - Code style changes (formatting)
-- `refactor:` - Code restructuring
-- `test:` - Test additions/changes
-- `chore:` - Maintenance tasks
-
-Keep messages concise (5-6 words max).
+```
+Add user authentication flow
+Fix API rate limiting bug
+Update Supabase migration schema
+Remove unused crawler config
+```
 
 ## PR Guidelines
 

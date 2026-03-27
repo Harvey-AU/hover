@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Last reviewed: 2026-02-22
+Last reviewed: 2026-03-28
 
 This file is the project operating guide for Claude Code (desktop/CLI) in this
 repository.
@@ -41,6 +41,15 @@ Fly.
 **Database migrations:** Use `supabase migration new <name>` to create migration
 files. Never edit or rename migrations after they are deployed. Keep migrations
 additive; avoid destructive schema changes.
+
+**Local dev auth:** Use `GET /dev/auto-login` to sign in during local
+development — no OAuth flow, no manual credential entry. The Go server fetches a
+session server-side and injects it into `localStorage`, then redirects to
+`/dashboard`. Only works when `APP_ENV=development`. The preview browser in
+Claude cannot reach `127.0.0.1:54321` directly, so always use this endpoint
+rather than the normal sign-in modal. After `supabase db reset`, the dev user
+(`dev@example.com`) is re-seeded automatically — just hit `/dev/auto-login`
+again.
 
 ## Instruction loading (how this repo should be read by Claude Code)
 

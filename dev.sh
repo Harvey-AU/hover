@@ -68,6 +68,30 @@ fi
 echo "Starting local Supabase..."
 supabase start
 
+# Generate .env.local from supabase status if it doesn't exist
+if [ ! -f ".env.local" ]; then
+    echo "Generating .env.local from supabase status..."
+    SUPA_ENV=$(supabase status --output env 2>/dev/null)
+    API_URL=$(echo "$SUPA_ENV" | grep '^API_URL=' | cut -d'"' -f2)
+    DB_URL=$(echo "$SUPA_ENV" | grep '^DB_URL=' | cut -d'"' -f2)
+    PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^PUBLISHABLE_KEY=' | cut -d'"' -f2)
+    cat > .env.local <<EOF
+# Local development overrides — not committed to git
+# Generated from: supabase status
+
+APP_ENV=development
+LOG_LEVEL=info
+
+DATABASE_URL=${DB_URL}
+
+SUPABASE_AUTH_URL=${API_URL}
+SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY}
+EOF
+    echo "✅ .env.local created"
+else
+    echo "ℹ️  .env.local already exists — skipping generation"
+fi
+
 # Start Air with hot reloading and migration watching
 echo "Starting development server with hot reloading..."
 echo "Watching for migration changes - will auto-reset database when needed..."

@@ -220,7 +220,7 @@
         // Marketing form handler
         const marketingForm = document.getElementById("marketingForm");
         if (marketingForm) {
-          marketingForm.addEventListener("submit", (e) => {
+          marketingForm.addEventListener("submit", async (e) => {
             e.preventDefault();
             const domain = document
               .getElementById("marketingDomain")
@@ -250,6 +250,7 @@
 
             // Try to show auth modal
             try {
+              await loadAuthModal();
               showAuthModal();
               // Default to signup for new users
               setTimeout(() => {
@@ -265,9 +266,10 @@
         // Header sign in button
         const headerSignInBtn = document.getElementById("headerSignInBtn");
         if (headerSignInBtn) {
-          headerSignInBtn.addEventListener("click", (e) => {
+          headerSignInBtn.addEventListener("click", async (e) => {
             e.preventDefault();
             try {
+              await loadAuthModal();
               showAuthModal();
               showLoginForm();
             } catch (error) {
@@ -280,9 +282,10 @@
         // Existing user link
         const existingUserLink = document.getElementById("existingUserLink");
         if (existingUserLink) {
-          existingUserLink.addEventListener("click", (e) => {
+          existingUserLink.addEventListener("click", async (e) => {
             e.preventDefault();
             try {
+              await loadAuthModal();
               showAuthModal();
               showLoginForm();
             } catch (error) {

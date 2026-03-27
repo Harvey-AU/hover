@@ -18,13 +18,13 @@ will return the `trace.out` file, which can be analyzed using `go tool trace`.
 1.  **Start the application with the flight recorder enabled:**
 
     ```bash
-    FLIGHT_RECORDER_ENABLED=true go run cmd/app/main.go
+    FLIGHT_RECORDER_ENABLED=true go run ./cmd/app
     ```
 
 2.  **Access the trace data:**
 
     ```bash
-    curl -o trace.out http://localhost:8080/debug/fgtrace
+    curl -o trace.out http://localhost:8847/debug/fgtrace
     ```
 
 3.  **Analyze the trace data:**
