@@ -87,7 +87,7 @@ export function initCreateOrgModal(options = {}) {
       }
 
       document.dispatchEvent(
-        new CustomEvent("bb:org-switched", {
+        new CustomEvent("gnh:org-switched", {
           detail: { organisation: newOrg },
         })
       );

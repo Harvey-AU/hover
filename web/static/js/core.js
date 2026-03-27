@@ -414,7 +414,7 @@
 
     // Dispatch event for listeners
     document.dispatchEvent(
-      new CustomEvent("bb:org-switched", { detail: { organisation: newOrg } })
+      new CustomEvent("gnh:org-switched", { detail: { organisation: newOrg } })
     );
 
     return newOrg;

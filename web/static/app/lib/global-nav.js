@@ -123,7 +123,7 @@ function initOrgSwitcher(navEl) {
   }
 
   // Org lifecycle events
-  document.addEventListener("bb:org-switched", (e) => {
+  document.addEventListener("gnh:org-switched", (e) => {
     const newOrg = e.detail?.organisation;
     if (newOrg) updateDisplay(newOrg, window.BB_ORGANISATIONS);
   });
@@ -215,7 +215,7 @@ function initUserMenu(navEl) {
     }
   });
 
-  document.addEventListener("bb:org-switched", syncOrgName);
+  document.addEventListener("gnh:org-switched", syncOrgName);
   document.addEventListener("bb:org-ready", syncOrgName);
   syncOrgName();
 }
@@ -436,7 +436,7 @@ function initNotifications(navEl) {
     }
   });
 
-  document.addEventListener("bb:org-switched", async () => {
+  document.addEventListener("gnh:org-switched", async () => {
     await refreshBadge();
     await subscribeRealtime();
   });
@@ -560,7 +560,7 @@ function initQuota() {
     quotaVisibilityListener();
   }
 
-  document.addEventListener("bb:org-switched", () => fetchAndDisplay());
+  document.addEventListener("gnh:org-switched", () => fetchAndDisplay());
 
   // Expose for settings page refresh
   window.BBQuota = {

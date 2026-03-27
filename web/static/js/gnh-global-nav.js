@@ -181,7 +181,7 @@
           try {
             // Use shared switch function
             await window.GNH_APP.switchOrg(orgId);
-            // bb:org-switched event will update UI
+            // gnh:org-switched event will update UI
           } catch (err) {
             console.warn("Failed to switch organisation:", err);
             // Restore previous name
@@ -209,7 +209,7 @@
 
       // Listen for org switches (from anywhere) — re-render full list so newly
       // created orgs appear without a page reload.
-      document.addEventListener("bb:org-switched", (e) => {
+      document.addEventListener("gnh:org-switched", (e) => {
         const newOrg = e.detail?.organisation;
         if (newOrg) {
           updateNavOrgDisplay(newOrg, window.BB_ORGANISATIONS);
@@ -318,7 +318,7 @@
         }
       });
 
-      document.addEventListener("bb:org-switched", syncUserMenuOrgName);
+      document.addEventListener("gnh:org-switched", syncUserMenuOrgName);
       document.addEventListener("bb:org-ready", syncUserMenuOrgName);
       syncUserMenuOrgName();
     };
@@ -568,7 +568,7 @@
         }
       });
 
-      document.addEventListener("bb:org-switched", async () => {
+      document.addEventListener("gnh:org-switched", async () => {
         await refreshBadge();
         await subscribeRealtime();
       });
@@ -700,7 +700,7 @@
       }
 
       // Refresh quota immediately when organisation changes (registered once)
-      document.addEventListener("bb:org-switched", () => {
+      document.addEventListener("gnh:org-switched", () => {
         fetchAndDisplayQuota();
       });
 

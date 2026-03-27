@@ -825,7 +825,7 @@
 
       try {
         await window.GNH_APP.switchOrg(org.id);
-        // bb:org-switched event will handle UI updates
+        // gnh:org-switched event will handle UI updates
       } catch (err) {
         console.error("Error switching organisation:", err);
         if (currentOrgNameRef) {
@@ -882,7 +882,7 @@
   }
 
   // Listen for org switches to update settings-specific UI and data
-  document.addEventListener("bb:org-switched", async (e) => {
+  document.addEventListener("gnh:org-switched", async (e) => {
     const newOrg = e.detail?.organisation;
     if (!newOrg) return;
 
@@ -998,7 +998,7 @@
 
           // Dispatch event for all listeners
           document.dispatchEvent(
-            new CustomEvent("bb:org-switched", {
+            new CustomEvent("gnh:org-switched", {
               detail: { organisation: newOrg },
             })
           );

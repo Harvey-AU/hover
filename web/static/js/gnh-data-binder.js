@@ -696,7 +696,7 @@ class GNHDataBinder {
           window.BB_ORGANISATIONS = [newOrg];
         }
         document.dispatchEvent(
-          new CustomEvent("bb:org-switched", {
+          new CustomEvent("gnh:org-switched", {
             detail: { organisation: newOrg },
           })
         );

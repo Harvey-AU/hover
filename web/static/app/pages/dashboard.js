@@ -111,7 +111,7 @@ async function init() {
   startSubscription();
 
   // Re-subscribe and refresh when the active org changes.
-  document.addEventListener("bb:org-switched", () => {
+  document.addEventListener("gnh:org-switched", () => {
     refresh();
     startSubscription();
   });
