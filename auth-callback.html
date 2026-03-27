@@ -87,7 +87,7 @@
 
             await loadScript("/js/auth.js");
             const callbackHandler =
-              window.BBAuth?.initAuthCallbackPage ||
+              window.GNHAuth?.initAuthCallbackPage ||
               window.initAuthCallbackPage;
             if (typeof callbackHandler !== "function") {
               throw new Error("Auth callback handler unavailable");

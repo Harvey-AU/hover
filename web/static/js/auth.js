@@ -15,7 +15,7 @@
  * - Sentry error tracking for auth failures
  */
 
-const CLI_AUTH_STORAGE_KEY = "bbb_cli_auth_state";
+const CLI_AUTH_STORAGE_KEY = "gnh_cli_auth_state";
 
 // Supabase configuration
 const runtimeConfig =
@@ -59,8 +59,8 @@ const AUTH_SYNC_RETRY_DELAY_MS = 100;
 let authSyncRetryTimer = null;
 let authSyncRetryCount = 0;
 let authCallbackRedirectIssued = false;
-const PENDING_INVITE_TOKEN_STORAGE_KEY = "bb_pending_invite_token";
-const POST_AUTH_RETURN_TARGET_STORAGE_KEY = "bb_post_auth_return_target";
+const PENDING_INVITE_TOKEN_STORAGE_KEY = "gnh_pending_invite_token";
+const POST_AUTH_RETURN_TARGET_STORAGE_KEY = "gnh_post_auth_return_target";
 const OAUTH_CALLBACK_QUERY_KEYS = [
   "error",
   "error_code",
@@ -108,7 +108,7 @@ function applyProtectedRouteAuthGate(isAuthenticated) {
 
   const shouldGate =
     !isAuthenticated && isProtectedRoutePath(window.location.pathname);
-  body.classList.toggle("bb-auth-route-gated", shouldGate);
+  body.classList.toggle("gnh-auth-route-gated", shouldGate);
 
   if (shouldGate) {
     setPostAuthReturnTargetFromCurrentPath();
@@ -319,10 +319,10 @@ async function loadAuthModal() {
       });
     }
     modalTarget.innerHTML = `
-      <div class="bb-modal show" role="dialog" aria-live="assertive" aria-label="Sign in is unavailable">
-        <div class="bb-modal-content">
+      <div class="gnh-modal show" role="dialog" aria-live="assertive" aria-label="Sign in is unavailable">
+        <div class="gnh-modal-content">
           <p>Sign-in is currently unavailable. Please refresh the page and try again.</p>
-          <button type="button" class="bb-button bb-button-primary" onclick="window.location.reload()">Retry</button>
+          <button type="button" class="gnh-button gnh-button-primary" onclick="window.location.reload()">Retry</button>
         </div>
       </div>
     `;
@@ -579,7 +579,7 @@ async function registerUserWithBackend(user) {
 function updateAuthState(isAuthenticated) {
   // Show/hide elements based on authentication (support both old and new attributes)
   const allAuthElements = document.querySelectorAll(
-    "[data-bb-auth], [bbb-auth]"
+    "[data-gnh-auth], [gnh-auth]"
   );
 
   const guestElements = [];
@@ -587,7 +587,7 @@ function updateAuthState(isAuthenticated) {
 
   allAuthElements.forEach((el) => {
     const authValue =
-      el.getAttribute("bbb-auth") || el.getAttribute("data-bb-auth");
+      el.getAttribute("gnh-auth") || el.getAttribute("data-gnh-auth");
     if (authValue === "guest") {
       guestElements.push(el);
     } else if (authValue === "required") {
@@ -1382,10 +1382,10 @@ async function initAuthCallbackPage() {
  * Handle pending domain after authentication
  */
 async function handlePendingDomain() {
-  const pendingDomain = sessionStorage.getItem("bb_pending_domain");
+  const pendingDomain = sessionStorage.getItem("gnh_pending_domain");
   if (pendingDomain && window.dataBinder?.authManager?.isAuthenticated) {
     // Clear the stored domain
-    sessionStorage.removeItem("bb_pending_domain");
+    sessionStorage.removeItem("gnh_pending_domain");
 
     // Auto-create job
     try {
@@ -1428,7 +1428,7 @@ async function handlePendingDomain() {
 function showAuthLoading() {
   const authLoading = document.getElementById("authLoading");
   const visibleForm = document.querySelector(
-    '.bb-auth-form:not([style*="display: none"])'
+    '.gnh-auth-form:not([style*="display: none"])'
   );
 
   if (authLoading) {
@@ -1547,10 +1547,10 @@ function setupPasswordStrength() {
 
     // Clear previous classes
     if (strengthFill) {
-      strengthFill.className = "bb-strength-fill";
+      strengthFill.className = "gnh-strength-fill";
     }
     if (strengthText) {
-      strengthText.className = "bb-strength-text";
+      strengthText.className = "gnh-strength-text";
     }
 
     // Apply strength classes and text
@@ -1615,20 +1615,20 @@ function setupPasswordStrength() {
     const confirm = confirmInput.value;
 
     // Remove existing validation styling
-    confirmInput.classList.remove("bb-field-valid", "bb-field-invalid");
+    confirmInput.classList.remove("gnh-field-valid", "gnh-field-invalid");
     const existingError =
-      confirmInput.parentElement.querySelector(".bb-field-error");
+      confirmInput.parentElement.querySelector(".gnh-field-error");
     if (existingError) {
       existingError.remove();
     }
 
     if (confirm.length > 0) {
       if (password === confirm) {
-        confirmInput.classList.add("bb-field-valid");
+        confirmInput.classList.add("gnh-field-valid");
       } else {
-        confirmInput.classList.add("bb-field-invalid");
+        confirmInput.classList.add("gnh-field-invalid");
         const errorDiv = document.createElement("div");
-        errorDiv.className = "bb-field-error";
+        errorDiv.className = "gnh-field-error";
         errorDiv.textContent = "Passwords do not match";
         errorDiv.style.cssText =
           "color: #dc2626; font-size: 12px; margin-top: 4px;";
@@ -1779,9 +1779,9 @@ function setupAuthModalHandlers() {
 
   // Use event delegation for social login buttons
   document.addEventListener("click", (e) => {
-    if (e.target.closest(".bb-social-btn[data-provider]")) {
+    if (e.target.closest(".gnh-social-btn[data-provider]")) {
       e.preventDefault();
-      const button = e.target.closest(".bb-social-btn[data-provider]");
+      const button = e.target.closest(".gnh-social-btn[data-provider]");
       const provider = button.dataset.provider;
       const handler =
         typeof window.handleSocialLogin === "function"
@@ -1791,11 +1791,11 @@ function setupAuthModalHandlers() {
     }
 
     // Handle modal close
-    if (e.target.closest(".bb-modal-close") || e.target.id === "authModal") {
+    if (e.target.closest(".gnh-modal-close") || e.target.id === "authModal") {
       if (e.target.id === "authModal" && e.target === e.currentTarget) {
         // Only close if clicking the backdrop
         closeAuthModal();
-      } else if (e.target.closest(".bb-modal-close")) {
+      } else if (e.target.closest(".gnh-modal-close")) {
         closeAuthModal();
       }
     }
@@ -2069,7 +2069,7 @@ function initCliAuthPage() {
         // Sanitise provider hint to prevent CSS selector injection
         const sanitised = providerHint.replace(/[^a-z0-9_-]/gi, "");
         const button = document.querySelector(
-          `.bb-social-btn[data-provider="${sanitised}"]`
+          `.gnh-social-btn[data-provider="${sanitised}"]`
         );
         if (button) {
           button.focus();
@@ -2171,7 +2171,7 @@ function initExtensionAuthPage() {
     try {
       window.opener.postMessage(
         {
-          source: "bbb-extension-auth",
+          source: "gnh-extension-auth",
           state: extensionState,
           extensionState,
           ...message,
@@ -2351,7 +2351,7 @@ if (typeof module !== "undefined" && module.exports) {
   };
 
   // Browser environment - make functions globally available
-  window.BBAuth = {
+  window.GNHAuth = {
     initialiseSupabase,
     loadAuthModal,
     waitForAuthScript,

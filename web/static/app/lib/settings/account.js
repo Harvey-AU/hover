@@ -18,7 +18,7 @@ import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 const MAX_NAME_LENGTH = 80;
 
-/** Adapter: bb-settings uses (variant, message); hover-toast uses (message, {variant}). */
+/** Adapter: gnh-settings uses (variant, message); hover-toast uses (message, {variant}). */
 function toast(variant, message) {
   _showToast(message, { variant });
 }
@@ -173,7 +173,7 @@ export async function connectAuthMethod(provider) {
     if (currentPath && currentPath !== "/") {
       try {
         window.sessionStorage.setItem(
-          "bb_post_auth_return_target",
+          "gnh_post_auth_return_target",
           currentPath
         );
       } catch {
@@ -335,7 +335,7 @@ export function renderAuthMethods(container, methods, options = {}) {
     details.appendChild(text);
 
     const actionBtn = document.createElement("button");
-    actionBtn.className = "bb-button bb-button-outline settings-btn-sm";
+    actionBtn.className = "gnh-button gnh-button-outline settings-btn-sm";
     actionBtn.type = "button";
     actionBtn.textContent = method.connected ? "Remove" : "Connect";
 

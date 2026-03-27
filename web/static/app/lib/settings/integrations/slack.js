@@ -21,13 +21,13 @@ function toast(variant, message) {
 // ── Setup ───────────────────────────────────────────────────────────────────────
 
 /**
- * Wire up Slack click delegation on [bbb-action] elements.
+ * Wire up Slack click delegation on [gnh-action] elements.
  */
 export function setupSlackIntegration() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) return;
-    const action = element.getAttribute("bbb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action || !action.startsWith("slack-")) return;
     event.preventDefault();
     handleSlackAction(action, element);
@@ -40,9 +40,9 @@ function handleSlackAction(action, element) {
       connectSlackWorkspace();
       break;
     case "slack-disconnect": {
-      const connectionId = element.getAttribute("bbb-id");
+      const connectionId = element.getAttribute("gnh-id");
       if (connectionId) disconnectSlackWorkspace(connectionId);
-      else console.warn("slack-disconnect: missing bbb-id attribute");
+      else console.warn("slack-disconnect: missing gnh-id attribute");
       break;
     }
     case "slack-refresh":
@@ -70,7 +70,7 @@ export async function loadSlackConnections() {
     }
 
     const template = connectionsList.querySelector(
-      '[bbb-template="slack-connection"]'
+      '[gnh-template="slack-connection"]'
     );
     if (!template) {
       console.error("Slack connection template not found");
@@ -91,7 +91,7 @@ export async function loadSlackConnections() {
     for (const conn of connections) {
       const clone = template.cloneNode(true);
       clone.style.display = "block";
-      clone.removeAttribute("bbb-template");
+      clone.removeAttribute("gnh-template");
       clone.classList.add("slack-connection");
 
       const nameEl = clone.querySelector(".slack-workspace-name");
@@ -103,9 +103,9 @@ export async function loadSlackConnections() {
         dateEl.textContent = `Connected ${formatRelativeDate(conn.created_at)}`;
 
       const disconnectBtn = clone.querySelector(
-        '[bbb-action="slack-disconnect"]'
+        '[gnh-action="slack-disconnect"]'
       );
-      if (disconnectBtn) disconnectBtn.setAttribute("bbb-id", conn.id);
+      if (disconnectBtn) disconnectBtn.setAttribute("gnh-id", conn.id);
 
       connectionsList.appendChild(clone);
     }

@@ -78,7 +78,7 @@ function initOrgSwitcher(navEl) {
       while (orgListEl.firstChild) orgListEl.removeChild(orgListEl.firstChild);
       (organisations || []).forEach((org) => {
         const button = document.createElement("button");
-        button.className = "bb-org-item";
+        button.className = "gnh-org-item";
         button.dataset.orgId = org.id;
         button.dataset.orgName = org.name;
         button.textContent = org.name;
@@ -90,7 +90,7 @@ function initOrgSwitcher(navEl) {
 
   // Delegated org-item clicks
   orgListEl?.addEventListener("click", async (e) => {
-    const item = e.target.closest(".bb-org-item");
+    const item = e.target.closest(".gnh-org-item");
     if (!item || item.classList.contains("active")) {
       orgSwitcher?.classList.remove("open");
       return;
@@ -273,7 +273,7 @@ function initNotifications(navEl) {
     if (!notifications || notifications.length === 0) {
       while (list.firstChild) list.removeChild(list.firstChild);
       const empty = document.createElement("div");
-      empty.className = "bb-notifications-empty";
+      empty.className = "gnh-notifications-empty";
       empty.textContent = "No notifications yet";
       list.appendChild(empty);
       return;
@@ -283,19 +283,19 @@ function initNotifications(navEl) {
     notifications.forEach((n) => {
       const item = document.createElement("button");
       item.type = "button";
-      item.className = `bb-notification-item${!n.read_at ? " unread" : ""}`;
+      item.className = `gnh-notification-item${!n.read_at ? " unread" : ""}`;
       item.dataset.id = escapeHtml(n.id);
       item.dataset.link = escapeHtml(n.link);
 
       const content = document.createElement("div");
-      content.className = "bb-notification-item-content";
+      content.className = "gnh-notification-item-content";
 
       const subject = document.createElement("div");
-      subject.className = "bb-notification-item-subject";
+      subject.className = "gnh-notification-item-subject";
       subject.textContent = n.subject ?? "";
 
       const preview = document.createElement("div");
-      preview.className = "bb-notification-item-preview";
+      preview.className = "gnh-notification-item-preview";
       preview.textContent = n.preview ?? "";
 
       content.appendChild(subject);
@@ -376,7 +376,7 @@ function initNotifications(navEl) {
   dropdown?.addEventListener("click", (e) => e.stopPropagation());
 
   list?.addEventListener("click", async (e) => {
-    const item = e.target.closest(".bb-notification-item");
+    const item = e.target.closest(".gnh-notification-item");
     if (!item) return;
 
     try {
@@ -425,7 +425,7 @@ function initNotifications(navEl) {
       });
       if (res.ok) {
         updateBadge(0);
-        list?.querySelectorAll(".bb-notification-item.unread").forEach((el) => {
+        list?.querySelectorAll(".gnh-notification-item.unread").forEach((el) => {
           el.classList.remove("unread");
         });
       }

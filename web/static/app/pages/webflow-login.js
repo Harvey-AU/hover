@@ -2,7 +2,7 @@
  * pages/webflow-login.js — Webflow Designer extension auth screen
  *
  * Entrypoint for the extension-auth page served by the Go backend at
- * /extension-auth. Replaces the legacy core.js + bb-auth-extension.js
+ * /extension-auth. Replaces the legacy core.js + gnh-auth-extension.js
  * global-script model for this surface.
  *
  * Loading contract (extension-auth.html):
@@ -10,7 +10,7 @@
  *   2. <script src="supabase.js">         — sets window.supabase (CDN UMD)
  *   3. <script type="module" src="/app/pages/webflow-login.js">
  *
- * No bb-bootstrap.js. No GNH_APP.whenReady(). No BBAuth globals required.
+ * No gnh-bootstrap.js. No GNH_APP.whenReady(). No GNHAuth globals required.
  *
  * Auth redirect contract (from AGENTS.md):
  *   - Deep-link URLs must return to the exact originating URL.
@@ -35,7 +35,7 @@ import { showToast } from "/app/components/hover-toast.js";
 const EXTENSION_ORIGIN = "https://webflow.com";
 
 /** Storage key written by auth.js for CLI/extension auth state. */
-const CLI_AUTH_STORAGE_KEY = "bbb_cli_auth_state";
+const CLI_AUTH_STORAGE_KEY = "gnh_cli_auth_state";
 
 /**
  * The state token passed by the extension when opening this popup.
@@ -134,7 +134,7 @@ async function handleAuthenticated(session) {
 
   // Send the session back to the extension.
   // Contract must match what index.ts connectAccount() expects:
-  //   { source: "bbb-extension-auth", state, extensionState, type: "success",
+  //   { source: "gnh-extension-auth", state, extensionState, type: "success",
   //     accessToken, user: { id, email, avatarUrl } }
   if (!window.opener) {
     // Opened directly (not by the extension popup flow) — nothing to notify.
@@ -145,7 +145,7 @@ async function handleAuthenticated(session) {
   try {
     window.opener.postMessage(
       {
-        source: "bbb-extension-auth",
+        source: "gnh-extension-auth",
         state: EXTENSION_STATE,
         extensionState: EXTENSION_STATE,
         type: "success",
@@ -180,8 +180,8 @@ async function handleAuthenticated(session) {
  * handles the access_token hash directly.
  */
 async function handleCallbackIfPresent() {
-  if (typeof window.BBAuth?.handleAuthCallback === "function") {
-    await window.BBAuth.handleAuthCallback().catch(() => {});
+  if (typeof window.GNHAuth?.handleAuthCallback === "function") {
+    await window.GNHAuth.handleAuthCallback().catch(() => {});
     return;
   }
 

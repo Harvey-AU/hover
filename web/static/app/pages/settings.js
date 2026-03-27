@@ -7,7 +7,7 @@
  * Webflow extension or other surfaces.
  *
  * Also owns settings navigation (sidebar, tabs, deep-linking) and
- * the org creation modal — previously in bb-settings.js.
+ * the org creation modal — previously in gnh-settings.js.
  */
 
 import {

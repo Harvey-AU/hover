@@ -25,7 +25,7 @@
       if (
         existing.dataset.bbReady === "true" ||
         existing.dataset.bbLoader === "true" ||
-        existing.getAttribute("data-bb-ready") === "true" ||
+        existing.getAttribute("data-gnh-ready") === "true" ||
         existing.readyState === "complete"
       ) {
         const promise = Promise.resolve();
@@ -171,34 +171,34 @@
     await ensureAuthBundle();
 
     // Initialise Supabase client after loading SDK and auth bundle
-    if (typeof window.BBAuth?.initialiseSupabase === "function") {
-      const initialised = window.BBAuth.initialiseSupabase();
+    if (typeof window.GNHAuth?.initialiseSupabase === "function") {
+      const initialised = window.GNHAuth.initialiseSupabase();
       if (!initialised) {
         console.error("Failed to initialise Supabase client");
       }
     }
 
-    if (typeof window.BBAuth?.resumeCliAuthFromStorage === "function") {
-      window.BBAuth.resumeCliAuthFromStorage();
+    if (typeof window.GNHAuth?.resumeCliAuthFromStorage === "function") {
+      window.GNHAuth.resumeCliAuthFromStorage();
     }
 
-    if (isCliAuthPage && window.BBAuth?.initCliAuthPage) {
-      window.BBAuth.initCliAuthPage();
+    if (isCliAuthPage && window.GNHAuth?.initCliAuthPage) {
+      window.GNHAuth.initCliAuthPage();
       return;
     }
 
-    if (isAuthCallbackPage && window.BBAuth?.initAuthCallbackPage) {
-      window.BBAuth.initAuthCallbackPage();
+    if (isAuthCallbackPage && window.GNHAuth?.initAuthCallbackPage) {
+      window.GNHAuth.initAuthCallbackPage();
       return;
     }
 
-    if (isExtensionAuthPage && window.BBAuth?.initExtensionAuthPage) {
-      window.BBAuth.initExtensionAuthPage();
+    if (isExtensionAuthPage && window.GNHAuth?.initExtensionAuthPage) {
+      window.GNHAuth.initExtensionAuthPage();
       return;
     }
 
-    if (typeof window.BBAuth?.setupAuthHandlers === "function") {
-      window.BBAuth.setupAuthHandlers();
+    if (typeof window.GNHAuth?.setupAuthHandlers === "function") {
+      window.GNHAuth.setupAuthHandlers();
     }
   }
 
@@ -296,7 +296,7 @@
       // Fall back to localStorage only if API value is absent.
       if (!activeOrgId) {
         try {
-          activeOrgId = localStorage.getItem("bb_active_org_id");
+          activeOrgId = localStorage.getItem("gnh_active_org_id");
         } catch (e) {
           // localStorage might be blocked
         }
@@ -308,7 +308,7 @@
 
       // Store in localStorage for faster future loads
       try {
-        localStorage.setItem("bb_active_org_id", activeOrg.id);
+        localStorage.setItem("gnh_active_org_id", activeOrg.id);
       } catch (e) {
         // localStorage might be blocked
       }
@@ -343,7 +343,7 @@
           window.BB_ACTIVE_ORG = null;
           window.BB_ORGANISATIONS = [];
           try {
-            localStorage.removeItem("bb_active_org_id");
+            localStorage.removeItem("gnh_active_org_id");
           } catch (e) {
             // localStorage might be blocked
           }
@@ -407,7 +407,7 @@
 
     // Store in localStorage for persistence
     try {
-      localStorage.setItem("bb_active_org_id", newOrg.id);
+      localStorage.setItem("gnh_active_org_id", newOrg.id);
     } catch (e) {
       // localStorage might be blocked
     }

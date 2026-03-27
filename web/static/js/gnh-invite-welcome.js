@@ -11,8 +11,8 @@
   }
 
   async function ensureAuthModalReady() {
-    if (window.BBAuth?.loadAuthModal) {
-      await window.BBAuth.loadAuthModal();
+    if (window.GNHAuth?.loadAuthModal) {
+      await window.GNHAuth.loadAuthModal();
     }
   }
 
@@ -22,8 +22,8 @@
       // CSS on this page renders the modal inline instead of as an overlay.
       window.showAuthModal();
     }
-    if (window.BBAuth?.showAuthForm) {
-      window.BBAuth.showAuthForm(formType);
+    if (window.GNHAuth?.showAuthForm) {
+      window.GNHAuth.showAuthForm(formType);
     }
   }
 

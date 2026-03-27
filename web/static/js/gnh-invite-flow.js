@@ -136,9 +136,9 @@
       return { status: "no_token" };
     }
 
-    if (typeof window.BBAuth?.handleAuthCallback === "function") {
+    if (typeof window.GNHAuth?.handleAuthCallback === "function") {
       try {
-        await window.BBAuth.handleAuthCallback();
+        await window.GNHAuth.handleAuthCallback();
       } catch (error) {
         console.warn("Invite flow auth callback processing failed:", error);
       }
@@ -159,8 +159,8 @@
       if (clearTokenOnSuccess) {
         clearInviteTokenFromURL(tokenParamName);
       }
-      if (typeof window.BBAuth?.clearPendingInviteToken === "function") {
-        window.BBAuth.clearPendingInviteToken();
+      if (typeof window.GNHAuth?.clearPendingInviteToken === "function") {
+        window.GNHAuth.clearPendingInviteToken();
       }
 
       if (typeof onAccepted === "function") {

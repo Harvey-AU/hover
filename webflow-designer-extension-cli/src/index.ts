@@ -28,8 +28,8 @@ type RealtimeChannel = {
   ) => RealtimeChannel;
 };
 
-const API_BASE_STORAGE_KEY = "bbb_extension_api_base";
-const API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
+const API_BASE_STORAGE_KEY = "gnh_extension_api_base";
+const API_TOKEN_STORAGE_KEY = "gnh_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
 const DEFAULT_BGNH_APP_ORIGIN = "https://hover.app.goodnative.co";
@@ -1020,7 +1020,7 @@ async function connectAccount(): Promise<string | null> {
         const payloadState = payload?.state || payload?.extensionState;
 
         if (
-          payload?.source !== "bbb-extension-auth" ||
+          payload?.source !== "gnh-extension-auth" ||
           payloadState !== stateToken
         ) {
           console.warn(
@@ -2008,7 +2008,7 @@ async function connectWebflow(): Promise<void> {
 
   const popup = window.open(
     response.auth_url,
-    "bbb-webflow-connect",
+    "gnh-webflow-connect",
     `width=520,height=760,left=60,top=60`
   );
   if (!popup) {
@@ -2035,7 +2035,7 @@ async function connectWebflow(): Promise<void> {
       };
 
       if (
-        payload?.source !== "bbb-webflow-connect" ||
+        payload?.source !== "gnh-webflow-connect" ||
         payload.type !== "webflow-connect-complete"
       ) {
         return;

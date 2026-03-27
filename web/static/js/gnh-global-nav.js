@@ -48,7 +48,7 @@
       navWrapper.innerHTML = html.trim();
       navElement = navWrapper.firstElementChild;
     } catch (err) {
-      console.error("[bb-global-nav] Could not load nav partial:", err);
+      console.error("[gnh-global-nav] Could not load nav partial:", err);
       finishNavReady();
       return;
     }
@@ -150,7 +150,7 @@
           }
           (organisations || []).forEach((org) => {
             const button = document.createElement("button");
-            button.className = "bb-org-item";
+            button.className = "gnh-org-item";
             button.dataset.orgId = org.id;
             button.dataset.orgName = org.name;
             button.textContent = org.name;
@@ -165,7 +165,7 @@
       // Handle org item clicks (delegated)
       if (orgListEl) {
         orgListEl.addEventListener("click", async (e) => {
-          const item = e.target.closest(".bb-org-item");
+          const item = e.target.closest(".gnh-org-item");
           if (!item || item.classList.contains("active")) {
             orgSwitcher?.classList.remove("open");
             return;
@@ -393,8 +393,8 @@
         if (!notificationsList) return;
         if (!notifications || notifications.length === 0) {
           notificationsList.innerHTML = `
-            <div class="bb-notifications-empty">
-              <div class="bb-notifications-empty-icon">🔔</div>
+            <div class="gnh-notifications-empty">
+              <div class="gnh-notifications-empty-icon">🔔</div>
               <div>No notifications yet</div>
             </div>
           `;
@@ -410,13 +410,13 @@
             return `
               <button
                 type="button"
-                class="bb-notification-item ${!n.read_at ? "unread" : ""}"
+                class="gnh-notification-item ${!n.read_at ? "unread" : ""}"
                 data-id="${notificationId}"
                 data-link="${notificationLink}"
               >
-                <div class="bb-notification-item-content">
-                  <div class="bb-notification-item-subject">${subject}</div>
-                  <div class="bb-notification-item-preview">${preview}</div>
+                <div class="gnh-notification-item-content">
+                  <div class="gnh-notification-item-subject">${subject}</div>
+                  <div class="gnh-notification-item-preview">${preview}</div>
                 </div>
               </button>
             `;
@@ -507,7 +507,7 @@
       });
 
       notificationsList?.addEventListener("click", async (event) => {
-        const item = event.target.closest(".bb-notification-item");
+        const item = event.target.closest(".gnh-notification-item");
         if (!item) return;
 
         const id = item.dataset.id;
@@ -558,7 +558,7 @@
           if (response.ok) {
             updateBadge(0);
             notificationsList
-              ?.querySelectorAll(".bb-notification-item.unread")
+              ?.querySelectorAll(".gnh-notification-item.unread")
               .forEach((el) => {
                 el.classList.remove("unread");
               });

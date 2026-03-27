@@ -76,7 +76,7 @@ export async function loadMembers(container) {
         const initialsSource = member.full_name || member.email || "";
         const initials =
           window.BBAvatar?.getInitials?.(initialsSource) ||
-          window.BBAuth?.getInitials?.(initialsSource) ||
+          window.GNHAuth?.getInitials?.(initialsSource) ||
           "?";
         const avatarSize = Math.ceil(34 * (window.devicePixelRatio || 1));
         window.BBAvatar?.setUserAvatar?.(

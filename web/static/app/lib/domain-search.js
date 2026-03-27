@@ -2,7 +2,7 @@
  * lib/domain-search.js — domain autocomplete and creation
  *
  * Provides domain lookup, creation, and autocomplete dropdown for job
- * creation forms. Replaces bb-domain-search.js (legacy IIFE).
+ * creation forms. Replaces gnh-domain-search.js (legacy IIFE).
  */
 
 import { getAccessToken } from "/app/lib/auth-session.js";
@@ -183,7 +183,7 @@ export function setupDomainSearchInput(options = {}) {
   input.dataset.domainSearchInitialised = "true";
 
   const resolvedSearchMode =
-    searchMode || input.getAttribute("bbb-domain-search") || "on";
+    searchMode || input.getAttribute("gnh-domain-search") || "on";
   if (resolvedSearchMode === "off" || resolvedSearchMode === "disabled") return;
 
   const wrapper = container || input.parentElement;
@@ -205,7 +205,7 @@ export function setupDomainSearchInput(options = {}) {
   };
 
   const resolvedMode =
-    createMode || input.getAttribute("bbb-domain-create") || "auto";
+    createMode || input.getAttribute("gnh-domain-create") || "auto";
   const resolvedAllowCreate =
     allowCreate !== undefined ? allowCreate : resolvedMode !== "block";
   const resolvedShowCreateOption =

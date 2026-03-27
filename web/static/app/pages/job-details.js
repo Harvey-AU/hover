@@ -128,7 +128,7 @@ function resolveJobId() {
 
 function upgradeStatusPill() {
   const span = document.querySelector(
-    ".status-pill[bbb-text='job.status_label']"
+    ".status-pill[gnh-text='job.status_label']"
   );
   if (!span) return;
 
@@ -164,7 +164,7 @@ function upgradeStatusPill() {
 
 function watchStatusPill() {
   const span = document.querySelector(
-    ".status-pill[bbb-text='job.status_label']"
+    ".status-pill[gnh-text='job.status_label']"
   );
   if (!span) return;
   new MutationObserver(upgradeStatusPill).observe(span, {
@@ -464,7 +464,7 @@ function resolveDomain() {
   // job-page.js stores domain on window.dataBinder state; fall back to hostname
   return (
     window.dataBinder?.state?.domain ||
-    document.querySelector("[bbb-text='job.domain']")?.textContent?.trim() ||
+    document.querySelector("[gnh-text='job.domain']")?.textContent?.trim() ||
     ""
   );
 }
@@ -497,9 +497,9 @@ function updatePagination(pagination) {
   const end = Math.min(offset + taskState.limit, total);
   const summary = `${start}–${end} of ${total}`;
 
-  // Update bbb-text summary if present (legacy binding point)
+  // Update gnh-text summary if present (legacy binding point)
   const summaryEl = paginationEl.querySelector(
-    "[bbb-text='tasks.pagination.summary']"
+    "[gnh-text='tasks.pagination.summary']"
   );
   if (summaryEl) summaryEl.textContent = summary;
 
@@ -652,9 +652,9 @@ function clearPoll() {
 }
 
 function isActiveJob() {
-  // Read current status from the pill or bbb-text span
+  // Read current status from the pill or gnh-text span
   const statusEl = document.querySelector(
-    "[bbb-text='job.status_label'], hover-status-pill"
+    "[gnh-text='job.status_label'], hover-status-pill"
   );
   const statusText = (
     statusEl?.getAttribute("status") ||

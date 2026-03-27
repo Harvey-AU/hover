@@ -477,7 +477,7 @@
       if (!token) {
         list.textContent = "";
         const empty = document.createElement("div");
-        empty.className = "bb-notifications-empty";
+        empty.className = "gnh-notifications-empty";
         const msg = document.createElement("div");
         msg.textContent = "Please sign in";
         empty.appendChild(msg);
@@ -500,7 +500,7 @@
       console.error("Failed to load notifications:", err);
       list.textContent = "";
       const empty = document.createElement("div");
-      empty.className = "bb-notifications-empty";
+      empty.className = "gnh-notifications-empty";
       const msg = document.createElement("div");
       msg.textContent = "Failed to load";
       empty.appendChild(msg);
@@ -515,9 +515,9 @@
     if (!notifications || notifications.length === 0) {
       list.textContent = "";
       const empty = document.createElement("div");
-      empty.className = "bb-notifications-empty";
+      empty.className = "gnh-notifications-empty";
       const iconDiv = document.createElement("div");
-      iconDiv.className = "bb-notifications-empty-icon";
+      iconDiv.className = "gnh-notifications-empty-icon";
       iconDiv.textContent = "\ud83d\udd14";
       const msgDiv = document.createElement("div");
       msgDiv.textContent = "No notifications yet";
@@ -542,27 +542,27 @@
       const time = formatRelativeTime(n.created_at);
 
       const item = document.createElement("div");
-      item.className = `bb-notification-item${isUnread ? " unread" : ""}`;
+      item.className = `gnh-notification-item${isUnread ? " unread" : ""}`;
       item.dataset.id = n.id;
       item.dataset.link = n.link || "";
 
       const iconEl = document.createElement("div");
-      iconEl.className = "bb-notification-item-icon";
+      iconEl.className = "gnh-notification-item-icon";
       iconEl.textContent = icon;
 
       const content = document.createElement("div");
-      content.className = "bb-notification-item-content";
+      content.className = "gnh-notification-item-content";
 
       const subject = document.createElement("div");
-      subject.className = "bb-notification-item-subject";
+      subject.className = "gnh-notification-item-subject";
       subject.textContent = n.subject;
 
       const preview = document.createElement("div");
-      preview.className = "bb-notification-item-preview";
+      preview.className = "gnh-notification-item-preview";
       preview.textContent = n.preview;
 
       const timeEl = document.createElement("div");
-      timeEl.className = "bb-notification-item-time";
+      timeEl.className = "gnh-notification-item-time";
       timeEl.textContent = time;
 
       content.appendChild(subject);
@@ -574,7 +574,7 @@
     });
 
     list.onclick = (e) => {
-      const item = e.target.closest(".bb-notification-item");
+      const item = e.target.closest(".gnh-notification-item");
       if (item) {
         handleNotificationClick(item.dataset.id, item.dataset.link);
       }
@@ -637,7 +637,7 @@
       if (response.ok) {
         updateNotificationBadge(0);
         document
-          .querySelectorAll(".bb-notification-item.unread")
+          .querySelectorAll(".gnh-notification-item.unread")
           .forEach((el) => {
             el.classList.remove("unread");
           });
@@ -693,7 +693,7 @@
     const settingsSwitcherBtn = document.getElementById(
       "settingsOrgSwitcherBtn"
     );
-    const divider = document.querySelector(".bb-org-divider");
+    const divider = document.querySelector(".gnh-org-divider");
 
     if (!switcher || !btn) return;
 
@@ -719,7 +719,7 @@
     // Clone elements to remove old listeners
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
-    const chevron = newBtn.querySelector(".bb-org-chevron");
+    const chevron = newBtn.querySelector(".gnh-org-chevron");
     newBtn.disabled = false;
     newBtn.style.cursor = "";
     if (chevron) chevron.style.display = "";
@@ -844,7 +844,7 @@
     const renderOrgButton = (listEl, org) => {
       if (!listEl) return;
       const button = document.createElement("button");
-      button.className = "bb-org-item";
+      button.className = "gnh-org-item";
       button.dataset.orgId = org.id;
       button.textContent = org.name;
       if (org.id === activeOrg?.id) {
@@ -893,7 +893,7 @@
     if (settingsOrgNameRef) settingsOrgNameRef.textContent = newOrg.name;
 
     // Update active states in dropdowns
-    document.querySelectorAll(".bb-org-item").forEach((el) => {
+    document.querySelectorAll(".gnh-org-item").forEach((el) => {
       el.classList.toggle("active", el.dataset.orgId === newOrg.id);
     });
 
@@ -1044,7 +1044,7 @@
 
       window.dataBinder = dataBinder;
 
-      if (!window.BBAuth.initialiseSupabase()) {
+      if (!window.GNHAuth.initialiseSupabase()) {
         throw new Error("Failed to initialise Supabase client");
       }
 

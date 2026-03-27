@@ -1115,7 +1115,7 @@ function setupInteractions(state) {
 }
 
 async function initialiseAuth(state) {
-  // Support both bb-bootstrap.js (whenReady) and core.js-only (coreReady)
+  // Support both gnh-bootstrap.js (whenReady) and core.js-only (coreReady)
   if (window.GNH_APP?.whenReady) {
     await window.GNH_APP.whenReady();
   } else {
@@ -1150,8 +1150,8 @@ async function initialiseAuth(state) {
 
   // Use the unified auth system to update user info
   // This handles both email display and avatar properly
-  if (window.BBAuth?.updateUserInfo) {
-    await window.BBAuth.updateUserInfo();
+  if (window.GNHAuth?.updateUserInfo) {
+    await window.GNHAuth.updateUserInfo();
   }
 
   // Logout handler is already set up by setupAuthHandlers() in auth.js

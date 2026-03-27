@@ -48,7 +48,7 @@ if (
   typeof integrationHttp.normaliseIntegrationError !== "function"
 ) {
   throw new Error(
-    "Missing or incompatible integration HTTP helpers. Load /js/bb-integration-http.js before bb-webflow.js."
+    "Missing or incompatible integration HTTP helpers. Load /js/bb-integration-http.js before gnh-webflow.js."
   );
 }
 
@@ -61,12 +61,12 @@ var normaliseIntegrationError = integrationHttp.normaliseIntegrationError;
 function setupWebflowIntegration() {
   // Click handlers for webflow actions
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) {
       return;
     }
 
-    const action = element.getAttribute("bbb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action || !action.startsWith("webflow-")) {
       return;
     }
@@ -98,11 +98,11 @@ function handleWebflowAction(action, element) {
       break;
 
     case "webflow-disconnect": {
-      const connectionId = element.getAttribute("bbb-id");
+      const connectionId = element.getAttribute("gnh-id");
       if (connectionId) {
         disconnectWebflow(connectionId);
       } else {
-        console.warn("webflow-disconnect: missing bbb-id attribute");
+        console.warn("webflow-disconnect: missing gnh-id attribute");
       }
       break;
     }
@@ -163,7 +163,7 @@ async function loadWebflowConnections() {
     }
 
     const template = connectionsList.querySelector(
-      '[bbb-template="webflow-connection"]'
+      '[gnh-template="webflow-connection"]'
     );
 
     if (!template) {
@@ -189,7 +189,7 @@ async function loadWebflowConnections() {
     for (const conn of connections) {
       const clone = template.cloneNode(true);
       clone.style.display = "block";
-      clone.removeAttribute("bbb-template");
+      clone.removeAttribute("gnh-template");
       clone.classList.add("webflow-connection");
 
       // Set workspace name - prefer display name, fall back to ID
@@ -212,10 +212,10 @@ async function loadWebflowConnections() {
 
       // Set connection ID on disconnect button
       const disconnectBtn = clone.querySelector(
-        '[bbb-action="webflow-disconnect"]'
+        '[gnh-action="webflow-disconnect"]'
       );
       if (disconnectBtn) {
-        disconnectBtn.setAttribute("bbb-id", conn.id);
+        disconnectBtn.setAttribute("gnh-id", conn.id);
       }
 
       connectionsList.appendChild(clone);
@@ -373,7 +373,7 @@ function handleWebflowOAuthCallback() {
 
     if (window.opener && !window.opener.closed) {
       const payload = {
-        source: "bbb-webflow-connect",
+        source: "gnh-webflow-connect",
         type: "webflow-connect-complete",
         connected: true,
         setup: webflowSetup === "true",
@@ -402,7 +402,7 @@ function handleWebflowOAuthCallback() {
 
     if (window.opener && !window.opener.closed) {
       const payload = {
-        source: "bbb-webflow-connect",
+        source: "gnh-webflow-connect",
         type: "webflow-connect-complete",
         connected: false,
         error: webflowError,
@@ -525,14 +525,14 @@ function renderWebflowSites(page = 1) {
   const emptyEl = document.getElementById("webflowSitesEmpty");
   const loadingEl = document.getElementById("webflowSitesLoading");
   const paginationEl = document.getElementById("webflowSitesPagination");
-  const template = listEl?.querySelector('[bbb-template="webflow-site"]');
+  const template = listEl?.querySelector('[gnh-template="webflow-site"]');
 
   if (!listEl || !template) return;
   if (loadingEl) loadingEl.style.display = "none";
 
   // Clear existing site rows (except template)
   const existingRows = listEl.querySelectorAll(
-    ".webflow-site-row:not([bbb-template])"
+    ".webflow-site-row:not([gnh-template])"
   );
   existingRows.forEach((el) => el.remove());
 
@@ -557,7 +557,7 @@ function renderWebflowSites(page = 1) {
   for (const site of pageSites) {
     const clone = template.cloneNode(true);
     clone.style.display = "block";
-    clone.removeAttribute("bbb-template");
+    clone.removeAttribute("gnh-template");
     clone.dataset.siteId = site.webflow_site_id;
     clone.dataset.connectionId = webflowSitesState.connectionId;
 
