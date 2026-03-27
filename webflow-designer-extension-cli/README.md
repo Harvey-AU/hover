@@ -38,7 +38,7 @@ This prepares a `bundle.zip` for upload in Webflow App settings.
 The panel includes a basic read-only API check:
 
 1. Enter API base URL (for example `https://hover.app.goodnative.co`).
-2. Click `Sign in / Create account` to open BBB auth popup and obtain token.
+2. Click `Sign in / Create account` to open GNH auth popup and obtain token.
 3. Click `Check API`.
 
 Expected behaviour:
@@ -50,7 +50,7 @@ Expected behaviour:
 
 ## Popup auth bridge
 
-- Extension opens `GET /extension-auth.html` on BBB app domain.
+- Extension opens `GET /extension-auth.html` on GNH app domain.
 - Popup reuses shared auth modal (`/js/auth.js`) for sign in/sign up.
 - On success, popup posts `{ source: "gnh-extension-auth", accessToken }` back
   to extension with origin and state checks.

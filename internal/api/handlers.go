@@ -73,13 +73,13 @@ func buildConfigSnippet() ([]byte, error) {
 	if appEnv != "" {
 		config["environment"] = appEnv
 	}
-	if raw := os.Getenv("BBB_ENABLE_TURNSTILE"); raw != "" {
+	if raw := os.Getenv("GNH_ENABLE_TURNSTILE"); raw != "" {
 		if enabled, err := strconv.ParseBool(raw); err == nil {
 			config["enableTurnstile"] = enabled
 		} else {
 			log.Warn().
 				Str("value", raw).
-				Msg("invalid BBB_ENABLE_TURNSTILE value; falling back to default")
+				Msg("invalid GNH_ENABLE_TURNSTILE value; falling back to default")
 		}
 	} else {
 		// Default: enable Turnstile only in production unless explicitly overridden

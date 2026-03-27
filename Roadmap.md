@@ -369,7 +369,7 @@ Organisation model implemented:
 ### ✅ Slack Integration (Completed v0.20.0)
 
 - [x] **Slack Application Development**
-  - [x] OAuth flow for installing BBB Slack app to workspaces
+  - [x] OAuth flow for installing GNH Slack app to workspaces
   - [x] Bot tokens stored securely in Supabase Vault
   - [x] Auto-linking users to Slack workspaces via database triggers
   - [x] Supabase Slack OIDC support for user authentication
@@ -430,7 +430,7 @@ Organisation model implemented:
   - [ ] Add job management interface (view status, trigger crawls)
   - [ ] Configuration panel for schedule and webhook settings
 - [ ] **Integration & Testing**
-  - [ ] Connect extension to BBB API via OAuth
+  - [ ] Connect extension to GNH API via OAuth
   - [ ] Test extension in Webflow Designer workspace
   - [ ] Handle error states and loading indicators
 

@@ -9,14 +9,14 @@ becomes impossible.
 
 ## Core Value Proposition
 
-**What BBB Actually Does:**
+**What GNH Actually Does:**
 
 - Crawls entire sites after publish/update via webhook triggers
 - Detects broken internal links (404s, 500s) across all pages
 - Warms cache to eliminate slow first-visitor experience
 - Provides actionable reports with one-click fixes
 
-**What BBB is NOT:**
+**What GNH is NOT:**
 
 - Not uptime monitoring (like UptimeRobot)
 - Not infrastructure monitoring (like Better Stack)

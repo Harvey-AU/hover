@@ -29,7 +29,7 @@ type SlackConnection struct {
 	UpdatedAt        time.Time
 }
 
-// SlackUserLink represents a BBB user linked to their Slack identity
+// SlackUserLink represents a GNH user linked to their Slack identity
 type SlackUserLink struct {
 	ID                string
 	UserID            string
@@ -223,7 +223,7 @@ func (db *DB) DeleteSlackConnection(ctx context.Context, connectionID, organisat
 	return nil
 }
 
-// CreateSlackUserLink creates a link between a BBB user and their Slack identity
+// CreateSlackUserLink creates a link between a GNH user and their Slack identity
 func (db *DB) CreateSlackUserLink(ctx context.Context, link *SlackUserLink) error {
 	query := `
 		INSERT INTO slack_user_links (

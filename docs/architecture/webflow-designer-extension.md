@@ -15,7 +15,7 @@ Designer. It does not contain backend business logic.
 
 ## Auth model
 
-- Extension initiates auth via popup to BBB-hosted `/extension-auth.html`.
+- Extension initiates auth via popup to GNH-hosted `/extension-auth.html`.
 - Popup reuses existing shared auth system in `web/static/js/auth.js`.
 - First-time users are created via existing `POST /v1/auth/register` path.
 - Token handoff returns to extension using `postMessage` with origin/state

@@ -122,7 +122,9 @@
       "mcp__github__search_repositories",
       "mcp__github__search_code",
       "Bash(go fmt:*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "Bash(while read:*)",
+      "Bash(do sed:*)"
     ],
     "deny": []
   },
