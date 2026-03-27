@@ -89,7 +89,7 @@ func buildConfigSnippet() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal config: %w", err)
 	}
-	return fmt.Appendf(nil, "window.BGNH_CONFIG=%s;", bytes), nil
+	return fmt.Appendf(nil, "window.GNH_CONFIG=%s;", bytes), nil
 }
 
 // DBClient is an interface for database operations
