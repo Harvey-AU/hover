@@ -5,7 +5,7 @@
  * Automatically finds and populates elements with data-gnh-bind attributes.
  */
 
-class BBDataBinder {
+class GNHDataBinder {
   constructor(options = {}) {
     this.apiBaseUrl = options.apiBaseUrl || "";
     this.authManager = null;
@@ -15,7 +15,7 @@ class BBDataBinder {
     this.boundElements = new Map();
     this.templates = new Map();
 
-    this.log("BBDataBinder initialized", options);
+    this.log("GNHDataBinder initialized", options);
   }
 
   /**
@@ -1164,7 +1164,7 @@ class BBDataBinder {
 
 // Export for use as module or global
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = BBDataBinder;
+  module.exports = GNHDataBinder;
 } else {
-  window.BBDataBinder = BBDataBinder;
+  window.GNHDataBinder = GNHDataBinder;
 }

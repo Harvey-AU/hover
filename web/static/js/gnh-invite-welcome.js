@@ -47,7 +47,7 @@
     await window.GNH_APP?.coreReady;
     await ensureAuthModalReady();
 
-    const inviteFlow = window.BBInviteFlow;
+    const inviteFlow = window.GNHInviteFlow;
     if (!inviteFlow) {
       setStatus("Invite flow is unavailable. Please try again.", "error");
       return;

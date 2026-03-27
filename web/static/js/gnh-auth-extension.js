@@ -3,7 +3,7 @@
  * Data binding integration for the unified authentication system
  *
  * This module provides integration between the core auth system (auth.js)
- * and the BBDataBinder for seamless authentication in dashboard applications.
+ * and the GNHDataBinder for seamless authentication in dashboard applications.
  *
  * Features:
  * - Auth state monitoring and data binder integration
@@ -15,7 +15,7 @@
 
 /**
  * Initialise authentication with data binder integration
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  * @param {Object} options - Configuration options
  * @returns {Promise<void>}
  */
@@ -78,7 +78,7 @@ async function initializeAuthWithDataBinder(dataBinder, options = {}) {
 
 /**
  * Setup dashboard-specific refresh method override
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  */
 function setupDashboardRefresh(dataBinder) {
   const ACTIVE_JOB_STATUSES = new Set([
@@ -285,13 +285,13 @@ function setupDashboardFormHandler() {
 
 function setupJobDomainSearch() {
   const domainInput = document.getElementById("jobDomain");
-  if (!domainInput || !window.BBDomainSearch) {
+  if (!domainInput || !window.GNHDomainSearch) {
     return;
   }
 
   const container = domainInput.closest(".gnh-domain-search");
 
-  window.BBDomainSearch.setupDomainSearchInput({
+  window.GNHDomainSearch.setupDomainSearchInput({
     input: domainInput,
     container: container || domainInput.parentElement,
     clearOnSelect: false,
@@ -332,9 +332,9 @@ async function handleDashboardJobCreation(event) {
     return;
   }
 
-  if (window.BBDomainSearch) {
+  if (window.GNHDomainSearch) {
     try {
-      const ensuredDomain = await window.BBDomainSearch.ensureDomainByName(
+      const ensuredDomain = await window.GNHDomainSearch.ensureDomainByName(
         domain,
         { allowCreate: true }
       );
@@ -501,7 +501,7 @@ async function handleDashboardJobCreation(event) {
 
 /**
  * Setup network status monitoring
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  */
 function setupNetworkMonitoring(dataBinder) {
   // Check initial network status
@@ -603,7 +603,7 @@ async function initializeDashboard(config = {}) {
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   // Create data binder with production config
-  const dataBinder = new BBDataBinder({
+  const dataBinder = new GNHDataBinder({
     apiBaseUrl,
     debug,
   });
@@ -652,7 +652,7 @@ async function initializeDashboard(config = {}) {
 
 /**
  * Quick setup function for basic auth integration
- * @param {Object} dataBinder - Existing BBDataBinder instance
+ * @param {Object} dataBinder - Existing GNHDataBinder instance
  */
 async function setupQuickAuth(dataBinder) {
   // Load auth modal

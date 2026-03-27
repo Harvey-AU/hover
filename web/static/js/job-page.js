@@ -1734,7 +1734,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  const binder = new BBDataBinder({ apiBaseUrl: "" });
+  const binder = new GNHDataBinder({ apiBaseUrl: "" });
   window.dataBinder = binder;
   binder.scanAndBind();
 

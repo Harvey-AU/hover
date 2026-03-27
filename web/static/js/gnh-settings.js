@@ -267,9 +267,9 @@
   }
 
   async function handleInviteToken() {
-    if (!window.BBInviteFlow?.handleInviteTokenFlow) return;
+    if (!window.GNHInviteFlow?.handleInviteTokenFlow) return;
 
-    const result = await window.BBInviteFlow.handleInviteTokenFlow({
+    const result = await window.GNHInviteFlow.handleInviteTokenFlow({
       onAccepted: async () => {
         showSettingsToast("success", "Invite accepted");
         await refreshSettingsData();
@@ -1037,7 +1037,7 @@
         await window.GNH_APP.coreReady;
       }
 
-      const dataBinder = new BBDataBinder({
+      const dataBinder = new GNHDataBinder({
         apiBaseUrl: "",
         debug: false,
       });
@@ -1077,7 +1077,7 @@
         initAdminSection(session);
 
         await handleInviteToken();
-      } else if (window.BBInviteFlow?.getInviteToken?.()) {
+      } else if (window.GNHInviteFlow?.getInviteToken?.()) {
         await handleInviteToken();
       }
 

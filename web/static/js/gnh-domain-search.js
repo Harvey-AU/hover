@@ -541,7 +541,7 @@
     }
   };
 
-  window.BBDomainSearch = {
+  window.GNHDomainSearch = {
     getDomains,
     loadOrganisationDomains,
     ensureDomainsLoaded,

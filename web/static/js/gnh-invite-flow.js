@@ -180,7 +180,7 @@
     }
   }
 
-  window.BBInviteFlow = {
+  window.GNHInviteFlow = {
     getInviteToken,
     clearInviteTokenFromURL,
     fetchInvitePreview,
