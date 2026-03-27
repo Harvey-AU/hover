@@ -10,8 +10,7 @@ function setupDashboardActions() {
       return;
     }
 
-    const action =
-      element.getAttribute("gnh-action");
+    const action = element.getAttribute("gnh-action");
     if (!action) {
       return;
     }
