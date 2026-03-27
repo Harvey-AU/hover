@@ -79,11 +79,11 @@ export function initCreateOrgModal(options = {}) {
       const newOrg = data?.organisation;
 
       // Update shared org data (bridge to legacy globals).
-      window.BB_ACTIVE_ORG = newOrg;
-      if (Array.isArray(window.BB_ORGANISATIONS)) {
-        window.BB_ORGANISATIONS.push(newOrg);
+      window.GNH_ACTIVE_ORG = newOrg;
+      if (Array.isArray(window.GNH_ORGANISATIONS)) {
+        window.GNH_ORGANISATIONS.push(newOrg);
       } else {
-        window.BB_ORGANISATIONS = [newOrg];
+        window.GNH_ORGANISATIONS = [newOrg];
       }
 
       document.dispatchEvent(

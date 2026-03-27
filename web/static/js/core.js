@@ -23,9 +23,8 @@
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
       if (
-        existing.dataset.bbReady === "true" ||
-        existing.dataset.bbLoader === "true" ||
-        existing.getAttribute("data-gnh-ready") === "true" ||
+        existing.dataset.gnhReady === "true" ||
+        existing.dataset.gnhLoader === "true" ||
         existing.readyState === "complete"
       ) {
         const promise = Promise.resolve();
@@ -60,13 +59,13 @@
     } = promiseWithResolvers();
     const script = document.createElement("script");
     script.src = src;
-    script.dataset.bbLoader = "true";
+    script.dataset.gnhLoader = "true";
     Object.entries(attrs).forEach(([key, value]) => {
       if (value === undefined || value === null) return;
       script.setAttribute(key, value);
     });
     script.onload = () => {
-      script.dataset.bbReady = "true";
+      script.dataset.gnhReady = "true";
       resolveScript();
     };
     script.onerror = (error) => rejectScript(error);
@@ -222,7 +221,7 @@
   // Unified Organisation Initialisation
   // ========================================
   // Single source of truth for active organisation.
-  // All code should await BB_ORG_READY before accessing BB_ACTIVE_ORG.
+  // All code should await GNH_ORG_READY before accessing GNH_ACTIVE_ORG.
 
   let orgReadyResolve = null;
   let orgReadyReject = null;
@@ -233,23 +232,23 @@
     resolve: orgReadyResolveRef,
     reject: orgReadyRejectRef,
   } = promiseWithResolvers();
-  window.BB_ORG_READY = orgReady;
+  window.GNH_ORG_READY = orgReady;
   orgReadyResolve = orgReadyResolveRef;
   orgReadyReject = orgReadyRejectRef;
 
   /**
    * Initialise the active organisation. Called once after auth is confirmed.
-   * Sets window.BB_ACTIVE_ORG and resolves BB_ORG_READY.
+   * Sets window.GNH_ACTIVE_ORG and resolves GNH_ORG_READY.
    * @returns {Promise<Object|null>} The active organisation or null
    */
   window.GNH_APP.initialiseOrg = async function () {
     // Return cached result if we have a valid org
     if (
       orgInitialised &&
-      window.BB_ACTIVE_ORG?.id &&
-      window.BB_ACTIVE_ORG?.name
+      window.GNH_ACTIVE_ORG?.id &&
+      window.GNH_ACTIVE_ORG?.name
     ) {
-      return window.BB_ACTIVE_ORG;
+      return window.GNH_ACTIVE_ORG;
     }
 
     try {
@@ -260,9 +259,9 @@
       const { data: sessionData } = await window.supabase.auth.getSession();
       const session = sessionData?.session;
       if (!session) {
-        // No session - leave BB_ORG_READY pending so it resolves on sign-in
-        window.BB_ACTIVE_ORG = null;
-        window.BB_ORGANISATIONS = [];
+        // No session - leave GNH_ORG_READY pending so it resolves on sign-in
+        window.GNH_ACTIVE_ORG = null;
+        window.GNH_ORGANISATIONS = [];
         return null;
       }
 
@@ -281,8 +280,8 @@
 
       if (organisations.length === 0) {
         orgInitialised = true;
-        window.BB_ACTIVE_ORG = null;
-        window.BB_ORGANISATIONS = [];
+        window.GNH_ACTIVE_ORG = null;
+        window.GNH_ORGANISATIONS = [];
         orgReadyResolve(null);
         return null;
       }
@@ -314,8 +313,8 @@
       }
 
       // Set globals
-      window.BB_ACTIVE_ORG = activeOrg;
-      window.BB_ORGANISATIONS = organisations;
+      window.GNH_ACTIVE_ORG = activeOrg;
+      window.GNH_ORGANISATIONS = organisations;
       orgInitialised = true;
 
       orgReadyResolve(activeOrg);
@@ -323,7 +322,7 @@
     } catch (err) {
       console.error("Failed to initialise organisation:", err);
       orgInitialised = true;
-      window.BB_ACTIVE_ORG = null;
+      window.GNH_ACTIVE_ORG = null;
       orgReadyReject(err);
       throw err;
     }
@@ -340,8 +339,8 @@
       window.supabase.auth.onAuthStateChange((event, session) => {
         if (event === "SIGNED_OUT") {
           // Clear org state on sign out
-          window.BB_ACTIVE_ORG = null;
-          window.BB_ORGANISATIONS = [];
+          window.GNH_ACTIVE_ORG = null;
+          window.GNH_ORGANISATIONS = [];
           try {
             localStorage.removeItem("gnh_active_org_id");
           } catch (e) {
@@ -349,12 +348,12 @@
           }
         } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           // Re-init org if we don't have one yet
-          if (!window.BB_ACTIVE_ORG?.id) {
+          if (!window.GNH_ACTIVE_ORG?.id) {
             window.GNH_APP.initialiseOrg()
               .then((org) => {
                 if (org) {
                   document.dispatchEvent(
-                    new CustomEvent("bb:org-ready", {
+                    new CustomEvent("gnh:org-ready", {
                       detail: { organisation: org },
                     })
                   );
@@ -403,7 +402,7 @@
     }
 
     // Update global
-    window.BB_ACTIVE_ORG = newOrg;
+    window.GNH_ACTIVE_ORG = newOrg;
 
     // Store in localStorage for persistence
     try {

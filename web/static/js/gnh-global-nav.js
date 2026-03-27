@@ -13,9 +13,9 @@
   }
 
   let resolveNavReady = null;
-  if (!window.BB_NAV_READY) {
+  if (!window.GNH_NAV_READY) {
     const { promise, resolve } = promiseWithResolvers();
-    window.BB_NAV_READY = promise;
+    window.GNH_NAV_READY = promise;
     resolveNavReady = resolve;
   }
 
@@ -23,7 +23,7 @@
     if (resolveNavReady) {
       resolveNavReady();
     }
-    document.dispatchEvent(new CustomEvent("bb:nav-ready"));
+    document.dispatchEvent(new CustomEvent("gnh:nav-ready"));
   };
 
   if (document.querySelector(".global-nav")) {
@@ -186,7 +186,7 @@
             console.warn("Failed to switch organisation:", err);
             // Restore previous name
             currentOrgName.textContent =
-              window.BB_ACTIVE_ORG?.name || "Organisation";
+              window.GNH_ACTIVE_ORG?.name || "Organisation";
           }
         });
       }
@@ -212,13 +212,13 @@
       document.addEventListener("gnh:org-switched", (e) => {
         const newOrg = e.detail?.organisation;
         if (newOrg) {
-          updateNavOrgDisplay(newOrg, window.BB_ORGANISATIONS);
+          updateNavOrgDisplay(newOrg, window.GNH_ORGANISATIONS);
         }
       });
 
       // Listen for org ready (after auth state restored)
-      document.addEventListener("bb:org-ready", () => {
-        updateNavOrgDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+      document.addEventListener("gnh:org-ready", () => {
+        updateNavOrgDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
       });
 
       // Sync with settings page org name if present
@@ -249,7 +249,7 @@
         if (window.GNH_APP?.initialiseOrg) {
           await window.GNH_APP.initialiseOrg();
         }
-        updateNavOrgDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+        updateNavOrgDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
       } catch (err) {
         console.warn("Organisation initialisation failed:", err);
         currentOrgName.textContent = "Organisation";
@@ -319,7 +319,7 @@
       });
 
       document.addEventListener("gnh:org-switched", syncUserMenuOrgName);
-      document.addEventListener("bb:org-ready", syncUserMenuOrgName);
+      document.addEventListener("gnh:org-ready", syncUserMenuOrgName);
       syncUserMenuOrgName();
     };
 
@@ -450,7 +450,7 @@
 
       const notificationsChannelKey = "__bbNavNotificationsChannel";
       const subscribeRealtime = async () => {
-        const orgId = window.BB_ACTIVE_ORG?.id;
+        const orgId = window.GNH_ACTIVE_ORG?.id;
         const supabaseAuth = window.supabase?.auth;
         if (!orgId || !supabaseAuth || !window.supabase?.channel) {
           return;
@@ -572,7 +572,7 @@
         await refreshBadge();
         await subscribeRealtime();
       });
-      document.addEventListener("bb:org-ready", async () => {
+      document.addEventListener("gnh:org-ready", async () => {
         await refreshBadge();
         await subscribeRealtime();
       });

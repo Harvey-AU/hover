@@ -260,7 +260,7 @@
 
   function updateAdminVisibility(role) {
     const isAdmin =
-      role === "admin" || window.BB_ACTIVE_ORG?.currentUserRole === "admin";
+      role === "admin" || window.GNH_ACTIVE_ORG?.currentUserRole === "admin";
     document.querySelectorAll("[data-admin-only]").forEach((el) => {
       el.style.display = isAdmin ? "" : "none";
     });
@@ -402,7 +402,7 @@
   let notificationsRetryCount = 0;
   const maxNotificationRetries = 30;
   async function subscribeToNotifications() {
-    const orgId = window.BB_ACTIVE_ORG?.id;
+    const orgId = window.GNH_ACTIVE_ORG?.id;
     if (!orgId || !window.supabase) {
       if (notificationsRetryCount < maxNotificationRetries) {
         notificationsRetryCount += 1;
@@ -698,7 +698,7 @@
     if (!switcher || !btn) return;
 
     // Ensure org is initialised (may already be done by dashboard or nav)
-    if (window.GNH_APP?.initialiseOrg && !window.BB_ACTIVE_ORG?.name) {
+    if (window.GNH_APP?.initialiseOrg && !window.GNH_ACTIVE_ORG?.name) {
       try {
         await window.GNH_APP.initialiseOrg();
       } catch (err) {
@@ -708,13 +708,13 @@
 
     // Wait for shared org data
     try {
-      await window.BB_ORG_READY;
+      await window.GNH_ORG_READY;
     } catch (err) {
-      console.warn("BB_ORG_READY failed:", err);
+      console.warn("GNH_ORG_READY failed:", err);
     }
 
-    const organisations = window.BB_ORGANISATIONS || [];
-    const activeOrg = window.BB_ACTIVE_ORG;
+    const organisations = window.GNH_ORGANISATIONS || [];
+    const activeOrg = window.GNH_ACTIVE_ORG;
 
     // Clone elements to remove old listeners
     const newBtn = btn.cloneNode(true);
@@ -817,7 +817,7 @@
     // Handle org switch using shared function
     const handleOrgSwitch = async (org) => {
       closeOrgDropdowns();
-      const previous = window.BB_ACTIVE_ORG?.id;
+      const previous = window.GNH_ACTIVE_ORG?.id;
 
       // Show loading state
       if (currentOrgNameRef) currentOrgNameRef.textContent = "Switching...";
@@ -830,11 +830,11 @@
         console.error("Error switching organisation:", err);
         if (currentOrgNameRef) {
           currentOrgNameRef.textContent =
-            window.BB_ACTIVE_ORG?.name || "Unknown";
+            window.GNH_ACTIVE_ORG?.name || "Unknown";
         }
         if (settingsOrgNameRef) {
           settingsOrgNameRef.textContent =
-            window.BB_ACTIVE_ORG?.name || "Organisation";
+            window.GNH_ACTIVE_ORG?.name || "Organisation";
         }
         showSettingsToast("error", "Failed to switch organisation");
       }
@@ -989,11 +989,11 @@
           const newOrg = data.data?.organisation;
 
           // Update shared org data
-          window.BB_ACTIVE_ORG = newOrg;
-          if (Array.isArray(window.BB_ORGANISATIONS)) {
-            window.BB_ORGANISATIONS.push(newOrg);
+          window.GNH_ACTIVE_ORG = newOrg;
+          if (Array.isArray(window.GNH_ORGANISATIONS)) {
+            window.GNH_ORGANISATIONS.push(newOrg);
           } else {
-            window.BB_ORGANISATIONS = [newOrg];
+            window.GNH_ORGANISATIONS = [newOrg];
           }
 
           // Dispatch event for all listeners
@@ -1053,8 +1053,8 @@
         await window.setupQuickAuth(dataBinder);
       }
 
-      if (window.BB_NAV_READY) {
-        await window.BB_NAV_READY;
+      if (window.GNH_NAV_READY) {
+        await window.GNH_NAV_READY;
       }
 
       setupSettingsNavigation();

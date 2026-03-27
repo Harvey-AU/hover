@@ -814,7 +814,7 @@ function cleanupRealtimeSubscription() {
  * Listens for INSERT and UPDATE events on the jobs table for the active organisation
  */
 async function subscribeToJobUpdates() {
-  const orgId = window.BB_ACTIVE_ORG?.id;
+  const orgId = window.GNH_ACTIVE_ORG?.id;
   if (!orgId || !window.supabase) {
     if (subscribeRetryCount < MAX_SUBSCRIBE_RETRIES) {
       subscribeRetryCount++;

@@ -11,7 +11,7 @@
         await window.GNH_APP.initialiseOrg();
       }
 
-      const orgName = window.BB_ACTIVE_ORG?.name;
+      const orgName = window.GNH_ACTIVE_ORG?.name;
       if (orgName) {
         titleEl.textContent = `Welcome to ${orgName}`;
       }

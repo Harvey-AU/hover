@@ -105,7 +105,7 @@ async function init() {
   let unsubscribe = null;
   function startSubscription() {
     if (unsubscribe) unsubscribe();
-    const orgId = window.BB_ACTIVE_ORG?.id;
+    const orgId = window.GNH_ACTIVE_ORG?.id;
     unsubscribe = subscribeToJobUpdates(orgId, () => refresh());
   }
   startSubscription();

@@ -7,13 +7,13 @@
  *   - notifications (badge, realtime, mark-read)
  *   - quota display (polling, visibility-aware)
  *
- * Still reads window.GNH_APP / BB_ACTIVE_ORG / BB_ORGANISATIONS / supabase
+ * Still reads window.GNH_APP / GNH_ACTIVE_ORG / GNH_ORGANISATIONS / supabase
  * from core.js. Those globals will be retired when core.js is migrated.
  */
 
 import { getAccessToken } from "/app/lib/auth-session.js";
 
-// ── Promise gate (replaces window.BB_NAV_READY) ───────────────────────────────
+// ── Promise gate (replaces window.GNH_NAV_READY) ───────────────────────────────
 
 let _resolveNavReady;
 const navReadyPromise = new Promise((r) => {
@@ -23,14 +23,14 @@ const navReadyPromise = new Promise((r) => {
 /** Resolves the nav-ready promise and fires the legacy event. */
 function finishNavReady() {
   _resolveNavReady();
-  document.dispatchEvent(new CustomEvent("bb:nav-ready"));
+  document.dispatchEvent(new CustomEvent("gnh:nav-ready"));
 }
 
 /** Awaitable promise that resolves once nav is mounted and wired. */
 export { navReadyPromise as ready };
 
 // Keep the legacy global so existing code (dashboard.js etc.) still works.
-window.BB_NAV_READY = navReadyPromise;
+window.GNH_NAV_READY = navReadyPromise;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ function initOrgSwitcher(navEl) {
       await window.GNH_APP.switchOrg(item.dataset.orgId);
     } catch (err) {
       console.warn("Failed to switch organisation:", err);
-      currentOrgName.textContent = window.BB_ACTIVE_ORG?.name || "Organisation";
+      currentOrgName.textContent = window.GNH_ACTIVE_ORG?.name || "Organisation";
     }
   });
 
@@ -125,10 +125,10 @@ function initOrgSwitcher(navEl) {
   // Org lifecycle events
   document.addEventListener("gnh:org-switched", (e) => {
     const newOrg = e.detail?.organisation;
-    if (newOrg) updateDisplay(newOrg, window.BB_ORGANISATIONS);
+    if (newOrg) updateDisplay(newOrg, window.GNH_ORGANISATIONS);
   });
-  document.addEventListener("bb:org-ready", () => {
-    updateDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+  document.addEventListener("gnh:org-ready", () => {
+    updateDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
   });
 
   // Sync settings page org name if present
@@ -154,7 +154,7 @@ function initOrgSwitcher(navEl) {
     try {
       if (window.GNH_APP?.coreReady) await window.GNH_APP.coreReady;
       if (window.GNH_APP?.initialiseOrg) await window.GNH_APP.initialiseOrg();
-      updateDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+      updateDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
     } catch (err) {
       console.warn("Organisation initialisation failed:", err);
       currentOrgName.textContent = "Organisation";
@@ -216,7 +216,7 @@ function initUserMenu(navEl) {
   });
 
   document.addEventListener("gnh:org-switched", syncOrgName);
-  document.addEventListener("bb:org-ready", syncOrgName);
+  document.addEventListener("gnh:org-ready", syncOrgName);
   syncOrgName();
 }
 
@@ -330,7 +330,7 @@ function initNotifications(navEl) {
   // Realtime subscription
   const channelKey = "__navNotificationsChannel";
   const subscribeRealtime = async () => {
-    const orgId = window.BB_ACTIVE_ORG?.id;
+    const orgId = window.GNH_ACTIVE_ORG?.id;
     if (!orgId || !window.supabase?.channel) return;
 
     if (window[channelKey]) {
@@ -440,7 +440,7 @@ function initNotifications(navEl) {
     await refreshBadge();
     await subscribeRealtime();
   });
-  document.addEventListener("bb:org-ready", async () => {
+  document.addEventListener("gnh:org-ready", async () => {
     await refreshBadge();
     await subscribeRealtime();
   });

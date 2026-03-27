@@ -695,11 +695,11 @@ class GNHDataBinder {
     if (action === "create-organisation") {
       const newOrg = result?.data?.organisation;
       if (newOrg) {
-        window.BB_ACTIVE_ORG = newOrg;
-        if (Array.isArray(window.BB_ORGANISATIONS)) {
-          window.BB_ORGANISATIONS.push(newOrg);
+        window.GNH_ACTIVE_ORG = newOrg;
+        if (Array.isArray(window.GNH_ORGANISATIONS)) {
+          window.GNH_ORGANISATIONS.push(newOrg);
         } else {
-          window.BB_ORGANISATIONS = [newOrg];
+          window.GNH_ORGANISATIONS = [newOrg];
         }
         document.dispatchEvent(
           new CustomEvent("gnh:org-switched", {
