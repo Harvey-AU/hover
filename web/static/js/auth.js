@@ -2344,7 +2344,7 @@ if (typeof module !== "undefined" && module.exports) {
     getGravatarUrl,
   };
 } else {
-  window.BBAvatar = {
+  window.GNHAvatar = {
     getInitials,
     setUserAvatar,
     getGravatarUrl,

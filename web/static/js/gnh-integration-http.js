@@ -1,5 +1,5 @@
 (function () {
-  if (window.BBIntegrationHttp) {
+  if (window.GNHIntegrationHttp) {
     return;
   }
 
@@ -52,7 +52,7 @@
     });
   }
 
-  window.BBIntegrationHttp = {
+  window.GNHIntegrationHttp = {
     IntegrationHttpError,
     withTimeoutSignal,
     fetchWithTimeout,

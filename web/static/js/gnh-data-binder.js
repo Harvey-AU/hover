@@ -994,10 +994,10 @@ class GNHDataBinder {
     // Handle data binding attributes (gnh-href, gnh-src, etc.) - these set actual HTML attributes
     const bindingAttrs = ["href", "src", "alt", "title", "placeholder"];
     bindingAttrs.forEach((attrName) => {
-      const bbbAttr = `gnh-${attrName}`;
-      instance.querySelectorAll(`[${bbbAttr}]`).forEach((el) => {
-        if (el.hasAttribute(bbbAttr)) {
-          const template = el.getAttribute(bbbAttr);
+      const gnhAttr = `gnh-${attrName}`;
+      instance.querySelectorAll(`[${gnhAttr}]`).forEach((el) => {
+        if (el.hasAttribute(gnhAttr)) {
+          const template = el.getAttribute(gnhAttr);
           const value = this.processTemplate(template, data);
           if (value !== null) {
             // Set the actual HTML attribute
@@ -1010,14 +1010,14 @@ class GNHDataBinder {
     // Handle data storage attributes (gnh-id, gnh-value) - these stay as gnh-* with interpolated values
     const storageAttrs = ["id", "value"];
     storageAttrs.forEach((attrName) => {
-      const bbbAttr = `gnh-${attrName}`;
-      instance.querySelectorAll(`[${bbbAttr}]`).forEach((el) => {
-        if (el.hasAttribute(bbbAttr)) {
-          const template = el.getAttribute(bbbAttr);
+      const gnhAttr = `gnh-${attrName}`;
+      instance.querySelectorAll(`[${gnhAttr}]`).forEach((el) => {
+        if (el.hasAttribute(gnhAttr)) {
+          const template = el.getAttribute(gnhAttr);
           const value = this.processTemplate(template, data);
           if (value !== null) {
             // Keep as gnh-* attribute with interpolated value for handlers to read
-            el.setAttribute(bbbAttr, value);
+            el.setAttribute(gnhAttr, value);
           }
         }
       });

@@ -564,7 +564,7 @@ function initQuota() {
   document.addEventListener("gnh:org-switched", () => fetchAndDisplay());
 
   // Expose for settings page refresh
-  window.BBQuota = {
+  window.GNHQuota = {
     refresh: fetchAndDisplay,
     start: startPolling,
     formatTimeUntilReset,

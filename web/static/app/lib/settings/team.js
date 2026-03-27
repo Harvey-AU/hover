@@ -75,11 +75,11 @@ export async function loadMembers(container) {
       if (avatarEl) {
         const initialsSource = member.full_name || member.email || "";
         const initials =
-          window.BBAvatar?.getInitials?.(initialsSource) ||
+          window.GNHAvatar?.getInitials?.(initialsSource) ||
           window.GNHAuth?.getInitials?.(initialsSource) ||
           "?";
         const avatarSize = Math.ceil(34 * (window.devicePixelRatio || 1));
-        window.BBAvatar?.setUserAvatar?.(
+        window.GNHAvatar?.setUserAvatar?.(
           avatarEl,
           member.email || "",
           initials,

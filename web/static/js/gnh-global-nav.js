@@ -448,7 +448,7 @@
         }
       };
 
-      const notificationsChannelKey = "__bbNavNotificationsChannel";
+      const notificationsChannelKey = "__gnhNavNotificationsChannel";
       const subscribeRealtime = async () => {
         const orgId = window.GNH_ACTIVE_ORG?.id;
         const supabaseAuth = window.supabase?.auth;
@@ -705,7 +705,7 @@
       });
 
       // Expose globally for settings page to trigger refresh
-      window.BBQuota = {
+      window.GNHQuota = {
         refresh: fetchAndDisplayQuota,
         start: startQuotaPolling,
         formatTimeUntilReset,

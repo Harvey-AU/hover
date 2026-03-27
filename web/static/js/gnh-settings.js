@@ -906,7 +906,7 @@
       }
     }
 
-    window.BBQuota?.refresh();
+    window.GNHQuota?.refresh();
 
     showSettingsToast("success", `Switched to ${newOrg.name}`);
   });
@@ -1024,8 +1024,8 @@
   }
 
   function initAdminSection(session) {
-    if (window.BBAdmin) {
-      window.BBAdmin.initAdminResetButton("settingsResetDbBtn", session, {
+    if (window.GNHAdmin) {
+      window.GNHAdmin.initAdminResetButton("settingsResetDbBtn", session, {
         containerSelector: "#adminGroup",
       });
     }

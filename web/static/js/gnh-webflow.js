@@ -41,7 +41,7 @@ function formatWebflowDate(timestamp) {
   }
 }
 
-var integrationHttp = window.BBIntegrationHttp;
+var integrationHttp = window.GNHIntegrationHttp;
 if (
   !integrationHttp ||
   typeof integrationHttp.fetchWithTimeout !== "function" ||
