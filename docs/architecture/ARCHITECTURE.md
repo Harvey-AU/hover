@@ -311,12 +311,12 @@ JavaScript provides functionality through attribute-based event handling.
 ```html
 <!-- Dashboard with attribute-based event handling -->
 <div class="dashboard">
-  <button bb-action="refresh-dashboard">↻ Refresh</button>
-  <button bb-action="create-job">+ New Job</button>
-  <div bb-action="view-job-details" bb-data-job-id="123">View Details</div>
+  <button gnh-action="refresh-dashboard">↻ Refresh</button>
+  <button gnh-action="create-job">+ New Job</button>
+  <div gnh-action="view-job-details" gnh-data-job-id="123">View Details</div>
 </div>
 
-<!-- JavaScript automatically handles bb-action attributes -->
+<!-- JavaScript automatically handles gnh-action attributes -->
 <script src="/dashboard.html"></script>
 ```
 
@@ -325,34 +325,34 @@ JavaScript provides functionality through attribute-based event handling.
 ```html
 <!-- Template binding for dynamic content -->
 <div class="stats">
-  <span data-bb-bind="stats.total_jobs">0</span>
-  <div data-bb-template="job">
-    <h4 data-bb-bind="domain">Loading...</h4>
-    <div data-bb-bind-style="width:{progress}%"></div>
-    <span data-bb-bind="status">pending</span>
+  <span data-gnh-bind="stats.total_jobs">0</span>
+  <div data-gnh-template="job">
+    <h4 data-gnh-bind="domain">Loading...</h4>
+    <div data-gnh-bind-style="width:{progress}%"></div>
+    <span data-gnh-bind="status">pending</span>
   </div>
 </div>
 
 <!-- Authentication conditional rendering -->
-<div data-bb-auth="required">
-  <form data-bb-form="create-job" data-bb-validate="live">
-    <input name="domain" required data-bb-validate-type="url" />
+<div data-gnh-auth="required">
+  <form data-gnh-form="create-job" data-gnh-validate="live">
+    <input name="domain" required data-gnh-validate-type="url" />
     <button type="submit">Create Job</button>
   </form>
 </div>
 
 <!-- Data binding library (production ready) -->
-<script src="/js/bb-data-binder.min.js"></script>
+<script src="/js/gnh-data-binder.min.js"></script>
 ```
 
 **Data Flow:**
 
-- Event delegation scans DOM for `bb-action` attributes
-- Data binding scans DOM for `data-bb-bind`, `data-bb-template`, `data-bb-form`
+- Event delegation scans DOM for `gnh-action` attributes
+- Data binding scans DOM for `data-gnh-bind`, `data-gnh-template`, `data-gnh-form`
   attributes
 - JavaScript handles clicks, form submissions, and data population automatically
 - API endpoints (`/v1/dashboard/stats`, `/v1/jobs`) provide data
-- Real-time data binding populates `data-bb-bind` elements with live API data
+- Real-time data binding populates `data-gnh-bind` elements with live API data
 
 **Integration Benefits:**
 

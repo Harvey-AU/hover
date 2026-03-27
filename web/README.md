@@ -5,13 +5,13 @@ with Webflow.
 
 ## Available Libraries
 
-- **Web Components** (`bb-components.js`): Custom elements for authentication
+- **Web Components** (`gnh-components.js`): Custom elements for authentication
   and data display
-- **Data Binding Library** (`bb-data-binder.js`): Template + data binding system
+- **Data Binding Library** (`gnh-data-binder.js`): Template + data binding system
   for flexible dashboard development
-- **Dashboard Actions** (`bb-dashboard-actions.js`): Dashboard-specific
+- **Dashboard Actions** (`gnh-dashboard-actions.js`): Dashboard-specific
   functionality and interactions
-- **Auth Extension** (`bb-auth-extension.js`): Extended authentication features
+- **Auth Extension** (`gnh-auth-extension.js`): Extended authentication features
 - **Auth** (`auth.js`): Core authentication system
 
 ## Quick Start
@@ -33,9 +33,9 @@ with Webflow.
 </script>
 
 <!-- Hover Libraries -->
-<script src="https://hover.app.goodnative.co/js/bb-components.js"></script>
+<script src="https://hover.app.goodnative.co/js/gnh-components.js"></script>
 <!-- OR for data binding approach -->
-<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/gnh-data-binder.js"></script>
 ```
 
 2. **Design your templates in Webflow Designer:**
@@ -64,7 +64,7 @@ with Webflow.
   auto-load="true"
   require-auth="true"
 >
-</bb-data-loader>
+</gnh-data-loader>
 ```
 
 ## Development Workflow
@@ -95,10 +95,10 @@ npm run serve
 web/
 ├── static/
 │   └── js/                     # All JavaScript files
-│       ├── bb-components.js        # Web Components
-│       ├── bb-data-binder.js       # Data binding library
-│       ├── bb-dashboard-actions.js # Dashboard functionality
-│       ├── bb-auth-extension.js    # Auth extensions
+│       ├── gnh-components.js        # Web Components
+│       ├── gnh-data-binder.js       # Data binding library
+│       ├── gnh-dashboard-actions.js # Dashboard functionality
+│       ├── gnh-auth-extension.js    # Auth extensions
 │       └── auth.js                 # Core authentication
 └── examples/                   # Integration examples
     ├── data-binding-example.html
@@ -116,24 +116,24 @@ fetching, authentication, and real-time updates.
 
 ```html
 <!-- Include the library -->
-<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/gnh-data-binder.js"></script>
 
 <!-- Dashboard stats with data binding -->
 <div class="stats">
-  <span data-bb-bind="stats.total_jobs">0</span>
-  <span data-bb-bind="stats.running_jobs">0</span>
+  <span data-gnh-bind="stats.total_jobs">0</span>
+  <span data-gnh-bind="stats.running_jobs">0</span>
 </div>
 
 <!-- Job list with templates -->
-<div data-bb-template="job">
-  <h4 data-bb-bind="domain">Loading...</h4>
-  <div data-bb-bind-style="width:{progress}%"></div>
-  <span data-bb-bind="status">pending</span>
+<div data-gnh-template="job">
+  <h4 data-gnh-bind="domain">Loading...</h4>
+  <div data-gnh-bind-style="width:{progress}%"></div>
+  <span data-gnh-bind="status">pending</span>
 </div>
 
 <!-- Forms with validation -->
-<form data-bb-form="create-job" data-bb-validate="live">
-  <input name="domain" required data-bb-validate-type="url" />
+<form data-gnh-form="create-job" data-gnh-validate="live">
+  <input name="domain" required data-gnh-validate-type="url" />
   <button type="submit">Create Job</button>
 </form>
 
@@ -146,26 +146,26 @@ fetching, authentication, and real-time updates.
 
 ### Data Binding Attributes
 
-- **`data-bb-bind="field"`** - Bind element text content to data field
-- **`data-bb-bind-style="property:{field}"`** - Bind CSS styles with formatting
-- **`data-bb-bind-attr="attribute:{field}"`** - Bind element attributes
-- **`data-bb-template="name"`** - Mark element as template for repeated data
-- **`data-bb-auth="required|guest"`** - Conditional rendering based on auth
+- **`data-gnh-bind="field"`** - Bind element text content to data field
+- **`data-gnh-bind-style="property:{field}"`** - Bind CSS styles with formatting
+- **`data-gnh-bind-attr="attribute:{field}"`** - Bind element attributes
+- **`data-gnh-template="name"`** - Mark element as template for repeated data
+- **`data-gnh-auth="required|guest"`** - Conditional rendering based on auth
   state
-- **`data-bb-form="action"`** - Enable form handling with validation and API
+- **`data-gnh-form="action"`** - Enable form handling with validation and API
   submission
 
 ### Form Validation Attributes
 
-- **`data-bb-validate="live"`** - Enable real-time validation
-- **`data-bb-validate-type="email|url|number"`** - Field type validation
-- **`data-bb-validate-min="N"`** - Minimum length/value
-- **`data-bb-validate-max="N"`** - Maximum length/value
-- **`data-bb-validate-pattern="regex"`** - Custom pattern validation
+- **`data-gnh-validate="live"`** - Enable real-time validation
+- **`data-gnh-validate-type="email|url|number"`** - Field type validation
+- **`data-gnh-validate-min="N"`** - Minimum length/value
+- **`data-gnh-validate-max="N"`** - Maximum length/value
+- **`data-gnh-validate-pattern="regex"`** - Custom pattern validation
 
 ## Available Components
 
-### bb-data-loader
+### gnh-data-loader
 
 Core component for loading data from API and populating Webflow templates.
 
@@ -183,7 +183,7 @@ Core component for loading data from API and populating Webflow templates.
 - `data-bind="field"` - Bind text content to data field
 - `data-style-bind="property:field"` - Bind CSS property to data field
 
-### bb-auth-login
+### gnh-auth-login
 
 Authentication component with Supabase integration.
 
@@ -197,7 +197,7 @@ Authentication component with Supabase integration.
 
 The components are served as static files from your Fly.io app:
 
-- Production: `https://hover.app.goodnative.co/js/bb-components.js`
+- Production: `https://hover.app.goodnative.co/js/gnh-components.js`
 
 ## Architecture
 

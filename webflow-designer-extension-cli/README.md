@@ -52,6 +52,6 @@ Expected behaviour:
 
 - Extension opens `GET /extension-auth.html` on BBB app domain.
 - Popup reuses shared auth modal (`/js/auth.js`) for sign in/sign up.
-- On success, popup posts `{ source: "bbb-extension-auth", accessToken }` back
+- On success, popup posts `{ source: "gnh-extension-auth", accessToken }` back
   to extension with origin and state checks.
 - Popup only accepts trusted target origins (`*.webflow-ext.com` or localhost).

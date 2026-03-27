@@ -261,20 +261,20 @@ Organisation model implemented:
   - [x] Responsive design with professional styling and user experience
 - [x] **Template + Data Binding Foundation**
   - [x] Architecture documentation for template-based integration approach
-  - [x] Attribute-based event handling system (`bb-action`, `bb-data-*`)
+  - [x] Attribute-based event handling system (`gnh-action`, `gnh-data-*`)
   - [x] Event delegation framework for extensible functionality
   - [x] Demonstration of template approach in production dashboard
 
 ### 🟡 Template + Data Binding Implementation (Completed v0.5.5)
 
 - [x] **Core Data Binding Library**
-  - [x] Basic attribute-based event handling (`bb-action="refresh-dashboard"`)
-  - [x] JavaScript library for `data-bb-bind` attribute processing
-  - [x] Template engine for `data-bb-template` repeated content
+  - [x] Basic attribute-based event handling (`gnh-action="refresh-dashboard"`)
+  - [x] JavaScript library for `data-gnh-bind` attribute processing
+  - [x] Template engine for `data-gnh-template` repeated content
   - [x] Authentication integration with conditional element display
-        (`data-bb-auth`)
-  - [x] Form handling with `data-bb-form` and validation (`data-bb-validate`)
-  - [x] Style and attribute binding (`data-bb-bind-style`, `data-bb-bind-attr`)
+        (`data-gnh-auth`)
+  - [x] Form handling with `data-gnh-form` and validation (`data-gnh-validate`)
+  - [x] Style and attribute binding (`data-gnh-bind-style`, `data-gnh-bind-attr`)
 - [x] **Enhanced Job Management**
   - [x] Real-time job progress updates via data binding
   - [x] Job creation forms with template-based validation
