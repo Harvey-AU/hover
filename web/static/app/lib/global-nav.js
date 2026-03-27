@@ -425,9 +425,11 @@ function initNotifications(navEl) {
       });
       if (res.ok) {
         updateBadge(0);
-        list?.querySelectorAll(".gnh-notification-item.unread").forEach((el) => {
-          el.classList.remove("unread");
-        });
+        list
+          ?.querySelectorAll(".gnh-notification-item.unread")
+          .forEach((el) => {
+            el.classList.remove("unread");
+          });
       }
     } catch (err) {
       console.warn("Failed to mark notifications as read:", err);

@@ -94,7 +94,8 @@ runtime to access shared code.
 
 ### Fixed
 
-- Global nav notification badge race condition (guarded with `GNH_APP.coreReady`)
+- Global nav notification badge race condition (guarded with
+  `GNH_APP.coreReady`)
 - Extension job cards rendering as plain status text (missing bridge export)
 - Job details init crash when `gnh-bootstrap.js` not loaded
 - Seed idempotency: `auth.identities` `ON CONFLICT` column corrected
@@ -392,8 +393,8 @@ runtime to access shared code.
   - Root cause: `DOMContentLoaded` fired before deferred `core.js` had executed,
     so `window.GNH_APP.coreReady` didn't exist yet and the await was silently
     skipped
-  - New `gnh-bootstrap.js` provides `GNH_APP.whenReady()` — a polling wrapper that
-    waits for `core.js` to finish before proceeding
+  - New `gnh-bootstrap.js` provides `GNH_APP.whenReady()` — a polling wrapper
+    that waits for `core.js` to finish before proceeding
   - Loaded without `defer` so it's available immediately; all pages now use a
     single `await window.GNH_APP.whenReady()` call
   - Homepage now shows a visible error banner on timeout instead of silently
@@ -1557,7 +1558,8 @@ Series of minor optimisations to improve throughput and resource usage.
     existing calendar-day filters
   - URL-encodes timezone parameter to handle special characters (`Etc/GMT+10` →
     `Etc%2FGMT%2B10`)
-  - Applied to both gnh-auth-extension.js and gnh-components.js integration paths
+  - Applied to both gnh-auth-extension.js and gnh-components.js integration
+    paths
 
 ## [0.11.0] – 2025-10-24
 
@@ -3005,8 +3007,8 @@ Series of minor optimisations to improve throughput and resource usage.
     processing for dynamic content
   - Implemented template engine with `data-gnh-template` for repeated elements
     (job lists, tables, etc.)
-  - Added authentication integration with `data-gnh-auth` for conditional element
-    display
+  - Added authentication integration with `data-gnh-auth` for conditional
+    element display
   - Created comprehensive form handling with `data-gnh-form` attributes and
     real-time validation
   - Built style and attribute binding with `data-gnh-bind-style` and
@@ -3032,8 +3034,8 @@ Series of minor optimisations to improve throughput and resource usage.
 
 - **Build System**: Updated Rollup configuration to build data binding library
   alongside Web Components
-  - Added `gnh-data-binder.js` and `gnh-data-binder.min.js` builds for production
-    deployment
+  - Added `gnh-data-binder.js` and `gnh-data-binder.min.js` builds for
+    production deployment
   - Library available at `/js/gnh-data-binder.min.js` endpoint for CDN-style
     usage
   - Zero runtime dependencies - works with vanilla JavaScript and Supabase
@@ -3083,8 +3085,8 @@ Series of minor optimisations to improve throughput and resource usage.
   dashboard development
   - Dashboard now demonstrates template approach where HTML layout is
     customisable
-  - JavaScript automatically scans for `gnh-action` and `gnh-data-*` attributes to
-    provide functionality
+  - JavaScript automatically scans for `gnh-action` and `gnh-data-*` attributes
+    to provide functionality
   - Event delegation system allows any HTML element with `gnh-action` to trigger
     Adapt features
   - Sets foundation for future template binding system where users control
@@ -3219,7 +3221,8 @@ Series of minor optimisations to improve throughput and resource usage.
 - **Production Build System**: Rollup-based build pipeline for component
   distribution
   - Zero runtime dependencies (vanilla JavaScript, Supabase via CDN)
-  - Minified production bundle (`gnh-components.min.js`) ready for CDN deployment
+  - Minified production bundle (`gnh-components.min.js`) ready for CDN
+    deployment
   - Development and production builds with source maps and error handling
 - **Static File Serving**: Integrated component serving into existing Go
   application

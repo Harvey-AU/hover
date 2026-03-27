@@ -274,7 +274,8 @@ Organisation model implemented:
   - [x] Authentication integration with conditional element display
         (`data-gnh-auth`)
   - [x] Form handling with `data-gnh-form` and validation (`data-gnh-validate`)
-  - [x] Style and attribute binding (`data-gnh-bind-style`, `data-gnh-bind-attr`)
+  - [x] Style and attribute binding (`data-gnh-bind-style`,
+        `data-gnh-bind-attr`)
 - [x] **Enhanced Job Management**
   - [x] Real-time job progress updates via data binding
   - [x] Job creation forms with template-based validation

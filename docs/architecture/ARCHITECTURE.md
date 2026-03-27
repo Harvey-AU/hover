@@ -348,8 +348,8 @@ JavaScript provides functionality through attribute-based event handling.
 **Data Flow:**
 
 - Event delegation scans DOM for `gnh-action` attributes
-- Data binding scans DOM for `data-gnh-bind`, `data-gnh-template`, `data-gnh-form`
-  attributes
+- Data binding scans DOM for `data-gnh-bind`, `data-gnh-template`,
+  `data-gnh-form` attributes
 - JavaScript handles clicks, form submissions, and data population automatically
 - API endpoints (`/v1/dashboard/stats`, `/v1/jobs`) provide data
 - Real-time data binding populates `data-gnh-bind` elements with live API data

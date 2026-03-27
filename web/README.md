@@ -7,8 +7,8 @@ with Webflow.
 
 - **Web Components** (`gnh-components.js`): Custom elements for authentication
   and data display
-- **Data Binding Library** (`gnh-data-binder.js`): Template + data binding system
-  for flexible dashboard development
+- **Data Binding Library** (`gnh-data-binder.js`): Template + data binding
+  system for flexible dashboard development
 - **Dashboard Actions** (`gnh-dashboard-actions.js`): Dashboard-specific
   functionality and interactions
 - **Auth Extension** (`gnh-auth-extension.js`): Extended authentication features

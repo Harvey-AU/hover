@@ -158,7 +158,9 @@ function setupDashboardRefresh(dataBinder) {
       }
 
       // Clear any existing empty state before binding
-      const existingEmptyState = document.querySelector(".gnh-jobs-empty-state");
+      const existingEmptyState = document.querySelector(
+        ".gnh-jobs-empty-state"
+      );
       if (existingEmptyState) {
         existingEmptyState.remove();
       }

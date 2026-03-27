@@ -187,8 +187,8 @@ Key sections to review:
 
 ### Attribute Mapping
 
-| Old Attribute        | New Attribute                            | Notes                 |
-| -------------------- | ---------------------------------------- | --------------------- |
+| Old Attribute         | New Attribute                            | Notes                 |
+| --------------------- | ---------------------------------------- | --------------------- |
 | `data-gnh-bind`       | `gnh-text`                               | More semantic name    |
 | `data-gnh-bind-attr`  | `gnh-class`, `gnh-href`, `gnh-attr:name` | Simpler syntax        |
 | `data-gnh-bind-style` | `gnh-style:prop`                         | Property-specific     |
