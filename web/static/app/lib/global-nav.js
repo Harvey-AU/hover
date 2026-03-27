@@ -103,7 +103,8 @@ function initOrgSwitcher(navEl) {
       await window.GNH_APP.switchOrg(item.dataset.orgId);
     } catch (err) {
       console.warn("Failed to switch organisation:", err);
-      currentOrgName.textContent = window.GNH_ACTIVE_ORG?.name || "Organisation";
+      currentOrgName.textContent =
+        window.GNH_ACTIVE_ORG?.name || "Organisation";
     }
   });
 
