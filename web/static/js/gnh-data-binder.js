@@ -210,11 +210,11 @@ class BBDataBinder {
    * Supports data-gnh-bind-attr, gnh-class, gnh-href, gnh-attr:name
    */
   registerAttrElement(element) {
-    // Check for old format: data-gnh-bind-attr="class:bb-status-{status}"
+    // Check for old format: data-gnh-bind-attr="class:gnh-status-{status}"
     const oldAttrBinding = element.getAttribute("data-gnh-bind-attr");
 
     if (oldAttrBinding) {
-      // Parse attribute binding format: "class:bb-status-{status}"
+      // Parse attribute binding format: "class:gnh-status-{status}"
       const match = oldAttrBinding.match(/^([^:]+):(.+)$/);
       if (match) {
         const [, attribute, template] = match;

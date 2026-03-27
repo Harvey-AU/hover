@@ -48,7 +48,7 @@ if (
   typeof integrationHttp.normaliseIntegrationError !== "function"
 ) {
   throw new Error(
-    "Missing or incompatible integration HTTP helpers. Load /js/bb-integration-http.js before gnh-webflow.js."
+    "Missing or incompatible integration HTTP helpers. Load /js/gnh-integration-http.js before gnh-webflow.js."
   );
 }
 
