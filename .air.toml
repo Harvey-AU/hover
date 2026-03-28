@@ -2,13 +2,13 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-# Windows configuration (change for Mac/Linux)
-cmd = "go build -o ./tmp/main.exe ./cmd/app"
-bin = "tmp/main.exe"
+# Mac/Linux (default)
+cmd = "go build -o ./tmp/main ./cmd/app"
+bin = "tmp/main"
 
-# Mac/Linux configuration (uncomment and comment above when on Mac/Linux):
-# cmd = "go build -o ./tmp/main ./cmd/app"
-# bin = "tmp/main"
+# Windows: override with dev.sh pc, or run: air -build.cmd "go build -o ./tmp/main.exe ./cmd/app" -build.bin "tmp/main.exe"
+# cmd = "go build -o ./tmp/main.exe ./cmd/app"
+# bin = "tmp/main.exe"
 
 include_ext = ["go", "env"]
 exclude_dir = ["tmp", "vendor", "testdata"]
