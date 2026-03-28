@@ -30,11 +30,19 @@ jobs:
       contents: write
       pull-requests: read
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          PAT_TOKEN: op://Good Native/hover:github/PAT_TOKEN
+
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
 
       - name: Check for no-release label
         id: skip

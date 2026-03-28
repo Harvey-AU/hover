@@ -42,6 +42,22 @@ jobs:
         with:
           go-version: "1.26.0"
 
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+          SUPABASE_ACCESS_TOKEN: op://Good Native/hover:supabase/SUPABASE_ACCESS_TOKEN
+          SENTRY_DSN: op://Good Native/hover:runtime/SENTRY_DSN
+          LOOPS_API_KEY: op://Good Native/hover:runtime/LOOPS_API_KEY
+          SLACK_CLIENT_SECRET: op://Good Native/hover:runtime/SLACK_CLIENT_SECRET
+          WEBFLOW_CLIENT_SECRET: op://Good Native/hover:runtime/WEBFLOW_CLIENT_SECRET
+          GOOGLE_CLIENT_SECRET: op://Good Native/hover:runtime/GOOGLE_CLIENT_SECRET
+          SUPABASE_JWT_SECRET: op://Good Native/hover:supabase/SUPABASE_JWT_SECRET
+          SUPABASE_SERVICE_ROLE_KEY: op://Good Native/hover:supabase/SUPABASE_SERVICE_ROLE_KEY
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
 
@@ -107,8 +123,6 @@ jobs:
             echo "branch_exists=false" >> $GITHUB_OUTPUT
           fi
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           BRANCH_NAME: ${{ github.head_ref }}
 
       - name: Log Supabase Branch Status
@@ -137,14 +151,14 @@ jobs:
               SERVICE_ROLE_KEY="$BRANCH_SRK"
               echo "🔑 Using preview branch service_role key"
             else
-              SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
+              SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
               echo "🔑 Using main project service_role key (branch key not available)"
             fi
             if [ -n "$BRANCH_JWT" ]; then
               JWT_SECRET="$BRANCH_JWT"
               echo "🔑 Using preview branch JWT secret"
             else
-              JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
+              JWT_SECRET="$SUPABASE_JWT_SECRET"
               echo "🔑 Using main project JWT secret (branch secret not available)"
             fi
             BRANCH_URL="${{ steps.supabase.outputs.branch_supabase_url }}"
@@ -158,33 +172,14 @@ jobs:
             echo "🔀 Using Supabase PREVIEW database"
             echo "db_type=preview" >> $GITHUB_OUTPUT
           else
-            DB_URL="${{ secrets.TEST_DATABASE_URL }}"
-            DIRECT_URL=""
-            SERVICE_ROLE_KEY="${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
-            JWT_SECRET="${{ secrets.SUPABASE_JWT_SECRET }}"
-            SUPABASE_URL=""
-            if [ -z "$DB_URL" ]; then
-              DB_URL="${{ secrets.DATABASE_URL }}"
-            fi
-            echo "🔀 Using SHARED database (no preview branch)"
-            echo "db_type=shared" >> $GITHUB_OUTPUT
-          fi
-          if [ -z "$DB_URL" ]; then
-            echo "❌ Database configuration missing. Set either TEST_DATABASE_URL or DATABASE_URL secret." >&2
+            echo "❌ No Supabase preview branch found. Every PR should have one." >&2
             exit 1
           fi
 
           # Create review app name
+          # Auth URLs (SUPABASE_FALLBACK_AUTH_URL, SUPABASE_LEGACY_AUTH_URL) are
+          # now in review_apps.toml [env] — no need to set as secrets.
           APP_NAME="hover-pr-${{ github.event.number }}"
-          SUPABASE_FALLBACK_AUTH_URL="${{ secrets.SUPABASE_FALLBACK_AUTH_URL }}"
-          SUPABASE_LEGACY_AUTH_URL="${{ secrets.SUPABASE_LEGACY_AUTH_URL }}"
-          AUTH_URL_FLAGS=()
-          if [ -n "$SUPABASE_FALLBACK_AUTH_URL" ]; then
-            AUTH_URL_FLAGS+=(SUPABASE_FALLBACK_AUTH_URL="$SUPABASE_FALLBACK_AUTH_URL")
-          fi
-          if [ -n "$SUPABASE_LEGACY_AUTH_URL" ]; then
-            AUTH_URL_FLAGS+=(SUPABASE_LEGACY_AUTH_URL="$SUPABASE_LEGACY_AUTH_URL")
-          fi
 
           # Check if app exists, create if not
           if ! flyctl apps list | grep -q "$APP_NAME"; then
@@ -202,24 +197,21 @@ jobs:
 
           # Set secrets for Review App WITHOUT triggering deployment
           echo "Setting test database connection and auth secrets for review app..."
+          # Non-secret config (OAuth client IDs, auth URLs) is in review_apps.toml [env].
+          # Only set actual secrets and per-PR dynamic values here.
           if [ -n "$DIRECT_URL" ]; then
             echo "📡 Setting DATABASE_DIRECT_URL for real-time notifications"
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               DATABASE_DIRECT_URL="$DIRECT_URL" \
-              "${AUTH_URL_FLAGS[@]}" \
               "${SUPABASE_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
-              SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
-              LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
-              SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \
-              SLACK_CLIENT_SECRET="${{ secrets.SLACK_CLIENT_SECRET }}" \
-              WEBFLOW_CLIENT_ID="${{ secrets.WEBFLOW_CLIENT_ID }}" \
-              WEBFLOW_CLIENT_SECRET="${{ secrets.WEBFLOW_CLIENT_SECRET }}" \
-              GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}" \
-              GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-              GOOGLE_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/google/callback" \
+              SENTRY_DSN="$SENTRY_DSN" \
+              LOOPS_API_KEY="$LOOPS_API_KEY" \
+              SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
+              WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
+              GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
@@ -227,19 +219,14 @@ jobs:
           else
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
-              "${AUTH_URL_FLAGS[@]}" \
               "${SUPABASE_URL_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
-              SENTRY_DSN="${{ secrets.SENTRY_DSN }}" \
-              LOOPS_API_KEY="${{ secrets.LOOPS_API_KEY }}" \
-              SLACK_CLIENT_ID="${{ secrets.SLACK_CLIENT_ID }}" \
-              SLACK_CLIENT_SECRET="${{ secrets.SLACK_CLIENT_SECRET }}" \
-              WEBFLOW_CLIENT_ID="${{ secrets.WEBFLOW_CLIENT_ID }}" \
-              WEBFLOW_CLIENT_SECRET="${{ secrets.WEBFLOW_CLIENT_SECRET }}" \
-              GOOGLE_CLIENT_ID="${{ secrets.GOOGLE_CLIENT_ID }}" \
-              GOOGLE_CLIENT_SECRET="${{ secrets.GOOGLE_CLIENT_SECRET }}" \
-              GOOGLE_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/google/callback" \
+              SENTRY_DSN="$SENTRY_DSN" \
+              LOOPS_API_KEY="$LOOPS_API_KEY" \
+              SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
+              WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
+              GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
@@ -254,7 +241,7 @@ jobs:
             --local-only \
             --image hover:pr-${{ github.event.number }}
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
 
       - name: Comment PR with app URL
         uses: actions/github-script@v8
@@ -281,6 +268,14 @@ jobs:
     if: github.event.action == 'closed'
 
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
 
@@ -288,5 +283,3 @@ jobs:
         run: |
           APP_NAME="hover-pr-${{ github.event.number }}"
           flyctl apps destroy $APP_NAME --yes || echo "App may not exist"
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
