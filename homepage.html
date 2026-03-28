@@ -34,7 +34,7 @@
       })();
     </script>
     <link rel="stylesheet" href="/styles/app.css" />
-    <script src="/js/bb-bootstrap.js"></script>
+    <script src="/js/gnh-bootstrap.js"></script>
     <script src="/js/core.js" defer></script>
 
     <!-- Google tag (gtag.js) -->
@@ -197,7 +197,7 @@
     <script>
       async function initializeHomepage() {
         try {
-          await window.BB_APP.whenReady();
+          await window.GNH_APP.whenReady();
         } catch (error) {
           console.error("Core initialisation failed", error);
           // Show a visible error so users aren't left with dead buttons
@@ -245,7 +245,7 @@
             }
 
             // Store domain and show signup
-            sessionStorage.setItem("bb_pending_domain", cleanDomain);
+            sessionStorage.setItem("gnh_pending_domain", cleanDomain);
             console.log("Domain stored:", cleanDomain);
 
             // Try to show auth modal

@@ -36,7 +36,7 @@ import { createDataTable } from "/app/components/hover-data-table.js";
 const REALTIME_DEBOUNCE_MS = 250;
 const SUBSCRIBE_RETRY_INTERVAL_MS = 1000;
 const MAX_SUBSCRIBE_RETRIES = 15;
-// Match legacy bb-auth-extension.js: 500 ms when jobs are active, 1 s when idle.
+// Match legacy gnh-auth-extension.js: 500 ms when jobs are active, 1 s when idle.
 const FALLBACK_POLLING_INTERVAL_ACTIVE_MS = 500;
 const FALLBACK_POLLING_INTERVAL_IDLE_MS = 1000;
 
@@ -193,7 +193,7 @@ export function subscribeToJobUpdates(orgId, onUpdate) {
   }
 
   // Adaptive interval: 500 ms while jobs are active, 1 s when idle.
-  // Matches the legacy bb-auth-extension.js dual-interval behaviour.
+  // Matches the legacy gnh-auth-extension.js dual-interval behaviour.
   function getFallbackInterval() {
     return window.dataBinder?.hasRealtimeActiveJobs
       ? FALLBACK_POLLING_INTERVAL_ACTIVE_MS

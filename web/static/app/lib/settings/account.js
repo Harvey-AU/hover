@@ -18,7 +18,7 @@ import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 const MAX_NAME_LENGTH = 80;
 
-/** Adapter: bb-settings uses (variant, message); hover-toast uses (message, {variant}). */
+/** Adapter: gnh-settings uses (variant, message); hover-toast uses (message, {variant}). */
 function toast(variant, message) {
   _showToast(message, { variant });
 }
@@ -173,7 +173,7 @@ export async function connectAuthMethod(provider) {
     if (currentPath && currentPath !== "/") {
       try {
         window.sessionStorage.setItem(
-          "bb_post_auth_return_target",
+          "gnh_post_auth_return_target",
           currentPath
         );
       } catch {
@@ -223,8 +223,8 @@ export async function connectAuthMethod(provider) {
 async function unlinkIdentityViaApi(identityId) {
   const session = await getSession();
   const accessToken = session?.access_token;
-  const authUrl = window.BBB_CONFIG?.supabaseUrl;
-  const anonKey = window.BBB_CONFIG?.supabaseAnonKey;
+  const authUrl = window.GNH_CONFIG?.supabaseUrl;
+  const anonKey = window.GNH_CONFIG?.supabaseAnonKey;
   if (!accessToken || !authUrl || !anonKey) {
     throw new Error("Missing auth session details");
   }
@@ -335,7 +335,7 @@ export function renderAuthMethods(container, methods, options = {}) {
     details.appendChild(text);
 
     const actionBtn = document.createElement("button");
-    actionBtn.className = "bb-button bb-button-outline settings-btn-sm";
+    actionBtn.className = "gnh-button gnh-button-outline settings-btn-sm";
     actionBtn.type = "button";
     actionBtn.textContent = method.connected ? "Remove" : "Connect";
 

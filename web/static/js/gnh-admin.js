@@ -147,7 +147,7 @@
   }
 
   // Expose to global scope
-  window.BBAdmin = {
+  window.GNHAdmin = {
     isSystemAdmin,
     initAdminResetButton,
     handleResetDatabase,

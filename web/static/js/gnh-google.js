@@ -30,14 +30,14 @@ function formatGoogleDate(timestamp) {
   }
 }
 
-var integrationHttp = window.BBIntegrationHttp;
+var integrationHttp = window.GNHIntegrationHttp;
 if (
   !integrationHttp ||
   typeof integrationHttp.fetchWithTimeout !== "function" ||
   typeof integrationHttp.normaliseIntegrationError !== "function"
 ) {
   throw new Error(
-    "Missing or incompatible integration HTTP helpers. Load /js/bb-integration-http.js before bb-google.js."
+    "Missing or incompatible integration HTTP helpers. Load /js/gnh-integration-http.js before gnh-google.js."
   );
 }
 
@@ -49,12 +49,12 @@ var normaliseIntegrationError = integrationHttp.normaliseIntegrationError;
  */
 function setupGoogleIntegration() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) {
       return;
     }
 
-    const action = element.getAttribute("bbb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action || !action.startsWith("google-")) {
       return;
     }
@@ -76,11 +76,11 @@ function handleGoogleAction(action, element) {
       break;
 
     case "google-disconnect": {
-      const connectionId = element.getAttribute("bbb-id");
+      const connectionId = element.getAttribute("gnh-id");
       if (connectionId) {
         disconnectGoogle(connectionId);
       } else {
-        console.warn("google-disconnect: missing bbb-id attribute");
+        console.warn("google-disconnect: missing gnh-id attribute");
       }
       break;
     }
@@ -139,7 +139,7 @@ async function loadGoogleConnections() {
     }
 
     const template = connectionsList.querySelector(
-      '[bbb-template="google-connection"]'
+      '[gnh-template="google-connection"]'
     );
 
     if (!template) {
@@ -167,7 +167,7 @@ async function loadGoogleConnections() {
     for (const conn of connections) {
       const clone = template.cloneNode(true);
       clone.style.display = "block";
-      clone.removeAttribute("bbb-template");
+      clone.removeAttribute("gnh-template");
       clone.classList.add("google-connection");
 
       // Set property name
@@ -205,13 +205,13 @@ async function loadGoogleConnections() {
 
       // Set connection ID on disconnect button
       const disconnectBtn = clone.querySelector(
-        '[bbb-action="google-disconnect"]'
+        '[gnh-action="google-disconnect"]'
       );
       if (disconnectBtn) {
-        disconnectBtn.setAttribute("bbb-id", conn.id);
+        disconnectBtn.setAttribute("gnh-id", conn.id);
       }
 
-      // Set up status toggle (uses bb-toggle pattern - CSS handles visual state)
+      // Set up status toggle (uses gnh-toggle pattern - CSS handles visual state)
       const statusToggle = clone.querySelector(".google-status-toggle");
       if (statusToggle) {
         statusToggle.checked = conn.status === "active";
@@ -383,7 +383,7 @@ async function saveGoogleProperties() {
 
     // Show saving state
     const saveBtn = document.querySelector(
-      '[bbb-action="google-save-properties"]'
+      '[gnh-action="google-save-properties"]'
     );
     if (saveBtn) {
       saveBtn.disabled = true;
@@ -433,7 +433,7 @@ async function saveGoogleProperties() {
     showGoogleError("Failed to save properties");
   } finally {
     const saveBtn = document.querySelector(
-      '[bbb-action="google-save-properties"]'
+      '[gnh-action="google-save-properties"]'
     );
     if (saveBtn) {
       saveBtn.disabled = false;
@@ -521,7 +521,7 @@ function renderPropertyList(properties, totalCount) {
   // Add property options with toggle functionality
   for (const prop of properties) {
     const item = document.createElement("div");
-    item.className = "bb-job-card";
+    item.className = "gnh-job-card";
     item.style.cssText =
       "display: flex; align-items: center; width: 100%; margin-bottom: 8px; padding: 12px 16px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px;";
     const propertyId = prop.property_id;
@@ -610,15 +610,15 @@ function renderPropertyList(properties, totalCount) {
       "margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb;";
 
     const saveBtn = document.createElement("button");
-    saveBtn.className = "bb-button bb-button-primary";
-    saveBtn.setAttribute("bbb-action", "google-save-properties");
+    saveBtn.className = "gnh-button gnh-button-primary";
+    saveBtn.setAttribute("gnh-action", "google-save-properties");
     saveBtn.style.cssText = "width: 100%; padding: 12px;";
     saveBtn.textContent = "Save Properties";
     saveContainer.appendChild(saveBtn);
 
     const cancelBtn = document.createElement("button");
-    cancelBtn.className = "bb-button";
-    cancelBtn.setAttribute("bbb-action", "google-cancel-selection");
+    cancelBtn.className = "gnh-button";
+    cancelBtn.setAttribute("gnh-action", "google-cancel-selection");
     cancelBtn.style.cssText =
       "width: 100%; padding: 12px; margin-top: 8px; background: transparent;";
     cancelBtn.textContent = "Cancel";
@@ -756,10 +756,10 @@ function showAccountSelection(accounts) {
   for (const account of accounts) {
     const item = document.createElement("button");
     item.type = "button";
-    item.className = "bb-button";
+    item.className = "gnh-button";
     item.style.cssText =
       "display: block; width: 100%; text-align: left; margin-bottom: 8px; padding: 12px 16px; cursor: pointer;";
-    item.setAttribute("bbb-action", "google-select-account");
+    item.setAttribute("gnh-action", "google-select-account");
     item.setAttribute("data-account-id", account.account_id);
 
     const strongEl = document.createElement("strong");
@@ -777,8 +777,8 @@ function showAccountSelection(accounts) {
 
   // Add cancel button
   const cancelBtn = document.createElement("button");
-  cancelBtn.className = "bb-button";
-  cancelBtn.setAttribute("bbb-action", "google-cancel-selection");
+  cancelBtn.className = "gnh-button";
+  cancelBtn.setAttribute("gnh-action", "google-cancel-selection");
   cancelBtn.style.cssText =
     "width: 100%; padding: 12px; margin-top: 8px; background: transparent;";
   cancelBtn.textContent = "Cancel";

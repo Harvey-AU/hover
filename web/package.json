@@ -2,7 +2,7 @@
   "name": "@goodnative/web-components",
   "version": "1.0.0",
   "description": "Web Components for Hover dashboard integration",
-  "main": "static/js/bb-components.js",
+  "main": "static/js/core.js",
   "scripts": {
     "serve": "serve static"
   },

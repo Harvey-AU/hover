@@ -7,11 +7,11 @@
 
     <!--
       Phase 0 loading pattern:
-      1. /config.js    — sets window.BBB_CONFIG (server-rendered)
+      1. /config.js    — sets window.GNH_CONFIG (server-rendered)
       2. Supabase SDK  — sets window.supabase (CDN, pre-module)
       3. module entry  — imports from app/lib/* via ES module
 
-      No bb-bootstrap.js. No core.js. No window.BB_APP.whenReady().
+      No gnh-bootstrap.js. No core.js. No window.GNH_APP.whenReady().
     -->
     <script src="/config.js"></script>
     <script
@@ -125,7 +125,7 @@
     <h1>Phase 0 — Module validation</h1>
     <p class="subtitle">
       Confirms the ES module architecture loads correctly with no
-      bb-bootstrap.js, core.js, or BB_APP.whenReady() chain.
+      gnh-bootstrap.js, core.js, or GNH_APP.whenReady() chain.
     </p>
 
     <p class="section-title">Module checks</p>
@@ -180,24 +180,27 @@
         // 1. ES module loaded
         pass("ES module loaded", "type=module script executed without errors");
 
-        // 2. No bb-bootstrap.js
-        if (typeof window.BB_APP?.whenReady === "function") {
+        // 2. No gnh-bootstrap.js
+        if (typeof window.GNH_APP?.whenReady === "function") {
           warn(
-            "bb-bootstrap.js present",
-            "BB_APP.whenReady is defined — page loaded legacy scripts too"
+            "gnh-bootstrap.js present",
+            "GNH_APP.whenReady is defined — page loaded legacy scripts too"
           );
         } else {
-          pass("No bb-bootstrap dependency", "BB_APP.whenReady is not defined");
+          pass(
+            "No gnh-bootstrap dependency",
+            "GNH_APP.whenReady is not defined"
+          );
         }
 
         // 3. No core.js
-        if (window.BB_APP?.coreReady) {
+        if (window.GNH_APP?.coreReady) {
           warn(
             "core.js present",
-            "BB_APP.coreReady is defined — page loaded legacy scripts too"
+            "GNH_APP.coreReady is defined — page loaded legacy scripts too"
           );
         } else {
-          pass("No core.js dependency", "BB_APP.coreReady is not defined");
+          pass("No core.js dependency", "GNH_APP.coreReady is not defined");
         }
 
         // 4. Config
@@ -209,7 +212,7 @@
         } else {
           fail(
             "Config missing",
-            "window.BBB_CONFIG not set — ensure /config.js loaded"
+            "window.GNH_CONFIG not set — ensure /config.js loaded"
           );
         }
 

@@ -2,10 +2,10 @@
  * Hover Data Binding Library
  *
  * Provides template + data binding system for Hover dashboard pages.
- * Automatically finds and populates elements with data-bb-bind attributes.
+ * Automatically finds and populates elements with data-gnh-bind attributes.
  */
 
-class BBDataBinder {
+class GNHDataBinder {
   constructor(options = {}) {
     this.apiBaseUrl = options.apiBaseUrl || "";
     this.authManager = null;
@@ -15,7 +15,7 @@ class BBDataBinder {
     this.boundElements = new Map();
     this.templates = new Map();
 
-    this.log("BBDataBinder initialized", options);
+    this.log("GNHDataBinder initialized", options);
   }
 
   /**
@@ -72,32 +72,32 @@ class BBDataBinder {
 
   /**
    * Scan the DOM and bind all data binding attributes
-   * Supports both old (data-bb-*) and new (bbb-*) attribute formats
+   * Supports both old (data-gnh-*) and new (gnh-*) attribute formats
    */
   scanAndBind() {
     this.log("Scanning DOM for data binding attributes...");
 
     // Find all elements with data binding attributes (both old and new formats)
     const bindElements = document.querySelectorAll(
-      "[data-bb-bind], [bbb-text]"
+      "[data-gnh-bind], [gnh-text]"
     );
     const styleElements = document.querySelectorAll(
-      "[data-bb-bind-style], [bbb-style]"
+      "[data-gnh-bind-style], [gnh-style]"
     );
     const attrElements = document.querySelectorAll(
-      "[data-bb-bind-attr], [bbb-class], [bbb-href], [bbb-attr\\:]"
+      "[data-gnh-bind-attr], [gnh-class], [gnh-href], [gnh-attr\\:]"
     );
     const templateElements = document.querySelectorAll(
-      "[data-bb-template], [bbb-template]"
+      "[data-gnh-template], [gnh-template]"
     );
     const authElements = document.querySelectorAll(
-      "[data-bb-auth], [bbb-auth]"
+      "[data-gnh-auth], [gnh-auth]"
     );
     const formElements = document.querySelectorAll(
-      "[data-bb-form], [bbb-form]"
+      "[data-gnh-form], [gnh-form]"
     );
     const showElements = document.querySelectorAll(
-      "[data-bb-show-if], [bbb-show], [bbb-hide], [bbb-if]"
+      "[data-gnh-show-if], [gnh-show], [gnh-hide], [gnh-if]"
     );
 
     this.log("Found elements", {
@@ -130,12 +130,12 @@ class BBDataBinder {
 
   /**
    * Register an element for data binding
-   * Supports both data-bb-bind and bbb-text
+   * Supports both data-gnh-bind and gnh-text
    */
   registerBindElement(element) {
     // Check for both old and new attribute formats
     const bindPath =
-      element.getAttribute("bbb-text") || element.getAttribute("data-bb-bind");
+      element.getAttribute("gnh-text") || element.getAttribute("data-gnh-bind");
     if (!bindPath) return;
 
     if (!this.boundElements.has(bindPath)) {
@@ -153,11 +153,11 @@ class BBDataBinder {
 
   /**
    * Register an element for style binding
-   * Supports both data-bb-bind-style and bbb-style:prop
+   * Supports both data-gnh-bind-style and gnh-style:prop
    */
   registerStyleElement(element) {
-    // Check for old format: data-bb-bind-style="width:{progress}%"
-    const oldStyleBinding = element.getAttribute("data-bb-bind-style");
+    // Check for old format: data-gnh-bind-style="width:{progress}%"
+    const oldStyleBinding = element.getAttribute("data-gnh-bind-style");
 
     if (oldStyleBinding) {
       // Parse style binding format: "width:{progress}%"
@@ -168,10 +168,10 @@ class BBDataBinder {
       }
     }
 
-    // Check for new format: bbb-style:width="{progress}%"
+    // Check for new format: gnh-style:width="{progress}%"
     Array.from(element.attributes).forEach((attr) => {
-      if (attr.name.startsWith("bbb-style:")) {
-        const property = attr.name.substring("bbb-style:".length);
+      if (attr.name.startsWith("gnh-style:")) {
+        const property = attr.name.substring("gnh-style:".length);
         const template = attr.value;
         this._registerStyleBinding(element, property, template);
       }
@@ -207,14 +207,14 @@ class BBDataBinder {
 
   /**
    * Register an element for attribute binding
-   * Supports data-bb-bind-attr, bbb-class, bbb-href, bbb-attr:name
+   * Supports data-gnh-bind-attr, gnh-class, gnh-href, gnh-attr:name
    */
   registerAttrElement(element) {
-    // Check for old format: data-bb-bind-attr="class:bb-status-{status}"
-    const oldAttrBinding = element.getAttribute("data-bb-bind-attr");
+    // Check for old format: data-gnh-bind-attr="class:gnh-status-{status}"
+    const oldAttrBinding = element.getAttribute("data-gnh-bind-attr");
 
     if (oldAttrBinding) {
-      // Parse attribute binding format: "class:bb-status-{status}"
+      // Parse attribute binding format: "class:gnh-status-{status}"
       const match = oldAttrBinding.match(/^([^:]+):(.+)$/);
       if (match) {
         const [, attribute, template] = match;
@@ -222,7 +222,7 @@ class BBDataBinder {
       }
     }
 
-    // Check for new shorthand formats: bbb-class, bbb-href, etc.
+    // Check for new shorthand formats: gnh-class, gnh-href, etc.
     const shorthandAttrs = [
       "class",
       "href",
@@ -233,16 +233,16 @@ class BBDataBinder {
       "value",
     ];
     shorthandAttrs.forEach((attrName) => {
-      const attrValue = element.getAttribute(`bbb-${attrName}`);
+      const attrValue = element.getAttribute(`gnh-${attrName}`);
       if (attrValue) {
         this._registerAttrBinding(element, attrName, attrValue);
       }
     });
 
-    // Check for new explicit format: bbb-attr:data-id="{id}"
+    // Check for new explicit format: gnh-attr:data-id="{id}"
     Array.from(element.attributes).forEach((attr) => {
-      if (attr.name.startsWith("bbb-attr:")) {
-        const attribute = attr.name.substring("bbb-attr:".length);
+      if (attr.name.startsWith("gnh-attr:")) {
+        const attribute = attr.name.substring("gnh-attr:".length);
         const template = attr.value;
         this._registerAttrBinding(element, attribute, template);
       }
@@ -278,13 +278,13 @@ class BBDataBinder {
 
   /**
    * Register a template element for repeated content
-   * Supports both data-bb-template and bbb-template
+   * Supports both data-gnh-template and gnh-template
    */
   registerTemplate(element) {
     // Check for both old and new attribute formats
     const templateName =
-      element.getAttribute("bbb-template") ||
-      element.getAttribute("data-bb-template");
+      element.getAttribute("gnh-template") ||
+      element.getAttribute("data-gnh-template");
     if (!templateName) return;
 
     // Store the template
@@ -302,23 +302,23 @@ class BBDataBinder {
 
   /**
    * Update authentication-conditional elements
-   * Supports both data-bb-auth and bbb-auth
+   * Supports both data-gnh-auth and gnh-auth
    */
   updateAuthElements() {
     const authElements = document.querySelectorAll(
-      "[data-bb-auth], [bbb-auth]"
+      "[data-gnh-auth], [gnh-auth]"
     );
     authElements.forEach((el) => this.updateAuthElement(el));
   }
 
   /**
    * Update a single auth element
-   * Supports both data-bb-auth and bbb-auth
+   * Supports both data-gnh-auth and gnh-auth
    */
   updateAuthElement(element) {
     // Check for both old and new attribute formats
     const authCondition =
-      element.getAttribute("bbb-auth") || element.getAttribute("data-bb-auth");
+      element.getAttribute("gnh-auth") || element.getAttribute("data-gnh-auth");
     let shouldShow = false;
 
     switch (authCondition) {
@@ -337,15 +337,15 @@ class BBDataBinder {
 
   /**
    * Update conditional visibility element
-   * Supports data-bb-show-if, bbb-show, bbb-hide, bbb-if
+   * Supports data-gnh-show-if, gnh-show, gnh-hide, gnh-if
    */
   updateConditionalElement(element) {
     // Check for all conditional attribute formats
     const showIf =
-      element.getAttribute("bbb-show") ||
-      element.getAttribute("data-bb-show-if");
-    const hideIf = element.getAttribute("bbb-hide");
-    const renderIf = element.getAttribute("bbb-if");
+      element.getAttribute("gnh-show") ||
+      element.getAttribute("data-gnh-show-if");
+    const hideIf = element.getAttribute("gnh-hide");
+    const renderIf = element.getAttribute("gnh-if");
 
     // For now, just handle show/hide based on existence
     // Full implementation would evaluate conditions against data
@@ -362,12 +362,12 @@ class BBDataBinder {
 
   /**
    * Register a form for handling
-   * Supports both data-bb-form and bbb-form
+   * Supports both data-gnh-form and gnh-form
    */
   registerForm(form) {
     // Check for both old and new attribute formats
     const formAction =
-      form.getAttribute("bbb-form") || form.getAttribute("data-bb-form");
+      form.getAttribute("gnh-form") || form.getAttribute("data-gnh-form");
     if (!formAction) return;
 
     this.log("Registering form", { action: formAction, form });
@@ -379,7 +379,7 @@ class BBDataBinder {
     });
 
     // Set up real-time validation if configured
-    const validateOnChange = form.getAttribute("data-bb-validate") === "live";
+    const validateOnChange = form.getAttribute("data-gnh-validate") === "live";
     if (validateOnChange) {
       const inputs = form.querySelectorAll("input, select, textarea");
       inputs.forEach((input) => {
@@ -460,9 +460,15 @@ class BBDataBinder {
       case "create-organisation":
         return "/v1/organisations";
       default:
-        // Custom endpoint from data-bb-endpoint attribute
-        const form = document.querySelector(`[data-bb-form="${action}"]`);
-        return form?.getAttribute("data-bb-endpoint") || `/v1/${action}`;
+        // Custom endpoint from data-gnh-endpoint attribute
+        const form = document.querySelector(
+          `[data-gnh-form="${action}"], [gnh-form="${action}"]`
+        );
+        return (
+          form?.getAttribute("data-gnh-endpoint") ||
+          form?.getAttribute("gnh-endpoint") ||
+          `/v1/${action}`
+        );
     }
   }
 
@@ -604,11 +610,11 @@ class BBDataBinder {
   getValidationRules(input) {
     const rules = {
       required: input.hasAttribute("required"),
-      type: input.getAttribute("data-bb-validate-type") || input.type,
-      minLength: parseInt(input.getAttribute("data-bb-validate-min")) || null,
-      maxLength: parseInt(input.getAttribute("data-bb-validate-max")) || null,
-      pattern: input.getAttribute("data-bb-validate-pattern"),
-      patternMessage: input.getAttribute("data-bb-validate-message"),
+      type: input.getAttribute("data-gnh-validate-type") || input.type,
+      minLength: parseInt(input.getAttribute("data-gnh-validate-min")) || null,
+      maxLength: parseInt(input.getAttribute("data-gnh-validate-max")) || null,
+      pattern: input.getAttribute("data-gnh-validate-pattern"),
+      patternMessage: input.getAttribute("data-gnh-validate-message"),
     };
 
     return rules;
@@ -621,20 +627,20 @@ class BBDataBinder {
     const isValid = errors.length === 0;
 
     // Remove existing validation classes and messages
-    input.classList.remove("bb-field-valid", "bb-field-invalid");
-    const existingError = input.parentElement.querySelector(".bb-field-error");
+    input.classList.remove("gnh-field-valid", "gnh-field-invalid");
+    const existingError = input.parentElement.querySelector(".gnh-field-error");
     if (existingError) {
       existingError.remove();
     }
 
     // Add validation state
     if (input.value.trim()) {
-      input.classList.add(isValid ? "bb-field-valid" : "bb-field-invalid");
+      input.classList.add(isValid ? "gnh-field-valid" : "gnh-field-invalid");
 
       // Show error message
       if (!isValid) {
         const errorDiv = document.createElement("div");
-        errorDiv.className = "bb-field-error";
+        errorDiv.className = "gnh-field-error";
         errorDiv.textContent = errors[0]; // Show first error
         errorDiv.style.cssText =
           "color: #dc2626; font-size: 12px; margin-top: 4px;";
@@ -650,7 +656,7 @@ class BBDataBinder {
     const submitButton = form.querySelector(
       'button[type="submit"], input[type="submit"]'
     );
-    const loadingElements = form.querySelectorAll("[data-bb-loading]");
+    const loadingElements = form.querySelectorAll("[data-gnh-loading]");
 
     if (submitButton) {
       submitButton.disabled = loading;
@@ -681,7 +687,7 @@ class BBDataBinder {
     this.log("Form submission successful", { action, result });
 
     // Clear form if specified
-    if (form.getAttribute("data-bb-clear-on-success") === "true") {
+    if (form.getAttribute("data-gnh-clear-on-success") === "true") {
       form.reset();
     }
 
@@ -689,14 +695,14 @@ class BBDataBinder {
     if (action === "create-organisation") {
       const newOrg = result?.data?.organisation;
       if (newOrg) {
-        window.BB_ACTIVE_ORG = newOrg;
-        if (Array.isArray(window.BB_ORGANISATIONS)) {
-          window.BB_ORGANISATIONS.push(newOrg);
+        window.GNH_ACTIVE_ORG = newOrg;
+        if (Array.isArray(window.GNH_ORGANISATIONS)) {
+          window.GNH_ORGANISATIONS.push(newOrg);
         } else {
-          window.BB_ORGANISATIONS = [newOrg];
+          window.GNH_ORGANISATIONS = [newOrg];
         }
         document.dispatchEvent(
-          new CustomEvent("bb:org-switched", {
+          new CustomEvent("gnh:org-switched", {
             detail: { organisation: newOrg },
           })
         );
@@ -711,13 +717,13 @@ class BBDataBinder {
     );
 
     // Trigger custom success handler
-    const successEvent = new CustomEvent("bb-form-success", {
+    const successEvent = new CustomEvent("gnh-form-success", {
       detail: { action, result, form },
     });
     form.dispatchEvent(successEvent);
 
     // Redirect if specified
-    const redirectUrl = form.getAttribute("data-bb-redirect");
+    const redirectUrl = form.getAttribute("data-gnh-redirect");
     if (redirectUrl) {
       setTimeout(() => {
         window.location.href = redirectUrl;
@@ -739,7 +745,7 @@ class BBDataBinder {
     );
 
     // Trigger custom error handler
-    const errorEvent = new CustomEvent("bb-form-error", {
+    const errorEvent = new CustomEvent("gnh-form-error", {
       detail: { action, error, form },
     });
     form.dispatchEvent(errorEvent);
@@ -750,14 +756,14 @@ class BBDataBinder {
    */
   showFormMessage(form, message, type) {
     // Remove existing messages
-    const existingMessage = form.querySelector(".bb-form-message");
+    const existingMessage = form.querySelector(".gnh-form-message");
     if (existingMessage) {
       existingMessage.remove();
     }
 
     // Create message element
     const messageDiv = document.createElement("div");
-    messageDiv.className = `bb-form-message bb-form-message-${type}`;
+    messageDiv.className = `gnh-form-message gnh-form-message-${type}`;
     messageDiv.textContent = message;
 
     // Style message
@@ -886,7 +892,7 @@ class BBDataBinder {
 
     // Remove existing instances
     const existing = template.parent.querySelectorAll(
-      `[data-bb-template-instance="${templateName}"]`
+      `[data-gnh-template-instance="${templateName}"]`
     );
     existing.forEach((el) => el.remove());
 
@@ -913,32 +919,32 @@ class BBDataBinder {
 
     // Get template name from either old or new attribute
     const templateName =
-      template.element.getAttribute("bbb-template") ||
-      template.element.getAttribute("data-bb-template");
+      template.element.getAttribute("gnh-template") ||
+      template.element.getAttribute("data-gnh-template");
 
     // Mark as template instance
-    instance.setAttribute("data-bb-template-instance", templateName);
-    instance.removeAttribute("data-bb-template");
-    instance.removeAttribute("bbb-template");
+    instance.setAttribute("data-gnh-template-instance", templateName);
+    instance.removeAttribute("data-gnh-template");
+    instance.removeAttribute("gnh-template");
     instance.style.display = "";
 
     // Bind data to instance elements (support both old and new attributes)
     const bindElements = instance.querySelectorAll(
-      "[data-bb-bind], [bbb-text]"
+      "[data-gnh-bind], [gnh-text]"
     );
     bindElements.forEach((el) => {
       const path =
-        el.getAttribute("bbb-text") || el.getAttribute("data-bb-bind");
+        el.getAttribute("gnh-text") || el.getAttribute("data-gnh-bind");
       const value = this.getValueByPath(data, path);
       if (value !== undefined) {
         el.textContent = value;
       }
     });
 
-    // Handle style bindings (old format: data-bb-bind-style)
-    const oldStyleElements = instance.querySelectorAll("[data-bb-bind-style]");
+    // Handle style bindings (old format: data-gnh-bind-style)
+    const oldStyleElements = instance.querySelectorAll("[data-gnh-bind-style]");
     oldStyleElements.forEach((el) => {
-      const styleBinding = el.getAttribute("data-bb-bind-style");
+      const styleBinding = el.getAttribute("data-gnh-bind-style");
       const match = styleBinding.match(/^([^:]+):(.+)$/);
       if (match) {
         const [, property, template] = match;
@@ -949,12 +955,12 @@ class BBDataBinder {
       }
     });
 
-    // Handle style bindings (new format: bbb-style:property)
+    // Handle style bindings (new format: gnh-style:property)
     const styleAttrs = instance.attributes;
     for (let i = 0; i < styleAttrs.length; i++) {
       const attr = styleAttrs[i];
-      if (attr.name.startsWith("bbb-style:")) {
-        const property = attr.name.substring(10); // Remove 'bbb-style:' prefix
+      if (attr.name.startsWith("gnh-style:")) {
+        const property = attr.name.substring(10); // Remove 'gnh-style:' prefix
         const value = this.processTemplate(attr.value, data);
         if (value !== null) {
           instance.style[property] = value;
@@ -962,19 +968,19 @@ class BBDataBinder {
       }
     }
 
-    // Handle class binding (new format: bbb-class)
-    if (instance.hasAttribute("bbb-class")) {
-      const classTemplate = instance.getAttribute("bbb-class");
+    // Handle class binding (new format: gnh-class)
+    if (instance.hasAttribute("gnh-class")) {
+      const classTemplate = instance.getAttribute("gnh-class");
       const classValue = this.processTemplate(classTemplate, data);
       if (classValue !== null) {
         instance.setAttribute("class", classValue);
       }
     }
 
-    // Handle attribute bindings (old format: data-bb-bind-attr)
-    const oldAttrElements = instance.querySelectorAll("[data-bb-bind-attr]");
+    // Handle attribute bindings (old format: data-gnh-bind-attr)
+    const oldAttrElements = instance.querySelectorAll("[data-gnh-bind-attr]");
     oldAttrElements.forEach((el) => {
-      const attrBinding = el.getAttribute("data-bb-bind-attr");
+      const attrBinding = el.getAttribute("data-gnh-bind-attr");
       const match = attrBinding.match(/^([^:]+):(.+)$/);
       if (match) {
         const [, attribute, template] = match;
@@ -985,13 +991,13 @@ class BBDataBinder {
       }
     });
 
-    // Handle data binding attributes (bbb-href, bbb-src, etc.) - these set actual HTML attributes
+    // Handle data binding attributes (gnh-href, gnh-src, etc.) - these set actual HTML attributes
     const bindingAttrs = ["href", "src", "alt", "title", "placeholder"];
     bindingAttrs.forEach((attrName) => {
-      const bbbAttr = `bbb-${attrName}`;
-      instance.querySelectorAll(`[${bbbAttr}]`).forEach((el) => {
-        if (el.hasAttribute(bbbAttr)) {
-          const template = el.getAttribute(bbbAttr);
+      const gnhAttr = `gnh-${attrName}`;
+      instance.querySelectorAll(`[${gnhAttr}]`).forEach((el) => {
+        if (el.hasAttribute(gnhAttr)) {
+          const template = el.getAttribute(gnhAttr);
           const value = this.processTemplate(template, data);
           if (value !== null) {
             // Set the actual HTML attribute
@@ -1001,30 +1007,30 @@ class BBDataBinder {
       });
     });
 
-    // Handle data storage attributes (bbb-id, bbb-value) - these stay as bbb-* with interpolated values
+    // Handle data storage attributes (gnh-id, gnh-value) - these stay as gnh-* with interpolated values
     const storageAttrs = ["id", "value"];
     storageAttrs.forEach((attrName) => {
-      const bbbAttr = `bbb-${attrName}`;
-      instance.querySelectorAll(`[${bbbAttr}]`).forEach((el) => {
-        if (el.hasAttribute(bbbAttr)) {
-          const template = el.getAttribute(bbbAttr);
+      const gnhAttr = `gnh-${attrName}`;
+      instance.querySelectorAll(`[${gnhAttr}]`).forEach((el) => {
+        if (el.hasAttribute(gnhAttr)) {
+          const template = el.getAttribute(gnhAttr);
           const value = this.processTemplate(template, data);
           if (value !== null) {
-            // Keep as bbb-* attribute with interpolated value for handlers to read
-            el.setAttribute(bbbAttr, value);
+            // Keep as gnh-* attribute with interpolated value for handlers to read
+            el.setAttribute(gnhAttr, value);
           }
         }
       });
     });
 
-    // Handle conditional visibility (bbb-show, bbb-hide, bbb-if, data-bb-show-if)
+    // Handle conditional visibility (gnh-show, gnh-hide, gnh-if, data-gnh-show-if)
     instance
-      .querySelectorAll("[bbb-show], [bbb-hide], [bbb-if], [data-bb-show-if]")
+      .querySelectorAll("[gnh-show], [gnh-hide], [gnh-if], [data-gnh-show-if]")
       .forEach((el) => {
         const showCondition =
-          el.getAttribute("bbb-show") || el.getAttribute("data-bb-show-if");
-        const hideCondition = el.getAttribute("bbb-hide");
-        const ifCondition = el.getAttribute("bbb-if");
+          el.getAttribute("gnh-show") || el.getAttribute("data-gnh-show-if");
+        const hideCondition = el.getAttribute("gnh-hide");
+        const ifCondition = el.getAttribute("gnh-if");
 
         let shouldShow = true;
 
@@ -1164,7 +1170,7 @@ class BBDataBinder {
 
 // Export for use as module or global
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = BBDataBinder;
+  module.exports = GNHDataBinder;
 } else {
-  window.BBDataBinder = BBDataBinder;
+  window.GNHDataBinder = GNHDataBinder;
 }

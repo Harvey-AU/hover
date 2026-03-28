@@ -14,7 +14,7 @@
 
     </head>
 
-  <body class="page-job-details bb-auth-route-gated">
+  <body class="page-job-details gnh-auth-route-gated">
     <script type="module" src="/app/lib/global-nav.js"></script>
 
     <main>
@@ -24,21 +24,21 @@
           <span class="share-label">Public Link</span>
           <a id="shareLinkAnchor" href="#" target="_blank" rel="noopener noreferrer">—</a>
         </div>
-        <button id="revokeShareLinkBtn" class="bb-btn-secondary bb-btn" aria-label="Revoke share link">Revoke Link</button>
+        <button id="revokeShareLinkBtn" class="gnh-btn-secondary gnh-btn" aria-label="Revoke share link">Revoke Link</button>
       </div>
 
       <section>
         <div class="section-title">
           <div>
-            <h2 bbb-text="job.domain">—</h2>
+            <h2 gnh-text="job.domain">—</h2>
             <p style="margin: 4px 0 0; color: #6b7280; font-size: 14px">
-              Job ID: <span bbb-text="job.id">—</span>
+              Job ID: <span gnh-text="job.id">—</span>
             </p>
           </div>
           <div style="display: flex; gap: 8px">
             <button
               id="shareJobBtn"
-              class="bb-btn bb-btn-secondary"
+              class="gnh-btn gnh-btn-secondary"
               aria-label="Generate or copy shareable link"
             >
               Generate Link
@@ -47,7 +47,7 @@
             <button
               id="restartJobBtn"
               type="button"
-              class="bb-btn bb-btn-primary"
+              class="gnh-btn gnh-btn-primary"
               style="display: none"
               aria-label="Restart job"
             >
@@ -56,7 +56,7 @@
             <button
               id="cancelJobBtn"
               type="button"
-              class="bb-btn bb-btn-primary"
+              class="gnh-btn gnh-btn-primary"
               style="display: none"
               aria-label="Cancel job"
             >
@@ -69,60 +69,60 @@
           <div class="info-card">
             <h3>Status</h3>
             <p>
-              <span class="status-pill" bbb-class="status-pill {job.status_class}" bbb-text="job.status_label">—</span>
+              <span class="status-pill" gnh-class="status-pill {job.status_class}" gnh-text="job.status_label">—</span>
             </p>
           </div>
           <div class="info-card">
             <h3>Progress</h3>
-            <p bbb-text="job.progress_display">—</p>
+            <p gnh-text="job.progress_display">—</p>
           </div>
           <div class="info-card">
             <h3>Total Tasks</h3>
-            <p bbb-text="job.total_tasks_display">—</p>
+            <p gnh-text="job.total_tasks_display">—</p>
           </div>
           <div class="info-card">
             <h3>Completed</h3>
-            <p bbb-text="job.completed_tasks_display">—</p>
+            <p gnh-text="job.completed_tasks_display">—</p>
           </div>
           <div class="info-card">
             <h3>Failed</h3>
-            <p bbb-text="job.failed_tasks_display">—</p>
+            <p gnh-text="job.failed_tasks_display">—</p>
           </div>
           <div class="info-card">
             <h3>Concurrency</h3>
-            <p bbb-text="job.concurrency_display">—</p>
+            <p gnh-text="job.concurrency_display">—</p>
           </div>
           <div class="info-card">
             <h3>Max Pages</h3>
-            <p bbb-text="job.max_pages_display">—</p>
+            <p gnh-text="job.max_pages_display">—</p>
           </div>
           <div class="info-card">
             <h3>Source Type</h3>
-            <p bbb-text="job.source_type_display">—</p>
+            <p gnh-text="job.source_type_display">—</p>
           </div>
           <div class="info-card">
             <h3>Crawl Delay</h3>
-            <p bbb-text="job.crawl_delay_display">—</p>
+            <p gnh-text="job.crawl_delay_display">—</p>
           </div>
           <div class="info-card">
             <h3>Adaptive Delay</h3>
-            <p bbb-text="job.adaptive_delay_display">—</p>
+            <p gnh-text="job.adaptive_delay_display">—</p>
           </div>
           <div class="info-card">
             <h3>Started At</h3>
-            <p bbb-text="job.started_at_display">—</p>
+            <p gnh-text="job.started_at_display">—</p>
           </div>
           <div class="info-card">
             <h3>Completed At</h3>
-            <p bbb-text="job.completed_at_display">—</p>
+            <p gnh-text="job.completed_at_display">—</p>
           </div>
           <div class="info-card">
             <h3>Total Duration</h3>
-            <p bbb-text="job.duration_display">—</p>
+            <p gnh-text="job.duration_display">—</p>
           </div>
           <div class="info-card">
             <h3>Average Per Task</h3>
-            <p bbb-text="job.avg_time_display">—</p>
+            <p gnh-text="job.avg_time_display">—</p>
           </div>
         </div>
       </section>
@@ -130,7 +130,7 @@
       <section>
         <div class="section-title">
           <h2>Performance Summary</h2>
-          <button class="bb-btn" id="refreshJobBtn" aria-label="Refresh job overview">↻ Refresh</button>
+          <button class="gnh-btn" id="refreshJobBtn" aria-label="Refresh job overview">↻ Refresh</button>
         </div>
         <div class="stats-container">
           <div class="stat-row" data-metrics-empty style="grid-column: 1 / -1; display: none; text-align: center">
@@ -139,132 +139,132 @@
           <div class="stats-group" data-metric-group="cache">
             <h3>Cache Performance</h3>
             <div class="stat-row">
-              <span bbb-help="cache_hits">Cache Hits</span>
-              <strong bbb-text="metrics.cache.hits">0</strong>
+              <span gnh-help="cache_hits">Cache Hits</span>
+              <strong gnh-text="metrics.cache.hits">0</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="cache_misses">Cache Misses</span>
-              <strong bbb-text="metrics.cache.misses">0</strong>
+              <span gnh-help="cache_misses">Cache Misses</span>
+              <strong gnh-text="metrics.cache.misses">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.cache.bypass_visible">
               <span>Cache Bypass</span>
-              <strong bbb-text="metrics.cache.bypass">0</strong>
+              <strong gnh-text="metrics.cache.bypass">0</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="cache_hit_rate">Cache Hit Rate</span>
-              <strong bbb-text="metrics.cache.hit_rate">0%</strong>
+              <span gnh-help="cache_hit_rate">Cache Hit Rate</span>
+              <strong gnh-text="metrics.cache.hit_rate">0%</strong>
             </div>
           </div>
 
           <div class="stats-group" data-metric-group="warming">
             <h3>Cache Warming Effect</h3>
             <div class="stat-row">
-              <span bbb-help="time_saved">Time Saved</span>
-              <strong bbb-text="metrics.warming.time_saved">0s</strong>
+              <span gnh-help="time_saved">Time Saved</span>
+              <strong gnh-text="metrics.warming.time_saved">0s</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="avg_saved_per_page">Avg Saved/Page</span>
-              <strong bbb-text="metrics.warming.avg_saved_per_page">0ms</strong>
+              <span gnh-help="avg_saved_per_page">Avg Saved/Page</span>
+              <strong gnh-text="metrics.warming.avg_saved_per_page">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.warming.avg_second_request_visible">
               <span>Avg 2nd Request</span>
-              <strong bbb-text="metrics.warming.avg_second_request">0ms</strong>
+              <strong gnh-text="metrics.warming.avg_second_request">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.warming.validated_visible">
               <span>Pages Validated</span>
-              <strong bbb-text="metrics.warming.validated">0</strong>
+              <strong gnh-text="metrics.warming.validated">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.warming.improved_visible">
               <span>Improved Pages</span>
-              <strong bbb-text="metrics.warming.improved">0</strong>
+              <strong gnh-text="metrics.warming.improved">0</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="improvement_rate">Improvement Rate</span>
-              <strong bbb-text="metrics.warming.improvement_rate">0%</strong>
+              <span gnh-help="improvement_rate">Improvement Rate</span>
+              <strong gnh-text="metrics.warming.improvement_rate">0%</strong>
             </div>
           </div>
 
           <div class="stats-group" data-metric-group="performance">
             <h3>Performance Statistics</h3>
             <div class="stat-row">
-              <span bbb-help="avg_response_time">Avg Response Time</span>
-              <strong bbb-text="metrics.performance.avg">0ms</strong>
+              <span gnh-help="avg_response_time">Avg Response Time</span>
+              <strong gnh-text="metrics.performance.avg">0ms</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="median_response_time">Median Response Time</span>
-              <strong bbb-text="metrics.performance.median">0ms</strong>
+              <span gnh-help="median_response_time">Median Response Time</span>
+              <strong gnh-text="metrics.performance.median">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.performance.p90_visible">
-              <span bbb-help="p90">P90 Response Time</span>
-              <strong bbb-text="metrics.performance.p90">0ms</strong>
+              <span gnh-help="p90">P90 Response Time</span>
+              <strong gnh-text="metrics.performance.p90">0ms</strong>
             </div>
             <div class="stat-row">
-              <span bbb-help="p95_response_time">P95 Response Time</span>
-              <strong bbb-text="metrics.performance.p95">0ms</strong>
+              <span gnh-help="p95_response_time">P95 Response Time</span>
+              <strong gnh-text="metrics.performance.p95">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.performance.p99_visible">
-              <span bbb-help="p99_response_time">P99 Response Time</span>
-              <strong bbb-text="metrics.performance.p99">0ms</strong>
+              <span gnh-help="p99_response_time">P99 Response Time</span>
+              <strong gnh-text="metrics.performance.p99">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.performance.min_visible">
               <span>Fastest Page</span>
-              <strong bbb-text="metrics.performance.min">0ms</strong>
+              <strong gnh-text="metrics.performance.min">0ms</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.performance.max_visible">
               <span>Slowest Page</span>
-              <strong bbb-text="metrics.performance.max">0ms</strong>
+              <strong gnh-text="metrics.performance.max">0ms</strong>
             </div>
           </div>
 
           <div class="stats-group" data-metric-group="distribution">
             <h3>Response Time Distribution</h3>
             <div class="stat-row" data-metric-field="metrics.distribution.under_500ms_visible">
-              <span bbb-help="response_time_under_500ms">Under 500ms</span>
-              <strong bbb-text="metrics.distribution.under_500ms">0</strong>
+              <span gnh-help="response_time_under_500ms">Under 500ms</span>
+              <strong gnh-text="metrics.distribution.under_500ms">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._500ms_to_1s_visible">
-              <span bbb-help="response_time_500ms_to_1s">500ms-1s</span>
-              <strong bbb-text="metrics.distribution._500ms_to_1s">0</strong>
+              <span gnh-help="response_time_500ms_to_1s">500ms-1s</span>
+              <strong gnh-text="metrics.distribution._500ms_to_1s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._1_to_1_5s_visible">
-              <span bbb-help="response_time_1_to_1_5s">1-1.5s</span>
-              <strong bbb-text="metrics.distribution._1_to_1_5s">0</strong>
+              <span gnh-help="response_time_1_to_1_5s">1-1.5s</span>
+              <strong gnh-text="metrics.distribution._1_to_1_5s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._1_5_to_2s_visible">
-              <span bbb-help="response_time_1_5_to_2s">1.5-2s</span>
-              <strong bbb-text="metrics.distribution._1_5_to_2s">0</strong>
+              <span gnh-help="response_time_1_5_to_2s">1.5-2s</span>
+              <strong gnh-text="metrics.distribution._1_5_to_2s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._2_to_3s_visible">
-              <span bbb-help="response_time_2_to_3s">2-3s</span>
-              <strong bbb-text="metrics.distribution._2_to_3s">0</strong>
+              <span gnh-help="response_time_2_to_3s">2-3s</span>
+              <strong gnh-text="metrics.distribution._2_to_3s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._3_to_5s_visible">
-              <span bbb-help="response_time_3_to_5s">3-5s</span>
-              <strong bbb-text="metrics.distribution._3_to_5s">0</strong>
+              <span gnh-help="response_time_3_to_5s">3-5s</span>
+              <strong gnh-text="metrics.distribution._3_to_5s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution._5_to_10s_visible">
-              <span bbb-help="response_time_5_to_10s">5-10s</span>
-              <strong bbb-text="metrics.distribution._5_to_10s">0</strong>
+              <span gnh-help="response_time_5_to_10s">5-10s</span>
+              <strong gnh-text="metrics.distribution._5_to_10s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.distribution.over_10s_visible">
-              <span bbb-help="response_time_over_10s">Over 10s</span>
-              <strong bbb-text="metrics.distribution.over_10s">0</strong>
+              <span gnh-help="response_time_over_10s">Over 10s</span>
+              <strong gnh-text="metrics.distribution.over_10s">0</strong>
             </div>
           </div>
 
           <div class="stats-group" data-metric-group="reliability">
             <h3>Reliability</h3>
             <div class="stat-row" data-metric-field="metrics.reliability.failed_pages_visible">
-              <span bbb-help="total_failed_pages">Failed Pages</span>
-              <strong bbb-text="metrics.reliability.failed_pages">0</strong>
+              <span gnh-help="total_failed_pages">Failed Pages</span>
+              <strong gnh-text="metrics.reliability.failed_pages">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.reliability.slow_over_3s_visible">
-              <span bbb-help="slow_pages_over_3s">Slow Pages (&gt;3s)</span>
-              <strong bbb-text="metrics.reliability.slow_over_3s">0</strong>
+              <span gnh-help="slow_pages_over_3s">Slow Pages (&gt;3s)</span>
+              <strong gnh-text="metrics.reliability.slow_over_3s">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.reliability.tasks_with_errors_visible">
               <span>Tasks With Errors</span>
-              <strong bbb-text="metrics.reliability.tasks_with_errors">0</strong>
+              <strong gnh-text="metrics.reliability.tasks_with_errors">0</strong>
             </div>
           </div>
 
@@ -272,19 +272,19 @@
             <h3>Discovery Sources</h3>
             <div class="stat-row" data-metric-field="metrics.discovery.sitemap_visible">
               <span>From Sitemap</span>
-              <strong bbb-text="metrics.discovery.sitemap">0</strong>
+              <strong gnh-text="metrics.discovery.sitemap">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.discovery.discovered_visible">
               <span>Discovered</span>
-              <strong bbb-text="metrics.discovery.discovered">0</strong>
+              <strong gnh-text="metrics.discovery.discovered">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.discovery.manual_visible">
               <span>Manual</span>
-              <strong bbb-text="metrics.discovery.manual">0</strong>
+              <strong gnh-text="metrics.discovery.manual">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.discovery.unique_sources_visible">
               <span>Unique Sources</span>
-              <strong bbb-text="metrics.discovery.unique_sources">0</strong>
+              <strong gnh-text="metrics.discovery.unique_sources">0</strong>
             </div>
           </div>
 
@@ -292,15 +292,15 @@
             <h3>Redirects</h3>
             <div class="stat-row" data-metric-field="metrics.redirects.total_visible">
               <span>Redirects</span>
-              <strong bbb-text="metrics.redirects.total">0</strong>
+              <strong gnh-text="metrics.redirects.total">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.redirects.permanent_visible">
               <span>301 (Permanent)</span>
-              <strong bbb-text="metrics.redirects.permanent">0</strong>
+              <strong gnh-text="metrics.redirects.permanent">0</strong>
             </div>
             <div class="stat-row" data-metric-field="metrics.redirects.temporary_visible">
               <span>302 (Temporary)</span>
-              <strong bbb-text="metrics.redirects.temporary">0</strong>
+              <strong gnh-text="metrics.redirects.temporary">0</strong>
             </div>
           </div>
 
@@ -311,7 +311,7 @@
           <h2>Tasks</h2>
           <div class="tasks-controls">
             <label for="tasksLimit" class="sr-only" aria-hidden="true">Tasks per page</label>
-            <select id="tasksLimit" class="bb-btn" aria-label="Tasks per page">
+            <select id="tasksLimit" class="gnh-btn" aria-label="Tasks per page">
               <option value="25">25</option>
               <option value="50" selected>50</option>
               <option value="100">100</option>
@@ -320,7 +320,7 @@
             <input 
               type="text" 
               id="pathFilter" 
-              class="bb-input" 
+              class="gnh-input" 
               placeholder="Search" 
               style="max-width: 250px; margin: 0 8px;"
             />
@@ -334,23 +334,23 @@
               <button data-cache="hit">Hit</button>
               <button data-cache="miss">Miss</button>
             </div>
-            <div class="bb-dropdown">
-              <button class="bb-btn" id="exportMenuToggle">Export ▼</button>
+            <div class="gnh-dropdown">
+              <button class="gnh-btn" id="exportMenuToggle">Export ▼</button>
               <div
-                class="bb-dropdown-menu"
+                class="gnh-dropdown-menu"
                 id="exportMenu"
                 style="display: none; position: absolute; background: white; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 4px; min-width: 220px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);"
               >
-                <button class="bb-btn" data-type="job" data-format="csv" style="width: 100%; text-align: left">All Tasks (CSV)</button>
-                <button class="bb-btn" data-type="broken-links" data-format="csv" style="width: 100%; text-align: left">Failed Pages (CSV)</button>
-                <button class="bb-btn" data-type="slow-pages" data-format="csv" style="width: 100%; text-align: left">Slow Pages (CSV)</button>
+                <button class="gnh-btn" data-type="job" data-format="csv" style="width: 100%; text-align: left">All Tasks (CSV)</button>
+                <button class="gnh-btn" data-type="broken-links" data-format="csv" style="width: 100%; text-align: left">Failed Pages (CSV)</button>
+                <button class="gnh-btn" data-type="slow-pages" data-format="csv" style="width: 100%; text-align: left">Slow Pages (CSV)</button>
                 <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 6px 0" />
-                <button class="bb-btn" data-type="job" data-format="json" style="width: 100%; text-align: left">All Tasks (JSON)</button>
-                <button class="bb-btn" data-type="broken-links" data-format="json" style="width: 100%; text-align: left">Failed Pages (JSON)</button>
-                <button class="bb-btn" data-type="slow-pages" data-format="json" style="width: 100%; text-align: left">Slow Pages (JSON)</button>
+                <button class="gnh-btn" data-type="job" data-format="json" style="width: 100%; text-align: left">All Tasks (JSON)</button>
+                <button class="gnh-btn" data-type="broken-links" data-format="json" style="width: 100%; text-align: left">Failed Pages (JSON)</button>
+                <button class="gnh-btn" data-type="slow-pages" data-format="json" style="width: 100%; text-align: left">Slow Pages (JSON)</button>
               </div>
             </div>
-            <button class="bb-btn" id="refreshTasksBtn" aria-label="Refresh task list">↻ Refresh Tasks</button>
+            <button class="gnh-btn" id="refreshTasksBtn" aria-label="Refresh task list">↻ Refresh Tasks</button>
           </div>
         </div>
 
@@ -366,15 +366,15 @@
             </table>
           </div>
           <div class="pagination" id="tasksPagination" style="display: none">
-            <button class="bb-btn" id="prevTasksBtn" aria-label="Previous page of tasks">← Previous</button>
-            <span style="font-size: 13px; color: #6b7280" bbb-text="tasks.pagination.summary"></span>
-            <button class="bb-btn" id="nextTasksBtn" aria-label="Next page of tasks">Next →</button>
+            <button class="gnh-btn" id="prevTasksBtn" aria-label="Previous page of tasks">← Previous</button>
+            <span style="font-size: 13px; color: #6b7280" gnh-text="tasks.pagination.summary"></span>
+            <button class="gnh-btn" id="nextTasksBtn" aria-label="Next page of tasks">Next →</button>
           </div>
         </div>
       </section>
     </main>
 
-    <script src="/js/bb-data-binder.js" defer></script>
+    <script src="/js/gnh-data-binder.js" defer></script>
     <script src="/js/job-page.js" defer></script>
     <script type="module" src="/app/pages/job-details.js"></script>
   </body>

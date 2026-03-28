@@ -10,6 +10,8 @@
     />
     <title>Settings - Hover</title>
     <link rel="stylesheet" href="/styles/app.css" />
+    <link rel="stylesheet" href="/app/styles/tokens.css" />
+    <link rel="stylesheet" href="/app/styles/components.css" />
 
     <!-- Sentry Error Monitoring & Performance -->
     <script
@@ -65,7 +67,7 @@
       })();
     </script>
   </head>
-  <body class="page-settings bb-auth-route-gated">
+  <body class="page-settings gnh-auth-route-gated">
     <script type="module" src="/app/lib/global-nav.js"></script>
     <main class="settings-main">
       <div class="settings-container">
@@ -76,7 +78,7 @@
           </div>
 
           <div class="settings-group">
-            <div class="bb-org-switcher" id="settingsOrgSwitcher">
+            <div class="gnh-org-switcher" id="settingsOrgSwitcher">
               <button
                 class="settings-org-switcher"
                 id="settingsOrgSwitcherBtn"
@@ -86,12 +88,12 @@
                 <span id="settingsOrgName">Organisation</span>
                 <span>▼</span>
               </button>
-              <div class="bb-org-dropdown" id="settingsOrgDropdown">
-                <div class="bb-org-dropdown-header">Switch Organisation</div>
-                <div class="bb-org-list" id="settingsOrgList"></div>
-                <div class="bb-org-dropdown-footer">
+              <div class="gnh-org-dropdown" id="settingsOrgDropdown">
+                <div class="gnh-org-dropdown-header">Switch Organisation</div>
+                <div class="gnh-org-list" id="settingsOrgList"></div>
+                <div class="gnh-org-dropdown-footer">
                   <button
-                    class="bb-org-create-btn"
+                    class="gnh-org-create-btn"
                     id="settingsCreateOrgBtn"
                     aria-label="Create a new organisation"
                   >
@@ -156,7 +158,7 @@
                       aria-label="Last name"
                     />
                     <button
-                      class="bb-button bb-button-outline settings-btn-sm"
+                      class="gnh-button gnh-button-outline settings-btn-sm"
                       id="settingsSaveName"
                       type="button"
                     >
@@ -184,7 +186,7 @@
                   </div>
                 </div>
                 <button
-                  class="bb-button bb-button-outline"
+                  class="gnh-button gnh-button-outline"
                   id="settingsResetPassword"
                 >
                   Send reset email
@@ -247,7 +249,7 @@
                       <option value="admin">Admin</option>
                     </select>
                   </div>
-                  <button class="bb-button bb-button-primary" data-admin-only>
+                  <button class="gnh-button gnh-button-primary" data-admin-only>
                     Send invite
                   </button>
                 </div>
@@ -373,7 +375,7 @@
                     Paddle connection is required to manage billing.
                   </div>
                 </div>
-                <button class="bb-button bb-button-outline" disabled>
+                <button class="gnh-button gnh-button-outline" disabled>
                   Manage billing
                 </button>
               </div>
@@ -416,10 +418,10 @@
                 failure notifications.
               </p>
 
-              <div id="slackConnectionsList" bbb-list="slack-connections">
+              <div id="slackConnectionsList" gnh-list="slack-connections">
                 <div
                   class="settings-row settings-hidden"
-                  bbb-template="slack-connection"
+                  gnh-template="slack-connection"
                 >
                   <div>
                     <div
@@ -428,8 +430,8 @@
                     <div class="slack-connected-date settings-muted"></div>
                   </div>
                   <button
-                    class="bb-button bb-button-outline"
-                    bbb-action="slack-disconnect"
+                    class="gnh-button gnh-button-outline"
+                    gnh-action="slack-disconnect"
                   >
                     Disconnect
                   </button>
@@ -441,8 +443,8 @@
                   No Slack workspace connected yet.
                 </p>
                 <button
-                  class="bb-button bb-button-primary settings-btn-icon"
-                  bbb-action="slack-connect"
+                  class="gnh-button gnh-button-primary settings-btn-icon"
+                  gnh-action="slack-connect"
                 >
                   Connect Slack Workspace
                 </button>
@@ -481,16 +483,16 @@
               </p>
 
               <button
-                class="bb-button bb-button-primary settings-btn-icon settings-btn-icon--spaced"
-                bbb-action="google-connect"
+                class="gnh-button gnh-button-primary settings-btn-icon settings-btn-icon--spaced"
+                gnh-action="google-connect"
               >
                 Connect Google Analytics
               </button>
 
-              <div id="googleConnectionsList" bbb-list="google-connections">
+              <div id="googleConnectionsList" gnh-list="google-connections">
                 <div
                   class="settings-row settings-hidden"
-                  bbb-template="google-connection"
+                  gnh-template="google-connection"
                 >
                   <div>
                     <div class="google-name settings-connection-name"></div>
@@ -499,17 +501,17 @@
                   </div>
                   <div class="settings-connection-actions">
                     <span class="google-status settings-muted"></span>
-                    <label class="bb-toggle">
+                    <label class="gnh-toggle">
                       <input
                         type="checkbox"
                         class="google-status-toggle"
                         aria-label="Enable Google Analytics connection"
                       />
-                      <span class="bb-toggle-slider"></span>
+                      <span class="gnh-toggle-slider"></span>
                     </label>
                     <button
-                      class="bb-button bb-button-outline"
-                      bbb-action="google-disconnect"
+                      class="gnh-button gnh-button-outline"
+                      gnh-action="google-disconnect"
                     >
                       Disconnect
                     </button>
@@ -601,18 +603,18 @@
                   manage schedules.
                 </p>
 
-                <div id="webflowConnectionsList" bbb-list="webflow-connections">
+                <div id="webflowConnectionsList" gnh-list="webflow-connections">
                   <div
                     class="settings-row settings-hidden"
-                    bbb-template="webflow-connection"
+                    gnh-template="webflow-connection"
                   >
                     <div>
                       <div class="webflow-name settings-connection-name"></div>
                       <div class="webflow-connected-date settings-muted"></div>
                     </div>
                     <button
-                      class="bb-button bb-button-outline"
-                      bbb-action="webflow-disconnect"
+                      class="gnh-button gnh-button-outline"
+                      gnh-action="webflow-disconnect"
                     >
                       Disconnect
                     </button>
@@ -624,8 +626,8 @@
                     <h4 class="settings-sites-title">Configure Sites</h4>
                     <button
                       id="webflowSitesRefresh"
-                      class="bb-button bb-button-outline settings-btn-sm"
-                      bbb-action="webflow-sites-refresh"
+                      class="gnh-button gnh-button-outline settings-btn-sm"
+                      gnh-action="webflow-sites-refresh"
                       title="Refresh sites list"
                       aria-label="Refresh sites list"
                     >
@@ -646,7 +648,7 @@
                   <div id="webflowSitesList">
                     <div
                       class="webflow-site-row settings-site-row"
-                      bbb-template="webflow-site"
+                      gnh-template="webflow-site"
                     >
                       <div class="settings-site-content">
                         <div class="settings-site-info">
@@ -658,7 +660,7 @@
                             <label class="settings-site-label">Schedule:</label>
                             <select
                               class="site-schedule settings-site-select"
-                              bbb-action="site-schedule-change"
+                              gnh-action="site-schedule-change"
                               aria-label="Schedule frequency for site"
                             >
                               <option value="">None</option>
@@ -672,13 +674,13 @@
                             <label class="settings-site-label"
                               >Run on Publish:</label
                             >
-                            <label class="bb-toggle">
+                            <label class="gnh-toggle">
                               <input
                                 type="checkbox"
                                 class="site-autopublish"
                                 aria-label="Run on Publish"
                               />
-                              <span class="bb-toggle-slider"></span>
+                              <span class="gnh-toggle-slider"></span>
                             </label>
                           </div>
                         </div>
@@ -703,8 +705,8 @@
                   >
                     <button
                       id="webflowSitesPrevPage"
-                      class="bb-button bb-button-outline settings-pagination-btn settings-pagination-btn--prev"
-                      bbb-action="webflow-sites-prev"
+                      class="gnh-button gnh-button-outline settings-pagination-btn settings-pagination-btn--prev"
+                      gnh-action="webflow-sites-prev"
                       aria-label="Previous page of Webflow sites"
                       disabled
                     >
@@ -716,8 +718,8 @@
                     ></span>
                     <button
                       id="webflowSitesNextPage"
-                      class="bb-button bb-button-outline settings-pagination-btn settings-pagination-btn--next"
-                      bbb-action="webflow-sites-next"
+                      class="gnh-button gnh-button-outline settings-pagination-btn settings-pagination-btn--next"
+                      gnh-action="webflow-sites-next"
                       aria-label="Next page of Webflow sites"
                     >
                       Next
@@ -728,8 +730,8 @@
                 <div id="webflowEmptyState" class="settings-empty-state">
                   <p class="settings-empty-text">No Webflow connection yet.</p>
                   <button
-                    class="bb-button bb-button-primary settings-btn-icon"
-                    bbb-action="webflow-connect"
+                    class="gnh-button gnh-button-primary settings-btn-icon"
+                    gnh-action="webflow-connect"
                   >
                     Connect Webflow
                   </button>
@@ -766,7 +768,7 @@
                     </div>
                   </div>
                   <button
-                    class="bb-button bb-button-outline settings-btn-sm"
+                    class="gnh-button gnh-button-outline settings-btn-sm"
                     id="autoCrawlSchedulesRefresh"
                     type="button"
                   >
@@ -774,43 +776,43 @@
                   </button>
                 </div>
 
-                <div class="bb-jobs-list" id="settingsSchedulesList">
+                <div class="gnh-jobs-list" id="settingsSchedulesList">
                   <div
-                    class="bb-job-card"
+                    class="gnh-job-card"
                     data-settings-template="schedule"
                     style="display: none"
                   >
-                    <div class="bb-job-header">
-                      <div class="bb-job-domain">example.com</div>
-                      <div class="bb-schedule-info">
+                    <div class="gnh-job-header">
+                      <div class="gnh-job-domain">example.com</div>
+                      <div class="gnh-schedule-info">
                         <span>24 hours</span>
-                        <span class="bb-schedule-status bb-schedule-enabled">
+                        <span class="gnh-schedule-status gnh-schedule-enabled">
                           Enabled
                         </span>
                       </div>
                     </div>
-                    <div class="bb-job-footer">
+                    <div class="gnh-job-footer">
                       <div>
-                        <span class="bb-schedule-label">Next run:</span>
+                        <span class="gnh-schedule-label">Next run:</span>
                         <span>-</span>
                       </div>
-                      <div class="bb-job-actions">
+                      <div class="gnh-job-actions">
                         <button
-                          class="bb-job-link"
+                          class="gnh-job-link"
                           data-schedule-action="toggle"
                           type="button"
                         >
                           Disable
                         </button>
                         <button
-                          class="bb-job-link"
+                          class="gnh-job-link"
                           data-schedule-action="view-jobs"
                           type="button"
                         >
                           View Jobs
                         </button>
                         <button
-                          class="bb-job-link bb-job-link--danger"
+                          class="gnh-job-link gnh-job-link--danger"
                           data-schedule-action="delete"
                           type="button"
                         >
@@ -819,7 +821,7 @@
                       </div>
                     </div>
                   </div>
-                  <div id="settingsSchedulesEmpty" class="bb-schedules-empty">
+                  <div id="settingsSchedulesEmpty" class="gnh-schedules-empty">
                     No schedules configured.
                   </div>
                 </div>
@@ -849,7 +851,7 @@
           <option value="member">Member</option>
           <option value="admin">Admin</option>
         </select>
-        <button class="bb-button bb-button-outline settings-member-remove">
+        <button class="gnh-button gnh-button-outline settings-member-remove">
           Remove
         </button>
       </div>
@@ -864,12 +866,12 @@
         <span class="settings-invite-role"></span>
         <div class="settings-invite-actions">
           <button
-            class="bb-button bb-button-outline settings-invite-copy"
+            class="gnh-button gnh-button-outline settings-invite-copy"
             title="Copy invite link"
           >
             Copy link
           </button>
-          <button class="bb-button bb-button-outline settings-invite-revoke">
+          <button class="gnh-button gnh-button-outline settings-invite-revoke">
             Revoke
           </button>
         </div>
@@ -881,7 +883,7 @@
         <div class="settings-plan-name"></div>
         <div class="settings-plan-price"></div>
         <div class="settings-plan-limit"></div>
-        <button class="bb-button bb-button-outline settings-plan-action">
+        <button class="gnh-button gnh-button-outline settings-plan-action">
           Switch plan
         </button>
       </div>
@@ -890,18 +892,18 @@
     <!-- Create Organisation Modal -->
     <div
       id="createOrgModal"
-      class="bb-modal"
+      class="gnh-modal"
       role="dialog"
       aria-modal="true"
       aria-labelledby="createOrgModalTitle"
     >
-      <div class="bb-modal-content settings-modal-narrow">
-        <div class="bb-modal-header">
-          <h2 class="bb-modal-title" id="createOrgModalTitle">
+      <div class="gnh-modal-content settings-modal-narrow">
+        <div class="gnh-modal-header">
+          <h2 class="gnh-modal-title" id="createOrgModalTitle">
             Create Organisation
           </h2>
           <button
-            class="bb-modal-close"
+            class="gnh-modal-close"
             id="closeCreateOrgModal"
             aria-label="Close create organisation modal"
           >
@@ -909,7 +911,7 @@
           </button>
         </div>
         <form id="createOrgForm">
-          <div class="bb-form-group">
+          <div class="gnh-form-group">
             <label for="newOrgName">Organisation Name</label>
             <input
               type="text"
@@ -918,28 +920,28 @@
               required
               maxlength="100"
               placeholder="Enter organisation name"
-              class="bb-form-input"
+              class="gnh-form-input"
               aria-describedby="createOrgError"
             />
           </div>
           <div class="settings-modal-actions">
             <button
               type="button"
-              class="bb-button bb-button-outline"
+              class="gnh-button gnh-button-outline"
               id="cancelCreateOrg"
             >
               Cancel
             </button>
             <button
               type="submit"
-              class="bb-button bb-button-primary"
+              class="gnh-button gnh-button-primary"
               id="submitCreateOrg"
             >
               Create
             </button>
           </div>
         </form>
-        <div id="createOrgError" class="bb-auth-error settings-hidden"></div>
+        <div id="createOrgError" class="gnh-auth-error settings-hidden"></div>
       </div>
     </div>
 

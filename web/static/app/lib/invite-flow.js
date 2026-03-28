@@ -2,7 +2,7 @@
  * lib/invite-flow.js — invite token handling
  *
  * Handles invite token detection, preview, acceptance, and auth gating.
- * Replaces bb-invite-flow.js (legacy IIFE).
+ * Replaces gnh-invite-flow.js (legacy IIFE).
  */
 
 import { getAccessToken } from "/app/lib/auth-session.js";
@@ -118,9 +118,9 @@ export async function handleInviteTokenFlow(options = {}) {
   if (!token) return { status: "no_token" };
 
   // Process any pending auth callback first
-  if (typeof window.BBAuth?.handleAuthCallback === "function") {
+  if (typeof window.GNHAuth?.handleAuthCallback === "function") {
     try {
-      await window.BBAuth.handleAuthCallback();
+      await window.GNHAuth.handleAuthCallback();
     } catch (error) {
       console.warn("Invite flow auth callback processing failed:", error);
     }
@@ -136,8 +136,8 @@ export async function handleInviteTokenFlow(options = {}) {
   try {
     const result = await acceptInvite(token);
     if (clearTokenOnSuccess) clearInviteTokenFromURL(tokenParamName);
-    if (typeof window.BBAuth?.clearPendingInviteToken === "function") {
-      window.BBAuth.clearPendingInviteToken();
+    if (typeof window.GNHAuth?.clearPendingInviteToken === "function") {
+      window.GNHAuth.clearPendingInviteToken();
     }
     if (typeof onAccepted === "function") await onAccepted(result);
     if (redirectTo) window.location.assign(redirectTo);

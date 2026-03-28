@@ -13,9 +13,9 @@
   }
 
   let resolveNavReady = null;
-  if (!window.BB_NAV_READY) {
+  if (!window.GNH_NAV_READY) {
     const { promise, resolve } = promiseWithResolvers();
-    window.BB_NAV_READY = promise;
+    window.GNH_NAV_READY = promise;
     resolveNavReady = resolve;
   }
 
@@ -23,7 +23,7 @@
     if (resolveNavReady) {
       resolveNavReady();
     }
-    document.dispatchEvent(new CustomEvent("bb:nav-ready"));
+    document.dispatchEvent(new CustomEvent("gnh:nav-ready"));
   };
 
   if (document.querySelector(".global-nav")) {
@@ -48,7 +48,7 @@
       navWrapper.innerHTML = html.trim();
       navElement = navWrapper.firstElementChild;
     } catch (err) {
-      console.error("[bb-global-nav] Could not load nav partial:", err);
+      console.error("[gnh-global-nav] Could not load nav partial:", err);
       finishNavReady();
       return;
     }
@@ -150,7 +150,7 @@
           }
           (organisations || []).forEach((org) => {
             const button = document.createElement("button");
-            button.className = "bb-org-item";
+            button.className = "gnh-org-item";
             button.dataset.orgId = org.id;
             button.dataset.orgName = org.name;
             button.textContent = org.name;
@@ -165,7 +165,7 @@
       // Handle org item clicks (delegated)
       if (orgListEl) {
         orgListEl.addEventListener("click", async (e) => {
-          const item = e.target.closest(".bb-org-item");
+          const item = e.target.closest(".gnh-org-item");
           if (!item || item.classList.contains("active")) {
             orgSwitcher?.classList.remove("open");
             return;
@@ -180,13 +180,13 @@
 
           try {
             // Use shared switch function
-            await window.BB_APP.switchOrg(orgId);
-            // bb:org-switched event will update UI
+            await window.GNH_APP.switchOrg(orgId);
+            // gnh:org-switched event will update UI
           } catch (err) {
             console.warn("Failed to switch organisation:", err);
             // Restore previous name
             currentOrgName.textContent =
-              window.BB_ACTIVE_ORG?.name || "Organisation";
+              window.GNH_ACTIVE_ORG?.name || "Organisation";
           }
         });
       }
@@ -209,16 +209,16 @@
 
       // Listen for org switches (from anywhere) — re-render full list so newly
       // created orgs appear without a page reload.
-      document.addEventListener("bb:org-switched", (e) => {
+      document.addEventListener("gnh:org-switched", (e) => {
         const newOrg = e.detail?.organisation;
         if (newOrg) {
-          updateNavOrgDisplay(newOrg, window.BB_ORGANISATIONS);
+          updateNavOrgDisplay(newOrg, window.GNH_ORGANISATIONS);
         }
       });
 
       // Listen for org ready (after auth state restored)
-      document.addEventListener("bb:org-ready", () => {
-        updateNavOrgDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+      document.addEventListener("gnh:org-ready", () => {
+        updateNavOrgDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
       });
 
       // Sync with settings page org name if present
@@ -243,13 +243,13 @@
 
       // Wait for core (Supabase) to be ready, then init org
       try {
-        if (window.BB_APP?.coreReady) {
-          await window.BB_APP.coreReady;
+        if (window.GNH_APP?.coreReady) {
+          await window.GNH_APP.coreReady;
         }
-        if (window.BB_APP?.initialiseOrg) {
-          await window.BB_APP.initialiseOrg();
+        if (window.GNH_APP?.initialiseOrg) {
+          await window.GNH_APP.initialiseOrg();
         }
-        updateNavOrgDisplay(window.BB_ACTIVE_ORG, window.BB_ORGANISATIONS);
+        updateNavOrgDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
       } catch (err) {
         console.warn("Organisation initialisation failed:", err);
         currentOrgName.textContent = "Organisation";
@@ -318,8 +318,8 @@
         }
       });
 
-      document.addEventListener("bb:org-switched", syncUserMenuOrgName);
-      document.addEventListener("bb:org-ready", syncUserMenuOrgName);
+      document.addEventListener("gnh:org-switched", syncUserMenuOrgName);
+      document.addEventListener("gnh:org-ready", syncUserMenuOrgName);
       syncUserMenuOrgName();
     };
 
@@ -393,8 +393,8 @@
         if (!notificationsList) return;
         if (!notifications || notifications.length === 0) {
           notificationsList.innerHTML = `
-            <div class="bb-notifications-empty">
-              <div class="bb-notifications-empty-icon">🔔</div>
+            <div class="gnh-notifications-empty">
+              <div class="gnh-notifications-empty-icon">🔔</div>
               <div>No notifications yet</div>
             </div>
           `;
@@ -410,13 +410,13 @@
             return `
               <button
                 type="button"
-                class="bb-notification-item ${!n.read_at ? "unread" : ""}"
+                class="gnh-notification-item ${!n.read_at ? "unread" : ""}"
                 data-id="${notificationId}"
                 data-link="${notificationLink}"
               >
-                <div class="bb-notification-item-content">
-                  <div class="bb-notification-item-subject">${subject}</div>
-                  <div class="bb-notification-item-preview">${preview}</div>
+                <div class="gnh-notification-item-content">
+                  <div class="gnh-notification-item-subject">${subject}</div>
+                  <div class="gnh-notification-item-preview">${preview}</div>
                 </div>
               </button>
             `;
@@ -448,9 +448,9 @@
         }
       };
 
-      const notificationsChannelKey = "__bbNavNotificationsChannel";
+      const notificationsChannelKey = "__gnhNavNotificationsChannel";
       const subscribeRealtime = async () => {
-        const orgId = window.BB_ACTIVE_ORG?.id;
+        const orgId = window.GNH_ACTIVE_ORG?.id;
         const supabaseAuth = window.supabase?.auth;
         if (!orgId || !supabaseAuth || !window.supabase?.channel) {
           return;
@@ -507,7 +507,7 @@
       });
 
       notificationsList?.addEventListener("click", async (event) => {
-        const item = event.target.closest(".bb-notification-item");
+        const item = event.target.closest(".gnh-notification-item");
         if (!item) return;
 
         const id = item.dataset.id;
@@ -558,7 +558,7 @@
           if (response.ok) {
             updateBadge(0);
             notificationsList
-              ?.querySelectorAll(".bb-notification-item.unread")
+              ?.querySelectorAll(".gnh-notification-item.unread")
               .forEach((el) => {
                 el.classList.remove("unread");
               });
@@ -568,11 +568,11 @@
         }
       });
 
-      document.addEventListener("bb:org-switched", async () => {
+      document.addEventListener("gnh:org-switched", async () => {
         await refreshBadge();
         await subscribeRealtime();
       });
-      document.addEventListener("bb:org-ready", async () => {
+      document.addEventListener("gnh:org-ready", async () => {
         await refreshBadge();
         await subscribeRealtime();
       });
@@ -700,20 +700,20 @@
       }
 
       // Refresh quota immediately when organisation changes (registered once)
-      document.addEventListener("bb:org-switched", () => {
+      document.addEventListener("gnh:org-switched", () => {
         fetchAndDisplayQuota();
       });
 
       // Expose globally for settings page to trigger refresh
-      window.BBQuota = {
+      window.GNHQuota = {
         refresh: fetchAndDisplayQuota,
         start: startQuotaPolling,
         formatTimeUntilReset,
       };
 
       // Start after core (Supabase) is ready
-      if (window.BB_APP?.coreReady) {
-        window.BB_APP.coreReady
+      if (window.GNH_APP?.coreReady) {
+        window.GNH_APP.coreReady
           .then(startQuotaPolling)
           .catch(() => startQuotaPolling()); // still attempt polling on failure
       } else {

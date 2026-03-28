@@ -1,6 +1,6 @@
 (function () {
   const loadedScripts = new Map();
-  window.BB_APP = window.BB_APP || {};
+  window.GNH_APP = window.GNH_APP || {};
 
   function promiseWithResolvers() {
     if (typeof Promise.withResolvers === "function") {
@@ -23,9 +23,8 @@
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
       if (
-        existing.dataset.bbReady === "true" ||
-        existing.dataset.bbLoader === "true" ||
-        existing.getAttribute("data-bb-ready") === "true" ||
+        existing.dataset.gnhReady === "true" ||
+        existing.dataset.gnhLoader === "true" ||
         existing.readyState === "complete"
       ) {
         const promise = Promise.resolve();
@@ -60,13 +59,13 @@
     } = promiseWithResolvers();
     const script = document.createElement("script");
     script.src = src;
-    script.dataset.bbLoader = "true";
+    script.dataset.gnhLoader = "true";
     Object.entries(attrs).forEach(([key, value]) => {
       if (value === undefined || value === null) return;
       script.setAttribute(key, value);
     });
     script.onload = () => {
-      script.dataset.bbReady = "true";
+      script.dataset.gnhReady = "true";
       resolveScript();
     };
     script.onerror = (error) => rejectScript(error);
@@ -77,7 +76,7 @@
   }
 
   async function ensureConfig() {
-    if (window.BBB_CONFIG) {
+    if (window.GNH_CONFIG) {
       return;
     }
     try {
@@ -87,13 +86,13 @@
         cause: error,
       });
     }
-    if (!window.BBB_CONFIG) {
-      throw new Error("BBB_CONFIG missing after loading /config.js");
+    if (!window.GNH_CONFIG) {
+      throw new Error("GNH_CONFIG missing after loading /config.js");
     }
   }
 
   function ensureSupabase() {
-    const overrideSrc = window.BB_APP?.scripts?.supabase;
+    const overrideSrc = window.GNH_APP?.scripts?.supabase;
     const src =
       overrideSrc ||
       "https://unpkg.com/@supabase/supabase-js@2.80.0/dist/umd/supabase.js";
@@ -108,7 +107,7 @@
   }
 
   function ensurePasswordStrength() {
-    const overrideSrc = window.BB_APP?.scripts?.passwordStrength;
+    const overrideSrc = window.GNH_APP?.scripts?.passwordStrength;
     const src =
       overrideSrc || "https://cdn.jsdelivr.net/npm/zxcvbn@4.4.2/dist/zxcvbn.js";
     const attrs = overrideSrc
@@ -122,13 +121,13 @@
   }
 
   function ensureTurnstile() {
-    const config = window.BBB_CONFIG || {};
+    const config = window.GNH_CONFIG || {};
     const shouldLoadTurnstile =
-      window.BB_APP?.enableTurnstile ?? config.enableTurnstile ?? false;
+      window.GNH_APP?.enableTurnstile ?? config.enableTurnstile ?? false;
     if (!shouldLoadTurnstile) {
       return Promise.resolve();
     }
-    const overrideSrc = window.BB_APP?.scripts?.turnstile;
+    const overrideSrc = window.GNH_APP?.scripts?.turnstile;
     const src =
       overrideSrc || "https://challenges.cloudflare.com/turnstile/v0/api.js";
     const attrs = overrideSrc
@@ -148,9 +147,9 @@
   async function initialise() {
     await ensureConfig();
     await ensureSupabase();
-    const isCliAuthPage = Boolean(window.BB_APP?.cliAuth);
-    const isAuthCallbackPage = Boolean(window.BB_APP?.authCallback);
-    const isExtensionAuthPage = Boolean(window.BB_APP?.extensionAuth);
+    const isCliAuthPage = Boolean(window.GNH_APP?.cliAuth);
+    const isAuthCallbackPage = Boolean(window.GNH_APP?.authCallback);
+    const isExtensionAuthPage = Boolean(window.GNH_APP?.extensionAuth);
 
     // Callback/CLI/extension auth pages must not block on optional third-party scripts.
     if (!isCliAuthPage && !isAuthCallbackPage && !isExtensionAuthPage) {
@@ -171,58 +170,58 @@
     await ensureAuthBundle();
 
     // Initialise Supabase client after loading SDK and auth bundle
-    if (typeof window.BBAuth?.initialiseSupabase === "function") {
-      const initialised = window.BBAuth.initialiseSupabase();
+    if (typeof window.GNHAuth?.initialiseSupabase === "function") {
+      const initialised = window.GNHAuth.initialiseSupabase();
       if (!initialised) {
         console.error("Failed to initialise Supabase client");
       }
     }
 
-    if (typeof window.BBAuth?.resumeCliAuthFromStorage === "function") {
-      window.BBAuth.resumeCliAuthFromStorage();
+    if (typeof window.GNHAuth?.resumeCliAuthFromStorage === "function") {
+      window.GNHAuth.resumeCliAuthFromStorage();
     }
 
-    if (isCliAuthPage && window.BBAuth?.initCliAuthPage) {
-      window.BBAuth.initCliAuthPage();
+    if (isCliAuthPage && window.GNHAuth?.initCliAuthPage) {
+      window.GNHAuth.initCliAuthPage();
       return;
     }
 
-    if (isAuthCallbackPage && window.BBAuth?.initAuthCallbackPage) {
-      window.BBAuth.initAuthCallbackPage();
+    if (isAuthCallbackPage && window.GNHAuth?.initAuthCallbackPage) {
+      window.GNHAuth.initAuthCallbackPage();
       return;
     }
 
-    if (isExtensionAuthPage && window.BBAuth?.initExtensionAuthPage) {
-      window.BBAuth.initExtensionAuthPage();
+    if (isExtensionAuthPage && window.GNHAuth?.initExtensionAuthPage) {
+      window.GNHAuth.initExtensionAuthPage();
       return;
     }
 
-    if (typeof window.BBAuth?.setupAuthHandlers === "function") {
-      window.BBAuth.setupAuthHandlers();
+    if (typeof window.GNHAuth?.setupAuthHandlers === "function") {
+      window.GNHAuth.setupAuthHandlers();
     }
   }
 
   const coreReady = (async () => {
     try {
       await initialise();
-      window.BB_APP = window.BB_APP || {};
-      window.BB_APP.coreReadyState = "ready";
+      window.GNH_APP = window.GNH_APP || {};
+      window.GNH_APP.coreReadyState = "ready";
     } catch (error) {
-      window.BB_APP = window.BB_APP || {};
-      window.BB_APP.coreReadyState = "error";
+      window.GNH_APP = window.GNH_APP || {};
+      window.GNH_APP.coreReadyState = "error";
       console.error("Failed to initialise Hover core scripts", error);
       throw error;
     }
   })();
 
-  window.BB_APP = window.BB_APP || {};
-  window.BB_APP.coreReady = coreReady;
+  window.GNH_APP = window.GNH_APP || {};
+  window.GNH_APP.coreReady = coreReady;
 
   // ========================================
   // Unified Organisation Initialisation
   // ========================================
   // Single source of truth for active organisation.
-  // All code should await BB_ORG_READY before accessing BB_ACTIVE_ORG.
+  // All code should await GNH_ORG_READY before accessing GNH_ACTIVE_ORG.
 
   let orgReadyResolve = null;
   let orgReadyReject = null;
@@ -233,23 +232,23 @@
     resolve: orgReadyResolveRef,
     reject: orgReadyRejectRef,
   } = promiseWithResolvers();
-  window.BB_ORG_READY = orgReady;
+  window.GNH_ORG_READY = orgReady;
   orgReadyResolve = orgReadyResolveRef;
   orgReadyReject = orgReadyRejectRef;
 
   /**
    * Initialise the active organisation. Called once after auth is confirmed.
-   * Sets window.BB_ACTIVE_ORG and resolves BB_ORG_READY.
+   * Sets window.GNH_ACTIVE_ORG and resolves GNH_ORG_READY.
    * @returns {Promise<Object|null>} The active organisation or null
    */
-  window.BB_APP.initialiseOrg = async function () {
+  window.GNH_APP.initialiseOrg = async function () {
     // Return cached result if we have a valid org
     if (
       orgInitialised &&
-      window.BB_ACTIVE_ORG?.id &&
-      window.BB_ACTIVE_ORG?.name
+      window.GNH_ACTIVE_ORG?.id &&
+      window.GNH_ACTIVE_ORG?.name
     ) {
-      return window.BB_ACTIVE_ORG;
+      return window.GNH_ACTIVE_ORG;
     }
 
     try {
@@ -260,9 +259,9 @@
       const { data: sessionData } = await window.supabase.auth.getSession();
       const session = sessionData?.session;
       if (!session) {
-        // No session - leave BB_ORG_READY pending so it resolves on sign-in
-        window.BB_ACTIVE_ORG = null;
-        window.BB_ORGANISATIONS = [];
+        // No session - leave GNH_ORG_READY pending so it resolves on sign-in
+        window.GNH_ACTIVE_ORG = null;
+        window.GNH_ORGANISATIONS = [];
         return null;
       }
 
@@ -281,8 +280,8 @@
 
       if (organisations.length === 0) {
         orgInitialised = true;
-        window.BB_ACTIVE_ORG = null;
-        window.BB_ORGANISATIONS = [];
+        window.GNH_ACTIVE_ORG = null;
+        window.GNH_ORGANISATIONS = [];
         orgReadyResolve(null);
         return null;
       }
@@ -296,7 +295,7 @@
       // Fall back to localStorage only if API value is absent.
       if (!activeOrgId) {
         try {
-          activeOrgId = localStorage.getItem("bb_active_org_id");
+          activeOrgId = localStorage.getItem("gnh_active_org_id");
         } catch (e) {
           // localStorage might be blocked
         }
@@ -308,14 +307,14 @@
 
       // Store in localStorage for faster future loads
       try {
-        localStorage.setItem("bb_active_org_id", activeOrg.id);
+        localStorage.setItem("gnh_active_org_id", activeOrg.id);
       } catch (e) {
         // localStorage might be blocked
       }
 
       // Set globals
-      window.BB_ACTIVE_ORG = activeOrg;
-      window.BB_ORGANISATIONS = organisations;
+      window.GNH_ACTIVE_ORG = activeOrg;
+      window.GNH_ORGANISATIONS = organisations;
       orgInitialised = true;
 
       orgReadyResolve(activeOrg);
@@ -323,7 +322,7 @@
     } catch (err) {
       console.error("Failed to initialise organisation:", err);
       orgInitialised = true;
-      window.BB_ACTIVE_ORG = null;
+      window.GNH_ACTIVE_ORG = null;
       orgReadyReject(err);
       throw err;
     }
@@ -335,26 +334,26 @@
    * @returns {Promise<Object>} The new active organisation
    */
   // Listen for auth state changes to re-init org when user signs in
-  window.BB_APP.coreReady.then(() => {
+  window.GNH_APP.coreReady.then(() => {
     if (window.supabase?.auth) {
       window.supabase.auth.onAuthStateChange((event, session) => {
         if (event === "SIGNED_OUT") {
           // Clear org state on sign out
-          window.BB_ACTIVE_ORG = null;
-          window.BB_ORGANISATIONS = [];
+          window.GNH_ACTIVE_ORG = null;
+          window.GNH_ORGANISATIONS = [];
           try {
-            localStorage.removeItem("bb_active_org_id");
+            localStorage.removeItem("gnh_active_org_id");
           } catch (e) {
             // localStorage might be blocked
           }
         } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
           // Re-init org if we don't have one yet
-          if (!window.BB_ACTIVE_ORG?.id) {
-            window.BB_APP.initialiseOrg()
+          if (!window.GNH_ACTIVE_ORG?.id) {
+            window.GNH_APP.initialiseOrg()
               .then((org) => {
                 if (org) {
                   document.dispatchEvent(
-                    new CustomEvent("bb:org-ready", {
+                    new CustomEvent("gnh:org-ready", {
                       detail: { organisation: org },
                     })
                   );
@@ -369,7 +368,7 @@
     }
   });
 
-  window.BB_APP.switchOrg = async function (orgId) {
+  window.GNH_APP.switchOrg = async function (orgId) {
     if (!window.supabase?.auth) {
       throw new Error("Supabase not initialised");
     }
@@ -403,18 +402,18 @@
     }
 
     // Update global
-    window.BB_ACTIVE_ORG = newOrg;
+    window.GNH_ACTIVE_ORG = newOrg;
 
     // Store in localStorage for persistence
     try {
-      localStorage.setItem("bb_active_org_id", newOrg.id);
+      localStorage.setItem("gnh_active_org_id", newOrg.id);
     } catch (e) {
       // localStorage might be blocked
     }
 
     // Dispatch event for listeners
     document.dispatchEvent(
-      new CustomEvent("bb:org-switched", { detail: { organisation: newOrg } })
+      new CustomEvent("gnh:org-switched", { detail: { organisation: newOrg } })
     );
 
     return newOrg;
@@ -425,7 +424,7 @@
    * @param {Object} job - The job object to extract config from
    * @returns {Object} Payload for POST /v1/jobs
    */
-  window.BB_APP.buildRestartJobPayload = function (job) {
+  window.GNH_APP.buildRestartJobPayload = function (job) {
     return {
       domain: job.domain ?? job.domains?.name ?? job.domain_name,
       use_sitemap: true,

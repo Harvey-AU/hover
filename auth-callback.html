@@ -11,7 +11,7 @@
     <title>Signing In...</title>
     <link rel="stylesheet" href="/styles/app.css" />
     <script>
-      window.BB_APP = Object.assign({}, window.BB_APP || {}, {
+      window.GNH_APP = Object.assign({}, window.GNH_APP || {}, {
         authCallback: true,
       });
       (function () {
@@ -87,7 +87,7 @@
 
             await loadScript("/js/auth.js");
             const callbackHandler =
-              window.BBAuth?.initAuthCallbackPage ||
+              window.GNHAuth?.initAuthCallbackPage ||
               window.initAuthCallbackPage;
             if (typeof callbackHandler !== "function") {
               throw new Error("Auth callback handler unavailable");

@@ -134,7 +134,7 @@ class MetricsMetadata {
 
   /**
    * Initialize info icons on the page
-   * Scans for elements with bbb-help or data-bb-info attributes and adds info icons with tooltips
+   * Scans for elements with gnh-help or data-gnh-info attributes and adds info icons with tooltips
    */
   initializeInfoIcons() {
     if (!this.isLoaded()) {
@@ -143,13 +143,13 @@ class MetricsMetadata {
     }
 
     // Find all elements with info attributes (both old and new formats)
-    const elements = document.querySelectorAll("[data-bb-info], [bbb-help]");
+    const elements = document.querySelectorAll("[data-gnh-info], [gnh-help]");
 
     elements.forEach((element) => {
-      // Support both old (data-bb-info) and new (bbb-help) formats
+      // Support both old (data-gnh-info) and new (gnh-help) formats
       const metricKey =
-        element.getAttribute("bbb-help") ||
-        element.getAttribute("data-bb-info");
+        element.getAttribute("gnh-help") ||
+        element.getAttribute("data-gnh-info");
       const info = this.getInfo(metricKey);
 
       if (!info) {
@@ -158,19 +158,19 @@ class MetricsMetadata {
       }
 
       // Check if info icon already exists
-      if (element.querySelector(".bb-info-icon")) {
+      if (element.querySelector(".gnh-info-icon")) {
         return;
       }
 
       // Create info icon
       const infoIcon = document.createElement("span");
-      infoIcon.className = "bb-info-icon";
+      infoIcon.className = "gnh-info-icon";
       infoIcon.innerHTML = `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
           <path d="M16 3C8.832 3 3 8.832 3 16s5.832 13 13 13 13-5.832 13-13S23.168 3 16 3zm0 2c6.086 0 11 4.914 11 11s-4.914 11-11 11S5 22.086 5 16 9.914 5 16 5zm-1 5v2h2v-2zm0 4v8h2v-8z" />
         </svg>
       `.trim();
-      infoIcon.setAttribute("data-bbb-tooltip", info);
+      infoIcon.setAttribute("data-gnh-tooltip", info);
       infoIcon.setAttribute("aria-label", "More information");
 
       // Show rich tooltip on hover
@@ -228,18 +228,18 @@ class MetricsMetadata {
     // Remove any existing tooltip first
     this._removeTooltip();
 
-    const tooltipContent = iconElement.getAttribute("data-bbb-tooltip");
+    const tooltipContent = iconElement.getAttribute("data-gnh-tooltip");
     if (!tooltipContent) return;
 
     // Create tooltip popup
     const tooltip = document.createElement("div");
-    tooltip.className = "bb-tooltip-popup";
+    tooltip.className = "gnh-tooltip-popup";
     tooltip.dataset.trigger = trigger;
     tooltip.innerHTML = tooltipContent;
 
     // Add close button
     const closeBtn = document.createElement("button");
-    closeBtn.className = "bb-tooltip-close";
+    closeBtn.className = "gnh-tooltip-close";
     closeBtn.innerHTML = "×";
     closeBtn.setAttribute("aria-label", "Close");
     closeBtn.addEventListener("click", () => this._removeTooltip());

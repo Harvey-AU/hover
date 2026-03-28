@@ -86,17 +86,17 @@ real vulnerability.
 - **Risk**: LOW - `formType` is controlled internally (signup/login/forgot)
 - **Action**: Add allowlist validation
 
-### bb-data-binder.js:444-451 - Form data processing
+### gnh-data-binder.js:444-451 - Form data processing
 
 - **Risk**: LOW - Keys come from HTML form field `name` attributes
 - **Action**: No change needed - standard form processing pattern
 
-### bb-data-binder.js:924-937, 1078 - Data binding
+### gnh-data-binder.js:924-937, 1078 - Data binding
 
 - **Risk**: LOW - Internal template variable processing
 - **Action**: No change needed
 
-### bb-metadata.js:112-125 - Metadata lookups
+### gnh-metadata.js:112-125 - Metadata lookups
 
 - **Risk**: LOW - Keys are hardcoded constants
 - **Action**: No change needed
@@ -111,9 +111,9 @@ patterns.
 
 ---
 
-## Issue 4: ESLint - Non-literal RegExp (bb-data-binder.js:586)
+## Issue 4: ESLint - Non-literal RegExp (gnh-data-binder.js:586)
 
-**Severity**: MEDIUM **File**: `web/static/js/bb-data-binder.js:586`
+**Severity**: MEDIUM **File**: `web/static/js/gnh-data-binder.js:586`
 
 **Description**: `new RegExp(rules.pattern)` uses a variable pattern, risking
 ReDoS.
@@ -144,7 +144,7 @@ sources, this could be exploited.
 ### Phase 2: Code Improvements (Medium Effort)
 
 - [ ] Add allowlist validation for `formType` in auth.js
-- [ ] Wrap RegExp construction in try-catch in bb-data-binder.js
+- [ ] Wrap RegExp construction in try-catch in gnh-data-binder.js
 - [ ] Update `.eslintrc` to reduce false positive noise
 
 ### Phase 3: Documentation

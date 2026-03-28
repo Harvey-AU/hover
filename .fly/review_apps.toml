@@ -22,7 +22,7 @@ primary_region = "syd"
 [env]
 APP_ENV = "staging"
 PORT = "8080"
-BBB_ENABLE_TURNSTILE = "true"
+GNH_ENABLE_TURNSTILE = "true"
 
 # Explicitly source DATABASE_URL from secrets
 DATABASE_URL = { from_secret = "DATABASE_URL" }
@@ -35,8 +35,8 @@ SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xCn-z8wEo4MPJnbPq6cvXg_09fINjIp"
 WORKER_CONCURRENCY = "5"                    # Half of prod (respects 512mb VM)
 DB_QUEUE_MAX_CONCURRENCY = "20"             # Half of prod
 DB_TX_MAX_RETRIES = "5"                     # Same as prod
-BBB_RUNNING_TASK_BATCH_SIZE = "32"          # Same as prod (reduces DB trips)
-BBB_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"  # Same as prod
+GNH_RUNNING_TASK_BATCH_SIZE = "32"          # Same as prod (reduces DB trips)
+GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"  # Same as prod
 
 # Use same machine config as production but smaller
 [vm]

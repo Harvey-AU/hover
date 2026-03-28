@@ -3,7 +3,7 @@
  *
  * Thin wrappers over window.supabase.auth for use in new ES module code.
  * New modules import from here rather than calling window.supabase.auth
- * or window.BBAuth directly.
+ * or window.GNHAuth directly.
  *
  * Prerequisites:
  *   The Supabase SDK must be loaded as a plain <script> tag and
@@ -20,8 +20,8 @@
  *   to importing Supabase directly as an ESM dependency.
  *
  * Transition note:
- *   window.BBAuth is intentionally not referenced here. New code should
- *   use these helpers. Old pages continue to use window.BBAuth until
+ *   window.GNHAuth is intentionally not referenced here. New code should
+ *   use these helpers. Old pages continue to use window.GNHAuth until
  *   they are migrated.
  */
 

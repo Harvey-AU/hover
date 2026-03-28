@@ -32,37 +32,37 @@ var (
 )
 
 func init() {
-	if val := strings.TrimSpace(os.Getenv("BBB_BATCH_CHANNEL_SIZE")); val != "" {
+	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_CHANNEL_SIZE")); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("value", val).Msg("Failed to parse BBB_BATCH_CHANNEL_SIZE override")
+			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_CHANNEL_SIZE override")
 		} else {
 			if parsed < 500 {
-				log.Warn().Int("requested", parsed).Msg("BBB_BATCH_CHANNEL_SIZE below minimum, using 500")
+				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_CHANNEL_SIZE below minimum, using 500")
 				parsed = 500
 			} else if parsed > 20000 {
-				log.Warn().Int("requested", parsed).Msg("BBB_BATCH_CHANNEL_SIZE above maximum, using 20000")
+				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_CHANNEL_SIZE above maximum, using 20000")
 				parsed = 20000
 			}
 			BatchChannelSize = parsed
-			log.Info().Int("channel_size", parsed).Msg("BBB_BATCH_CHANNEL_SIZE override applied")
+			log.Info().Int("channel_size", parsed).Msg("GNH_BATCH_CHANNEL_SIZE override applied")
 		}
 	}
 
-	if val := strings.TrimSpace(os.Getenv("BBB_BATCH_MAX_INTERVAL_MS")); val != "" {
+	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_MAX_INTERVAL_MS")); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("value", val).Msg("Failed to parse BBB_BATCH_MAX_INTERVAL_MS override")
+			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_MAX_INTERVAL_MS override")
 		} else {
 			if parsed < 100 {
-				log.Warn().Int("requested", parsed).Msg("BBB_BATCH_MAX_INTERVAL_MS below minimum, using 100ms")
+				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS below minimum, using 100ms")
 				parsed = 100
 			} else if parsed > 10000 {
-				log.Warn().Int("requested", parsed).Msg("BBB_BATCH_MAX_INTERVAL_MS above maximum, using 10s")
+				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS above maximum, using 10s")
 				parsed = 10000
 			}
 			MaxBatchInterval = time.Duration(parsed) * time.Millisecond
-			log.Info().Int("interval_ms", parsed).Msg("BBB_BATCH_MAX_INTERVAL_MS override applied")
+			log.Info().Int("interval_ms", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS override applied")
 		}
 	}
 }

@@ -1,15 +1,17 @@
 <!-- Shared Authentication Modal -->
-<div id="authModal" class="bb-modal">
-  <div class="bb-modal-content" style="max-width: 480px">
-    <div class="bb-modal-header">
-      <h2 class="bb-modal-title" id="authModalTitle">Sign In</h2>
-      <button class="bb-modal-close" onclick="closeAuthModal()">&times;</button>
+<div id="authModal" class="gnh-modal">
+  <div class="gnh-modal-content" style="max-width: 480px">
+    <div class="gnh-modal-header">
+      <h2 class="gnh-modal-title" id="authModalTitle">Sign In</h2>
+      <button type="button" class="gnh-modal-close" onclick="closeAuthModal()">
+        &times;
+      </button>
     </div>
 
     <!-- Login Form -->
-    <div id="loginForm" class="bb-auth-form">
+    <div id="loginForm" class="gnh-auth-form">
       <form id="emailLoginForm">
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="loginEmail">Email</label>
           <input
             type="email"
@@ -17,12 +19,12 @@
             name="email"
             required
             placeholder="Enter your email"
-            class="bb-form-input"
+            class="gnh-form-input"
             autocomplete="email"
           />
         </div>
 
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="loginPassword">Password</label>
           <input
             type="password"
@@ -30,31 +32,33 @@
             name="password"
             required
             placeholder="Enter your password"
-            class="bb-form-input"
+            class="gnh-form-input"
             autocomplete="current-password"
           />
         </div>
 
         <button
           type="submit"
-          class="bb-button bb-button-primary bb-button-full"
+          class="gnh-button gnh-button-primary gnh-button-full"
           id="loginSubmitBtn"
         >
           Sign In
         </button>
       </form>
 
-      <div class="bb-auth-divider">
+      <div class="gnh-auth-divider">
         <span>or continue with</span>
       </div>
 
-      <div class="bb-social-buttons">
+      <div class="gnh-social-buttons">
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="google"
         >
-          <span class="bb-social-icon bb-social-icon-google" aria-hidden="true"
+          <span
+            class="gnh-social-icon gnh-social-icon-google"
+            aria-hidden="true"
             ><img
               src="/assets/auth-providers/google.svg"
               alt=""
@@ -66,10 +70,12 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="github"
         >
-          <span class="bb-social-icon bb-social-icon-github" aria-hidden="true"
+          <span
+            class="gnh-social-icon gnh-social-icon-github"
+            aria-hidden="true"
             ><img
               src="/assets/auth-providers/github.svg"
               alt=""
@@ -81,11 +87,11 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="azure"
         >
           <span
-            class="bb-social-icon bb-social-icon-microsoft"
+            class="gnh-social-icon gnh-social-icon-microsoft"
             aria-hidden="true"
             ><img
               src="/assets/auth-providers/microsoft.svg"
@@ -98,11 +104,11 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="facebook"
         >
           <span
-            class="bb-social-icon bb-social-icon-facebook"
+            class="gnh-social-icon gnh-social-icon-facebook"
             aria-hidden="true"
             ><img
               src="/assets/auth-providers/facebook.png"
@@ -115,10 +121,10 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="slack_oidc"
         >
-          <span class="bb-social-icon bb-social-icon-slack" aria-hidden="true"
+          <span class="gnh-social-icon gnh-social-icon-slack" aria-hidden="true"
             ><img
               src="/assets/auth-providers/slack.svg"
               alt=""
@@ -130,7 +136,7 @@
         </button>
       </div>
 
-      <div class="bb-auth-links">
+      <div class="gnh-auth-links">
         <a href="#" onclick="showSignupForm()"
           >Don't have an account? Sign up</a
         >
@@ -139,35 +145,35 @@
     </div>
 
     <!-- Signup Form -->
-    <div id="signupForm" class="bb-auth-form" style="display: none">
+    <div id="signupForm" class="gnh-auth-form" style="display: none">
       <form id="emailSignupForm">
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="signupFirstName">First Name</label>
           <input
             type="text"
             id="signupFirstName"
             name="firstName"
             placeholder="Enter your first name"
-            class="bb-form-input"
+            class="gnh-form-input"
             maxlength="80"
             autocomplete="given-name"
           />
         </div>
 
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="signupLastName">Last Name</label>
           <input
             type="text"
             id="signupLastName"
             name="lastName"
             placeholder="Enter your last name"
-            class="bb-form-input"
+            class="gnh-form-input"
             maxlength="80"
             autocomplete="family-name"
           />
         </div>
 
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="signupEmail">Email</label>
           <input
             type="email"
@@ -175,12 +181,12 @@
             name="email"
             required
             placeholder="Enter your email"
-            class="bb-form-input"
+            class="gnh-form-input"
             autocomplete="email"
           />
         </div>
 
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="signupPassword">Password</label>
           <input
             type="password"
@@ -188,13 +194,13 @@
             name="password"
             required
             placeholder="Create a password (min 8 characters)"
-            class="bb-form-input"
+            class="gnh-form-input"
             minlength="8"
             autocomplete="new-password"
           />
         </div>
 
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="signupPasswordConfirm">Confirm Password</label>
           <input
             type="password"
@@ -202,13 +208,13 @@
             name="passwordConfirm"
             required
             placeholder="Confirm your password"
-            class="bb-form-input"
+            class="gnh-form-input"
             minlength="8"
             autocomplete="new-password"
           />
         </div>
 
-        <div class="bb-form-group" id="captchaContainer">
+        <div class="gnh-form-group" id="captchaContainer">
           <div
             class="cf-turnstile"
             data-sitekey="0x4AAAAAABfi3Cv35Nhu4sN4"
@@ -218,7 +224,7 @@
 
         <button
           type="submit"
-          class="bb-button bb-button-primary bb-button-full"
+          class="gnh-button gnh-button-primary gnh-button-full"
           id="signupSubmitBtn"
           disabled
         >
@@ -226,17 +232,19 @@
         </button>
       </form>
 
-      <div class="bb-auth-divider">
+      <div class="gnh-auth-divider">
         <span>or continue with</span>
       </div>
 
-      <div class="bb-social-buttons">
+      <div class="gnh-social-buttons">
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="google"
         >
-          <span class="bb-social-icon bb-social-icon-google" aria-hidden="true"
+          <span
+            class="gnh-social-icon gnh-social-icon-google"
+            aria-hidden="true"
             ><img
               src="/assets/auth-providers/google.svg"
               alt=""
@@ -248,10 +256,12 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="github"
         >
-          <span class="bb-social-icon bb-social-icon-github" aria-hidden="true"
+          <span
+            class="gnh-social-icon gnh-social-icon-github"
+            aria-hidden="true"
             ><img
               src="/assets/auth-providers/github.svg"
               alt=""
@@ -263,11 +273,11 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="azure"
         >
           <span
-            class="bb-social-icon bb-social-icon-microsoft"
+            class="gnh-social-icon gnh-social-icon-microsoft"
             aria-hidden="true"
             ><img
               src="/assets/auth-providers/microsoft.svg"
@@ -280,11 +290,11 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="facebook"
         >
           <span
-            class="bb-social-icon bb-social-icon-facebook"
+            class="gnh-social-icon gnh-social-icon-facebook"
             aria-hidden="true"
             ><img
               src="/assets/auth-providers/facebook.png"
@@ -297,10 +307,10 @@
         </button>
         <button
           type="button"
-          class="bb-button bb-button-outline bb-button-full bb-social-btn"
+          class="gnh-button gnh-button-outline gnh-button-full gnh-social-btn"
           data-provider="slack_oidc"
         >
-          <span class="bb-social-icon bb-social-icon-slack" aria-hidden="true"
+          <span class="gnh-social-icon gnh-social-icon-slack" aria-hidden="true"
             ><img
               src="/assets/auth-providers/slack.svg"
               alt=""
@@ -312,7 +322,7 @@
         </button>
       </div>
 
-      <div class="bb-auth-links">
+      <div class="gnh-auth-links">
         <a href="#" onclick="showLoginForm()"
           >Already have an account? Sign in</a
         >
@@ -320,9 +330,9 @@
     </div>
 
     <!-- Reset Form -->
-    <div id="resetForm" class="bb-auth-form" style="display: none">
+    <div id="resetForm" class="gnh-auth-form" style="display: none">
       <form id="passwordResetForm">
-        <div class="bb-form-group">
+        <div class="gnh-form-group">
           <label for="resetEmail">Email</label>
           <input
             type="email"
@@ -330,33 +340,33 @@
             name="email"
             required
             placeholder="Enter your email"
-            class="bb-form-input"
+            class="gnh-form-input"
           />
         </div>
 
         <button
           type="submit"
-          class="bb-button bb-button-primary bb-button-full"
+          class="gnh-button gnh-button-primary gnh-button-full"
         >
           Send Reset Link
         </button>
       </form>
 
-      <div class="bb-auth-links">
+      <div class="gnh-auth-links">
         <a href="#" onclick="showLoginForm()">Back to sign in</a>
       </div>
     </div>
 
     <!-- Loading State -->
-    <div id="authLoading" class="bb-auth-loading" style="display: none">
-      <div class="bb-spinner"></div>
+    <div id="authLoading" class="gnh-auth-loading" style="display: none">
+      <div class="gnh-spinner"></div>
       <p>Processing...</p>
     </div>
 
     <!-- Error Message -->
     <div
       id="authError"
-      class="bb-auth-error"
+      class="gnh-auth-error"
       style="display: none"
       role="status"
       aria-live="polite"

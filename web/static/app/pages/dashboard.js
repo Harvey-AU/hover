@@ -45,9 +45,9 @@ async function init() {
 
   // Wire action buttons — refresh, create-job modal, close-create-job-modal
   document.addEventListener("click", (e) => {
-    const el = e.target.closest("[bbb-action]");
+    const el = e.target.closest("[gnh-action]");
     if (!el) return;
-    const action = el.getAttribute("bbb-action");
+    const action = el.getAttribute("gnh-action");
     if (action === "refresh-dashboard") {
       e.preventDefault();
       refresh();
@@ -69,7 +69,7 @@ async function init() {
   // Domain search autocomplete
   const domainInput = document.getElementById("jobDomain");
   if (domainInput) {
-    const container = domainInput.closest(".bb-domain-search");
+    const container = domainInput.closest(".gnh-domain-search");
     setupDomainSearchInput({
       input: domainInput,
       container: container || domainInput.parentElement,
@@ -105,13 +105,13 @@ async function init() {
   let unsubscribe = null;
   function startSubscription() {
     if (unsubscribe) unsubscribe();
-    const orgId = window.BB_ACTIVE_ORG?.id;
+    const orgId = window.GNH_ACTIVE_ORG?.id;
     unsubscribe = subscribeToJobUpdates(orgId, () => refresh());
   }
   startSubscription();
 
   // Re-subscribe and refresh when the active org changes.
-  document.addEventListener("bb:org-switched", () => {
+  document.addEventListener("gnh:org-switched", () => {
     refresh();
     startSubscription();
   });
@@ -149,11 +149,11 @@ async function refreshStats() {
 }
 
 /**
- * Update a stat card value by its bbb-text attribute selector.
+ * Update a stat card value by its gnh-text attribute selector.
  * Falls back gracefully when the element doesn't exist.
  */
 function setStatCard(key, value) {
-  const el = document.querySelector(`[bbb-text="${key}"]`);
+  const el = document.querySelector(`[gnh-text="${key}"]`);
   if (el) el.textContent = value;
 }
 
@@ -163,7 +163,7 @@ function setStatCard(key, value) {
 const _jobCards = new Map();
 
 async function refreshJobs() {
-  const container = document.querySelector(".bb-jobs-list");
+  const container = document.querySelector(".gnh-jobs-list");
   if (!container) return;
 
   const token = await waitForSession();
@@ -537,7 +537,7 @@ function waitForSession(timeoutMs = 8000) {
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 // Initialise after DOM is ready. waitForSession() inside refresh() handles
-// the Supabase timing — no dependency on bb-bootstrap.js or BB_APP.whenReady.
+// the Supabase timing — no dependency on gnh-bootstrap.js or GNH_APP.whenReady.
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () =>
     init().catch(console.error)

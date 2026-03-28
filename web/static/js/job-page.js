@@ -1115,11 +1115,11 @@ function setupInteractions(state) {
 }
 
 async function initialiseAuth(state) {
-  // Support both bb-bootstrap.js (whenReady) and core.js-only (coreReady)
-  if (window.BB_APP?.whenReady) {
-    await window.BB_APP.whenReady();
+  // Support both gnh-bootstrap.js (whenReady) and core.js-only (coreReady)
+  if (window.GNH_APP?.whenReady) {
+    await window.GNH_APP.whenReady();
   } else {
-    await window.BB_APP?.coreReady;
+    await window.GNH_APP?.coreReady;
   }
 
   if (!window.supabase) {
@@ -1150,8 +1150,8 @@ async function initialiseAuth(state) {
 
   // Use the unified auth system to update user info
   // This handles both email display and avatar properly
-  if (window.BBAuth?.updateUserInfo) {
-    await window.BBAuth.updateUserInfo();
+  if (window.GNHAuth?.updateUserInfo) {
+    await window.GNHAuth.updateUserInfo();
   }
 
   // Logout handler is already set up by setupAuthHandlers() in auth.js
@@ -1285,7 +1285,7 @@ async function restartJobFromPage(state) {
   }
 
   // Create new job with same config
-  const payload = window.BB_APP.buildRestartJobPayload(job);
+  const payload = window.GNH_APP.buildRestartJobPayload(job);
   const response = await authorisedFetch(state, "/v1/jobs", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -1734,7 +1734,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  const binder = new BBDataBinder({ apiBaseUrl: "" });
+  const binder = new GNHDataBinder({ apiBaseUrl: "" });
   window.dataBinder = binder;
   binder.scanAndBind();
 

@@ -4,7 +4,7 @@
  * Provides timeout-aware fetch and standardised error handling for
  * third-party integration requests (Slack, Webflow, Google).
  *
- * Extracted from bb-integration-http.js (legacy IIFE) as an ES module
+ * Extracted from gnh-integration-http.js (legacy IIFE) as an ES module
  * so integration modules can import directly without globals.
  *
  * Usage:

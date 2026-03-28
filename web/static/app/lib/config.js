@@ -2,7 +2,7 @@
  * lib/config.js — app configuration
  *
  * Single import point for runtime config in new ES module code.
- * The server populates window.BBB_CONFIG via /config.js before any
+ * The server populates window.GNH_CONFIG via /config.js before any
  * module entrypoint runs. Pages using the new app/ architecture must
  * load /config.js as a plain script before their module entrypoint:
  *
@@ -10,14 +10,14 @@
  *   <script type="module" src="/app/pages/example.js"></script>
  *
  * New code imports from this module rather than reading
- * window.BBB_CONFIG directly.
+ * window.GNH_CONFIG directly.
  *
- * Transition note: window.BBB_CONFIG is set by the legacy server
+ * Transition note: window.GNH_CONFIG is set by the legacy server
  * endpoint. The name will change when the server config endpoint is
  * updated. At that point, only this file needs to change.
  */
 
-const raw = (typeof window !== "undefined" && window.BBB_CONFIG) || {};
+const raw = (typeof window !== "undefined" && window.GNH_CONFIG) || {};
 
 /** Supabase project URL */
 export const supabaseUrl = raw.supabaseUrl || "";

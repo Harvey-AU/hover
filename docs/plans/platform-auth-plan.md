@@ -8,11 +8,11 @@ org they selected.
 
 ## Decisions
 
-- Webflow: map **workspace ID → BBB organisation**.
+- Webflow: map **workspace ID → GNH organisation**.
 - Shopify: map **Plus org ID when available**, otherwise **shop/store ID**.
 - Multi-org users must use **active organisation context** for all queries (no
   cross-org listings).
-- Platform mappings belong to a single BBB org; users gain access only through
+- Platform mappings belong to a single GNH org; users gain access only through
   org membership.
 
 ## Plan

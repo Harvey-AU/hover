@@ -9,13 +9,13 @@ Designer. It does not contain backend business logic.
 
 1. Webflow loads the extension UI.
 2. Extension reads app context from Webflow APIs.
-3. Extension calls Blue Banded Bee backend APIs for data and actions.
+3. Extension calls Hover backend APIs for data and actions.
 4. Backend handles authentication, token storage, scheduling, jobs, and
    webhooks.
 
 ## Auth model
 
-- Extension initiates auth via popup to BBB-hosted `/extension-auth.html`.
+- Extension initiates auth via popup to GNH-hosted `/extension-auth.html`.
 - Popup reuses existing shared auth system in `web/static/js/auth.js`.
 - First-time users are created via existing `POST /v1/auth/register` path.
 - Token handoff returns to extension using `postMessage` with origin/state

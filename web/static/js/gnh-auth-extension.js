@@ -3,7 +3,7 @@
  * Data binding integration for the unified authentication system
  *
  * This module provides integration between the core auth system (auth.js)
- * and the BBDataBinder for seamless authentication in dashboard applications.
+ * and the GNHDataBinder for seamless authentication in dashboard applications.
  *
  * Features:
  * - Auth state monitoring and data binder integration
@@ -15,7 +15,7 @@
 
 /**
  * Initialise authentication with data binder integration
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  * @param {Object} options - Configuration options
  * @returns {Promise<void>}
  */
@@ -27,20 +27,20 @@ async function initializeAuthWithDataBinder(dataBinder, options = {}) {
   } = options;
 
   // Handle auth callback tokens
-  const hasToken = await window.BBAuth.handleAuthCallback();
+  const hasToken = await window.GNHAuth.handleAuthCallback();
 
   // Use the session already retrieved by dataBinder.init() instead of fetching again
   const session = dataBinder.authManager?.session;
 
   if (session?.user) {
-    await window.BBAuth.registerUserWithBackend(session.user);
+    await window.GNHAuth.registerUserWithBackend(session.user);
   }
 
   // Update user info in header
-  window.BBAuth.updateUserInfo();
+  window.GNHAuth.updateUserInfo();
 
   // Set initial auth state
-  window.BBAuth.updateAuthState(!!session?.user);
+  window.GNHAuth.updateAuthState(!!session?.user);
 
   // Set up auth state change listener for UI updates and backend registration
   // Note: dataBinder.initAuth() already handles updating authManager.session
@@ -51,16 +51,16 @@ async function initializeAuthWithDataBinder(dataBinder, options = {}) {
         (event === "SIGNED_IN" || event === "USER_UPDATED") &&
         session?.user
       ) {
-        await window.BBAuth.registerUserWithBackend(session.user);
+        await window.GNHAuth.registerUserWithBackend(session.user);
       }
 
       // Update auth state in UI
-      window.BBAuth.updateAuthState(!!session?.user);
-      window.BBAuth.updateUserInfo();
+      window.GNHAuth.updateAuthState(!!session?.user);
+      window.GNHAuth.updateUserInfo();
 
       // Handle pending domain after successful auth
       if (session?.user) {
-        await window.BBAuth.handlePendingDomain();
+        await window.GNHAuth.handlePendingDomain();
       }
     });
   }
@@ -68,7 +68,7 @@ async function initializeAuthWithDataBinder(dataBinder, options = {}) {
   // Log auth state for debugging
   // Update auth state after data binder init
   const currentSession = await window.supabase.auth.getSession();
-  window.BBAuth.updateAuthState(!!currentSession.data.session?.user);
+  window.GNHAuth.updateAuthState(!!currentSession.data.session?.user);
 
   // Set up network monitoring if enabled
   if (networkMonitoring) {
@@ -78,7 +78,7 @@ async function initializeAuthWithDataBinder(dataBinder, options = {}) {
 
 /**
  * Setup dashboard-specific refresh method override
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  */
 function setupDashboardRefresh(dataBinder) {
   const ACTIVE_JOB_STATUSES = new Set([
@@ -158,7 +158,9 @@ function setupDashboardRefresh(dataBinder) {
       }
 
       // Clear any existing empty state before binding
-      const existingEmptyState = document.querySelector(".bb-jobs-empty-state");
+      const existingEmptyState = document.querySelector(
+        ".gnh-jobs-empty-state"
+      );
       if (existingEmptyState) {
         existingEmptyState.remove();
       }
@@ -170,10 +172,10 @@ function setupDashboardRefresh(dataBinder) {
 
       // Show simple empty state if no jobs
       if (processedJobs.length === 0) {
-        const jobsList = document.querySelector(".bb-jobs-list");
+        const jobsList = document.querySelector(".gnh-jobs-list");
         if (jobsList) {
           const emptyState = document.createElement("div");
-          emptyState.className = "bb-jobs-empty-state";
+          emptyState.className = "gnh-jobs-empty-state";
           emptyState.style.cssText =
             "text-align: center; padding: 40px 20px; color: #6b7280;";
 
@@ -283,13 +285,13 @@ function setupDashboardFormHandler() {
 
 function setupJobDomainSearch() {
   const domainInput = document.getElementById("jobDomain");
-  if (!domainInput || !window.BBDomainSearch) {
+  if (!domainInput || !window.GNHDomainSearch) {
     return;
   }
 
-  const container = domainInput.closest(".bb-domain-search");
+  const container = domainInput.closest(".gnh-domain-search");
 
-  window.BBDomainSearch.setupDomainSearchInput({
+  window.GNHDomainSearch.setupDomainSearchInput({
     input: domainInput,
     container: container || domainInput.parentElement,
     clearOnSelect: false,
@@ -330,9 +332,9 @@ async function handleDashboardJobCreation(event) {
     return;
   }
 
-  if (window.BBDomainSearch) {
+  if (window.GNHDomainSearch) {
     try {
-      const ensuredDomain = await window.BBDomainSearch.ensureDomainByName(
+      const ensuredDomain = await window.GNHDomainSearch.ensureDomainByName(
         domain,
         { allowCreate: true }
       );
@@ -499,7 +501,7 @@ async function handleDashboardJobCreation(event) {
 
 /**
  * Setup network status monitoring
- * @param {Object} dataBinder - BBDataBinder instance
+ * @param {Object} dataBinder - GNHDataBinder instance
  */
 function setupNetworkMonitoring(dataBinder) {
   // Check initial network status
@@ -595,13 +597,13 @@ async function initializeDashboard(config = {}) {
   } = config;
 
   // Load the shared authentication modal
-  await window.BBAuth.loadAuthModal();
+  await window.GNHAuth.loadAuthModal();
 
   // Wait for auth modal DOM to be ready
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   // Create data binder with production config
-  const dataBinder = new BBDataBinder({
+  const dataBinder = new GNHDataBinder({
     apiBaseUrl,
     debug,
   });
@@ -612,7 +614,7 @@ async function initializeDashboard(config = {}) {
   }
 
   // Ensure Supabase is initialised BEFORE dataBinder.init() tries to use it
-  if (!window.BBAuth.initialiseSupabase()) {
+  if (!window.GNHAuth.initialiseSupabase()) {
     console.error("Supabase not available");
     throw new Error("Failed to initialise Supabase client");
   }
@@ -634,10 +636,10 @@ async function initializeDashboard(config = {}) {
   setupDashboardFormHandler();
 
   // Setup authentication event handlers
-  window.BBAuth.setupAuthHandlers();
+  window.GNHAuth.setupAuthHandlers();
 
   // Setup login page handlers
-  window.BBAuth.setupLoginPageHandlers();
+  window.GNHAuth.setupLoginPageHandlers();
 
   // Subscribe to job updates
   if (autoRefresh) {
@@ -650,11 +652,11 @@ async function initializeDashboard(config = {}) {
 
 /**
  * Quick setup function for basic auth integration
- * @param {Object} dataBinder - Existing BBDataBinder instance
+ * @param {Object} dataBinder - Existing GNHDataBinder instance
  */
 async function setupQuickAuth(dataBinder) {
   // Load auth modal
-  await window.BBAuth.loadAuthModal();
+  await window.GNHAuth.loadAuthModal();
 
   // Wait for DOM to be ready
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -663,8 +665,8 @@ async function setupQuickAuth(dataBinder) {
   await initializeAuthWithDataBinder(dataBinder, { debug: false });
 
   // Setup handlers
-  window.BBAuth.setupAuthHandlers();
-  window.BBAuth.setupLoginPageHandlers();
+  window.GNHAuth.setupAuthHandlers();
+  window.GNHAuth.setupLoginPageHandlers();
 }
 
 // Realtime subscription constants (exposed on window for job-page.js)
@@ -812,7 +814,7 @@ function cleanupRealtimeSubscription() {
  * Listens for INSERT and UPDATE events on the jobs table for the active organisation
  */
 async function subscribeToJobUpdates() {
-  const orgId = window.BB_ACTIVE_ORG?.id;
+  const orgId = window.GNH_ACTIVE_ORG?.id;
   if (!orgId || !window.supabase) {
     if (subscribeRetryCount < MAX_SUBSCRIBE_RETRIES) {
       subscribeRetryCount++;
@@ -927,7 +929,7 @@ if (typeof module !== "undefined" && module.exports) {
   };
 } else {
   // Browser environment - make functions globally available
-  window.BBAuthExtension = {
+  window.GNHAuthExtension = {
     initializeAuthWithDataBinder,
     setupDashboardRefresh,
     setupDashboardFormHandler,
