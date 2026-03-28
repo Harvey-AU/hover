@@ -55,7 +55,6 @@
       "Bash(supabase stop)",
       "Bash(supabase status:*)",
       "Bash(supabase migration:*)",
-      "Bash(supabase db reset)",
       "Bash(docker build:*)",
       "Bash(docker ps:*)",
       "Bash(docker logs:*)",
