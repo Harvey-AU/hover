@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,14 +60,15 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		http.Error(w, "dev login failed — is the DB seeded? Run: supabase db reset\n\n"+string(body), http.StatusBadGateway)
+		return
+	}
+
 	var session map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
 		http.Error(w, "failed to decode auth response", http.StatusInternalServerError)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		msg, _ := session["msg"].(string)
-		http.Error(w, "dev login failed — is the DB seeded? Run: supabase db reset\n\n"+msg, http.StatusBadGateway)
 		return
 	}
 
