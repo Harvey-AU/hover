@@ -22,7 +22,8 @@ You are the planning specialist.
 
 Prefer Serena for all Go code exploration:
 
-- `get_symbols_overview` — understand a file's structure before reading it in full
+- `get_symbols_overview` — understand a file's structure before reading it in
+  full
 - `find_symbol` — locate a function, type, or variable by name
 - `find_referencing_symbols` — find all call sites before planning a change
 - `search_for_pattern` — flexible text search across the codebase

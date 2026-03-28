@@ -19,9 +19,9 @@ Use this whenever the user asks to process current PR Coderabbit comments.
    - This fetches all CodeRabbit inline comments, the walkthrough summary, and
      CI check statuses into a single structured file.
    - Read `.claude/pr-review.md` as your source of truth for what needs doing.
-4. From the inline comments section, build a numbered action list with file
-   path and minimal required change. Ignore comments already marked as resolved
-   (✅ Addressed in commit …) unless explicitly requested.
+4. From the inline comments section, build a numbered action list with file path
+   and minimal required change. Ignore comments already marked as resolved (✅
+   Addressed in commit …) unless explicitly requested.
 5. Handle comments one by one.
    - Implement the smallest safe code change for each comment.
    - Do not edit `.md` files unless explicitly requested.
