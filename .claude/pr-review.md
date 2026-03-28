@@ -2,26 +2,112 @@
 
 **PR:**
 [#285 — Fix local dev setup and docs](https://github.com/Harvey-AU/hover/pull/285)
-**Branch:** `work/mystifying-newton` **Generated:** 2026-03-28 03:30 UTC
+**Branch:** `work/mystifying-newton` **Generated:** 2026-03-28 04:34 UTC
 
 ---
 
 ## CI Checks
 
-| Check       | Status       |
-| ----------- | ------------ |
-| Coverage    | ❓ Report    |
-| Deploy      | ❓ Review    |
-| Format      | ❓ Check     |
-| Integration | ❓ Tests     |
-| Lint        | ✅ pass      |
-| Supabase    | ❓ Preview   |
-| Unit        | ❓ Tests     |
-| Validate    | ❓ Changelog |
-| Cleanup     | ❓ Review    |
-| CodeRabbit  | ✅ pass      |
+| Check                                | Status      |
+| ------------------------------------ | ----------- |
+| Coverage Report (Informational Only) | ✅ pass     |
+| Deploy Review App                    | ✅ pass     |
+| Format Check                         | ✅ pass     |
+| Integration Tests                    | ✅ pass     |
+| Lint                                 | ✅ pass     |
+| Supabase Preview                     | ✅ pass     |
+| Unit Tests                           | ✅ pass     |
+| Validate Changelog Updated           | ✅ pass     |
+| Cleanup Review App                   | ⏭️ skipping |
+| CodeRabbit                           | ✅ pass     |
 
 ### Failed Job Logs
+
+#### Run Tests
+
+```
+Format Check	Check Prettier formatting	﻿2026-03-28T04:04:37.6651767Z ##[group]Run echo "=== Checking Prettier formatting ==="
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6651996Z [36;1mecho "=== Checking Prettier formatting ==="[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6652192Z [36;1mprettier --check "**/*.{md,yml,yaml,json,html,css,js}" || {[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6652362Z [36;1m  echo ""[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6652498Z [36;1m  echo "❌ Some files are not formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6652756Z [36;1m  echo "Run 'prettier --write \"**/*.{md,yml,yaml,json,html,css,js}\"' to fix formatting"[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6652957Z [36;1m  exit 1[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6653047Z [36;1m}[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6653181Z [36;1mecho "✅ All files are properly formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6668786Z shell: /usr/bin/bash -e {0}
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6668903Z env:
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6669003Z   GITHUB_REPO_NAME: Harvey-AU/hover
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6669126Z   GOTOOLCHAIN: local
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6669229Z ##[endgroup]
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.6692901Z === Checking Prettier formatting ===
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.7110210Z Checking formatting...
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.7808746Z [[33mwarn[39m] .claude/agents/planner.md
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.7960239Z [[33mwarn[39m] .claude/commands/pr-review.md
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.8487221Z [[33mwarn[39m] .claude/pr-review.md
+Format Check	Check Prettier formatting	2026-03-28T04:04:37.8660705Z [[33mwarn[39m] .claude/skills/coderabbit-review/SKILL.md
+Format Check	Check Prettier formatting	2026-03-28T04:04:40.1430597Z [[33mwarn[39m] Code style issues found in 4 files. Run Prettier with --write to fix.
+Format Check	Check Prettier formatting	2026-03-28T04:04:40.1546347Z
+Format Check	Check Prettier formatting	2026-03-28T04:04:40.1547465Z ❌ Some files are not formatted with Prettier
+Format Check	Check Prettier formatting	2026-03-28T04:04:40.1547814Z Run 'prettier --write "**/*.{md,yml,yaml,json,html,css,js}"' to fix formatting
+Format Check	Check Prettier formatting	2026-03-28T04:04:40.1559391Z ##[error]Process completed with exit code 1.
+```
+
+#### Run Tests
+
+```
+Format Check	Check Prettier formatting	﻿2026-03-28T03:51:11.4878491Z ##[group]Run echo "=== Checking Prettier formatting ==="
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4878717Z [36;1mecho "=== Checking Prettier formatting ==="[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4879000Z [36;1mprettier --check "**/*.{md,yml,yaml,json,html,css,js}" || {[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4879271Z [36;1m  echo ""[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4879478Z [36;1m  echo "❌ Some files are not formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4879842Z [36;1m  echo "Run 'prettier --write \"**/*.{md,yml,yaml,json,html,css,js}\"' to fix formatting"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4880154Z [36;1m  exit 1[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4880284Z [36;1m}[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4880486Z [36;1mecho "✅ All files are properly formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4894321Z shell: /usr/bin/bash -e {0}
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4894475Z env:
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4894583Z   GITHUB_REPO_NAME: Harvey-AU/hover
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4894711Z   GOTOOLCHAIN: local
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4894821Z ##[endgroup]
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.4919125Z === Checking Prettier formatting ===
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.5314848Z Checking formatting...
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.6093594Z [[33mwarn[39m] .claude/commands/pr-review.md
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.6727303Z [[33mwarn[39m] .claude/pr-review.md
+Format Check	Check Prettier formatting	2026-03-28T03:51:11.6880105Z [[33mwarn[39m] .claude/skills/coderabbit-review/SKILL.md
+Format Check	Check Prettier formatting	2026-03-28T03:51:13.7470082Z [[33mwarn[39m] Code style issues found in 3 files. Run Prettier with --write to fix.
+Format Check	Check Prettier formatting	2026-03-28T03:51:13.7572161Z
+Format Check	Check Prettier formatting	2026-03-28T03:51:13.7572389Z ❌ Some files are not formatted with Prettier
+Format Check	Check Prettier formatting	2026-03-28T03:51:13.7572669Z Run 'prettier --write "**/*.{md,yml,yaml,json,html,css,js}"' to fix formatting
+Format Check	Check Prettier formatting	2026-03-28T03:51:13.7583304Z ##[error]Process completed with exit code 1.
+```
+
+#### Run Tests
+
+```
+Format Check	Check Prettier formatting	﻿2026-03-28T03:31:10.5192236Z ##[group]Run echo "=== Checking Prettier formatting ==="
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5192474Z [36;1mecho "=== Checking Prettier formatting ==="[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5192679Z [36;1mprettier --check "**/*.{md,yml,yaml,json,html,css,js}" || {[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5192903Z [36;1m  echo ""[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5193047Z [36;1m  echo "❌ Some files are not formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5193349Z [36;1m  echo "Run 'prettier --write \"**/*.{md,yml,yaml,json,html,css,js}\"' to fix formatting"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5193571Z [36;1m  exit 1[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5193669Z [36;1m}[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5193811Z [36;1mecho "✅ All files are properly formatted with Prettier"[0m
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5210222Z shell: /usr/bin/bash -e {0}
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5210361Z env:
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5210474Z   GITHUB_REPO_NAME: Harvey-AU/hover
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5210606Z   GOTOOLCHAIN: local
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5210717Z ##[endgroup]
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5239115Z === Checking Prettier formatting ===
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.5630139Z Checking formatting...
+Format Check	Check Prettier formatting	2026-03-28T03:31:10.6432431Z [[33mwarn[39m] .claude/commands/pr-review.md
+Format Check	Check Prettier formatting	2026-03-28T03:31:12.7084599Z [[33mwarn[39m] Code style issues found in the above file. Run Prettier with --write to fix.
+Format Check	Check Prettier formatting	2026-03-28T03:31:12.7147935Z
+Format Check	Check Prettier formatting	2026-03-28T03:31:12.7148287Z ❌ Some files are not formatted with Prettier
+Format Check	Check Prettier formatting	2026-03-28T03:31:12.7148647Z Run 'prettier --write "**/*.{md,yml,yaml,json,html,css,js}"' to fix formatting
+Format Check	Check Prettier formatting	2026-03-28T03:31:12.7156285Z ##[error]Process completed with exit code 1.
+```
 
 #### Run Tests
 
@@ -206,7 +292,7 @@ accidental termination.
 
 ---
 
-**Line 53** — _⚠️ Potential issue_ | _🟠 Major_
+**Line —** — _⚠️ Potential issue_ | _🟠 Major_
 ([view](https://github.com/Harvey-AU/hover/pull/285#discussion_r3004029534))
 
 **Keep GitHub write/admin commands behind a prompt.**
@@ -232,7 +318,7 @@ subcommands indiscriminately, which is broader than required. Keep
 
 ---
 
-**Line 77** — _⚠️ Potential issue_ | _🟠 Major_
+**Line —** — _⚠️ Potential issue_ | _🟠 Major_
 ([view](https://github.com/Harvey-AU/hover/pull/285#discussion_r3004029541))
 
 **Fix the malformed helper commands on lines 77–78.**
@@ -241,6 +327,8 @@ Line 77 contains doubled single quotes in the SQL email literal
 (`''dev@example.com''`), which is invalid SQL syntax. Line 78 contains literal
 backslash escapes in the Python snippet (`json.load\(` and similar), which
 causes a syntax error when parsed.
+
+✅ Addressed in commits 379ae63 to 57f4117
 
 ---
 
@@ -315,6 +403,8 @@ Two small issues flagged by static analysis:
    `javascript`).
 
 </details>
+
+✅ Addressed in commits a1890c2 to 30e1e04
 
 ---
 
