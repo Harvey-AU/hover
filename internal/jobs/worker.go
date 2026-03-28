@@ -410,7 +410,7 @@ type priorityUpdateState struct {
 
 func jobFailureThresholdFromEnv() int {
 	threshold := defaultJobFailureThreshold
-	if raw := strings.TrimSpace(os.Getenv("GNH_JOB_FAILURE_THRESHOLD")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_JOB_FAILURE_THRESHOLD", "BBB_JOB_FAILURE_THRESHOLD"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			threshold = parsed
 		}
@@ -419,7 +419,7 @@ func jobFailureThresholdFromEnv() int {
 }
 
 func idleThresholdFromEnv() int {
-	if raw := strings.TrimSpace(os.Getenv("GNH_WORKER_IDLE_THRESHOLD")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_WORKER_IDLE_THRESHOLD", "BBB_WORKER_IDLE_THRESHOLD"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
 			return parsed
 		}
@@ -428,7 +428,7 @@ func idleThresholdFromEnv() int {
 }
 
 func scaleCooldownFromEnv() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv("GNH_WORKER_SCALE_COOLDOWN_SECONDS")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_WORKER_SCALE_COOLDOWN_SECONDS", "BBB_WORKER_SCALE_COOLDOWN_SECONDS"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			return time.Duration(parsed) * time.Second
 		}
@@ -437,7 +437,7 @@ func scaleCooldownFromEnv() time.Duration {
 }
 
 func probeIntervalFromEnv() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv("GNH_HEALTH_PROBE_INTERVAL_SECONDS")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_HEALTH_PROBE_INTERVAL_SECONDS", "BBB_HEALTH_PROBE_INTERVAL_SECONDS"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 10 {
 			return time.Duration(parsed) * time.Second
 		}
@@ -446,7 +446,7 @@ func probeIntervalFromEnv() time.Duration {
 }
 
 func runningTaskBatchSizeFromEnv() int {
-	if raw := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_BATCH_SIZE")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_RUNNING_TASK_BATCH_SIZE", "BBB_RUNNING_TASK_BATCH_SIZE"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
 			return parsed
 		}
@@ -455,7 +455,7 @@ func runningTaskBatchSizeFromEnv() int {
 }
 
 func runningTaskFlushIntervalFromEnv() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS")); raw != "" {
+	if raw := util.GetenvWithLegacy("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS", "BBB_RUNNING_TASK_FLUSH_INTERVAL_MS"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 			return time.Duration(parsed) * time.Millisecond
 		}

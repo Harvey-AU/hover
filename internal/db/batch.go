@@ -5,12 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/getsentry/sentry-go"
 	"github.com/lib/pq"
 	"github.com/rs/zerolog/log"
@@ -32,7 +31,7 @@ var (
 )
 
 func init() {
-	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_CHANNEL_SIZE")); val != "" {
+	if val := util.GetenvWithLegacy("GNH_BATCH_CHANNEL_SIZE", "BBB_BATCH_CHANNEL_SIZE"); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
 			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_CHANNEL_SIZE override")
@@ -49,7 +48,7 @@ func init() {
 		}
 	}
 
-	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_MAX_INTERVAL_MS")); val != "" {
+	if val := util.GetenvWithLegacy("GNH_BATCH_MAX_INTERVAL_MS", "BBB_BATCH_MAX_INTERVAL_MS"); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
 			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_MAX_INTERVAL_MS override")

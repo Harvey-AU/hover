@@ -3,12 +3,12 @@ package jobs
 import (
 	"context"
 	"database/sql"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/rs/zerolog/log"
 )
 
@@ -42,45 +42,45 @@ func defaultDomainLimiterConfig() DomainLimiterConfig {
 		RobotsDelayMultiplier: 0.5,
 	}
 
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_BASE_DELAY_MS"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_BASE_DELAY_MS", "BBB_RATE_LIMIT_BASE_DELAY_MS"); ok {
 		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
 			cfg.BaseDelay = time.Duration(ms) * time.Millisecond
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_MAX_DELAY_SECONDS"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_MAX_DELAY_SECONDS", "BBB_RATE_LIMIT_MAX_DELAY_SECONDS"); ok {
 		if sec, err := strconv.Atoi(v); err == nil && sec > 0 {
 			cfg.MaxAdaptiveDelay = time.Duration(sec) * time.Second
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_SUCCESS_THRESHOLD"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_SUCCESS_THRESHOLD", "BBB_RATE_LIMIT_SUCCESS_THRESHOLD"); ok {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.SuccessProbeThreshold = n
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_DELAY_STEP_MS"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_DELAY_STEP_MS", "BBB_RATE_LIMIT_DELAY_STEP_MS"); ok {
 		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
 			cfg.DelayStep = time.Duration(ms) * time.Millisecond
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_MAX_RETRIES"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_MAX_RETRIES", "BBB_RATE_LIMIT_MAX_RETRIES"); ok {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.MaxBlockingRetries = n
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_CANCEL_THRESHOLD"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_CANCEL_THRESHOLD", "BBB_RATE_LIMIT_CANCEL_THRESHOLD"); ok {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.CancelStreakThreshold = n
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_CANCEL_DELAY_SECONDS"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_CANCEL_DELAY_SECONDS", "BBB_RATE_LIMIT_CANCEL_DELAY_SECONDS"); ok {
 		if sec, err := strconv.Atoi(v); err == nil && sec >= 0 {
 			cfg.CancelDelayThreshold = time.Duration(sec) * time.Second
 		}
 	}
-	if v, ok := os.LookupEnv("GNH_RATE_LIMIT_CANCEL_ENABLED"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_RATE_LIMIT_CANCEL_ENABLED", "BBB_RATE_LIMIT_CANCEL_ENABLED"); ok {
 		cfg.CancelRateLimitJobs = v == "1" || v == "true" || v == "TRUE"
 	}
-	if v, ok := os.LookupEnv("GNH_ROBOTS_DELAY_MULTIPLIER"); ok {
+	if v, ok := util.LookupEnvWithLegacy("GNH_ROBOTS_DELAY_MULTIPLIER", "BBB_ROBOTS_DELAY_MULTIPLIER"); ok {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f <= 1.0 {
 			cfg.RobotsDelayMultiplier = f
 		}
