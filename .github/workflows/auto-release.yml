@@ -10,12 +10,12 @@ name: Auto Release
 # - Repository: Harvey-AU/hover
 # - Permissions: Contents (read/write), Pull requests (read/write)
 # - Location: https://github.com/settings/tokens?type=beta
-# - Secret: https://github.com/Harvey-AU/hover/settings/secrets/actions
+# - Secret: 1Password vault "Good Native", item "hover-github", field "PAT_TOKEN"
 #
 # When to renew:
 # - GitHub will email you before expiration
 # - Create new token with same permissions
-# - Update PAT_TOKEN secret with new value
+# - Update PAT_TOKEN in 1Password (hover-github) — workflows load it via 1Password
 
 on:
   push:

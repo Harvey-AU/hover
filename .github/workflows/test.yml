@@ -143,6 +143,7 @@ jobs:
           path: coverage-unit.out
 
       - name: Load secrets from 1Password
+        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
@@ -151,6 +152,7 @@ jobs:
           CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
 
       - name: Upload unit test coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ env.CODECOV_TOKEN }}
@@ -213,7 +215,7 @@ jobs:
           path: junit.xml
 
       - name: Load secrets from 1Password
-        if: always()
+        if: always() && secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
@@ -222,7 +224,7 @@ jobs:
           CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
 
       - name: Upload integration test coverage to Codecov
-        if: always()
+        if: always() && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ env.CODECOV_TOKEN }}
@@ -232,7 +234,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload test results to Codecov
-        if: always()
+        if: always() && env.CODECOV_TOKEN != ''
         uses: codecov/test-results-action@v1
         with:
           token: ${{ env.CODECOV_TOKEN }}
@@ -283,6 +285,7 @@ jobs:
           fi
 
       - name: Load secrets from 1Password
+        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
@@ -293,6 +296,7 @@ jobs:
             op://Good Native/hover-codecov/CODECOV_STATIC_TOKEN
 
       - name: Upload combined coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ env.CODECOV_TOKEN }}
@@ -302,6 +306,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload static analysis to Codecov
+        if: env.CODECOV_STATIC_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
           token: ${{ env.CODECOV_STATIC_TOKEN }}
