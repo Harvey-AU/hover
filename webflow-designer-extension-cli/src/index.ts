@@ -30,11 +30,13 @@ type RealtimeChannel = {
 
 const API_BASE_STORAGE_KEY = "gnh_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "gnh_extension_api_token_session";
+const LEGACY_API_BASE_STORAGE_KEY = "bbb_extension_api_base";
+const LEGACY_API_TOKEN_STORAGE_KEY = "bbb_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
 const DEFAULT_GNH_APP_ORIGIN = "https://hover.app.goodnative.co";
 const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://hover-pr-255.fly.dev"]);
-const AUTH_POPUP_NAME = "bbbExtensionAuth";
+const AUTH_POPUP_NAME = "gnhExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
 const JOB_POLLING_INTERVAL_MS = 6000;
@@ -496,9 +498,16 @@ let isRealtimeRefreshing = false;
 let cleanupHandlerRegistered = false;
 
 function getStoredBaseUrl(): string {
-  const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
+  const storedBaseUrl =
+    localStorage.getItem(API_BASE_STORAGE_KEY) ??
+    localStorage.getItem(LEGACY_API_BASE_STORAGE_KEY);
   if (!storedBaseUrl) {
     return DEFAULT_GNH_APP_ORIGIN;
+  }
+
+  // Migrate legacy key to new key
+  if (!localStorage.getItem(API_BASE_STORAGE_KEY)) {
+    localStorage.setItem(API_BASE_STORAGE_KEY, storedBaseUrl);
   }
 
   if (LEGACY_EXTENSION_APP_ORIGINS.has(storedBaseUrl)) {
@@ -509,7 +518,14 @@ function getStoredBaseUrl(): string {
 }
 
 function getStoredToken(): string | null {
-  return sessionStorage.getItem(API_TOKEN_STORAGE_KEY);
+  const token =
+    sessionStorage.getItem(API_TOKEN_STORAGE_KEY) ??
+    sessionStorage.getItem(LEGACY_API_TOKEN_STORAGE_KEY);
+  // Migrate legacy key to new key
+  if (token && !sessionStorage.getItem(API_TOKEN_STORAGE_KEY)) {
+    sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+  }
+  return token;
 }
 
 function setStoredToken(token: string | null): void {
