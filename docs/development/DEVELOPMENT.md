@@ -172,7 +172,7 @@ The local Supabase instance is seeded with test users on every
 
 Navigate to `http://localhost:8847/dev/auto-login`. The server signs in as
 `dev@example.com` server-side, injects a valid Supabase session into
-`localStorage`, then redirects to `/dashboard`. Session lasts one hour and
+`localStorage`, then redirects to `/dashboard`. The session lasts one hour and
 persists across page reloads.
 
 **Claude preview browser** (sandboxed — cannot reach Supabase directly):
@@ -470,7 +470,7 @@ git push origin feature/your-feature
 Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI
 attribution.
 
-```
+```text
 Add cache warming endpoint
 Fix job queue timeout bug
 Update Supabase seed users

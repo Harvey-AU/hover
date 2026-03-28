@@ -74,13 +74,13 @@ if [ ! -f ".env.local" ]; then
     SUPA_ENV=$(supabase status --output env 2>/dev/null)
     API_URL=$(echo "$SUPA_ENV" | grep '^API_URL=' | cut -d'"' -f2)
     DB_URL=$(echo "$SUPA_ENV" | grep '^DB_URL=' | cut -d'"' -f2)
-    PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^PUBLISHABLE_KEY=' | cut -d'"' -f2)
+    PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^ANON_KEY=' | cut -d'"' -f2)
     if [ -z "$API_URL" ] || [ -z "$DB_URL" ] || [ -z "$PUBLISHABLE_KEY" ]; then
         echo "⚠️  Could not extract required values from supabase status"
         echo "    Ensure Supabase is running, or create .env.local manually"
         exit 1
     fi
-    cat > .env.local <<EOF
+    (umask 077; cat > .env.local <<EOF
 # Local development overrides — not committed to git
 # Generated from: supabase status
 
@@ -92,6 +92,7 @@ DATABASE_URL=${DB_URL}
 SUPABASE_AUTH_URL=${API_URL}
 SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY}
 EOF
+)
     echo "✅ .env.local created"
 else
     echo "ℹ️  .env.local already exists — skipping generation"

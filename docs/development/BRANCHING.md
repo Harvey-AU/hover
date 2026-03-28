@@ -66,7 +66,7 @@ git push origin feature/your-feature
 Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI
 attribution.
 
-```
+```text
 Add user authentication flow
 Fix API rate limiting bug
 Update Supabase migration schema
