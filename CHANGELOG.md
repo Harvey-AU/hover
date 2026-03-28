@@ -28,6 +28,28 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Added
+
+- `/dev/auto-login` endpoint — signs in as `dev@example.com` server-side and
+  injects a valid Supabase session into `localStorage`, then redirects to
+  `/dashboard`; returns 404 outside `APP_ENV=development`
+- `dev@example.com` seed user (email/password) added to `supabase/seed.sql` for
+  use with the auto-login endpoint
+- `dev.sh` now auto-generates `.env.local` from `supabase status` on first run
+
+### Fixed
+
+- Homepage auth modal: `await loadAuthModal()` before `showAuthModal()` to
+  prevent a race condition on first open
+
+### Changed
+
+- Commit message convention updated across docs to plain English (5–6 words, no
+  conventional commit prefixes)
+- `DEVELOPMENT.md` local auth section added with seed user table and login
+  instructions for both real and sandboxed browsers
+- `flight-recorder.md` corrected to use port 8847 and `./cmd/app` run path
+
 ## [0.30.1] – 2026-03-26
 
 ### Fixed
