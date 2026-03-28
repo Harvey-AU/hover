@@ -19,7 +19,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/loops"
-	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/rs/zerolog/log"
 )
 
@@ -74,7 +73,7 @@ func buildConfigSnippet() ([]byte, error) {
 	if appEnv != "" {
 		config["environment"] = appEnv
 	}
-	if raw := util.GetenvWithLegacy("GNH_ENABLE_TURNSTILE", "BBB_ENABLE_TURNSTILE"); raw != "" {
+	if raw := os.Getenv("GNH_ENABLE_TURNSTILE"); raw != "" {
 		if enabled, err := strconv.ParseBool(raw); err == nil {
 			config["enableTurnstile"] = enabled
 		} else {
