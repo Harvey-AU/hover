@@ -36,11 +36,21 @@ On merge, CI will:
 - `dev@example.com` seed user (email/password) added to `supabase/seed.sql` for
   use with the auto-login endpoint
 - `dev.sh` now auto-generates `.env.local` from `supabase status` on first run
+- `.claude/launch.json` configured to start Air (hot reloading) via Claude Code
+  preview — no manual server start needed
+- `/preview` Claude command added to standardise preview startup and auth
+- `scripts/pr-review-summary.sh` added to collect CodeRabbit comments and CI
+  check results into `.claude/pr-review.md` for agent use
+- Claude agent files updated to include Serena MCP tools for Go code navigation
 
 ### Fixed
 
 - Homepage auth modal: `await loadAuthModal()` before `showAuthModal()` to
   prevent a race condition on first open
+- `dev.sh` key extraction corrected to use `PUBLISHABLE_KEY` from
+  `supabase status` (not `ANON_KEY`)
+- `.air.toml` Mac/Linux build command now active by default; Windows override
+  documented
 
 ### Changed
 
@@ -48,7 +58,12 @@ On merge, CI will:
   conventional commit prefixes)
 - `DEVELOPMENT.md` local auth section added with seed user table and login
   instructions for both real and sandboxed browsers
+- `DEVELOPMENT.md` Claude Code preview section added
 - `flight-recorder.md` corrected to use port 8847 and `./cmd/app` run path
+- `CLAUDE.md` updated with Serena code navigation preference and preview server
+  rule
+- `.claude/settings.local.json` permission allowlist tightened — removed broad
+  wildcards, scoped `gh`/`git`/`supabase`/`docker` commands
 
 ## [0.30.1] – 2026-03-26
 
