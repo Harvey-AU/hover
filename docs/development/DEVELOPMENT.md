@@ -153,6 +153,21 @@ go run ./cmd/app/main.go
 
 ### Server will start on `http://localhost:8847`
 
+### Claude Code Preview
+
+Claude Code's built-in preview feature starts the server automatically via
+`.claude/launch.json`. It runs `air` directly (hot reloading included).
+
+**Prerequisite:** Supabase must already be running before the preview starts.
+Run `supabase start` or `./dev.sh` once to bring it up, then use the preview.
+
+**Windows:** `.air.toml` defaults to Mac/Linux. On Windows, use `./dev.sh pc`
+which overrides the build command, or run Air manually:
+
+```bash
+air -build.cmd "go build -o ./tmp/main.exe ./cmd/app" -build.bin "tmp/main.exe"
+```
+
 ## Local Authentication
 
 The local Supabase instance is seeded with test users on every

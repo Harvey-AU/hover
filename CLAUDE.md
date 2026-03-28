@@ -62,6 +62,10 @@ rather than the normal sign-in modal. After `supabase db reset`, the dev user
 (`dev@example.com`) is re-seeded automatically — just hit `/dev/auto-login`
 again.
 
+**Claude preview server:** `.claude/launch.json` starts the server via `air`
+(hot reloading). Supabase must already be running — call `preview_start` with
+name `go-server` and then navigate to `/dev/auto-login` to authenticate.
+
 ## Instruction loading (how this repo should be read by Claude Code)
 
 - `CLAUDE.md` (this file) and optional `CLAUDE.local.md` are read in the project
