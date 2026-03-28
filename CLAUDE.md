@@ -26,6 +26,17 @@ repository.
 - Prefer `go test` and targeted checks before broader validation.
 - Keep commit messages short and descriptive (five to six words).
 
+## Code navigation
+
+Prefer Serena MCP tools over `grep`/`glob` for Go code exploration:
+
+- `get_symbols_overview` before reading a whole file
+- `find_symbol` to jump to a definition
+- `find_referencing_symbols` to trace usages before changing a function
+- `search_for_pattern` for flexible codebase-wide search
+
+Use `grep`/`glob` only for non-Go files (YAML, shell scripts, HTML, JSON).
+
 ## Project-specific rules
 
 **Auth redirect contract:** OAuth redirect targets are centralised in
