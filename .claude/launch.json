@@ -5,7 +5,9 @@
       "name": "go-server",
       "runtimeExecutable": "go",
       "runtimeArgs": ["run", "./cmd/app"],
-      "port": 8080
+      "cwd": ".",
+      "port": 8847,
+      "autoPort": false
     },
     {
       "name": "webflow-extension",

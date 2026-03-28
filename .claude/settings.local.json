@@ -122,7 +122,11 @@
       "mcp__github__search_repositories",
       "mcp__github__search_code",
       "Bash(go fmt:*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "Bash(psql \"postgresql://postgres:postgres@127.0.0.1:54322/postgres\" -c \"SELECT id, email, encrypted_password IS NOT NULL as has_pwd FROM auth.users WHERE email = ''dev@example.com'';\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(r\\) for r in d.get\\(''''rows'''',[]\\)]\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(kill 86539)"
     ],
     "deny": []
   },
