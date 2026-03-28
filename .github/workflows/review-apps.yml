@@ -129,6 +129,7 @@ jobs:
             echo "branch_exists=false" >> $GITHUB_OUTPUT
           fi
         env:
+          SUPABASE_PROJECT_REF: gpzjtbgtdjxnacdfujvx
           BRANCH_NAME: ${{ github.head_ref }}
 
       - name: Log Supabase Branch Status
