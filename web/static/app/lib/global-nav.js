@@ -153,7 +153,7 @@ function initOrgSwitcher(navEl) {
   // Wait for core → init org → render
   (async () => {
     try {
-      if (window.GNH_APP?.coreReady) await window.GNH_APP.coreReady;
+      if (window.GNH_APP?.whenReady) await window.GNH_APP.whenReady();
       if (window.GNH_APP?.initialiseOrg) await window.GNH_APP.initialiseOrg();
       updateDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
     } catch (err) {
