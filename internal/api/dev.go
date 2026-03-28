@@ -8,7 +8,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
+
+// devClient is used for the local Supabase sign-in request. Timeout prevents
+// indefinite hangs if Supabase is unresponsive.
+var devClient = &http.Client{Timeout: 10 * time.Second}
 
 // DevAutoLogin signs in as the dev seed user server-side and injects the
 // Supabase session directly into the browser's localStorage. This sidesteps the
@@ -47,7 +52,7 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", anonKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := devClient.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Supabase unreachable: %v\n\nRun: supabase start", err), http.StatusBadGateway)
 		return
@@ -66,14 +71,18 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Supabase JS v2 stores sessions under: sb-{hostname.split('.')[0]}-auth-token
-	parsed, _ := url.Parse(authURL)
+	parsed, err := url.Parse(authURL)
+	if err != nil || parsed == nil {
+		http.Error(w, "invalid SUPABASE_AUTH_URL", http.StatusInternalServerError)
+		return
+	}
 	hostPart := strings.SplitN(parsed.Hostname(), ".", 2)[0]
 	storageKey := fmt.Sprintf("sb-%s-auth-token", hostPart)
 
 	sessionJSON, _ := json.Marshal(session)
 
 	redirect := r.URL.Query().Get("redirect")
-	if redirect == "" || !strings.HasPrefix(redirect, "/") {
+	if redirect == "" || !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
 		redirect = "/dashboard"
 	}
 	redirectJSON, _ := json.Marshal(redirect)
