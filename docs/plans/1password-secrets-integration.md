@@ -22,13 +22,13 @@ Sync secrets from 1Password across local, preview, and production environments.
 
 ### Vault: "Good Native"
 
-| Item Type   | Item Name         | Fields                                                                                                          |
-| ----------- | ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| Secure Note | `hover:fly`       | `FLY_API_TOKEN`                                                                                                 |
-| Secure Note | `hover:runtime`   | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
-| Secure Note | `hover:supabase`  | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN` |
-| Secure Note | `hover:codecov`   | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                         |
-| Secure Note | `hover:github`    | `PAT_TOKEN`                                                                                                     |
+| Item Type   | Item Name        | Fields                                                                                                                              |
+| ----------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Secure Note | `hover:fly`      | `FLY_API_TOKEN`                                                                                                                     |
+| Secure Note | `hover:runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| Secure Note | `hover:supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
+| Secure Note | `hover:codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
+| Secure Note | `hover:github`   | `PAT_TOKEN`                                                                                                                         |
 
 ---
 
@@ -158,7 +158,8 @@ available).
     WEBFLOW_CLIENT_SECRET: op://Good Native/hover:runtime/WEBFLOW_CLIENT_SECRET
     GOOGLE_CLIENT_SECRET: op://Good Native/hover:runtime/GOOGLE_CLIENT_SECRET
     SUPABASE_JWT_SECRET: op://Good Native/hover:supabase/SUPABASE_JWT_SECRET
-    SUPABASE_SERVICE_ROLE_KEY: op://Good Native/hover:supabase/SUPABASE_SERVICE_ROLE_KEY
+    SUPABASE_SERVICE_ROLE_KEY:
+      op://Good Native/hover:supabase/SUPABASE_SERVICE_ROLE_KEY
 
 # DATABASE_URL comes from Supabase preview branch (per-PR)
 - name: Deploy with secrets
