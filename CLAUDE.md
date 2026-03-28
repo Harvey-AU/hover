@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Last reviewed: 2026-02-22
+Last reviewed: 2026-03-28
 
 This file is the project operating guide for Claude Code (desktop/CLI) in this
 repository.
@@ -26,6 +26,17 @@ repository.
 - Prefer `go test` and targeted checks before broader validation.
 - Keep commit messages short and descriptive (five to six words).
 
+## Code navigation
+
+Prefer Serena MCP tools over `grep`/`glob` for Go code exploration:
+
+- `get_symbols_overview` before reading a whole file
+- `find_symbol` to jump to a definition
+- `find_referencing_symbols` to trace usages before changing a function
+- `search_for_pattern` for flexible codebase-wide search
+
+Use `grep`/`glob` only for non-Go files (YAML, shell scripts, HTML, JSON).
+
 ## Project-specific rules
 
 **Auth redirect contract:** OAuth redirect targets are centralised in
@@ -41,6 +52,19 @@ Fly.
 **Database migrations:** Use `supabase migration new <name>` to create migration
 files. Never edit or rename migrations after they are deployed. Keep migrations
 additive; avoid destructive schema changes.
+
+**Local dev auth:** Use `GET /dev/auto-login` to sign in during local
+development — no OAuth flow, no manual credential entry. The Go server fetches a
+session server-side and injects it into `localStorage`, then redirects to
+`/dashboard`. Only works when `APP_ENV=development`. The preview browser in
+Claude cannot reach `127.0.0.1:54321` directly, so always use this endpoint
+rather than the normal sign-in modal. After `supabase db reset`, the dev user
+(`dev@example.com`) is re-seeded automatically — just hit `/dev/auto-login`
+again.
+
+**Claude preview server:** `.claude/launch.json` starts the server via `air`
+(hot reloading). Supabase must already be running — call `preview_start` with
+name `go-server` and then navigate to `/dev/auto-login` to authenticate.
 
 ## Instruction loading (how this repo should be read by Claude Code)
 

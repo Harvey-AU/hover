@@ -31,6 +31,13 @@ changes — HTTP route in `internal/api/handlers.go`, the page file on disk, and
 **Database migrations:** Use `supabase migration new <name>`. Never edit or
 rename deployed migrations. Keep migrations additive.
 
+**Local dev auth:** Use `GET /dev/auto-login` to sign in during local
+development — no OAuth flow required. The Go server fetches a session
+server-side and injects it into `localStorage`, then redirects to `/dashboard`.
+Only active when `APP_ENV=development` (returns 404 otherwise). The dev user
+(`dev@example.com` / `devpassword`) is re-seeded on every `supabase db reset`.
+See `docs/development/DEVELOPMENT.md#local-authentication` for full detail.
+
 ## Automated review gates
 
 - Treat `scripts/security-check.sh` and Coderabbit as mandatory pre-merge

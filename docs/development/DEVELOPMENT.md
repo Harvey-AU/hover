@@ -61,17 +61,30 @@ This single command will:
 
 ### 3. Environment Configuration (Automatic)
 
-The app automatically uses `.env.local` for development, which provides:
+`dev.sh` generates `.env.local` automatically from `supabase status` on first
+run. It produces:
 
 ```bash
-# Local Supabase Configuration (auto-configured)
-DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres
-SUPABASE_URL=http://localhost:54321
-APP_ENV=development
-LOG_LEVEL=debug
+# Local development overrides — not committed to git
+# Generated from: supabase status
 
-# Production uses .env (different database)
-# No manual configuration required!
+APP_ENV=development
+LOG_LEVEL=info
+
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+
+SUPABASE_AUTH_URL=http://127.0.0.1:54321
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_<project-specific>
+```
+
+If `.env.local` already exists, `dev.sh` leaves it untouched. Do not commit it —
+it is gitignored.
+
+To regenerate (e.g. after a Supabase CLI upgrade changes the keys):
+
+```bash
+rm .env.local
+./dev.sh
 ```
 
 ### 4. Prerequisites Check
@@ -90,7 +103,7 @@ supabase --version
 # Mac: brew install supabase/tap/supabase
 ```
 
-### 4. Database Migrations
+### 5. Database Migrations
 
 **Creating new migrations (fully automatic)**:
 
@@ -139,6 +152,68 @@ go run ./cmd/app/main.go
 ```
 
 ### Server will start on `http://localhost:8847`
+
+### Claude Code Preview
+
+Claude Code's built-in preview feature starts the server automatically via
+`.claude/launch.json`. It runs `air` directly (hot reloading included).
+
+**Prerequisite:** Supabase must already be running before the preview starts.
+Run `supabase start` or `./dev.sh` once to bring it up, then use the preview.
+
+**Windows:** `.air.toml` defaults to Mac/Linux. On Windows, use `./dev.sh pc`
+which overrides the build command, or run Air manually:
+
+```bash
+air -build.cmd "go build -o ./tmp/main.exe ./cmd/app" -build.bin "tmp/main.exe"
+```
+
+## Local Authentication
+
+The local Supabase instance is seeded with test users on every
+`supabase db reset`.
+
+### Seed users
+
+| Email                     | Password      | Role         | Notes                                         |
+| ------------------------- | ------------- | ------------ | --------------------------------------------- |
+| `seed-admin@example.com`  | —             | system_admin | Google OAuth only — cannot use email/password |
+| `seed-member@example.com` | —             | member       | Google OAuth only                             |
+| `dev@example.com`         | `devpassword` | system_admin | Email/password — use this for local login     |
+
+### Logging in
+
+**Real browser** (Chrome/Safari at `localhost:8847`):
+
+Navigate to `http://localhost:8847/dev/auto-login`. The server signs in as
+`dev@example.com` server-side, injects a valid Supabase session into
+`localStorage`, then redirects to `/dashboard`. The session lasts one hour and
+persists across page reloads.
+
+**Claude preview browser** (sandboxed — cannot reach Supabase directly):
+
+The `/dev/auto-login` endpoint is specifically designed for this. From a preview
+eval or by navigating directly:
+
+```javascript
+window.location.replace("/dev/auto-login");
+```
+
+### Why `/dev/auto-login` exists
+
+The Claude app's preview browser can reach `localhost:8847` but not
+`127.0.0.1:54321` (the local Supabase instance). The Supabase JS client normally
+calls Supabase directly from the browser for auth. The endpoint bypasses this:
+the Go server fetches the session server-side (it can reach Supabase fine), then
+injects the tokens directly into `localStorage` before the redirect.
+
+The endpoint returns **404** outside `APP_ENV=development` — it cannot be
+accidentally exposed in production.
+
+### After `supabase db reset`
+
+The `dev@example.com` user is recreated automatically by `supabase/seed.sql`. No
+manual steps needed — just navigate to `/dev/auto-login` again.
 
 ## Testing
 
@@ -257,7 +332,7 @@ summaries into time-series data and markdown reports.
 
 ### Log Levels
 
-Set `LOG_LEVEL` in `.env`:
+Set `LOG_LEVEL` in `.env.local`:
 
 - `debug` - Verbose logging for development
 - `info` - Standard operational logging
@@ -370,7 +445,7 @@ brew upgrade golangci-lint  # macOS
 go fmt ./... && go vet ./... && go test ./...
 
 # 2. 🚀 Push to GitHub
-git add . && git commit -m "feat: new feature" && git push
+git add specific-file.go && git commit -m "Add new feature" && git push
 
 # 3. ⚡ GitHub CI runs comprehensive checks
 # - Linting (golangci-lint)
@@ -407,14 +482,14 @@ git push origin feature/your-feature
 
 ### Commit Messages
 
-Use conventional commits:
+Short, plain English — 5-6 words maximum. No conventional commit prefixes, no AI
+attribution.
 
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `refactor:` - Code refactoring
-- `test:` - Test additions/changes
-- `chore:` - Maintenance tasks
+```text
+Add cache warming endpoint
+Fix job queue timeout bug
+Update Supabase seed users
+```
 
 ### Pull Request Process
 
@@ -534,11 +609,12 @@ Use backend state as the source of truth for active organisation selection:
 **Database Connection Errors**:
 
 ```bash
-# Check PostgreSQL is running
-pg_isready -h localhost -p 5432
+# Check local Supabase is running
+supabase status
 
-# Verify credentials
-psql -h localhost -U your_user -d adaptappgoodnative
+# Verify the DB port (local Supabase uses 54322, not 5432)
+# DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+docker ps | grep supabase_db
 ```
 
 **Port Already in Use**:

@@ -380,6 +380,13 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.Handle("/debug/pprof/block", pprofProtected(pprof.Handler("block")))
 	mux.Handle("/debug/pprof/mutex", pprofProtected(pprof.Handler("mutex")))
 
+	// Dev-only: inject Supabase session into browser localStorage.
+	// Lets sandboxed preview browsers (e.g. Claude app) bypass the
+	// browser→Supabase network call that fails in those environments.
+	if os.Getenv("APP_ENV") == "development" {
+		mux.HandleFunc("/dev/auto-login", h.DevAutoLogin)
+	}
+
 	// Debug endpoints (no auth required)
 	mux.HandleFunc("/debug/fgtrace", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open("trace.out")

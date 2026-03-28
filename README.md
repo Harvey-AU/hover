@@ -54,7 +54,7 @@ git clone https://github.com/Harvey-AU/hover.git hover
 cd hover
 
 # Enable pre-commit hooks for automatic formatting
-git config core.hooksPath .githooks
+bash scripts/setup-hooks.sh
 
 # Start development environment
 # Windows:
@@ -63,7 +63,7 @@ dev debug        # Verbose output (debug level)
 
 # Mac/Linux:
 ./dev.sh         # Clean output (info level)
-./dev.sh mac debug  # Verbose output (debug level)
+./dev.sh debug      # Verbose output (debug level)
 ```
 
 One command starts everything:
@@ -71,13 +71,18 @@ One command starts everything:
 - ✅ Checks prerequisites (Docker + Supabase CLI)
 - 🐳 Starts local Supabase database
 - 🔄 Auto-applies migrations
+- 📝 Generates `.env.local` on first run (from `supabase status`)
 - 🔥 Hot reloading on port 8847
 - 📊 Displays helpful URLs for homepage, dashboard, and Supabase Studio
 - 🚀 Completely isolated from production
 - 🔇 Clean logging by default, verbose mode available
 
-If you run without `DATABASE_URL`, ensure `POSTGRES_DB=hover` for local
-defaults.
+**Then log in:** navigate to `http://localhost:8847/dev/auto-login` — signs you
+in as the dev seed user instantly, no OAuth flow needed. See
+[Local Authentication](docs/development/DEVELOPMENT.md#local-authentication) for
+details.
+
+`.env.local` is generated automatically by `dev.sh` — do not commit it.
 
 ## Status
 
