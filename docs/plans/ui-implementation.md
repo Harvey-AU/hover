@@ -26,7 +26,7 @@ Bee's own product dashboard **Secondary Interfaces:**
 
 ### Template + Data Binding System
 
-Hover's own dashboard pages use `data-bb-bind` attributes. The JavaScript
+Hover's own dashboard pages use `data-gnh-bind` attributes. The JavaScript
 library finds these elements and populates them with live data from the API.
 
 **Template system controls:**
@@ -46,45 +46,45 @@ library finds these elements and populates them with live data from the API.
 
 ```html
 <!-- Hover dashboard HTML design -->
-<div class="bb-dashboard-design">
+<div class="gnh-dashboard-design">
   <div class="stat-card">
     <h3>Total Jobs</h3>
-    <span class="big-number" data-bb-bind="total_jobs">0</span>
+    <span class="big-number" data-gnh-bind="total_jobs">0</span>
   </div>
 
   <div class="job-list">
-    <div class="job-template" data-bb-template="job">
-      <h4 data-bb-bind="domain">Domain loading...</h4>
+    <div class="job-template" data-gnh-template="job">
+      <h4 data-gnh-bind="domain">Domain loading...</h4>
       <div class="progress-bar">
-        <div class="fill" data-bb-bind-style="width:{progress}%"></div>
+        <div class="fill" data-gnh-bind-style="width:{progress}%"></div>
       </div>
-      <span data-bb-bind="status">pending</span>
+      <span data-gnh-bind="status">pending</span>
     </div>
   </div>
 </div>
 
 <!-- Single script inclusion -->
-<script src="https://hover.app.goodnative.co/js/bb-data-binder.js"></script>
+<script src="https://hover.app.goodnative.co/js/gnh-data-binder.js"></script>
 ```
 
 ## Data Binding Attributes
 
 ### Basic Data Binding
 
-- `data-bb-bind="field_name"` - Binds element's text content to API data field
-- `data-bb-bind-attr="href:{url}"` - Binds element attributes
-- `data-bb-bind-style="width:{progress}%"` - Binds CSS styles with formatting
+- `data-gnh-bind="field_name"` - Binds element's text content to API data field
+- `data-gnh-bind-attr="href:{url}"` - Binds element attributes
+- `data-gnh-bind-style="width:{progress}%"` - Binds CSS styles with formatting
 
 ### Template Binding
 
-- `data-bb-template="template_name"` - Marks element as template for repeated
+- `data-gnh-template="template_name"` - Marks element as template for repeated
   data
 - Templates are cloned and populated for each data item
 
 ### Authentication Elements
 
-- `data-bb-auth="required"` - Shows element only when authenticated
-- `data-bb-auth="guest"` - Shows element only when not authenticated
+- `data-gnh-auth="required"` - Shows element only when authenticated
+- `data-gnh-auth="guest"` - Shows element only when not authenticated
 
 ## API Integration
 
@@ -113,21 +113,21 @@ The JavaScript automatically fetches data from these endpoints:
 
 ### ✅ Phase 1: Attribute-Based Event Handling (Completed v0.5.3)
 
-- Event delegation system with `bb-action` attributes
+- Event delegation system with `gnh-action` attributes
 - Dashboard demonstration with vanilla JavaScript
 - API integration for stats and job data
 - Foundation for template-based approach
 
 ### ✅ Phase 2: Data Binding Implementation (Completed v0.5.4)
 
-- ✅ `data-bb-bind` attribute processing for dynamic content
-- ✅ Template engine for `data-bb-template` repeated elements
-- ✅ Authentication integration with conditional displays (`data-bb-auth`)
-- ✅ Form handling and user input processing (`data-bb-form`)
-- ✅ Real-time validation with `data-bb-validate` attributes
-- ✅ Style and attribute binding with `data-bb-bind-style` and
-  `data-bb-bind-attr`
-- ✅ Built and deployed `bb-data-binder.min.js` library
+- ✅ `data-gnh-bind` attribute processing for dynamic content
+- ✅ Template engine for `data-gnh-template` repeated elements
+- ✅ Authentication integration with conditional displays (`data-gnh-auth`)
+- ✅ Form handling and user input processing (`data-gnh-form`)
+- ✅ Real-time validation with `data-gnh-validate` attributes
+- ✅ Style and attribute binding with `data-gnh-bind-style` and
+  `data-gnh-bind-attr`
+- ✅ Built and deployed `gnh-data-binder.min.js` library
 
 ### 🔴 Phase 3: Advanced Features
 
@@ -155,8 +155,8 @@ class BBDataBinder {
   }
 
   bindElements() {
-    // Find and bind data-bb-bind elements
-    const elements = document.querySelectorAll("[data-bb-bind]");
+    // Find and bind data-gnh-bind elements
+    const elements = document.querySelectorAll("[data-gnh-bind]");
     elements.forEach((el) => this.bindElement(el));
   }
 

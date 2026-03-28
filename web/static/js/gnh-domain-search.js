@@ -211,7 +211,7 @@
     input.dataset.domainSearchInitialised = "true";
 
     const resolvedSearchMode =
-      searchMode || input.getAttribute("bbb-domain-search") || "on";
+      searchMode || input.getAttribute("gnh-domain-search") || "on";
     if (resolvedSearchMode === "off" || resolvedSearchMode === "disabled") {
       return;
     }
@@ -239,7 +239,7 @@
     };
 
     const resolvedMode =
-      createMode || input.getAttribute("bbb-domain-create") || "auto";
+      createMode || input.getAttribute("gnh-domain-create") || "auto";
     const resolvedAllowCreate =
       allowCreate !== undefined ? allowCreate : resolvedMode !== "block";
     const resolvedShowCreateOption =
@@ -541,7 +541,7 @@
     }
   };
 
-  window.BBDomainSearch = {
+  window.GNHDomainSearch = {
     getDomains,
     loadOrganisationDomains,
     ensureDomainsLoaded,

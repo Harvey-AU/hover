@@ -260,16 +260,16 @@
 
   function updateAdminVisibility(role) {
     const isAdmin =
-      role === "admin" || window.BB_ACTIVE_ORG?.currentUserRole === "admin";
+      role === "admin" || window.GNH_ACTIVE_ORG?.currentUserRole === "admin";
     document.querySelectorAll("[data-admin-only]").forEach((el) => {
       el.style.display = isAdmin ? "" : "none";
     });
   }
 
   async function handleInviteToken() {
-    if (!window.BBInviteFlow?.handleInviteTokenFlow) return;
+    if (!window.GNHInviteFlow?.handleInviteTokenFlow) return;
 
-    const result = await window.BBInviteFlow.handleInviteTokenFlow({
+    const result = await window.GNHInviteFlow.handleInviteTokenFlow({
       onAccepted: async () => {
         showSettingsToast("success", "Invite accepted");
         await refreshSettingsData();
@@ -402,7 +402,7 @@
   let notificationsRetryCount = 0;
   const maxNotificationRetries = 30;
   async function subscribeToNotifications() {
-    const orgId = window.BB_ACTIVE_ORG?.id;
+    const orgId = window.GNH_ACTIVE_ORG?.id;
     if (!orgId || !window.supabase) {
       if (notificationsRetryCount < maxNotificationRetries) {
         notificationsRetryCount += 1;
@@ -477,7 +477,7 @@
       if (!token) {
         list.textContent = "";
         const empty = document.createElement("div");
-        empty.className = "bb-notifications-empty";
+        empty.className = "gnh-notifications-empty";
         const msg = document.createElement("div");
         msg.textContent = "Please sign in";
         empty.appendChild(msg);
@@ -500,7 +500,7 @@
       console.error("Failed to load notifications:", err);
       list.textContent = "";
       const empty = document.createElement("div");
-      empty.className = "bb-notifications-empty";
+      empty.className = "gnh-notifications-empty";
       const msg = document.createElement("div");
       msg.textContent = "Failed to load";
       empty.appendChild(msg);
@@ -515,9 +515,9 @@
     if (!notifications || notifications.length === 0) {
       list.textContent = "";
       const empty = document.createElement("div");
-      empty.className = "bb-notifications-empty";
+      empty.className = "gnh-notifications-empty";
       const iconDiv = document.createElement("div");
-      iconDiv.className = "bb-notifications-empty-icon";
+      iconDiv.className = "gnh-notifications-empty-icon";
       iconDiv.textContent = "\ud83d\udd14";
       const msgDiv = document.createElement("div");
       msgDiv.textContent = "No notifications yet";
@@ -542,27 +542,27 @@
       const time = formatRelativeTime(n.created_at);
 
       const item = document.createElement("div");
-      item.className = `bb-notification-item${isUnread ? " unread" : ""}`;
+      item.className = `gnh-notification-item${isUnread ? " unread" : ""}`;
       item.dataset.id = n.id;
       item.dataset.link = n.link || "";
 
       const iconEl = document.createElement("div");
-      iconEl.className = "bb-notification-item-icon";
+      iconEl.className = "gnh-notification-item-icon";
       iconEl.textContent = icon;
 
       const content = document.createElement("div");
-      content.className = "bb-notification-item-content";
+      content.className = "gnh-notification-item-content";
 
       const subject = document.createElement("div");
-      subject.className = "bb-notification-item-subject";
+      subject.className = "gnh-notification-item-subject";
       subject.textContent = n.subject;
 
       const preview = document.createElement("div");
-      preview.className = "bb-notification-item-preview";
+      preview.className = "gnh-notification-item-preview";
       preview.textContent = n.preview;
 
       const timeEl = document.createElement("div");
-      timeEl.className = "bb-notification-item-time";
+      timeEl.className = "gnh-notification-item-time";
       timeEl.textContent = time;
 
       content.appendChild(subject);
@@ -574,7 +574,7 @@
     });
 
     list.onclick = (e) => {
-      const item = e.target.closest(".bb-notification-item");
+      const item = e.target.closest(".gnh-notification-item");
       if (item) {
         handleNotificationClick(item.dataset.id, item.dataset.link);
       }
@@ -637,7 +637,7 @@
       if (response.ok) {
         updateNotificationBadge(0);
         document
-          .querySelectorAll(".bb-notification-item.unread")
+          .querySelectorAll(".gnh-notification-item.unread")
           .forEach((el) => {
             el.classList.remove("unread");
           });
@@ -693,14 +693,14 @@
     const settingsSwitcherBtn = document.getElementById(
       "settingsOrgSwitcherBtn"
     );
-    const divider = document.querySelector(".bb-org-divider");
+    const divider = document.querySelector(".gnh-org-divider");
 
     if (!switcher || !btn) return;
 
     // Ensure org is initialised (may already be done by dashboard or nav)
-    if (window.BB_APP?.initialiseOrg && !window.BB_ACTIVE_ORG?.name) {
+    if (window.GNH_APP?.initialiseOrg && !window.GNH_ACTIVE_ORG?.name) {
       try {
-        await window.BB_APP.initialiseOrg();
+        await window.GNH_APP.initialiseOrg();
       } catch (err) {
         console.warn("Org init failed:", err);
       }
@@ -708,18 +708,18 @@
 
     // Wait for shared org data
     try {
-      await window.BB_ORG_READY;
+      await window.GNH_ORG_READY;
     } catch (err) {
-      console.warn("BB_ORG_READY failed:", err);
+      console.warn("GNH_ORG_READY failed:", err);
     }
 
-    const organisations = window.BB_ORGANISATIONS || [];
-    const activeOrg = window.BB_ACTIVE_ORG;
+    const organisations = window.GNH_ORGANISATIONS || [];
+    const activeOrg = window.GNH_ACTIVE_ORG;
 
     // Clone elements to remove old listeners
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
-    const chevron = newBtn.querySelector(".bb-org-chevron");
+    const chevron = newBtn.querySelector(".gnh-org-chevron");
     newBtn.disabled = false;
     newBtn.style.cursor = "";
     if (chevron) chevron.style.display = "";
@@ -817,24 +817,24 @@
     // Handle org switch using shared function
     const handleOrgSwitch = async (org) => {
       closeOrgDropdowns();
-      const previous = window.BB_ACTIVE_ORG?.id;
+      const previous = window.GNH_ACTIVE_ORG?.id;
 
       // Show loading state
       if (currentOrgNameRef) currentOrgNameRef.textContent = "Switching...";
       if (settingsOrgNameRef) settingsOrgNameRef.textContent = "Switching...";
 
       try {
-        await window.BB_APP.switchOrg(org.id);
-        // bb:org-switched event will handle UI updates
+        await window.GNH_APP.switchOrg(org.id);
+        // gnh:org-switched event will handle UI updates
       } catch (err) {
         console.error("Error switching organisation:", err);
         if (currentOrgNameRef) {
           currentOrgNameRef.textContent =
-            window.BB_ACTIVE_ORG?.name || "Unknown";
+            window.GNH_ACTIVE_ORG?.name || "Unknown";
         }
         if (settingsOrgNameRef) {
           settingsOrgNameRef.textContent =
-            window.BB_ACTIVE_ORG?.name || "Organisation";
+            window.GNH_ACTIVE_ORG?.name || "Organisation";
         }
         showSettingsToast("error", "Failed to switch organisation");
       }
@@ -844,7 +844,7 @@
     const renderOrgButton = (listEl, org) => {
       if (!listEl) return;
       const button = document.createElement("button");
-      button.className = "bb-org-item";
+      button.className = "gnh-org-item";
       button.dataset.orgId = org.id;
       button.textContent = org.name;
       if (org.id === activeOrg?.id) {
@@ -882,7 +882,7 @@
   }
 
   // Listen for org switches to update settings-specific UI and data
-  document.addEventListener("bb:org-switched", async (e) => {
+  document.addEventListener("gnh:org-switched", async (e) => {
     const newOrg = e.detail?.organisation;
     if (!newOrg) return;
 
@@ -893,7 +893,7 @@
     if (settingsOrgNameRef) settingsOrgNameRef.textContent = newOrg.name;
 
     // Update active states in dropdowns
-    document.querySelectorAll(".bb-org-item").forEach((el) => {
+    document.querySelectorAll(".gnh-org-item").forEach((el) => {
       el.classList.toggle("active", el.dataset.orgId === newOrg.id);
     });
 
@@ -906,7 +906,7 @@
       }
     }
 
-    window.BBQuota?.refresh();
+    window.GNHQuota?.refresh();
 
     showSettingsToast("success", `Switched to ${newOrg.name}`);
   });
@@ -989,16 +989,16 @@
           const newOrg = data.data?.organisation;
 
           // Update shared org data
-          window.BB_ACTIVE_ORG = newOrg;
-          if (Array.isArray(window.BB_ORGANISATIONS)) {
-            window.BB_ORGANISATIONS.push(newOrg);
+          window.GNH_ACTIVE_ORG = newOrg;
+          if (Array.isArray(window.GNH_ORGANISATIONS)) {
+            window.GNH_ORGANISATIONS.push(newOrg);
           } else {
-            window.BB_ORGANISATIONS = [newOrg];
+            window.GNH_ORGANISATIONS = [newOrg];
           }
 
           // Dispatch event for all listeners
           document.dispatchEvent(
-            new CustomEvent("bb:org-switched", {
+            new CustomEvent("gnh:org-switched", {
               detail: { organisation: newOrg },
             })
           );
@@ -1024,8 +1024,8 @@
   }
 
   function initAdminSection(session) {
-    if (window.BBAdmin) {
-      window.BBAdmin.initAdminResetButton("settingsResetDbBtn", session, {
+    if (window.GNHAdmin) {
+      window.GNHAdmin.initAdminResetButton("settingsResetDbBtn", session, {
         containerSelector: "#adminGroup",
       });
     }
@@ -1033,18 +1033,18 @@
 
   async function initSettingsPage() {
     try {
-      if (window.BB_APP?.coreReady) {
-        await window.BB_APP.coreReady;
+      if (window.GNH_APP?.coreReady) {
+        await window.GNH_APP.coreReady;
       }
 
-      const dataBinder = new BBDataBinder({
+      const dataBinder = new GNHDataBinder({
         apiBaseUrl: "",
         debug: false,
       });
 
       window.dataBinder = dataBinder;
 
-      if (!window.BBAuth.initialiseSupabase()) {
+      if (!window.GNHAuth.initialiseSupabase()) {
         throw new Error("Failed to initialise Supabase client");
       }
 
@@ -1053,8 +1053,8 @@
         await window.setupQuickAuth(dataBinder);
       }
 
-      if (window.BB_NAV_READY) {
-        await window.BB_NAV_READY;
+      if (window.GNH_NAV_READY) {
+        await window.GNH_NAV_READY;
       }
 
       setupSettingsNavigation();
@@ -1065,9 +1065,9 @@
       const session = sessionResult?.data?.session;
       if (session?.user) {
         // Initialise org using shared logic (single source of truth)
-        if (window.BB_APP?.initialiseOrg) {
+        if (window.GNH_APP?.initialiseOrg) {
           try {
-            await window.BB_APP.initialiseOrg();
+            await window.GNH_APP.initialiseOrg();
           } catch (err) {
             console.warn("Failed to initialise org:", err);
           }
@@ -1077,7 +1077,7 @@
         initAdminSection(session);
 
         await handleInviteToken();
-      } else if (window.BBInviteFlow?.getInviteToken?.()) {
+      } else if (window.GNHInviteFlow?.getInviteToken?.()) {
         await handleInviteToken();
       }
 

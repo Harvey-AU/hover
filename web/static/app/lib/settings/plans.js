@@ -57,7 +57,7 @@ export async function loadPlansAndUsage(container, options = {}) {
     }
     if (currentPlanReset) {
       currentPlanReset.textContent = usage.resets_at
-        ? window.BBQuota?.formatTimeUntilReset(usage.resets_at) || ""
+        ? window.GNHQuota?.formatTimeUntilReset(usage.resets_at) || ""
         : "";
     }
 
@@ -122,7 +122,7 @@ async function switchPlan(planId, container, options = {}) {
     await put("/v1/organisations/plan", { plan_id: planId });
     toast("success", "Plan updated");
     await loadPlansAndUsage(container, options);
-    window.BBQuota?.refresh();
+    window.GNHQuota?.refresh();
   } catch (err) {
     console.error("Failed to switch plan:", err);
     toast("error", "Failed to switch plan");

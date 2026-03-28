@@ -7,7 +7,7 @@
  * Webflow extension or other surfaces.
  *
  * Also owns settings navigation (sidebar, tabs, deep-linking) and
- * the org creation modal — previously in bb-settings.js.
+ * the org creation modal — previously in gnh-settings.js.
  */
 
 import {
@@ -256,7 +256,7 @@ async function refreshSections() {
 window.__esRefreshSections = refreshSections;
 
 // Listen for org-switch events directly.
-document.addEventListener("bb:org-switched", () =>
+document.addEventListener("gnh:org-switched", () =>
   refreshSections().catch(console.error)
 );
 
@@ -269,8 +269,8 @@ async function init() {
   _initialised = true;
 
   // Wait for core readiness (Supabase, org init).
-  if (window.BB_APP?.coreReady) {
-    await window.BB_APP.coreReady;
+  if (window.GNH_APP?.coreReady) {
+    await window.GNH_APP.coreReady;
   }
 
   // Wait for supabase auth (polling with timeout).

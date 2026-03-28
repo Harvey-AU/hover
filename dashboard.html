@@ -71,7 +71,7 @@
     </script>
   </head>
 
-  <body class="page-dashboard bb-auth-route-gated">
+  <body class="page-dashboard gnh-auth-route-gated">
     <div id="globalNav"></div>
     <!-- Main Content -->
     <main class="main-content">
@@ -246,7 +246,7 @@
 
           <button
             type="submit"
-            class="bb-button bb-button-primary"
+            class="gnh-button gnh-button-primary"
             style="padding: 12px 24px; white-space: nowrap"
             aria-label="Start cache warming crawl"
           >
@@ -279,8 +279,8 @@
 
         <div class="page-actions">
           <button
-            class="bb-btn bb-btn-secondary"
-            bbb-action="refresh-dashboard"
+            class="gnh-btn gnh-btn-secondary"
+            gnh-action="refresh-dashboard"
             aria-label="Refresh dashboard data"
           >
             <span>↻</span> Refresh
@@ -289,7 +289,7 @@
       </div>
 
       <!-- Login Interface for Unauthenticated Users -->
-      <div id="loginContent" bbb-auth="guest">
+      <div id="loginContent" gnh-auth="guest">
         <div
           style="
             max-width: 400px;
@@ -320,7 +320,7 @@
           <div style="display: flex; gap: 12px; margin-bottom: 24px">
             <button
               id="showLoginBtn"
-              class="bb-button bb-button-primary"
+              class="gnh-button gnh-button-primary"
               style="flex: 1"
               aria-label="Show sign in form"
             >
@@ -328,7 +328,7 @@
             </button>
             <button
               id="showSignupBtn"
-              class="bb-button bb-button-outline"
+              class="gnh-button gnh-button-outline"
               style="flex: 1"
               aria-label="Show create account form"
             >
@@ -343,42 +343,42 @@
       </div>
 
       <!-- Dashboard Content for Authenticated Users -->
-      <div id="dashboardContent" bbb-auth="required" style="display: none">
+      <div id="dashboardContent" gnh-auth="required" style="display: none">
         <!-- Stats Overview Cards -->
-        <div class="bb-stats-grid">
-          <div class="bb-stat-card">
-            <div class="bb-stat-value" bbb-text="stats.total_jobs">-</div>
-            <div class="bb-stat-label">Total Jobs</div>
+        <div class="gnh-stats-grid">
+          <div class="gnh-stat-card">
+            <div class="gnh-stat-value" gnh-text="stats.total_jobs">-</div>
+            <div class="gnh-stat-label">Total Jobs</div>
           </div>
-          <div class="bb-stat-card">
-            <div class="bb-stat-value" bbb-text="stats.running_jobs">-</div>
-            <div class="bb-stat-label">Running</div>
+          <div class="gnh-stat-card">
+            <div class="gnh-stat-value" gnh-text="stats.running_jobs">-</div>
+            <div class="gnh-stat-label">Running</div>
           </div>
-          <div class="bb-stat-card">
-            <div class="bb-stat-value" bbb-text="stats.completed_jobs">-</div>
-            <div class="bb-stat-label">Completed</div>
+          <div class="gnh-stat-card">
+            <div class="gnh-stat-value" gnh-text="stats.completed_jobs">-</div>
+            <div class="gnh-stat-label">Completed</div>
           </div>
-          <div class="bb-stat-card">
-            <div class="bb-stat-value" bbb-text="stats.failed_jobs">-</div>
-            <div class="bb-stat-label">Failed</div>
+          <div class="gnh-stat-card">
+            <div class="gnh-stat-value" gnh-text="stats.failed_jobs">-</div>
+            <div class="gnh-stat-label">Failed</div>
           </div>
         </div>
 
         <!-- Recent Jobs Section with Data Binding Templates -->
-        <div class="bb-jobs-section">
-          <div class="bb-section-header">
+        <div class="gnh-jobs-section">
+          <div class="gnh-section-header">
             <h3>Recent Jobs</h3>
-            <div class="bb-section-actions">
+            <div class="gnh-section-actions">
               <button
-                class="bb-btn bb-btn-secondary"
-                bbb-action="refresh-dashboard"
+                class="gnh-btn gnh-btn-secondary"
+                gnh-action="refresh-dashboard"
                 aria-label="Refresh jobs list"
               >
                 <span>↻</span> Refresh
               </button>
               <button
-                class="bb-btn bb-btn-primary"
-                bbb-action="create-job"
+                class="gnh-btn gnh-btn-primary"
+                gnh-action="create-job"
                 aria-label="Create a new job"
               >
                 <span>+</span> New Job
@@ -386,56 +386,59 @@
             </div>
           </div>
 
-          <div class="bb-jobs-list">
+          <div class="gnh-jobs-list">
             <!-- Job Template — hidden by dashboard.js module; kept for legacy binder compatibility -->
-            <div class="bb-job-card" bbb-template="job" style="display: none">
-              <div class="bb-job-header">
-                <div class="bb-job-domain" bbb-text="domain">example.com</div>
+            <div class="gnh-job-card" gnh-template="job" style="display: none">
+              <div class="gnh-job-header">
+                <div class="gnh-job-domain" gnh-text="domain">example.com</div>
                 <div
-                  bbb-class="bb-job-status bb-status-{status}"
-                  bbb-text="status"
+                  gnh-class="gnh-job-status gnh-status-{status}"
+                  gnh-text="status"
                 >
                   pending
                 </div>
               </div>
-              <div class="bb-job-progress">
-                <div class="bb-progress-bar">
+              <div class="gnh-job-progress">
+                <div class="gnh-progress-bar">
                   <div
-                    class="bb-progress-fill"
-                    bbb-style:width="{progress}%"
+                    class="gnh-progress-fill"
+                    gnh-style:width="{progress}%"
                   ></div>
                 </div>
-                <div class="bb-job-details">
-                  <span bbb-text="completed_tasks">0</span> /
-                  <span bbb-text="total_tasks">0</span> tasks (<span
-                    bbb-text="progress"
+                <div class="gnh-job-details">
+                  <span gnh-text="completed_tasks">0</span> /
+                  <span gnh-text="total_tasks">0</span> tasks (<span
+                    gnh-text="progress"
                     >0</span
                   >%)
                 </div>
               </div>
-              <div class="bb-job-footer">
-                <div class="bb-job-started">
+              <div class="gnh-job-footer">
+                <div class="gnh-job-started">
                   <span style="font-weight: 500">Started:</span>
-                  <span bbb-text="started_at_formatted">-</span>
+                  <span gnh-text="started_at_formatted">-</span>
                 </div>
-                <div class="bb-job-actions">
-                  <a class="bb-job-link" href="/jobs/{id}" bbb-href="/jobs/{id}"
+                <div class="gnh-job-actions">
+                  <a
+                    class="gnh-job-link"
+                    href="/jobs/{id}"
+                    gnh-href="/jobs/{id}"
                     >Open Job</a
                   >
                   <button
-                    class="bb-job-link"
-                    bbb-action="restart-job"
-                    bbb-id="{id}"
-                    bbb-show="status=completed,failed,cancelled"
+                    class="gnh-job-link"
+                    gnh-action="restart-job"
+                    gnh-id="{id}"
+                    gnh-show="status=completed,failed,cancelled"
                     aria-label="Restart this job"
                   >
                     Restart
                   </button>
                   <button
-                    class="bb-job-link"
-                    bbb-action="cancel-job"
-                    bbb-id="{id}"
-                    bbb-show="status=running,pending"
+                    class="gnh-job-link"
+                    gnh-action="cancel-job"
+                    gnh-id="{id}"
+                    gnh-show="status=running,pending"
                     aria-label="Cancel this job"
                   >
                     Cancel
@@ -452,42 +455,42 @@
     <div id="authModalContainer"></div>
 
     <!-- Job Creation Modal -->
-    <div id="createJobModal" class="bb-modal">
-      <div class="bb-modal-content" style="max-width: 600px">
-        <div class="bb-modal-header">
-          <h2 class="bb-modal-title">Create New Job</h2>
+    <div id="createJobModal" class="gnh-modal">
+      <div class="gnh-modal-content" style="max-width: 600px">
+        <div class="gnh-modal-header">
+          <h2 class="gnh-modal-title">Create New Job</h2>
           <button
-            class="bb-modal-close"
-            bbb-action="close-create-job-modal"
+            class="gnh-modal-close"
+            gnh-action="close-create-job-modal"
             aria-label="Close create job modal"
           >
             &times;
           </button>
         </div>
 
-        <form id="createJobForm" class="bb-auth-form">
-          <div class="bb-form-group">
+        <form id="createJobForm" class="gnh-auth-form">
+          <div class="gnh-form-group">
             <label for="jobDomain">Domain</label>
-            <div class="bb-domain-search" style="position: relative">
+            <div class="gnh-domain-search" style="position: relative">
               <input
                 type="text"
                 id="jobDomain"
                 name="domain"
-                bbb-domain-create="auto"
+                gnh-domain-create="auto"
                 required
                 placeholder="example.com"
-                class="bb-form-input"
+                class="gnh-form-input"
                 aria-label="Domain to crawl"
               />
             </div>
             <div
-              class="bb-field-error"
+              class="gnh-field-error"
               id="domainError"
               style="display: none"
             ></div>
           </div>
 
-          <div class="bb-form-group">
+          <div class="gnh-form-group">
             <label for="maxPages">Maximum Pages</label>
             <input
               type="number"
@@ -496,7 +499,7 @@
               min="0"
               max="10000"
               value="0"
-              class="bb-form-input"
+              class="gnh-form-input"
               aria-label="Maximum number of pages to crawl"
             />
             <div style="font-size: 12px; color: #6b7280; margin-top: 4px">
@@ -504,12 +507,12 @@
             </div>
           </div>
 
-          <div class="bb-form-group">
+          <div class="gnh-form-group">
             <label for="scheduleInterval">Schedule</label>
             <select
               id="scheduleInterval"
               name="schedule_interval_hours"
-              class="bb-form-input"
+              class="gnh-form-input"
               aria-label="Schedule frequency for recurring jobs"
             >
               <option value="">Run once</option>
@@ -538,15 +541,15 @@
           >
             <button
               type="button"
-              class="bb-button bb-button-outline"
-              bbb-action="close-create-job-modal"
+              class="gnh-button gnh-button-outline"
+              gnh-action="close-create-job-modal"
               aria-label="Cancel job creation"
             >
               Cancel
             </button>
             <button
               type="submit"
-              class="bb-button bb-button-primary"
+              class="gnh-button gnh-button-primary"
               id="createJobSubmitBtn"
               aria-label="Create the job"
             >
@@ -558,37 +561,37 @@
         <!-- Loading State -->
         <div
           id="createJobLoading"
-          class="bb-auth-loading"
+          class="gnh-auth-loading"
           style="display: none"
         >
-          <div class="bb-spinner"></div>
+          <div class="gnh-spinner"></div>
           <p>Creating job...</p>
         </div>
 
         <!-- Error Message -->
         <div
           id="createJobError"
-          class="bb-auth-error"
+          class="gnh-auth-error"
           style="display: none"
         ></div>
       </div>
     </div>
 
     <!-- Create Organisation Modal -->
-    <div id="createOrgModal" class="bb-modal">
-      <div class="bb-modal-content" style="max-width: 440px">
-        <div class="bb-modal-header">
-          <h2 class="bb-modal-title">Create Organisation</h2>
+    <div id="createOrgModal" class="gnh-modal">
+      <div class="gnh-modal-content" style="max-width: 440px">
+        <div class="gnh-modal-header">
+          <h2 class="gnh-modal-title">Create Organisation</h2>
           <button
-            class="bb-modal-close"
+            class="gnh-modal-close"
             id="closeCreateOrgModal"
             aria-label="Close create organisation modal"
           >
             ×
           </button>
         </div>
-        <form id="createOrgForm" bbb-form="create-organisation">
-          <div class="bb-form-group">
+        <form id="createOrgForm" gnh-form="create-organisation">
+          <div class="gnh-form-group">
             <label for="newOrgName">Organisation Name</label>
             <input
               type="text"
@@ -597,7 +600,7 @@
               required
               maxlength="100"
               placeholder="Enter organisation name"
-              class="bb-form-input"
+              class="gnh-form-input"
               aria-describedby="createOrgError"
             />
           </div>
@@ -611,14 +614,14 @@
           >
             <button
               type="button"
-              class="bb-button bb-button-outline"
+              class="gnh-button gnh-button-outline"
               id="cancelCreateOrg"
             >
               Cancel
             </button>
             <button
               type="submit"
-              class="bb-button bb-button-primary"
+              class="gnh-button gnh-button-primary"
               id="submitCreateOrg"
             >
               Create
@@ -627,7 +630,7 @@
         </form>
         <div
           id="createOrgError"
-          class="bb-auth-error"
+          class="gnh-auth-error"
           style="display: none"
         ></div>
       </div>

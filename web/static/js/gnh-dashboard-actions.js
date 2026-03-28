@@ -5,13 +5,12 @@
 
 function setupDashboardActions() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bb-action], [bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) {
       return;
     }
 
-    const action =
-      element.getAttribute("bbb-action") || element.getAttribute("bb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action) {
       return;
     }
@@ -45,12 +44,12 @@ function setupDashboardActions() {
 }
 
 function handleDashboardAction(action, element) {
-  // Skip slack-* actions - handled by bb-slack.js
+  // Skip slack-* actions - handled by gnh-slack.js
   if (action.startsWith("slack-")) {
     return;
   }
 
-  // Skip webflow-* and site-* actions - handled by bb-webflow.js
+  // Skip webflow-* and site-* actions - handled by gnh-webflow.js
   if (action.startsWith("webflow-") || action.startsWith("site-")) {
     return;
   }
@@ -64,8 +63,8 @@ function handleDashboardAction(action, element) {
 
     case "restart-job": {
       const jobId =
-        element.getAttribute("bbb-id") ||
-        element.getAttribute("bb-data-job-id");
+        element.getAttribute("gnh-id") ||
+        element.getAttribute("gnh-data-job-id");
       if (jobId) {
         restartJob(jobId);
       }
@@ -74,8 +73,8 @@ function handleDashboardAction(action, element) {
 
     case "cancel-job": {
       const jobId =
-        element.getAttribute("bbb-id") ||
-        element.getAttribute("bb-data-job-id");
+        element.getAttribute("gnh-id") ||
+        element.getAttribute("gnh-data-job-id");
       if (jobId) {
         cancelJob(jobId);
       }
@@ -104,7 +103,7 @@ async function restartJob(jobId) {
     }
 
     // Create new job with same config
-    const payload = window.BB_APP.buildRestartJobPayload(job);
+    const payload = window.GNH_APP.buildRestartJobPayload(job);
     await window.dataBinder.fetchData("/v1/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

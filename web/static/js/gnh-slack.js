@@ -30,14 +30,14 @@ function formatSlackDate(timestamp) {
   }
 }
 
-var integrationHttp = window.BBIntegrationHttp;
+var integrationHttp = window.GNHIntegrationHttp;
 if (
   !integrationHttp ||
   typeof integrationHttp.fetchWithTimeout !== "function" ||
   typeof integrationHttp.normaliseIntegrationError !== "function"
 ) {
   throw new Error(
-    "Missing or incompatible integration HTTP helpers. Load /js/bb-integration-http.js before bb-slack.js."
+    "Missing or incompatible integration HTTP helpers. Load /js/gnh-integration-http.js before gnh-slack.js."
   );
 }
 
@@ -49,12 +49,12 @@ var normaliseIntegrationError = integrationHttp.normaliseIntegrationError;
  */
 function setupSlackIntegration() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) {
       return;
     }
 
-    const action = element.getAttribute("bbb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action || !action.startsWith("slack-")) {
       return;
     }
@@ -76,11 +76,11 @@ function handleSlackAction(action, element) {
       break;
 
     case "slack-disconnect": {
-      const connectionId = element.getAttribute("bbb-id");
+      const connectionId = element.getAttribute("gnh-id");
       if (connectionId) {
         disconnectSlackWorkspace(connectionId);
       } else {
-        console.warn("slack-disconnect: missing bbb-id attribute");
+        console.warn("slack-disconnect: missing gnh-id attribute");
       }
       break;
     }
@@ -112,7 +112,7 @@ async function loadSlackConnections() {
     }
 
     const template = connectionsList.querySelector(
-      '[bbb-template="slack-connection"]'
+      '[gnh-template="slack-connection"]'
     );
 
     if (!template) {
@@ -136,7 +136,7 @@ async function loadSlackConnections() {
     for (const conn of connections) {
       const clone = template.cloneNode(true);
       clone.style.display = "block";
-      clone.removeAttribute("bbb-template");
+      clone.removeAttribute("gnh-template");
       clone.classList.add("slack-connection");
 
       // Set workspace name
@@ -153,10 +153,10 @@ async function loadSlackConnections() {
 
       // Set connection ID on disconnect button
       const disconnectBtn = clone.querySelector(
-        '[bbb-action="slack-disconnect"]'
+        '[gnh-action="slack-disconnect"]'
       );
       if (disconnectBtn) {
-        disconnectBtn.setAttribute("bbb-id", conn.id);
+        disconnectBtn.setAttribute("gnh-id", conn.id);
       }
 
       connectionsList.appendChild(clone);

@@ -34,9 +34,9 @@ let sitesState = {
 
 export function setupWebflowIntegration() {
   document.addEventListener("click", (event) => {
-    const element = event.target.closest("[bbb-action]");
+    const element = event.target.closest("[gnh-action]");
     if (!element) return;
-    const action = element.getAttribute("bbb-action");
+    const action = element.getAttribute("gnh-action");
     if (!action || !action.startsWith("webflow-")) return;
     event.preventDefault();
     handleWebflowAction(action, element);
@@ -58,9 +58,9 @@ function handleWebflowAction(action, element) {
       connectWebflow();
       break;
     case "webflow-disconnect": {
-      const connectionId = element.getAttribute("bbb-id");
+      const connectionId = element.getAttribute("gnh-id");
       if (connectionId) disconnectWebflow(connectionId);
-      else console.warn("webflow-disconnect: missing bbb-id attribute");
+      else console.warn("webflow-disconnect: missing gnh-id attribute");
       break;
     }
     case "webflow-refresh":
@@ -114,7 +114,7 @@ export async function loadWebflowConnections() {
     if (!connectionsList) return;
 
     const template = connectionsList.querySelector(
-      '[bbb-template="webflow-connection"]'
+      '[gnh-template="webflow-connection"]'
     );
     if (!template) {
       console.error("Webflow connection template not found");
@@ -135,7 +135,7 @@ export async function loadWebflowConnections() {
     for (const conn of connections) {
       const clone = template.cloneNode(true);
       clone.style.display = "block";
-      clone.removeAttribute("bbb-template");
+      clone.removeAttribute("gnh-template");
       clone.classList.add("webflow-connection");
 
       const nameEl = clone.querySelector(".webflow-name");
@@ -152,9 +152,9 @@ export async function loadWebflowConnections() {
         dateEl.textContent = `Connected ${formatRelativeDate(conn.created_at)}`;
 
       const disconnectBtn = clone.querySelector(
-        '[bbb-action="webflow-disconnect"]'
+        '[gnh-action="webflow-disconnect"]'
       );
-      if (disconnectBtn) disconnectBtn.setAttribute("bbb-id", conn.id);
+      if (disconnectBtn) disconnectBtn.setAttribute("gnh-id", conn.id);
 
       connectionsList.appendChild(clone);
     }
@@ -284,12 +284,12 @@ function renderWebflowSites(page = 1) {
   const emptyEl = document.getElementById("webflowSitesEmpty");
   const loadingEl = document.getElementById("webflowSitesLoading");
   const paginationEl = document.getElementById("webflowSitesPagination");
-  const template = listEl?.querySelector('[bbb-template="webflow-site"]');
+  const template = listEl?.querySelector('[gnh-template="webflow-site"]');
   if (!listEl || !template) return;
   if (loadingEl) loadingEl.style.display = "none";
 
   listEl
-    .querySelectorAll(".webflow-site-row:not([bbb-template])")
+    .querySelectorAll(".webflow-site-row:not([gnh-template])")
     .forEach((el) => el.remove());
 
   const sites = sitesState.filteredSites;
@@ -308,7 +308,7 @@ function renderWebflowSites(page = 1) {
   for (const site of pageSites) {
     const clone = template.cloneNode(true);
     clone.style.display = "block";
-    clone.removeAttribute("bbb-template");
+    clone.removeAttribute("gnh-template");
     clone.dataset.siteId = site.webflow_site_id;
     clone.dataset.connectionId = sitesState.connectionId;
 
@@ -545,7 +545,7 @@ export function handleWebflowOAuthCallback() {
       try {
         window.opener.postMessage(
           {
-            source: "bbb-webflow-connect",
+            source: "gnh-webflow-connect",
             type: "webflow-connect-complete",
             connected: true,
             setup: webflowSetup === "true",
@@ -569,7 +569,7 @@ export function handleWebflowOAuthCallback() {
       try {
         window.opener.postMessage(
           {
-            source: "bbb-webflow-connect",
+            source: "gnh-webflow-connect",
             type: "webflow-connect-complete",
             connected: false,
             error: webflowError,

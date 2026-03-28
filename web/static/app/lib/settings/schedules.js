@@ -54,7 +54,7 @@ export async function loadSchedules(container) {
 
     // Remove existing rendered cards (keep the template)
     const existing = schedulesList.querySelectorAll(
-      '.bb-job-card:not([data-settings-template="schedule"])'
+      '.gnh-job-card:not([data-settings-template="schedule"])'
     );
     existing.forEach((node) => node.remove());
 
@@ -69,23 +69,23 @@ export async function loadSchedules(container) {
       clone.style.display = "block";
       clone.removeAttribute("data-settings-template");
 
-      const domainEl = clone.querySelector(".bb-job-domain");
+      const domainEl = clone.querySelector(".gnh-job-domain");
       if (domainEl) domainEl.textContent = schedule.domain;
 
-      const scheduleInfo = clone.querySelector(".bb-schedule-info");
+      const scheduleInfo = clone.querySelector(".gnh-schedule-info");
       if (scheduleInfo) {
         scheduleInfo.replaceChildren();
         const hoursSpan = document.createElement("span");
         const intervalHours = schedule.schedule_interval_hours ?? "\u2014";
         hoursSpan.textContent = `${intervalHours} hours`;
         const statusSpan = document.createElement("span");
-        statusSpan.className = `bb-schedule-status bb-schedule-${schedule.is_enabled ? "enabled" : "disabled"}`;
+        statusSpan.className = `gnh-schedule-status gnh-schedule-${schedule.is_enabled ? "enabled" : "disabled"}`;
         statusSpan.textContent = schedule.is_enabled ? "Enabled" : "Disabled";
         scheduleInfo.appendChild(hoursSpan);
         scheduleInfo.appendChild(statusSpan);
       }
 
-      const nextRunContainer = clone.querySelector(".bb-job-footer > div");
+      const nextRunContainer = clone.querySelector(".gnh-job-footer > div");
       if (nextRunContainer) {
         nextRunContainer.replaceChildren();
         const label = document.createElement("span");
