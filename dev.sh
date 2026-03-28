@@ -74,7 +74,7 @@ if [ ! -f ".env.local" ]; then
     SUPA_ENV=$(supabase status --output env 2>/dev/null)
     API_URL=$(echo "$SUPA_ENV" | grep '^API_URL=' | cut -d'"' -f2)
     DB_URL=$(echo "$SUPA_ENV" | grep '^DB_URL=' | cut -d'"' -f2)
-    PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^ANON_KEY=' | cut -d'"' -f2)
+    PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^PUBLISHABLE_KEY=' | cut -d'"' -f2)
     if [ -z "$API_URL" ] || [ -z "$DB_URL" ] || [ -z "$PUBLISHABLE_KEY" ]; then
         echo "⚠️  Could not extract required values from supabase status"
         echo "    Ensure Supabase is running, or create .env.local manually"
