@@ -48,21 +48,21 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
           SUPABASE_ACCESS_TOKEN:
-            op://Good Native/hover:supabase/SUPABASE_ACCESS_TOKEN
-          SENTRY_DSN: op://Good Native/hover:runtime/SENTRY_DSN
-          LOOPS_API_KEY: op://Good Native/hover:runtime/LOOPS_API_KEY
+            op://Good Native/hover-supabase/SUPABASE_ACCESS_TOKEN
+          SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
+          LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
           SLACK_CLIENT_SECRET:
-            op://Good Native/hover:runtime/SLACK_CLIENT_SECRET
+            op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
           WEBFLOW_CLIENT_SECRET:
-            op://Good Native/hover:runtime/WEBFLOW_CLIENT_SECRET
+            op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
           GOOGLE_CLIENT_SECRET:
-            op://Good Native/hover:runtime/GOOGLE_CLIENT_SECRET
+            op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
           SUPABASE_JWT_SECRET:
-            op://Good Native/hover:supabase/SUPABASE_JWT_SECRET
+            op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
           SUPABASE_SERVICE_ROLE_KEY:
-            op://Good Native/hover:supabase/SUPABASE_SERVICE_ROLE_KEY
+            op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
 
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
@@ -141,7 +141,7 @@ jobs:
           echo "========================================"
 
       - name: Build Docker image locally
-        run: docker build -t hover:pr-${{ github.event.number }} .
+        run: docker build -t hover-pr-${{ github.event.number }} .
 
       - name: Deploy Review App
         id: deploy
@@ -245,7 +245,7 @@ jobs:
             --app $APP_NAME \
             --config .fly/review_apps.toml \
             --local-only \
-            --image hover:pr-${{ github.event.number }}
+            --image hover-pr-${{ github.event.number }}
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
 
@@ -280,7 +280,7 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master

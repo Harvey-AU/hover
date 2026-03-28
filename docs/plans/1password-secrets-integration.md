@@ -24,11 +24,11 @@ Sync secrets from 1Password across local, preview, and production environments.
 
 | Item Type   | Item Name        | Fields                                                                                                                              |
 | ----------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Secure Note | `hover:fly`      | `FLY_API_TOKEN`                                                                                                                     |
-| Secure Note | `hover:runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
-| Secure Note | `hover:supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
-| Secure Note | `hover:codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
-| Secure Note | `hover:github`   | `PAT_TOKEN`                                                                                                                         |
+| Secure Note | `hover-fly`      | `FLY_API_TOKEN`                                                                                                                     |
+| Secure Note | `hover-runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| Secure Note | `hover-supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
+| Secure Note | `hover-codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
+| Secure Note | `hover-github`   | `PAT_TOKEN`                                                                                                                         |
 
 ---
 
@@ -79,7 +79,7 @@ op inject -i .env.1password -o .env.local
 # Install
 pipx install 1password-secrets
 
-# Secrets are spread across hover:runtime and hover:supabase
+# Secrets are spread across hover-runtime and hover-supabase
 # in the Good Native vault. See docs/operations/ENV_VARS.md for the
 # full field list per item.
 
@@ -120,7 +120,7 @@ available).
     export-env: true
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+    FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
 - uses: superfly/flyctl-actions/setup-flyctl@master
 - run: flyctl deploy --remote-only
@@ -135,7 +135,7 @@ available).
     export-env: true
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    CODECOV_TOKEN: op://Good Native/hover:codecov/CODECOV_TOKEN
+    CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
 ```
 
 #### `.github/workflows/review-apps.yml`
@@ -148,18 +148,18 @@ available).
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
     # CI/CD
-    FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
-    SUPABASE_ACCESS_TOKEN: op://Good Native/hover:supabase/SUPABASE_ACCESS_TOKEN
+    FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+    SUPABASE_ACCESS_TOKEN: op://Good Native/hover-supabase/SUPABASE_ACCESS_TOKEN
     # SUPABASE_PROJECT_REF is non-secret config in fly.toml / review_apps.toml
     # Runtime secrets for review apps
-    SENTRY_DSN: op://Good Native/hover:runtime/SENTRY_DSN
-    LOOPS_API_KEY: op://Good Native/hover:runtime/LOOPS_API_KEY
-    SLACK_CLIENT_SECRET: op://Good Native/hover:runtime/SLACK_CLIENT_SECRET
-    WEBFLOW_CLIENT_SECRET: op://Good Native/hover:runtime/WEBFLOW_CLIENT_SECRET
-    GOOGLE_CLIENT_SECRET: op://Good Native/hover:runtime/GOOGLE_CLIENT_SECRET
-    SUPABASE_JWT_SECRET: op://Good Native/hover:supabase/SUPABASE_JWT_SECRET
+    SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
+    LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
+    SLACK_CLIENT_SECRET: op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
+    WEBFLOW_CLIENT_SECRET: op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
+    GOOGLE_CLIENT_SECRET: op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
+    SUPABASE_JWT_SECRET: op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
     SUPABASE_SERVICE_ROLE_KEY:
-      op://Good Native/hover:supabase/SUPABASE_SERVICE_ROLE_KEY
+      op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
 
 # DATABASE_URL comes from Supabase preview branch (per-PR)
 - name: Deploy with secrets

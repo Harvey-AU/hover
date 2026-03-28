@@ -77,27 +77,27 @@ the TOML `[env]` section. If it grants access to anything, it is a secret.
 
 | Variable                     | Purpose                                | 1Password Item   |
 | ---------------------------- | -------------------------------------- | ---------------- |
-| `DATABASE_URL`               | Primary PostgreSQL connection (pooled) | `hover:supabase` |
-| `DATABASE_DIRECT_URL`        | Direct connection for LISTEN/NOTIFY    | `hover:supabase` |
-| `DATABASE_QUEUE_URL`         | Optional separate queue connection     | `hover:supabase` |
-| `SUPABASE_JWT_SECRET`        | Auth token signing key                 | `hover:supabase` |
-| `SUPABASE_SERVICE_ROLE_KEY`  | Admin API key                          | `hover:supabase` |
-| `SLACK_CLIENT_SECRET`        | Slack OAuth credential                 | `hover:runtime`  |
-| `WEBFLOW_CLIENT_SECRET`      | Webflow OAuth credential               | `hover:runtime`  |
-| `GOOGLE_CLIENT_SECRET`       | Google OAuth credential                | `hover:runtime`  |
-| `LOOPS_API_KEY`              | Email service API key                  | `hover:runtime`  |
-| `SENTRY_DSN`                 | Error tracking URL (contains auth)     | `hover:runtime`  |
-| `OTEL_EXPORTER_OTLP_HEADERS` | Grafana Basic auth header              | `hover:runtime`  |
+| `DATABASE_URL`               | Primary PostgreSQL connection (pooled) | `hover-supabase` |
+| `DATABASE_DIRECT_URL`        | Direct connection for LISTEN/NOTIFY    | `hover-supabase` |
+| `DATABASE_QUEUE_URL`         | Optional separate queue connection     | `hover-supabase` |
+| `SUPABASE_JWT_SECRET`        | Auth token signing key                 | `hover-supabase` |
+| `SUPABASE_SERVICE_ROLE_KEY`  | Admin API key                          | `hover-supabase` |
+| `SLACK_CLIENT_SECRET`        | Slack OAuth credential                 | `hover-runtime`  |
+| `WEBFLOW_CLIENT_SECRET`      | Webflow OAuth credential               | `hover-runtime`  |
+| `GOOGLE_CLIENT_SECRET`       | Google OAuth credential                | `hover-runtime`  |
+| `LOOPS_API_KEY`              | Email service API key                  | `hover-runtime`  |
+| `SENTRY_DSN`                 | Error tracking URL (contains auth)     | `hover-runtime`  |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Grafana Basic auth header              | `hover-runtime`  |
 
 ### CI-Only Secrets (GitHub secrets / 1Password action)
 
 | Variable                   | Purpose                                                            | 1Password Item   |
 | -------------------------- | ------------------------------------------------------------------ | ---------------- |
-| `FLY_API_TOKEN`            | Fly.io deploy authentication                                       | `hover:fly`      |
-| `PAT_TOKEN`                | GitHub release with branch protection                              | `hover:github`   |
-| `SUPABASE_ACCESS_TOKEN`    | Supabase CLI authentication                                        | `hover:supabase` |
-| `CODECOV_TOKEN`            | Coverage upload token                                              | `hover:codecov`  |
-| `CODECOV_STATIC_TOKEN`     | Static analysis coverage token                                     | `hover:codecov`  |
+| `FLY_API_TOKEN`            | Fly.io deploy authentication                                       | `hover-fly`      |
+| `PAT_TOKEN`                | GitHub release with branch protection                              | `hover-github`   |
+| `SUPABASE_ACCESS_TOKEN`    | Supabase CLI authentication                                        | `hover-supabase` |
+| `CODECOV_TOKEN`            | Coverage upload token                                              | `hover-codecov`  |
+| `CODECOV_STATIC_TOKEN`     | Static analysis coverage token                                     | `hover-codecov`  |
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account (the only GitHub secret after migration) | —                |
 
 ---
@@ -108,10 +108,10 @@ the TOML `[env]` section. If it grants access to anything, it is a secret.
 2. **Non-secret config:** Add to `fly.toml` `[env]` (and `review_apps.toml` if
    review apps need it). Commit the change.
 3. **Runtime secret:** Add the field to the appropriate Secure Note in 1Password
-   (`hover:runtime` for app integrations, `hover:supabase` for database/auth),
+   (`hover-runtime` for app integrations, `hover-supabase` for database/auth),
    then run `1password-secrets fly import hover` to sync.
 4. **CI-only secret:** Add the field to the appropriate 1Password item
-   (`hover:fly`, `hover:supabase`, `hover:codecov`, or `hover:github`) and
+   (`hover-fly`, `hover-supabase`, `hover-codecov`, or `hover-github`) and
    reference it via `op://Good Native/<item>/<field>` in the workflow.
 5. **Update this document** with the new variable.
 
@@ -129,11 +129,11 @@ The **"Good Native"** vault contains five Secure Notes, grouped by concern:
 
 | Item Name        | Fields                                                                                                                              |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `hover:fly`      | `FLY_API_TOKEN`                                                                                                                     |
-| `hover:runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
-| `hover:supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
-| `hover:codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
-| `hover:github`   | `PAT_TOKEN`                                                                                                                         |
+| `hover-fly`      | `FLY_API_TOKEN`                                                                                                                     |
+| `hover-runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| `hover-supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
+| `hover-codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
+| `hover-github`   | `PAT_TOKEN`                                                                                                                         |
 
 ### Service Account
 
@@ -157,7 +157,7 @@ them as environment variables. Example:
     export-env: true
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+    FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 ```
 
 ### Secret Rotation

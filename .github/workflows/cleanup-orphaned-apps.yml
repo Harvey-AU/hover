@@ -17,7 +17,7 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          FLY_API_TOKEN: op://Good Native/hover:fly/FLY_API_TOKEN
+          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
