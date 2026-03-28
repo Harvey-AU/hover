@@ -53,8 +53,6 @@
       "Bash(supabase start)",
       "Bash(supabase stop)",
       "Bash(supabase status:*)",
-      "Bash(supabase migration new:*)",
-      "Bash(supabase migration list:*)",
       "Bash(docker build:*)",
       "Bash(docker ps:*)",
       "Bash(docker logs:*)",
