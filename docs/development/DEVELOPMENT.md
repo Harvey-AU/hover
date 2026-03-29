@@ -500,6 +500,26 @@ Update Supabase seed users
 4. **Update CHANGELOG.md** if the change affects users
 5. **Reference relevant issues** in PR description
 
+### Checking PR Status
+
+Use `scripts/pr-status-check.sh` to get a quick summary of CI checks and
+CodeRabbit review comments for any PR:
+
+```bash
+# Auto-detect PR from current branch
+bash scripts/pr-status-check.sh
+
+# Or specify a PR number
+bash scripts/pr-status-check.sh 286
+```
+
+Output includes:
+
+- CI check statuses (PASS/FAIL/RUNNING/PENDING/SKIP)
+- Failed check error logs (when applicable)
+- CodeRabbit review comments with resolution status (OPEN/RESOLVED) and severity
+- Actionable agent prompt from the latest review
+
 ## Deployment
 
 ### Local Build
