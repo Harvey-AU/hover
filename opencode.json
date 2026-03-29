@@ -17,6 +17,10 @@
     "pr-status": {
       "description": "Fetch CodeRabbit comments and CI check status for a PR",
       "template": "Run bash scripts/pr-status-check.sh $ARGUMENTS. Summarise findings by severity, note any failing or pending CI checks, and propose fixes for actionable comments."
+    },
+    "pr-reply": {
+      "description": "Reply to and resolve PR review comment threads",
+      "template": "Run bash scripts/pr-comment-reply.sh $ARGUMENTS. Use --list to show open threads, --reply INDEX \"message\" to respond, --resolve INDEX to resolve, or combine with --reply INDEX \"message\" --resolve. Do not use raw gh api GraphQL mutations."
     }
   },
   "mcp": {
