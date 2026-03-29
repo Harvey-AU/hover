@@ -520,6 +520,24 @@ Output includes:
 - CodeRabbit review comments with resolution status (OPEN/RESOLVED) and severity
 - Actionable agent prompt from the latest review
 
+### Replying to Review Comments
+
+Use `scripts/pr-comment-reply.sh` to reply to and resolve review threads:
+
+```bash
+# List open threads (indexed)
+bash scripts/pr-comment-reply.sh --list
+
+# Reply to a thread
+bash scripts/pr-comment-reply.sh --reply 1 "Fixed in abc1234"
+
+# Reply and resolve in one step
+bash scripts/pr-comment-reply.sh --reply 1 "Deferring — reason here" --resolve
+
+# Just resolve (no reply)
+bash scripts/pr-comment-reply.sh --resolve 1
+```
+
 ## Deployment
 
 ### Local Build

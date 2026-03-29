@@ -87,6 +87,8 @@ PR review support:
 
 - Use `bash scripts/pr-status-check.sh [PR_NUMBER]` to fetch CodeRabbit
   comments and CI check statuses. Do not use raw `gh api` commands for this.
+- Use `bash scripts/pr-comment-reply.sh` to reply to, resolve, or skip review
+  threads. Do not use raw `gh api` GraphQL mutations for this.
 - The `/pr-review` skill automates the full review-and-resolve workflow
   (`.claude/skills/pr-review/SKILL.md`).
 

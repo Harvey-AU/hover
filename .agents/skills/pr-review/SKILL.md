@@ -19,7 +19,7 @@ The PR number is optional — it auto-detects from the current branch.
 
 Output sections:
 - **CI CHECKS** — PASS/FAIL/RUNNING/PENDING/SKIP per check
-- **CODERABBIT REVIEW COMMENTS** — deduplicated, with FILE/LINE/SEVERITY/SUMMARY
+- **CODERABBIT REVIEW COMMENTS** — deduplicated, with STATUS/FILE/LINE/SEVERITY/SUMMARY
 - **CODERABBIT AGENT PROMPT** — actionable instructions from the latest review
 
 **Do not use raw `gh api` or `gh pr` commands to fetch review data.** The script
@@ -27,22 +27,45 @@ handles review aggregation, deduplication, severity extraction, and
 agent-friendly formatting. Using `gh` directly wastes tokens and produces
 inconsistent results.
 
-## Resolving comments
+## Replying to and resolving comments
+
+Use `bash scripts/pr-comment-reply.sh` to reply to, resolve, or skip review
+threads. **Do not use raw `gh api` GraphQL mutations** — the script handles
+thread indexing and mutations.
+
+```bash
+# List open threads (indexed)
+bash scripts/pr-comment-reply.sh --list
+
+# Reply to a thread
+bash scripts/pr-comment-reply.sh --reply INDEX "message"
+
+# Reply and resolve in one step
+bash scripts/pr-comment-reply.sh --reply INDEX "message" --resolve
+
+# Just resolve (no reply)
+bash scripts/pr-comment-reply.sh --resolve INDEX
+```
+
+Thread indexes are 1-based and match the `--list` output. After resolving or
+replying, the index numbers shift — always re-run `--list` before the next
+action.
+
+## Workflow
 
 1. Run `bash scripts/pr-status-check.sh` and read the output.
-2. From the CODERABBIT REVIEW COMMENTS section, build a numbered action list with file
-   path, severity, and minimal required change.
+2. From the CODERABBIT REVIEW COMMENTS section, build a numbered action list
+   with file path, severity, and minimal required change.
 3. Ignore comments already resolved in a prior commit unless explicitly asked.
 4. Handle comments one by one:
-   - Implement the smallest safe code change for each comment.
+   - **Actionable:** implement the smallest safe code change, run targeted
+     validation, create one commit per fix, then resolve the thread with
+     `pr-comment-reply.sh --reply INDEX "Fixed in <hash>" --resolve`.
+   - **Skipped/deferred:** reply with the reason and resolve:
+     `pr-comment-reply.sh --reply INDEX "Deferring — <reason>" --resolve`.
    - Do not edit `.md` files unless explicitly requested.
-   - Run targeted validation for that area.
-   - Create exactly one commit per resolved comment.
-5. For any comment that cannot be fixed safely:
-   - Add a PR-thread reply explaining the blocker and why it is being skipped.
-   - Include concrete conditions for reconsideration.
-6. Continue until all actionable comments are processed.
-7. Re-run `bash scripts/pr-status-check.sh` to confirm no unresolved items
+5. Continue until all actionable comments are processed.
+6. Re-run `bash scripts/pr-status-check.sh` to confirm no unresolved items
    remain, then push all commits in one final push.
-8. Final response: list commit hash per resolved comment, skipped comments with
+7. Final response: list commit hash per resolved comment, skipped comments with
    reply text, validation run results, and push confirmation.
