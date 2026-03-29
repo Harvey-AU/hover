@@ -114,7 +114,9 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(./dev.sh)",
       "Bash(bash scripts/pr-status-check.sh:*)",
-      "Bash(bash scripts/pr-status-check.sh)"
+      "Bash(bash scripts/pr-status-check.sh)",
+      "Bash(bash scripts/pr-comment-reply.sh:*)",
+      "Bash(bash scripts/pr-comment-reply.sh)"
     ],
     "deny": []
   },
