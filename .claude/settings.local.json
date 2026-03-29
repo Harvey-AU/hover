@@ -112,7 +112,9 @@
       "mcp__github__search_repositories",
       "mcp__github__search_code",
       "mcp__Claude_Preview__preview_start",
-      "Bash(./dev.sh)"
+      "Bash(./dev.sh)",
+      "Bash(bash scripts/pr-status-check.sh:*)",
+      "Bash(bash scripts/pr-status-check.sh)"
     ],
     "deny": []
   },

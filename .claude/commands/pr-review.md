@@ -1,22 +1,17 @@
 ---
 name: pr-review
 description:
-  Fetch CodeRabbit comments and CI check results for the current PR and write
-  them to .claude/pr-review.md
+  Fetch CodeRabbit comments and CI check results for the current PR.
 ---
 
-Run `bash scripts/pr-review-summary.sh` to collect all CodeRabbit inline
-comments, the walkthrough summary, and CI check statuses for the current
-branch's open PR.
+Run `bash scripts/pr-status-check.sh` to fetch all CodeRabbit review comments
+and CI check statuses for the current branch's open PR.
 
-Output is written to `.claude/pr-review.md`.
+After the script completes, present:
 
-After the script completes, read `.claude/pr-review.md` and present:
-
-1. A table of CI check statuses
+1. A table of CI check statuses (PASS/FAIL/RUNNING/PENDING/SKIP)
 2. A numbered list of unresolved CodeRabbit inline comments grouped by file,
-   with file path, line number, severity, and the comment body
-3. A brief note on any comments that are already addressed (mention the fixing
-   commit if visible in the body)
+   with file path, line number, severity, and the comment summary
+3. A brief note on any comments that are already addressed
 
 If the script fails (no open PR, not authenticated), report the error clearly.
