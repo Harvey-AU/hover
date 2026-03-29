@@ -497,18 +497,31 @@ func InitFromEnv() (*DB, error) {
 		ApplicationName: appName,
 	}
 
-	// Use defaults if not set
+	// Use defaults if not set — local Supabase runs on port 54322
+	// with database "postgres"; production uses standard port 5432.
+	isDev := os.Getenv("APP_ENV") == "" || os.Getenv("APP_ENV") == "development"
 	if config.Host == "" {
 		config.Host = "localhost"
 	}
 	if config.Port == "" {
-		config.Port = "5432"
+		if isDev {
+			config.Port = "54322"
+		} else {
+			config.Port = "5432"
+		}
 	}
 	if config.User == "" {
 		config.User = "postgres"
 	}
+	if config.Password == "" && isDev {
+		config.Password = "postgres"
+	}
 	if config.Database == "" {
-		config.Database = "hover"
+		if isDev {
+			config.Database = "postgres"
+		} else {
+			config.Database = "hover"
+		}
 	}
 
 	// Create the database connection

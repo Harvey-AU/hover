@@ -20,15 +20,15 @@ Sync secrets from 1Password across local, preview, and production environments.
 
 ## 1. 1Password Structure
 
-### Vault: "Hover"
+### Vault: "Good Native"
 
-| Item Type   | Item Name               | Fields                                                                                    |
-| ----------- | ----------------------- | ----------------------------------------------------------------------------------------- |
-| Login       | `flyctl`                | Token: `<FLY_API_TOKEN>`                                                                  |
-| Secure Note | `fly:hover`             | DATABASE_URL, SUPABASE_JWT_SECRET, SENTRY_DSN, SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, etc. |
-| Secure Note | `fly:hover-pr-template` | Shared preview secrets (no DATABASE_URL - comes from Supabase)                            |
-| Login       | `supabase-management`   | access-token, project-ref                                                                 |
-| Login       | `codecov`               | token                                                                                     |
+| Item Type   | Item Name        | Fields                                                                                                                              |
+| ----------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Secure Note | `hover-fly`      | `FLY_API_TOKEN`                                                                                                                     |
+| Secure Note | `hover-runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
+| Secure Note | `hover-supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
+| Secure Note | `hover-codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
+| Secure Note | `hover-github`   | `PAT_TOKEN`                                                                                                                         |
 
 ---
 
@@ -79,12 +79,9 @@ op inject -i .env.1password -o .env.local
 # Install
 pipx install 1password-secrets
 
-# Create Secure Note in 1Password titled: fly:hover
-# Add all secrets as fields:
-#   DATABASE_URL = postgresql://...
-#   SUPABASE_JWT_SECRET = ...
-#   SENTRY_DSN = ...
-#   etc.
+# Secrets are spread across hover-runtime and hover-supabase
+# in the Good Native vault. See docs/operations/ENV_VARS.md for the
+# full field list per item.
 
 # Sync to Fly.io (uses biometric auth)
 1password-secrets fly import hover
@@ -109,7 +106,7 @@ available).
 ### Setup
 
 1. Create Service Account in 1Password Business console
-2. Grant read access to "Hover" vault
+2. Grant read access to "Good Native" vault
 3. Store token as `OP_SERVICE_ACCOUNT_TOKEN` in GitHub Secrets
 
 ### Workflow Updates
@@ -123,7 +120,7 @@ available).
     export-env: true
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    FLY_API_TOKEN: op://Hover/flyctl/token
+    FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
 - uses: superfly/flyctl-actions/setup-flyctl@master
 - run: flyctl deploy --remote-only
@@ -138,7 +135,7 @@ available).
     export-env: true
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-    CODECOV_TOKEN: op://Hover/codecov/token
+    CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
 ```
 
 #### `.github/workflows/review-apps.yml`
@@ -151,14 +148,18 @@ available).
   env:
     OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
     # CI/CD
-    FLY_API_TOKEN: op://Hover/flyctl/token
-    SUPABASE_ACCESS_TOKEN: op://Hover/supabase-management/access-token
-    # Shared app secrets
-    SENTRY_DSN: op://Hover/fly:hover/SENTRY_DSN
-    SLACK_CLIENT_ID: op://Hover/fly:hover/SLACK_CLIENT_ID
-    SLACK_CLIENT_SECRET: op://Hover/fly:hover/SLACK_CLIENT_SECRET
-    SUPABASE_JWT_SECRET: op://Hover/fly:hover/SUPABASE_JWT_SECRET
-    SUPABASE_SERVICE_ROLE_KEY: op://Hover/fly:hover/SUPABASE_SERVICE_ROLE_KEY
+    FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+    SUPABASE_ACCESS_TOKEN: op://Good Native/hover-supabase/SUPABASE_ACCESS_TOKEN
+    # SUPABASE_PROJECT_REF is non-secret config in fly.toml / review_apps.toml
+    # Runtime secrets for review apps
+    SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
+    LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
+    SLACK_CLIENT_SECRET: op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
+    WEBFLOW_CLIENT_SECRET: op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
+    GOOGLE_CLIENT_SECRET: op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
+    SUPABASE_JWT_SECRET: op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
+    SUPABASE_SERVICE_ROLE_KEY:
+      op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
 
 # DATABASE_URL comes from Supabase preview branch (per-PR)
 - name: Deploy with secrets
@@ -180,18 +181,33 @@ available).
 | SUPABASE_JWT_SECRET       | 1Password                   | Shared (project-level) |
 | SUPABASE_SERVICE_ROLE_KEY | 1Password                   | Shared (project-level) |
 | SENTRY_DSN                | 1Password                   | Shared                 |
-| SLACK_CLIENT_ID/SECRET    | 1Password                   | Shared                 |
+| SLACK_CLIENT_SECRET       | 1Password                   | Shared                 |
+| WEBFLOW_CLIENT_SECRET     | 1Password                   | Shared                 |
+| GOOGLE_CLIENT_SECRET      | 1Password                   | Shared                 |
+| LOOPS_API_KEY             | 1Password                   | Shared                 |
+
+> **Note:** OAuth client IDs (`SLACK_CLIENT_ID`, `WEBFLOW_CLIENT_ID`,
+> `GOOGLE_CLIENT_ID`) and auth URLs are non-secret config in `fly.toml` /
+> `review_apps.toml`, not in 1Password. See `docs/operations/ENV_VARS.md`.
 
 ---
 
 ## 6. Migration Steps
 
+### Phase 0: Env Var Classification (done — issue #273)
+
+1. Classified every env var into non-secret config, runtime secrets, or CI-only
+2. Moved misplaced non-secrets (OAuth client IDs, auth URLs) to `fly.toml` [env]
+3. Removed dead config (`GOOGLE_REDIRECT_URI`)
+4. Fixed `ALLOW_DB_RESET` in production (was `true`, now `false`)
+5. Documented classification in `docs/operations/ENV_VARS.md`
+
 ### Phase 1: 1Password Setup
 
-1. Create vault "Hover"
-2. Create `flyctl` Login item with Token field
-3. Create `fly:hover` Secure Note with all production secrets
-4. Create Service Account for GitHub Actions
+1. Use existing vault "Good Native"
+2. Create items per the table in section 1 above
+3. Create Service Account `GitHub Actions - Hover` with read-only vault access
+4. Add `OP_SERVICE_ACCOUNT_TOKEN` to GitHub Secrets
 
 ### Phase 2: Local Dev
 
@@ -200,16 +216,15 @@ available).
 3. Source plugins: add to `~/.zshrc`
 4. Install 1password-secrets: `pipx install 1password-secrets`
 
-### Phase 3: GitHub Actions
+### Phase 3: GitHub Actions (done — workflows updated)
 
-1. Add `OP_SERVICE_ACCOUNT_TOKEN` to GitHub Secrets
-2. Update workflow files with 1Password action
-3. Test with a PR
+1. All 5 workflows now use `1password/load-secrets-action@v2`
+2. Test by triggering each workflow after Phase 1 setup is complete
 
 ### Phase 4: Cleanup
 
-1. Remove old GitHub Secrets (keep only `OP_SERVICE_ACCOUNT_TOKEN`)
-2. Update `docs/development/DEVELOPMENT.md`
+1. Remove old GitHub Secrets one by one (keep only `OP_SERVICE_ACCOUNT_TOKEN`)
+2. Test one removal at a time by triggering the relevant workflow
 
 ---
 

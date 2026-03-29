@@ -14,9 +14,13 @@
       "description": "Run scripted load test safely",
       "template": "Run ./scripts/generate-test-jobs.sh using $ARGUMENTS when provided. Confirm prerequisites first, avoid exposing tokens, and summarise outcomes and risk signals."
     },
-    "coderabbit": {
-      "description": "Run CodeRabbit AI code review via WSL wrapper",
-      "template": "Run bash scripts/coderabbit.sh review --plain $ARGUMENTS using the PTY tool with notifyOnExit set to true. Do not poll or give up early — coderabbit takes several minutes to analyse. Wait for the pty_exited notification, then read the full output with pty_read and summarise the findings by severity."
+    "pr-status": {
+      "description": "Fetch CodeRabbit comments and CI check status for a PR",
+      "template": "Run bash scripts/pr-status-check.sh $ARGUMENTS. Summarise findings by severity, note any failing or pending CI checks, and propose fixes for actionable comments."
+    },
+    "pr-reply": {
+      "description": "Reply to and resolve PR review comment threads",
+      "template": "Run bash scripts/pr-comment-reply.sh $ARGUMENTS. Use --list to show open threads, --reply INDEX \"message\" to respond, --resolve INDEX to resolve, or combine with --reply INDEX \"message\" --resolve. Do not use raw gh api GraphQL mutations."
     }
   },
   "mcp": {
@@ -70,7 +74,6 @@
       "head *": "allow",
       "tail *": "allow",
       "sed *": "allow",
-      "coderabbit *": "allow",
 
       "git status": "allow",
       "git status *": "allow",
@@ -102,8 +105,6 @@
       "gh issue list *": "allow",
       "gh issue view *": "allow",
 
-      "wsl -d Ubuntu-24.04 -- bash -c *coderabbit*": "allow",
-      "wsl --list *": "allow",
 
       "npm run *": "allow",
       "npm test": "allow",

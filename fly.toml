@@ -13,7 +13,7 @@ primary_region = 'syd'
   APP_URL = "https://hover.app.goodnative.co"
   SETTINGS_URL = "https://hover.app.goodnative.co/settings"
   WORKER_CONCURRENCY = "10"  # Increasing this pushes Supabase small plan past CPU limit
-  ALLOW_DB_RESET = "true"
+  ALLOW_DB_RESET = "false"
   GNH_HEALTH_PROBE_INTERVAL_SECONDS = "30"
   GNH_WORKER_IDLE_THRESHOLD = "0.10"
   GNH_WORKER_SCALE_COOLDOWN_SECONDS = "120"
@@ -26,8 +26,15 @@ primary_region = 'syd'
   OBSERVABILITY_ENABLED = "true"
   SUPABASE_AUTH_URL = "https://hover.auth.goodnative.co"
   SUPABASE_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
+  SUPABASE_PROJECT_REF = "gpzjtbgtdjxnacdfujvx"
 
+  SUPABASE_FALLBACK_AUTH_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
+  SUPABASE_LEGACY_AUTH_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
   SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xCn-z8wEo4MPJnbPq6cvXg_09fINjIp"
+  GNH_ENABLE_TURNSTILE = "true"
+  SLACK_CLIENT_ID = "475806237719.8953791603746"
+  WEBFLOW_CLIENT_ID = "b0a05758d95823fcef73f57e836e55232bf7c5730794222786040800230ea329"
+  GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleusercontent.com"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp"
 
 [deploy]

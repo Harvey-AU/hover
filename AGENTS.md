@@ -64,9 +64,10 @@ See `docs/development/DEVELOPMENT.md#local-authentication` for full detail.
 
 Available review skill in this repo:
 
-- `coderabbit-review` (single-comment workflow with one commit per resolved
-  comment, `.md` skip unless requested, PR-thread acknowledgement for skipped
-  items).
+- `pr-review` — fetches PR status, CI checks, and CodeRabbit comments via
+  `scripts/pr-status-check.sh`, replies to and resolves threads via
+  `scripts/pr-comment-reply.sh`, then resolves actionable items with one commit
+  per fix. Do not use raw `gh api` commands — use the scripts.
 
 Keep this file as the first fallback, and use skills only for high-leverage
 workflows.

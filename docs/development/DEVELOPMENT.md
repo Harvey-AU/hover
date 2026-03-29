@@ -131,24 +131,35 @@ run `supabase db push` manually.
 
 ## Development Server
 
-### With Hot Reloading (Recommended)
+### Recommended: `dev.sh` (handles everything)
 
 ```bash
-# Install Air if not already installed
-go install github.com/air-verse/air@latest
+./dev.sh
+```
 
-# Start development server with hot reloading
+This script automatically:
+- Starts Supabase local if not already running
+- Generates `.env.local` from `supabase status` (DATABASE_URL, auth URL, keys)
+- Launches `air` with hot reloading
+- Watches for migration changes and auto-resets the database
+
+### Bare `air` (advanced — only if you already have `.env.local`)
+
+```bash
+go install github.com/air-verse/air@latest
 air
 ```
+
+If `DATABASE_URL` is not set and `APP_ENV` is `development` (the default), the
+app falls back to Supabase local defaults (`localhost:54322/postgres`). For full
+functionality (auth, publishable key), use `dev.sh` or create `.env.local`
+manually — see `.env.example` for reference.
 
 ### Without Hot Reloading
 
 ```bash
-# Build and run
 go build ./cmd/app && ./app
-
-# Or run directly
-go run ./cmd/app/main.go
+# Or: go run ./cmd/app/main.go
 ```
 
 ### Server will start on `http://localhost:8847`
@@ -499,6 +510,44 @@ Update Supabase seed users
 3. **Ensure all tests pass**
 4. **Update CHANGELOG.md** if the change affects users
 5. **Reference relevant issues** in PR description
+
+### Checking PR Status
+
+Use `scripts/pr-status-check.sh` to get a quick summary of CI checks and
+CodeRabbit review comments for any PR:
+
+```bash
+# Auto-detect PR from current branch
+bash scripts/pr-status-check.sh
+
+# Or specify a PR number
+bash scripts/pr-status-check.sh 286
+```
+
+Output includes:
+
+- CI check statuses (PASS/FAIL/RUNNING/PENDING/SKIP)
+- Failed check error logs (when applicable)
+- CodeRabbit review comments with resolution status (OPEN/RESOLVED) and severity
+- Actionable agent prompt from the latest review
+
+### Replying to Review Comments
+
+Use `scripts/pr-comment-reply.sh` to reply to and resolve review threads:
+
+```bash
+# List open threads (indexed)
+bash scripts/pr-comment-reply.sh --list
+
+# Reply to a thread
+bash scripts/pr-comment-reply.sh --reply 1 "Fixed in abc1234"
+
+# Reply and resolve in one step
+bash scripts/pr-comment-reply.sh --reply 1 "Deferring — reason here" --resolve
+
+# Just resolve (no reply)
+bash scripts/pr-comment-reply.sh --resolve 1
+```
 
 ## Deployment
 

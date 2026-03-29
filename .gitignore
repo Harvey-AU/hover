@@ -60,6 +60,7 @@ node_modules/
 /playwright/.cache/
 .gemini/
 .claude/mcp.json
+.claude/pr-review.md
 
 # Supabase
 supabase/.temp/

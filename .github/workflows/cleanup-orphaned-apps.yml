@@ -11,12 +11,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
 
       - name: Find and destroy orphaned preview apps
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |

@@ -142,10 +142,20 @@ jobs:
           name: coverage-unit
           path: coverage-unit.out
 
+      - name: Load secrets from 1Password
+        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
+
       - name: Upload unit test coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage-unit.out
           flags: unit
           name: unit-tests
@@ -204,21 +214,30 @@ jobs:
           name: test-results
           path: junit.xml
 
+      - name: Load secrets from 1Password
+        if: always() && secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
+
       - name: Upload integration test coverage to Codecov
-        if: always()
+        if: always() && env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage-integration.out
           flags: integration
           name: integration-tests
           fail_ci_if_error: false
 
       - name: Upload test results to Codecov
-        if: always()
+        if: always() && env.CODECOV_TOKEN != ''
         uses: codecov/test-results-action@v1
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./junit.xml
 
   coverage-report:
@@ -265,19 +284,32 @@ jobs:
             go tool cover -func=coverage.out | tail -1
           fi
 
+      - name: Load secrets from 1Password
+        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CODECOV_TOKEN: op://Good Native/hover-codecov/CODECOV_TOKEN
+          CODECOV_STATIC_TOKEN:
+            op://Good Native/hover-codecov/CODECOV_STATIC_TOKEN
+
       - name: Upload combined coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: ./coverage.out
           flags: all
           name: all-tests
           fail_ci_if_error: false
 
       - name: Upload static analysis to Codecov
+        if: env.CODECOV_STATIC_TOKEN != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_STATIC_TOKEN }}
+          token: ${{ env.CODECOV_STATIC_TOKEN }}
           flags: static-analysis
           name: static-analysis
           fail_ci_if_error: false

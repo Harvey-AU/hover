@@ -83,10 +83,14 @@ Use these files as dedicated specialists to reduce context pollution:
 - `.claude/agents/code-reviewer.md`
 - `.claude/agents/security-auditor.md`
 
-Coderabbit review support:
+PR review support:
 
-- Open a companion review workflow from
-  `.claude/skills/coderabbit-review/SKILL.md` (used by compatible tool modes).
+- Use `bash scripts/pr-status-check.sh [PR_NUMBER]` to fetch CodeRabbit
+  comments and CI check statuses. Do not use raw `gh api` commands for this.
+- Use `bash scripts/pr-comment-reply.sh` to reply to, resolve, or skip review
+  threads. Do not use raw `gh api` GraphQL mutations for this.
+- The `/pr-review` skill automates the full review-and-resolve workflow
+  (`.claude/skills/pr-review/SKILL.md`).
 
 ## Work approach
 

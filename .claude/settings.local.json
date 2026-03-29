@@ -34,7 +34,9 @@
       "Bash(open:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
       "Bash(git fetch:*)",
       "Bash(git pull:*)",
       "Bash(git checkout:*)",
@@ -112,7 +114,11 @@
       "mcp__github__search_repositories",
       "mcp__github__search_code",
       "mcp__Claude_Preview__preview_start",
-      "Bash(./dev.sh)"
+      "Bash(./dev.sh)",
+      "Bash(bash scripts/pr-status-check.sh:*)",
+      "Bash(bash scripts/pr-status-check.sh)",
+      "Bash(bash scripts/pr-comment-reply.sh:*)",
+      "Bash(bash scripts/pr-comment-reply.sh)"
     ],
     "deny": []
   },
