@@ -70,8 +70,6 @@
       "head *": "allow",
       "tail *": "allow",
       "sed *": "allow",
-      "bash scripts/pr-status-check.sh": "allow",
-      "bash scripts/pr-status-check.sh *": "allow",
 
       "git status": "allow",
       "git status *": "allow",

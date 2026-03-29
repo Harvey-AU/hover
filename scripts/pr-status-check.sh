@@ -104,7 +104,7 @@ THREADS_JSON=$(gh api graphql -f query='
 {
   repository(owner: "'"$REPO_OWNER"'", name: "'"$REPO_NAME"'") {
     pullRequest(number: '"$PR_NUMBER"') {
-      reviewThreads(first: 50) {
+      reviewThreads(first: 100) {
         nodes {
           isResolved
           isOutdated

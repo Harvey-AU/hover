@@ -4,6 +4,8 @@ description:
   Fetch PR review comments, CI check results, and failure details.
 ---
 
+# PR Review
+
 Run `bash scripts/pr-status-check.sh` to fetch all review comments (including
 CodeRabbit) and CI check statuses for the current branch's open PR.
 

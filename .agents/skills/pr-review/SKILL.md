@@ -30,7 +30,7 @@ inconsistent results.
 ## Resolving comments
 
 1. Run `bash scripts/pr-status-check.sh` and read the output.
-2. From the REVIEW COMMENTS section, build a numbered action list with file
+2. From the CODERABBIT REVIEW COMMENTS section, build a numbered action list with file
    path, severity, and minimal required change.
 3. Ignore comments already resolved in a prior commit unless explicitly asked.
 4. Handle comments one by one:
