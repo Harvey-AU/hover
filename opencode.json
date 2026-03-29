@@ -24,21 +24,6 @@
     }
   },
   "mcp": {
-    "serena": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--from",
-        "serena-agent",
-        "serena",
-        "start-mcp-server",
-        "--transport",
-        "stdio",
-        "--project",
-        "."
-      ],
-      "enabled": true
-    },
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp",

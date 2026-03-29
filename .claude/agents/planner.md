@@ -7,28 +7,14 @@ tools:
   - grep
   - glob
   - bash
-  - mcp__plugin_serena_serena__activate_project
-  - mcp__plugin_serena_serena__get_symbols_overview
-  - mcp__plugin_serena_serena__find_symbol
-  - mcp__plugin_serena_serena__find_referencing_symbols
-  - mcp__plugin_serena_serena__search_for_pattern
-  - mcp__plugin_serena_serena__list_dir
-  - mcp__plugin_serena_serena__read_file
 ---
 
 You are the planning specialist.
 
 ## Code navigation
 
-Prefer Serena for all Go code exploration:
-
-- `get_symbols_overview` — understand a file's structure before reading it in
-  full
-- `find_symbol` — locate a function, type, or variable by name
-- `find_referencing_symbols` — find all call sites before planning a change
-- `search_for_pattern` — flexible text search across the codebase
-
-Fall back to `grep`/`glob` only for non-Go files (shell scripts, YAML, HTML).
+- Prefer symbol-aware or structural code navigation for Go code when available.
+- Use `grep`/`glob` for non-Go files such as shell scripts, YAML, and HTML.
 
 ## Your job
 

@@ -10,33 +10,60 @@ project instructions are loaded.
 - Ask one focused confirmation question only when correctness or safety is
   blocked.
 - Never expose or invent secrets, credentials, JWTs, or end-user private data.
+- Ask for explicit confirmation before destructive steps such as schema changes,
+  credentials or config changes, or data-impacting actions.
 - For destructive actions, state the risk before execution.
+- If a safety limit is reached in a tool, pause and continue with the best
+  available path.
 
 ## Execution defaults
 
 - Use bounded, incremental edits.
 - Prefer gofmt/goimports + target checks on Go files.
+- Prefer `go test` and targeted checks before broader validation.
 - Keep commit messages short (about five to six words), no AI attribution.
+
+## Technical baseline
+
+- Language stack: Go 1.26 backend, Vue-free frontend, Supabase-backed data.
+- Run formatting (`gofmt`, `goimports`) on touched Go files.
+
+## Code navigation
+
+- Prefer symbol-aware or structural code navigation for Go code when available.
+- Use `rg`/`grep`/`glob` for non-Go files such as YAML, shell scripts, HTML,
+  JSON, and config.
+
+## Work approach
+
+- For small tasks, keep read-plan-implement cycles minimal.
+- For larger changes, confirm scope, prepare a staged plan, and implement in
+  bounded increments.
+- Report blockers clearly with concrete risk and proposed mitigation.
 
 ## Project-specific rules
 
 **Auth redirect contract:** OAuth redirects are centralised in
 `web/static/js/auth.js` (`handleSocialLogin`). Deep-link URLs must return to the
-exact originating URL. Invite acceptance routes to `/welcome`.
+exact originating URL. Invite acceptance routes to `/welcome`. Homepage auth may
+route to the default app landing page.
 
 **Dockerfile triple-surface rule:** Every new top-level HTML page requires three
 changes — HTTP route in `internal/api/handlers.go`, the page file on disk, and a
-`COPY` line in `Dockerfile`. Missing the Dockerfile copy causes a runtime 404.
+`COPY` line in `Dockerfile`. Missing the Dockerfile copy causes a runtime 404 on
+Fly.
 
 **Database migrations:** Use `supabase migration new <name>`. Never edit or
-rename deployed migrations. Keep migrations additive.
+rename deployed migrations. Keep migrations additive and avoid destructive
+schema changes.
 
 **Local dev auth:** Use `GET /dev/auto-login` to sign in during local
-development — no OAuth flow required. The Go server fetches a session
-server-side and injects it into `localStorage`, then redirects to `/dashboard`.
-Only active when `APP_ENV=development` (returns 404 otherwise). The dev user
-(`dev@example.com` / `devpassword`) is re-seeded on every `supabase db reset`.
-See `docs/development/DEVELOPMENT.md#local-authentication` for full detail.
+development — no OAuth flow or manual credential entry required. The Go server
+fetches a session server-side and injects it into `localStorage`, then
+redirects to `/dashboard`. Only active when `APP_ENV=development` (returns 404
+otherwise). After `supabase db reset`, the dev user (`dev@example.com` /
+`devpassword`) is re-seeded automatically. See
+`docs/development/DEVELOPMENT.md#local-authentication` for full detail.
 
 ## Automated review gates
 
@@ -54,6 +81,7 @@ See `docs/development/DEVELOPMENT.md#local-authentication` for full detail.
 - `docs/architecture/DATABASE.md`
 - `docs/architecture/API.md`
 - `docs/development/DEVELOPMENT.md`
+- `docs/development/BRANCHING.md`
 - `docs/TEST_PLAN.md`
 
 ## Skills location (tool-native)
