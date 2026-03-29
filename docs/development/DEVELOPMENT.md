@@ -73,8 +73,10 @@ LOG_LEVEL=info
 
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 
+SUPABASE_URL=http://127.0.0.1:54321
 SUPABASE_AUTH_URL=http://127.0.0.1:54321
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_<project-specific>
+SUPABASE_SERVICE_ROLE_KEY=sb_secret_<project-specific>
 ```
 
 If `.env.local` already exists, `dev.sh` leaves it untouched. Do not commit it —

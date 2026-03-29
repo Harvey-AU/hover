@@ -81,28 +81,45 @@ jobs:
           echo ""
           echo "🔍 Looking for branch: $BRANCH_NAME"
 
-          # Get branch details as JSON for robust parsing
-          BRANCH_JSON=$(supabase branches get "$BRANCH_NAME" --project-ref "$SUPABASE_PROJECT_REF" --output json 2>/dev/null) || true
+          MAX_ATTEMPTS=8
+          SLEEP_SECONDS=15
+          PREVIEW_DB_URL=""
+          DIRECT_DB_URL=""
+          BRANCH_SERVICE_ROLE_KEY=""
+          BRANCH_JWT_SECRET=""
+          BRANCH_SUPABASE_URL=""
+          BRANCH_JSON=""
+
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            # Get branch details as JSON for robust parsing.
+            BRANCH_JSON=$(supabase branches get "$BRANCH_NAME" --project-ref "$SUPABASE_PROJECT_REF" --output json 2>/dev/null) || true
+
+            # Extract pooler URL (for general queries) - try multiple field names.
+            PREVIEW_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL // .postgres_url // .db_url // empty' 2>/dev/null)
+
+            # Extract direct URL (for LISTEN/NOTIFY) - Supabase uses POSTGRES_URL_NON_POOLING.
+            DIRECT_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL_NON_POOLING // empty' 2>/dev/null)
+            BRANCH_SERVICE_ROLE_KEY=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY // empty' 2>/dev/null)
+            BRANCH_JWT_SECRET=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_JWT_SECRET // empty' 2>/dev/null)
+            BRANCH_SUPABASE_URL=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_URL // empty' 2>/dev/null)
+
+            if [ -n "$PREVIEW_DB_URL" ]; then
+              break
+            fi
+
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "⏳ Preview branch not ready yet; retrying in ${SLEEP_SECONDS}s (${ATTEMPT}/${MAX_ATTEMPTS})"
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
 
           # Debug: show available fields (keys only, not values)
           echo "🔑 Available JSON fields:"
           echo "$BRANCH_JSON" | jq -r 'keys[]' 2>/dev/null || echo "  (none)"
 
-          # Extract pooler URL (for general queries) - try multiple field names
-          PREVIEW_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL // .postgres_url // .db_url // empty' 2>/dev/null)
-
-          # Extract direct URL (for LISTEN/NOTIFY) - Supabase uses POSTGRES_URL_NON_POOLING
-          DIRECT_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL_NON_POOLING // empty' 2>/dev/null)
-
           echo "📊 URLs found:"
           echo "  Pooler URL present: $([ -n "$PREVIEW_DB_URL" ] && echo 'yes' || echo 'no')"
           echo "  Direct URL present: $([ -n "$DIRECT_DB_URL" ] && echo 'yes' || echo 'no')"
-
-          # Extract branch-specific keys (each preview branch has its own)
-          BRANCH_SERVICE_ROLE_KEY=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY // empty' 2>/dev/null)
-          BRANCH_JWT_SECRET=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_JWT_SECRET // empty' 2>/dev/null)
-          BRANCH_SUPABASE_URL=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_URL // empty' 2>/dev/null)
-
           echo "  Branch service role key present: $([ -n "$BRANCH_SERVICE_ROLE_KEY" ] && echo 'yes' || echo 'no')"
           echo "  Branch JWT secret present: $([ -n "$BRANCH_JWT_SECRET" ] && echo 'yes' || echo 'no')"
           echo "  Branch Supabase URL present: $([ -n "$BRANCH_SUPABASE_URL" ] && echo 'yes' || echo 'no')"

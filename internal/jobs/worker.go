@@ -576,9 +576,12 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		log.Info().Msg("Technology detector initialised")
 	}
 
-	// Initialise storage client for HTML uploads (non-fatal if not configured)
-	// Uses existing SUPABASE_URL from project config
+	// Initialise storage client for HTML uploads (non-fatal if not configured).
+	// Local development may only have SUPABASE_AUTH_URL in older .env.local files.
 	supabaseURL := strings.TrimSuffix(os.Getenv("SUPABASE_URL"), "/")
+	if supabaseURL == "" && os.Getenv("APP_ENV") == "development" {
+		supabaseURL = strings.TrimSuffix(os.Getenv("SUPABASE_AUTH_URL"), "/")
+	}
 	supabasePublishableKey := os.Getenv("SUPABASE_PUBLISHABLE_KEY")
 	supabaseSecretKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseSecretKey != "" {

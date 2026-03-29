@@ -190,15 +190,18 @@ if [ "$ACTION" = "reply" ]; then
     exit 1
   fi
 
-  RESULT=$(gh api graphql -f query='
-    mutation {
-      addPullRequestReviewThreadReply(input: {
-        pullRequestReviewThreadId: "'"$THREAD_ID"'",
-        body: "'"$(echo "$MESSAGE" | sed 's/"/\\"/g; s/\n/\\n/g')"'"
-      }) {
-        comment { id }
-      }
-    }' 2>&1)
+  RESULT=$(gh api graphql \
+    -f query='
+      mutation($threadId: ID!, $body: String!) {
+        addPullRequestReviewThreadReply(input: {
+          pullRequestReviewThreadId: $threadId,
+          body: $body
+        }) {
+          comment { id }
+        }
+      }' \
+    -f threadId="$THREAD_ID" \
+    -f body="$MESSAGE" 2>&1)
 
   if echo "$RESULT" | jq -e '.data.addPullRequestReviewThreadReply.comment.id' >/dev/null 2>&1; then
     echo "Replied to thread #$THREAD_INDEX ($THREAD_FILE:$THREAD_LINE)"

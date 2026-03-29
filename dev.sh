@@ -75,7 +75,8 @@ if [ ! -f ".env.local" ]; then
     API_URL=$(echo "$SUPA_ENV" | grep '^API_URL=' | cut -d'"' -f2)
     DB_URL=$(echo "$SUPA_ENV" | grep '^DB_URL=' | cut -d'"' -f2)
     PUBLISHABLE_KEY=$(echo "$SUPA_ENV" | grep '^PUBLISHABLE_KEY=' | cut -d'"' -f2)
-    if [ -z "$API_URL" ] || [ -z "$DB_URL" ] || [ -z "$PUBLISHABLE_KEY" ]; then
+    SERVICE_ROLE_KEY=$(echo "$SUPA_ENV" | grep '^SERVICE_ROLE_KEY=' | cut -d'"' -f2)
+    if [ -z "$API_URL" ] || [ -z "$DB_URL" ] || [ -z "$PUBLISHABLE_KEY" ] || [ -z "$SERVICE_ROLE_KEY" ]; then
         echo "⚠️  Could not extract required values from supabase status"
         echo "    Ensure Supabase is running, or create .env.local manually"
         exit 1
@@ -89,8 +90,10 @@ LOG_LEVEL=info
 
 DATABASE_URL=${DB_URL}
 
+SUPABASE_URL=${API_URL}
 SUPABASE_AUTH_URL=${API_URL}
 SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY}
+SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
 EOF
 )
     echo "✅ .env.local created"
