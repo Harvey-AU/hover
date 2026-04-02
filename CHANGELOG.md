@@ -28,6 +28,12 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Fixed
+
+- Sitemap parser now uses Go's `encoding/xml` decoder instead of string matching,
+  fixing sitemaps that use CDATA wrappers (e.g. WordPress All in One SEO) or XML
+  entity-encoded URLs (`&amp;` in query strings)
+
 ## [0.30.2] – 2026-03-28
 
 ### Added
