@@ -33,6 +33,11 @@ On merge, CI will:
 - Sitemap parser now uses Go's `encoding/xml` decoder instead of string matching,
   fixing sitemaps that use CDATA wrappers (e.g. WordPress All in One SEO) or XML
   entity-encoded URLs (`&amp;` in query strings)
+- AIA (Authority Information Access) transport fetches missing intermediate
+  certificates at runtime, fixing TLS failures on servers with incomplete
+  certificate chains (e.g. acsi.org.au)
+- Job lifecycle hardened: `initialising` state prevents premature completion
+  before sitemap URLs are enqueued, with stale timeout and cancellation support
 
 ## [0.30.2] – 2026-03-28
 
