@@ -231,8 +231,6 @@ func addSupabaseConnectOrigins(values []string, rawURL string) []string {
 func buildConnectSrcValues() string {
 	values := []string{
 		"'self'",
-		"http://127.0.0.1:8765",
-		"http://localhost:8765",
 		"https://challenges.cloudflare.com",
 		"https://cdn.jsdelivr.net",
 		"https://www.google-analytics.com",

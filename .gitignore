@@ -13,6 +13,7 @@
 /app
 /main
 /test_jobs
+/hover
 /tmp
 
 # Go build cache (local)

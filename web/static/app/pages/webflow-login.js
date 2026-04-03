@@ -34,9 +34,6 @@ import { showToast } from "/app/components/hover-toast.js";
 /** postMessage target origin for the Webflow Designer extension. */
 const EXTENSION_ORIGIN = "https://webflow.com";
 
-/** Storage key written by auth.js for CLI/extension auth state. */
-const CLI_AUTH_STORAGE_KEY = "gnh_cli_auth_state";
-
 /**
  * The state token passed by the extension when opening this popup.
  * Included in the postMessage payload so index.ts can verify it.

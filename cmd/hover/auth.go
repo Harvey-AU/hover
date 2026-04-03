@@ -1,0 +1,339 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	defaultAuthURL      = "https://hover.auth.goodnative.co"
+	defaultAnonKey      = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
+	tokenSkewSeconds    = 90
+	callbackTimeout     = 5 * time.Minute
+	callbackPort        = 8765
+	supabaseTokenPath   = "/auth/v1/token"
+	supabaseAuthorizePath = "/auth/v1/authorize"
+)
+
+// session represents a cached Supabase auth session.
+type session struct {
+	AccessToken  string  `json:"access_token"`
+	RefreshToken string  `json:"refresh_token"`
+	ExpiresIn    float64 `json:"expires_in"`
+	ExpiresAt    float64 `json:"expires_at,omitempty"`
+	FetchedAt    float64 `json:"fetched_at"`
+	TokenType    string  `json:"token_type,omitempty"`
+	User         json.RawMessage `json:"user,omitempty"`
+}
+
+func (s *session) isValid() bool {
+	expiresAt := s.ExpiresAt
+	if expiresAt == 0 && s.ExpiresIn > 0 && s.FetchedAt > 0 {
+		expiresAt = s.FetchedAt + s.ExpiresIn
+	}
+	if expiresAt == 0 {
+		return false
+	}
+	return expiresAt-tokenSkewSeconds > float64(time.Now().Unix())
+}
+
+// authConfig holds resolved auth parameters for a CLI invocation.
+type authConfig struct {
+	AuthURL string
+	AnonKey string
+	APIURL  string
+	PR      int
+}
+
+func (c *authConfig) sessionFile() string {
+	dir := configDir()
+	if c.PR > 0 {
+		return filepath.Join(dir, fmt.Sprintf("session-pr-%d.json", c.PR))
+	}
+	return filepath.Join(dir, "session.json")
+}
+
+func configDir() string {
+	if v := os.Getenv("BBB_AUTH_DIR"); v != "" {
+		return v
+	}
+	if runtime.GOOS == "windows" {
+		if appdata := os.Getenv("APPDATA"); appdata != "" {
+			return filepath.Join(appdata, "Hover", "auth")
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "AppData", "Roaming", "Hover", "auth")
+	}
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "hover", "auth")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "hover", "auth")
+}
+
+func loadSession(path string) (*session, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var s session
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("invalid session file: %w", err)
+	}
+	return &s, nil
+}
+
+func saveSession(s *session, path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// ensureToken returns a valid access token, refreshing or performing a
+// browser login as needed.
+func ensureToken(ctx context.Context, cfg *authConfig) (string, error) {
+	sf := cfg.sessionFile()
+	sess, err := loadSession(sf)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read session: %v\n", err)
+	}
+
+	// Reuse cached token if still valid.
+	if sess != nil && sess.isValid() {
+		return sess.AccessToken, nil
+	}
+
+	// Attempt refresh if we have a refresh token.
+	if sess != nil && sess.RefreshToken != "" {
+		refreshed, err := refreshSession(ctx, cfg, sess.RefreshToken)
+		if err == nil {
+			if err := saveSession(refreshed, sf); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not cache session: %v\n", err)
+			}
+			return refreshed.AccessToken, nil
+		}
+		fmt.Fprintf(os.Stderr, "Session refresh failed: %v\n", err)
+	}
+
+	// Fall back to browser login.
+	fmt.Fprintln(os.Stderr, "No valid session found. Starting browser login...")
+	newSess, err := browserLogin(ctx, cfg)
+	if err != nil {
+		return "", fmt.Errorf("browser login failed: %w", err)
+	}
+	if err := saveSession(newSess, sf); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not cache session: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "Session saved to %s\n", sf)
+	return newSess.AccessToken, nil
+}
+
+// refreshSession exchanges a refresh token for a new session.
+func refreshSession(ctx context.Context, cfg *authConfig, refreshToken string) (*session, error) {
+	tokenURL := cfg.AuthURL + supabaseTokenPath + "?grant_type=refresh_token"
+	payload := fmt.Sprintf(`{"refresh_token":%q}`, refreshToken)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", cfg.AnonKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.AnonKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("refresh failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
+	var s session
+	if err := json.Unmarshal(body, &s); err != nil {
+		return nil, fmt.Errorf("invalid refresh response: %w", err)
+	}
+	s.FetchedAt = float64(time.Now().Unix())
+	return &s, nil
+}
+
+// browserLogin performs a PKCE OAuth flow via a local loopback server.
+// It opens the user's browser to the Supabase authorize endpoint directly
+// (no hosted cli-login.html needed). On completion, the browser redirects
+// back to 127.0.0.1 where we exchange the code for a session.
+func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
+	verifier := generateCodeVerifier()
+	challenge := generateCodeChallenge(verifier)
+
+	// Bind the loopback listener first so we know the port.
+	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", callbackPort))
+	if err != nil {
+		return nil, fmt.Errorf("could not bind 127.0.0.1:%d: %w", callbackPort, err)
+	}
+	redirectURL := fmt.Sprintf("http://127.0.0.1:%d/callback", callbackPort)
+
+	// Build the Supabase authorize URL. We use Google as the default provider
+	// with PKCE. The user can choose another provider in the consent screen.
+	authorizeURL := cfg.AuthURL + supabaseAuthorizePath + "?" + url.Values{
+		"provider":              {"google"},
+		"redirect_to":           {redirectURL},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"response_type":         {"code"},
+	}.Encode()
+
+	fmt.Fprintln(os.Stderr, "Opening browser for authentication...")
+	fmt.Fprintf(os.Stderr, "If your browser does not open, visit:\n  %s\n\n", authorizeURL)
+	openBrowser(authorizeURL)
+
+	// Wait for the OAuth redirect with the code.
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errMsg := r.URL.Query().Get("error_description")
+			if errMsg == "" {
+				errMsg = r.URL.Query().Get("error")
+			}
+			if errMsg == "" {
+				errMsg = "no authorisation code received"
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", errMsg)
+			errCh <- fmt.Errorf("auth callback error: %s", errMsg)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, "<html><body><h2>Authentication complete</h2><p>You can close this tab and return to your terminal.</p></body></html>")
+		codeCh <- code
+	})
+
+	srv := &http.Server{Handler: mux}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	defer func() {
+		srv.Shutdown(context.Background())
+		wg.Wait()
+	}()
+
+	// Wait for code or timeout.
+	select {
+	case code := <-codeCh:
+		return exchangeCode(ctx, cfg, code, verifier, redirectURL)
+	case err := <-errCh:
+		return nil, err
+	case <-time.After(callbackTimeout):
+		return nil, fmt.Errorf("timed out waiting for authentication (waited %s)", callbackTimeout)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// exchangeCode trades an authorisation code for a Supabase session.
+func exchangeCode(ctx context.Context, cfg *authConfig, code, verifier, redirectURL string) (*session, error) {
+	tokenURL := cfg.AuthURL + supabaseTokenPath + "?grant_type=pkce"
+	payload := fmt.Sprintf(`{"auth_code":%q,"code_verifier":%q}`, code, verifier)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("apikey", cfg.AnonKey)
+	req.Header.Set("Authorization", "Bearer "+cfg.AnonKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("code exchange failed (HTTP %d): %s", resp.StatusCode, body)
+	}
+
+	var s session
+	if err := json.Unmarshal(body, &s); err != nil {
+		return nil, fmt.Errorf("invalid token response: %w", err)
+	}
+	s.FetchedAt = float64(time.Now().Unix())
+	return &s, nil
+}
+
+// PKCE helpers
+
+func generateCodeVerifier() string {
+	b := make([]byte, 64)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return base64URLEncode(b)[:128]
+}
+
+func generateCodeChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64URLEncode(h[:])
+}
+
+func base64URLEncode(data []byte) string {
+	return strings.TrimRight(base64.URLEncoding.EncodeToString(data), "=")
+}
+
+// openBrowser tries to open a URL in the default browser.
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return
+	}
+	cmd.Start() //nolint:errcheck // best-effort
+}

@@ -147,12 +147,11 @@
   async function initialise() {
     await ensureConfig();
     await ensureSupabase();
-    const isCliAuthPage = Boolean(window.GNH_APP?.cliAuth);
     const isAuthCallbackPage = Boolean(window.GNH_APP?.authCallback);
     const isExtensionAuthPage = Boolean(window.GNH_APP?.extensionAuth);
 
-    // Callback/CLI/extension auth pages must not block on optional third-party scripts.
-    if (!isCliAuthPage && !isAuthCallbackPage && !isExtensionAuthPage) {
+    // Callback/extension auth pages must not block on optional third-party scripts.
+    if (!isAuthCallbackPage && !isExtensionAuthPage) {
       const optionalScriptResults = await Promise.allSettled([
         ensurePasswordStrength(),
         ensureTurnstile(),
@@ -175,15 +174,6 @@
       if (!initialised) {
         console.error("Failed to initialise Supabase client");
       }
-    }
-
-    if (typeof window.GNHAuth?.resumeCliAuthFromStorage === "function") {
-      window.GNHAuth.resumeCliAuthFromStorage();
-    }
-
-    if (isCliAuthPage && window.GNHAuth?.initCliAuthPage) {
-      window.GNHAuth.initCliAuthPage();
-      return;
     }
 
     if (isAuthCallbackPage && window.GNHAuth?.initAuthCallbackPage) {

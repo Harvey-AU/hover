@@ -15,8 +15,6 @@
  * - Sentry error tracking for auth failures
  */
 
-const CLI_AUTH_STORAGE_KEY = "gnh_cli_auth_state";
-
 // Supabase configuration
 const runtimeConfig =
   (typeof window !== "undefined" && window.GNH_CONFIG) ||
@@ -76,7 +74,6 @@ const PUBLIC_ROUTE_PATHS = new Set([
   "/welcome/",
   "/welcome/invite",
   "/welcome/invite/",
-  "/cli-login.html",
   "/extension-auth",
   "/extension-auth/",
   "/extension-auth.html",
@@ -232,8 +229,7 @@ function clearPostAuthReturnTarget() {
 
 function setPostAuthReturnTargetFromCurrentPath() {
   if (
-    window.location.pathname === "/" ||
-    window.location.pathname === "/cli-login.html"
+    window.location.pathname === "/"
   ) {
     return;
   }
@@ -1810,303 +1806,6 @@ function setupLoginPageHandlers() {
   // No need for direct element handlers since they're covered by delegation
 }
 
-function isLoopbackCallback(url) {
-  try {
-    const parsed = new URL(url);
-    const isLoopback =
-      parsed.hostname === "127.0.0.1" ||
-      parsed.hostname === "localhost" ||
-      parsed.hostname === "::1";
-    return isLoopback && parsed.protocol === "http:";
-  } catch (error) {
-    return false;
-  }
-}
-
-function getStoredCliAuthPayload() {
-  if (!window.sessionStorage) {
-    return null;
-  }
-
-  const raw = window.sessionStorage.getItem(CLI_AUTH_STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (error) {
-    console.warn("CLI auth: invalid stored payload, clearing", error);
-    window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
-    return null;
-  }
-
-  const { callbackUrl, state } = payload || {};
-  if (!callbackUrl || !state || !isLoopbackCallback(callbackUrl)) {
-    window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
-    return null;
-  }
-
-  return { callbackUrl, state };
-}
-
-async function resumeCliAuthFromStorage() {
-  const payload = getStoredCliAuthPayload();
-  if (!payload) {
-    return;
-  }
-
-  try {
-    if (!supabase && !initialiseSupabase()) {
-      console.warn("CLI auth resume: Supabase initialisation failed");
-      return;
-    }
-
-    const {
-      data: { session },
-      error,
-    } = await supabase.auth.getSession();
-
-    if (error || !session) {
-      return;
-    }
-
-    const response = await fetch(payload.callbackUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session, state: payload.state }),
-    });
-
-    if (!response.ok) {
-      console.error(
-        `CLI auth resume failed (${response.status})`,
-        await response.text()
-      );
-      return;
-    }
-
-    window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
-  } catch (error) {
-    console.error("Failed to resume CLI auth", error);
-  }
-}
-
-function initCliAuthPage() {
-  const params = new URLSearchParams(window.location.search);
-  const storedPayload = getStoredCliAuthPayload();
-  const callbackFromUrl = params.get("callback") || "";
-  const stateFromUrl = params.get("state") || "";
-  const callbackUrl = isLoopbackCallback(callbackFromUrl)
-    ? callbackFromUrl
-    : storedPayload?.callbackUrl || "";
-  const state = stateFromUrl || storedPayload?.state || "";
-  const providerHint = params.get("provider") || null;
-  const statusEl = document.getElementById("cliStatus");
-  const modalContainer = document.getElementById("authModalContainer");
-  if (!statusEl || !modalContainer) {
-    console.warn("CLI auth: required elements missing");
-    return;
-  }
-
-  function setStatus(message, isError = false) {
-    statusEl.textContent = message;
-    statusEl.classList.toggle("error", Boolean(isError));
-  }
-
-  const callbackValid =
-    Boolean(callbackUrl) && Boolean(state) && isLoopbackCallback(callbackUrl);
-  if (!callbackValid) {
-    setStatus(
-      "Invalid CLI callback parameters. Close this tab and re-run the CLI login command.",
-      true
-    );
-    return;
-  }
-
-  if (!initialiseSupabase()) {
-    console.error("CLI auth: Supabase initialisation failed");
-    return;
-  }
-
-  try {
-    window.sessionStorage.setItem(
-      CLI_AUTH_STORAGE_KEY,
-      JSON.stringify({ callbackUrl, state })
-    );
-  } catch (error) {
-    console.warn("CLI auth: unable to persist state", error);
-  }
-
-  let sessionSent = false;
-
-  async function sendSessionToCli() {
-    if (sessionSent) {
-      setStatus("Session already delivered to CLI. You can close this tab.");
-      return;
-    }
-
-    if (!supabase) {
-      throw new Error("Supabase client is unavailable");
-    }
-
-    const {
-      data: { session },
-      error,
-    } = await supabase.auth.getSession();
-
-    if (error || !session) {
-      throw new Error(error?.message || "Unable to read Supabase session", {
-        cause: error,
-      });
-    }
-
-    const response = await fetch(callbackUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session, state }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(
-        `CLI callback failed (${response.status}): ${text || "Unknown error"}`
-      );
-    }
-    sessionSent = true;
-    try {
-      window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
-    } catch (error) {
-      console.warn("CLI auth: unable to clear stored state", error);
-    }
-  }
-
-  function overrideHandleAuthSuccess() {
-    window.handleAuthSuccess = async function (user) {
-      try {
-        setStatus("Auth successful. Finalising session…");
-        // The CLI login page must not run the default post-auth redirect flow,
-        // or the browser can navigate to /dashboard before the loopback
-        // callback receives the Supabase session.
-        await registerUserWithBackend(user);
-        updateUserInfo();
-        updateAuthState(true);
-        await sendSessionToCli();
-        setStatus("Session sent to CLI. You can close this tab.");
-        if (typeof window.closeAuthModal === "function") {
-          window.closeAuthModal();
-        }
-      } catch (error) {
-        console.error(error);
-        setStatus(
-          error.message || "Failed to deliver session to CLI. Please retry.",
-          true
-        );
-        sessionSent = false;
-      }
-    };
-  }
-
-  function overrideHandleSocialLogin() {
-    window.handleSocialLogin = async function (provider) {
-      if (typeof window.showAuthLoading === "function") {
-        window.showAuthLoading();
-      }
-      if (typeof window.clearAuthError === "function") {
-        window.clearAuthError();
-      }
-      try {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider,
-          options: {
-            redirectTo: window.location.href,
-          },
-        });
-
-        if (error) throw error;
-      } catch (error) {
-        console.error(error);
-        if (typeof window.showAuthError === "function") {
-          window.showAuthError(error.message || `${provider} login failed.`);
-        }
-        if (typeof window.hideAuthLoading === "function") {
-          window.hideAuthLoading();
-        }
-        setStatus(
-          error.message || `${provider} login failed – please retry.`,
-          true
-        );
-      }
-    };
-  }
-
-  const reopenButton = document.getElementById("reopenModalBtn");
-  if (reopenButton) {
-    reopenButton.addEventListener("click", () => {
-      if (typeof window.showAuthModal === "function") {
-        window.showAuthModal();
-        setStatus("Sign-in modal reopened. Continue authentication.");
-      }
-    });
-  }
-
-  (async () => {
-    try {
-      // Handle social OAuth returns before checking session state so the CLI
-      // page can recover even when the provider round-trip rewrites the URL.
-      await handleAuthCallback();
-
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-      if (error) {
-        throw error;
-      }
-      if (session) {
-        setStatus("Session already active. Completing CLI login…");
-        await sendSessionToCli();
-        setStatus("Session sent to CLI. You can close this tab.");
-        if (typeof window.closeAuthModal === "function") {
-          window.closeAuthModal();
-        }
-        return;
-      }
-
-      await loadAuthModal();
-      await waitForAuthScript();
-      if (typeof window.setupAuthHandlers === "function") {
-        window.setupAuthHandlers();
-      }
-      if (typeof window.showLoginForm === "function") {
-        window.showLoginForm();
-      }
-      if (typeof window.showAuthModal === "function") {
-        window.showAuthModal();
-      }
-      if (providerHint) {
-        // Sanitise provider hint to prevent CSS selector injection
-        const sanitised = providerHint.replace(/[^a-z0-9_-]/gi, "");
-        const button = document.querySelector(
-          `.gnh-social-btn[data-provider="${sanitised}"]`
-        );
-        if (button) {
-          button.focus();
-        }
-      }
-      overrideHandleAuthSuccess();
-      overrideHandleSocialLogin();
-      setStatus("Sign-in modal ready. Continue authentication.");
-    } catch (error) {
-      console.error(error);
-      setStatus(
-        error.message ||
-          "Unable to load auth modal. Please try again or contact support.",
-        true
-      );
-    }
-  })();
-}
 
 function isValidExtensionTargetOrigin(rawOrigin) {
   if (!rawOrigin) return false;
@@ -2356,9 +2055,7 @@ if (typeof module !== "undefined" && module.exports) {
     handleLogout,
     defaultHandleAuthSuccess,
     initAuthCallbackPage,
-    initCliAuthPage,
     initExtensionAuthPage,
-    resumeCliAuthFromStorage,
     setUserAvatar,
     getGravatarUrl,
   };
@@ -2397,9 +2094,7 @@ if (typeof module !== "undefined" && module.exports) {
     setupLoginPageHandlers,
     handleLogout,
     initAuthCallbackPage,
-    initCliAuthPage,
     initExtensionAuthPage,
-    resumeCliAuthFromStorage,
     clearPendingInviteToken,
     setUserAvatar,
     getGravatarUrl,
@@ -2434,10 +2129,8 @@ if (typeof module !== "undefined" && module.exports) {
   window.setupLoginPageHandlers = setupLoginPageHandlers;
   window.handleLogout = handleLogout;
   window.handleAuthSuccess = defaultHandleAuthSuccess;
-  window.initCliAuthPage = initCliAuthPage;
   window.initExtensionAuthPage = initExtensionAuthPage;
   window.initAuthCallbackPage = initAuthCallbackPage;
-  window.resumeCliAuthFromStorage = resumeCliAuthFromStorage;
   window.clearPendingInviteToken = clearPendingInviteToken;
 
   // Convenience functions for common auth form actions
