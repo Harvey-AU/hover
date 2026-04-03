@@ -26,7 +26,33 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:minor]
+
+### Added
+
+- Native `hover` CLI binary — run `hover jobs generate --pr <N>` to create
+  load-test jobs without scripts or manual API calls
+- Browser-based CLI authentication via the app's existing auth flow — no
+  separate credentials or login page needed
+- Auto-discovery of Supabase auth config from preview app, so `--anon-key` is
+  no longer required
+- Session persistence and token refresh for CLI — authenticate once, reuse
+  across sessions
+- npm distribution (`npm install -g @harvey-au/hover`) with automatic binary
+  download for macOS, Linux, and Windows
+- Independent CLI versioning — npm releases only trigger when `cmd/hover/`
+  changes, with their own version counter
+- Windows support for CLI (amd64 and arm64)
+
+### Removed
+
+- Hosted `cli-login.html` auth page and Python auth helper scripts — replaced
+  by native browser auth flow
+
+### Fixed
+
+- PKCE verifier slice bounds panic when code verifier was shorter than 128
+  characters
 
 ## [0.30.3] – 2026-04-03
 

@@ -21,6 +21,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set CLI version from tag
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          echo "GORELEASER_CURRENT_TAG=${GIT_TAG#cli-}" >> $GITHUB_ENV
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

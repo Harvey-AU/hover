@@ -8,14 +8,19 @@ const path = require("path");
 
 const REPO = "Harvey-AU/hover";
 const BIN_DIR = path.join(__dirname, "bin");
-const BIN_PATH = path.join(BIN_DIR, "hover");
+const BIN_NAME = process.platform === "win32" ? "hover.exe" : "hover";
+const BIN_PATH = path.join(BIN_DIR, BIN_NAME);
 
-const PLATFORM_MAP = { darwin: "darwin", linux: "linux" };
+const PLATFORM_MAP = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
 
 function getVersion() {
   const pkg = require("./package.json");
   return pkg.version;
+}
+
+function isWindows() {
+  return process.platform === "win32";
 }
 
 function getAssetName() {
@@ -26,7 +31,8 @@ function getAssetName() {
       `Unsupported platform: ${process.platform}-${process.arch}`
     );
   }
-  return `hover_${getVersion()}_${os}_${arch}.tar.gz`;
+  const ext = isWindows() ? "zip" : "tar.gz";
+  return `hover_${getVersion()}_${os}_${arch}.${ext}`;
 }
 
 function fetch(url) {
@@ -57,14 +63,24 @@ async function main() {
 
   const buffer = await fetch(url);
 
-  // Write tarball to temp file, extract with tar (no shell).
+  // Write archive to temp file and extract.
   fs.mkdirSync(BIN_DIR, { recursive: true });
-  const tmpFile = path.join(BIN_DIR, "_download.tar.gz");
-  fs.writeFileSync(tmpFile, buffer);
-  execFileSync("tar", ["xzf", tmpFile, "-C", BIN_DIR], { stdio: "ignore" });
-  fs.unlinkSync(tmpFile);
 
-  fs.chmodSync(BIN_PATH, 0o755);
+  if (isWindows()) {
+    const tmpFile = path.join(BIN_DIR, "_download.zip");
+    fs.writeFileSync(tmpFile, buffer);
+    execFileSync("powershell", [
+      "-NoProfile", "-Command",
+      `Expand-Archive -Force -Path '${tmpFile}' -DestinationPath '${BIN_DIR}'`
+    ], { stdio: "ignore" });
+    fs.unlinkSync(tmpFile);
+  } else {
+    const tmpFile = path.join(BIN_DIR, "_download.tar.gz");
+    fs.writeFileSync(tmpFile, buffer);
+    execFileSync("tar", ["xzf", tmpFile, "-C", BIN_DIR], { stdio: "ignore" });
+    fs.unlinkSync(tmpFile);
+    fs.chmodSync(BIN_PATH, 0o755);
+  }
   console.log("hover installed successfully.");
 }
 

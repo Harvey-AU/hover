@@ -13,7 +13,7 @@
     "install.js",
     "README.md"
   ],
-  "os": ["darwin", "linux"],
+  "os": ["darwin", "linux", "win32"],
   "cpu": ["x64", "arm64"],
   "repository": {
     "type": "git",

@@ -2,9 +2,6 @@ version: 2
 
 project_name: hover
 
-monorepo:
-  tag_prefix: cli-
-
 builds:
   - id: hover
     main: ./cmd/hover/
@@ -14,6 +11,7 @@ builds:
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -24,6 +22,9 @@ archives:
   - id: hover
     builds: [hover]
     format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
     name_template: "hover_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
