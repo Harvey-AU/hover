@@ -63,25 +63,7 @@ jobs:
         run: |
           VERSION="${GIT_TAG#cli-v}"
 
-          cat > README.md <<EOF
-          # @harvey-au/hover
-
-          CLI for the Hover cache-warming platform.
-
-          ## Install
-
-          \`\`\`sh
-          npm install -g @harvey-au/hover
-          \`\`\`
-
-          ## Usage
-
-          \`\`\`sh
-          hover jobs generate --pr <number>
-          \`\`\`
-
-          See [GitHub releases](https://github.com/Harvey-AU/hover/releases) for changelogs.
-          EOF
+          cp ../npm-README.md README.md
 
           npm version "$VERSION" --no-git-tag-version
           npm publish --access public
