@@ -30,5 +30,8 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+release:
+  mode: replace
+
 changelog:
   disable: true

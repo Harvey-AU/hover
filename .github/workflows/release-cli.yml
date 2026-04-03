@@ -28,7 +28,7 @@ jobs:
           # Goreleaser needs a semver tag on HEAD. Create a temporary
           # v* tag from the cli-v* tag so archives are named correctly.
           VERSION_TAG="${GIT_TAG#cli-}"
-          git tag "$VERSION_TAG"
+          git tag -f "$VERSION_TAG"
           echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
 
       - uses: goreleaser/goreleaser-action@v6
