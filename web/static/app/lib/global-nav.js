@@ -170,6 +170,8 @@ function initOrgSwitcher(navEl) {
         }
         if (window.GNH_APP?.coreReady) {
           await window.GNH_APP.coreReady;
+        } else {
+          console.warn("core.js did not initialise within 5s; proceeding without org data");
         }
       }
       if (window.GNH_APP?.initialiseOrg) await window.GNH_APP.initialiseOrg();

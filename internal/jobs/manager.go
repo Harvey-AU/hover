@@ -1091,13 +1091,15 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to discover sitemaps: %v", err))
 		// Ensure job exits initialising state on error
-		_ = jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		if markErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				UPDATE jobs SET status = $1, completed_at = $2
 				WHERE id = $3 AND status IN ($4, $5)
 			`, JobStatusFailed, time.Now().UTC(), jobID, JobStatusInitialising, JobStatusPending)
 			return err
-		})
+		}); markErr != nil {
+			log.Warn().Err(markErr).Str("job_id", jobID).Msg("Failed to mark job as failed after sitemap error")
+		}
 		return
 	}
 
