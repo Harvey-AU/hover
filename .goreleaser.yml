@@ -1,5 +1,10 @@
 version: 2
 
+project_name: hover
+
+monorepo:
+  tag_prefix: cli-
+
 builds:
   - id: hover
     main: ./cmd/hover/

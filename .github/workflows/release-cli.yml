@@ -3,7 +3,7 @@ name: Release CLI
 on:
   push:
     tags:
-      - "v*"
+      - "cli-v*"
 
 permissions:
   contents: write
@@ -28,6 +28,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          NPM_TOKEN: op://Good Native/npm/npm_access_token
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -37,8 +45,29 @@ jobs:
         working-directory: npm
         env:
           GIT_TAG: ${{ github.ref_name }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
         run: |
-          VERSION="${GIT_TAG#v}"
+          VERSION="${GIT_TAG#cli-v}"
+
+          cat > README.md <<EOF
+          # @harvey-au/hover
+
+          CLI for the Hover cache-warming platform.
+
+          ## Install
+
+          \`\`\`sh
+          npm install -g @harvey-au/hover
+          \`\`\`
+
+          ## Usage
+
+          \`\`\`sh
+          hover jobs generate --pr <number>
+          \`\`\`
+
+          See [GitHub releases](https://github.com/Harvey-AU/hover/releases) for changelogs.
+          EOF
+
           npm version "$VERSION" --no-git-tag-version
           npm publish --access public

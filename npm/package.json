@@ -10,7 +10,8 @@
   },
   "files": [
     "bin/",
-    "install.js"
+    "install.js",
+    "README.md"
   ],
   "os": ["darwin", "linux"],
   "cpu": ["x64", "arm64"],

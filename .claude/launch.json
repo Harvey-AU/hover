@@ -6,7 +6,7 @@
       "runtimeExecutable": "air",
       "runtimeArgs": [],
       "cwd": ".",
-      "env": { "PORT": "8847" },
+      "env": { "PORT": "8847", "APP_ENV": "development" },
       "port": 8847,
       "autoPort": false
     },

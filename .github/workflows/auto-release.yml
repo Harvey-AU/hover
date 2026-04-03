@@ -164,6 +164,24 @@ jobs:
           git commit --amend --no-edit
           git push --force-with-lease origin main
 
+      - name: Check for CLI changes
+        if:
+          steps.check.outputs.should_release == 'true' &&
+          steps.skip.outputs.should_skip != 'true'
+        id: cli
+        run: |
+          # Find the previous tag to compare against
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            echo "cli_changed=true" >> $GITHUB_OUTPUT
+          elif git diff --name-only "$PREV_TAG"..HEAD -- cmd/hover/ | grep -q .; then
+            echo "cli_changed=true" >> $GITHUB_OUTPUT
+            echo "CLI code changed since $PREV_TAG"
+          else
+            echo "cli_changed=false" >> $GITHUB_OUTPUT
+            echo "No CLI changes since $PREV_TAG — skipping CLI release"
+          fi
+
       - name: Create and push tag
         if:
           steps.check.outputs.should_release == 'true' &&
@@ -173,6 +191,25 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${{ steps.bump.outputs.new_version }}" -m "Release ${{ steps.bump.outputs.new_version }}"
           git push origin "${{ steps.bump.outputs.new_version }}"
+
+      - name: Create and push CLI tag
+        if:
+          steps.check.outputs.should_release == 'true' &&
+          steps.skip.outputs.should_skip != 'true' &&
+          steps.cli.outputs.cli_changed == 'true'
+        run: |
+          # Independent CLI version — find latest cli-v* tag and bump patch
+          LATEST_CLI_TAG=$(git tag -l 'cli-v*' --sort=-version:refname | head -1)
+          if [ -z "$LATEST_CLI_TAG" ]; then
+            CLI_VERSION="cli-v0.1.0"
+          else
+            CLI_VER="${LATEST_CLI_TAG#cli-v}"
+            IFS='.' read -r MAJ MIN PAT <<< "$CLI_VER"
+            PAT=$((PAT + 1))
+            CLI_VERSION="cli-v${MAJ}.${MIN}.${PAT}"
+          fi
+          git tag -a "$CLI_VERSION" -m "CLI release $CLI_VERSION"
+          git push origin "$CLI_VERSION"
 
       - name: Extract changelog content
         if:
