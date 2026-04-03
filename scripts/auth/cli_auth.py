@@ -169,6 +169,11 @@ class _AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if (
+            self.headers.get("Access-Control-Request-Private-Network", "").lower()
+            == "true"
+        ):
+            self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Access-Control-Max-Age", "600")
 
     def do_OPTIONS(self) -> None:
