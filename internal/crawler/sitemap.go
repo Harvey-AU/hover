@@ -66,8 +66,8 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 	// Parse robots.txt first - this gets us both sitemaps and crawl rules
 	robotRules, err := ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent)
 	if err != nil {
-		// Log error but don't fail - no robots.txt means no restrictions
-		log.Debug().
+		// Log at warn so TLS/network issues are visible in production logs
+		log.Warn().
 			Err(err).
 			Str("domain", normalisedDomain).
 			Msg("Failed to parse robots.txt, proceeding with no restrictions")
@@ -115,7 +115,7 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Debug().Err(err).Str("url", sitemapURL).Msg("Error fetching sitemap")
+				log.Warn().Err(err).Str("url", sitemapURL).Msg("Error fetching sitemap at common location")
 				continue
 			}
 
