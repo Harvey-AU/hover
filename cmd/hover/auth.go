@@ -306,7 +306,7 @@ func exchangeCode(ctx context.Context, cfg *authConfig, code, verifier, redirect
 // PKCE helpers
 
 func generateCodeVerifier() string {
-	b := make([]byte, 64)
+	b := make([]byte, 96) // 96 bytes → 128 base64url chars
 	if _, err := rand.Read(b); err != nil {
 		panic("crypto/rand failed: " + err.Error())
 	}
