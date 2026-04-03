@@ -151,9 +151,27 @@ function initOrgSwitcher(navEl) {
   }
 
   // Wait for core → init org → render
+  // Use coreReady (set by core.js) directly — gnh-bootstrap.js may not be
+  // loaded on module-based pages, so whenReady() can be absent.
   (async () => {
     try {
-      if (window.GNH_APP?.whenReady) await window.GNH_APP.whenReady();
+      if (window.GNH_APP?.whenReady) {
+        await window.GNH_APP.whenReady();
+      } else if (window.GNH_APP?.coreReady) {
+        await window.GNH_APP.coreReady;
+      } else {
+        // Neither bootstrap nor core.js has run yet — poll for coreReady
+        const pollMs = 50;
+        const maxWait = 5000;
+        let waited = 0;
+        while (!window.GNH_APP?.coreReady && waited < maxWait) {
+          await new Promise((r) => setTimeout(r, pollMs));
+          waited += pollMs;
+        }
+        if (window.GNH_APP?.coreReady) {
+          await window.GNH_APP.coreReady;
+        }
+      }
       if (window.GNH_APP?.initialiseOrg) await window.GNH_APP.initialiseOrg();
       updateDisplay(window.GNH_ACTIVE_ORG, window.GNH_ORGANISATIONS);
     } catch (err) {
