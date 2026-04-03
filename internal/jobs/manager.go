@@ -539,7 +539,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	}
 
 	// Check if job can be canceled
-	if job.Status != JobStatusRunning && job.Status != JobStatusPending && job.Status != JobStatusPaused {
+	if job.Status != JobStatusRunning && job.Status != JobStatusPending && job.Status != JobStatusPaused && job.Status != JobStatusInitialising {
 		return fmt.Errorf("job cannot be canceled: %s", job.Status)
 	}
 
@@ -1053,13 +1053,24 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	// Mark job as initialising so the worker pool doesn't prematurely
 	// complete it before sitemap URLs have been enqueued.
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET status = $1
 			WHERE id = $2 AND status = $3
 		`, JobStatusInitialising, jobID, JobStatusPending)
-		return err
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return fmt.Errorf("job %s not in expected status %s", jobID, JobStatusPending)
+		}
+		return nil
 	}); err != nil {
-		log.Error().Err(err).Str("job_id", jobID).Msg("Failed to set job to initialising")
+		log.Warn().Err(err).Str("job_id", jobID).Msg("Aborting sitemap processing: failed to enter initialising")
+		return
 	}
 
 	log.Info().
@@ -1080,15 +1091,13 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to discover sitemaps: %v", err))
 		// Ensure job exits initialising state on error
-		if failErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_ = jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				UPDATE jobs SET status = $1, completed_at = $2
-				WHERE id = $3 AND status = $4
-			`, JobStatusFailed, time.Now().UTC(), jobID, JobStatusInitialising)
+				WHERE id = $3 AND status IN ($4, $5)
+			`, JobStatusFailed, time.Now().UTC(), jobID, JobStatusInitialising, JobStatusPending)
 			return err
-		}); failErr != nil {
-			log.Error().Err(failErr).Str("job_id", jobID).Msg("Failed to mark initialising job as failed")
-		}
+		})
 		return
 	}
 
@@ -1144,13 +1153,24 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 
 	// Transition from initialising → pending so the worker pool picks it up
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET status = $1
 			WHERE id = $2 AND status = $3
 		`, JobStatusPending, jobID, JobStatusInitialising)
-		return err
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return fmt.Errorf("job %s no longer in initialising state (may have been cancelled)", jobID)
+		}
+		return nil
 	}); err != nil {
-		log.Error().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending")
+		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending")
+		return
 	}
 
 	// Notify workers immediately that new tasks are available

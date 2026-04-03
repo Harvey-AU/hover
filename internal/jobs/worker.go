@@ -1839,6 +1839,7 @@ type jobQueueState struct {
 	Failed      int
 	Skipped     int
 	Concurrency sql.NullInt64
+	CreatedAt   time.Time
 }
 
 func (s jobQueueState) remainingWork() int {
@@ -1875,7 +1876,23 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 	case JobStatusCompleted, JobStatusCancelled, JobStatusFailed:
 		return true, nil
 	case JobStatusInitialising:
-		// Job is still discovering sitemap URLs — do not remove yet
+		// Job is still discovering sitemap URLs — do not remove yet,
+		// but fail-safe if the goroutine hung or crashed.
+		const initialisingTimeout = 35 * time.Minute
+		if !state.CreatedAt.IsZero() && time.Since(state.CreatedAt) > initialisingTimeout {
+			if err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `
+					UPDATE jobs
+					SET status = $1, completed_at = $2, error_message = $3
+					WHERE id = $4 AND status = $5
+				`, JobStatusFailed, time.Now().UTC(), "Job timed out while initialising", jobID, JobStatusInitialising)
+				return err
+			}); err != nil {
+				return false, err
+			}
+			log.Warn().Str("job_id", jobID).Msg("Timed out stale initialising job")
+			return true, nil
+		}
 		return false, nil
 	}
 
@@ -1934,7 +1951,7 @@ func (wp *WorkerPool) loadJobQueueState(ctx context.Context, jobID string) (*job
 	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT status, pending_tasks, waiting_tasks, running_tasks,
-			       total_tasks, completed_tasks, failed_tasks, skipped_tasks, concurrency
+			       total_tasks, completed_tasks, failed_tasks, skipped_tasks, concurrency, created_at
 			FROM jobs
 			WHERE id = $1
 		`, jobID).Scan(
@@ -1947,6 +1964,7 @@ func (wp *WorkerPool) loadJobQueueState(ctx context.Context, jobID string) (*job
 			&state.Failed,
 			&state.Skipped,
 			&state.Concurrency,
+			&state.CreatedAt,
 		)
 	})
 	if err != nil {
