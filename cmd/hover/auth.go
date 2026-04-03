@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,10 +61,14 @@ type authConfig struct {
 
 func (c *authConfig) sessionFile() string {
 	dir := configDir()
+	// Scope session to the auth target so different Supabase projects
+	// (e.g. production vs preview) never share a cached token.
+	h := sha256.Sum256([]byte(c.AuthURL))
+	suffix := hex.EncodeToString(h[:4])
 	if c.PR > 0 {
-		return filepath.Join(dir, fmt.Sprintf("session-pr-%d.json", c.PR))
+		return filepath.Join(dir, fmt.Sprintf("session-pr-%d-%s.json", c.PR, suffix))
 	}
-	return filepath.Join(dir, "session.json")
+	return filepath.Join(dir, fmt.Sprintf("session-%s.json", suffix))
 }
 
 func configDir() string {

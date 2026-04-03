@@ -284,6 +284,14 @@ func runJobsGenerate(args []string) error {
 		default:
 		}
 
+		// Refresh token if it's nearing expiry (within 5 minutes).
+		freshToken, err := ensureToken(ctx, ac)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: token refresh failed: %v\n", err)
+		} else {
+			token = freshToken
+		}
+
 		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d/%d ===\033[0m\n", batch, totalBatches)
 
 		end := domainIdx + cfg.JobsPerBatch
@@ -361,7 +369,10 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 		MaxPages:    10000,
 		Concurrency: concurrency,
 	}
-	body, _ := json.Marshal(p)
+	body, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("marshalling job payload: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL+"/v1/jobs", bytes.NewReader(body))
 	if err != nil {
