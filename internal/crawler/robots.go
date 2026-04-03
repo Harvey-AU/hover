@@ -35,7 +35,7 @@ type RobotsRules struct {
 // We intentionally don't match SEO crawler rules (AhrefsBot, MJ12bot, etc.) as those
 // often have punitive 10s delays meant for aggressive crawlers. Most sites have no
 // crawl-delay for the default * user-agent.
-func ParseRobotsTxt(ctx context.Context, domain string, userAgent string) (*RobotsRules, error) {
+func ParseRobotsTxt(ctx context.Context, domain string, userAgent string, transport ...http.RoundTripper) (*RobotsRules, error) {
 	// Support both domain-only and full URL formats
 	var robotsURL string
 	if strings.HasPrefix(domain, "http://") || strings.HasPrefix(domain, "https://") {
@@ -60,6 +60,9 @@ func ParseRobotsTxt(ctx context.Context, domain string, userAgent string) (*Robo
 			}
 			return nil
 		},
+	}
+	if len(transport) > 0 && transport[0] != nil {
+		client.Transport = transport[0]
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", robotsURL, nil)

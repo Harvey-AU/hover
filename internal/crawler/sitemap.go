@@ -64,7 +64,15 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 	}
 
 	// Parse robots.txt first - this gets us both sitemaps and crawl rules
-	robotRules, err := ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent)
+	// Guard against Go's nil-interface trap: a typed nil *aiaTransport
+	// satisfies http.RoundTripper with a non-nil interface value.
+	var robotRules *RobotsRules
+	var err error
+	if c.aia != nil {
+		robotRules, err = ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent, c.aia)
+	} else {
+		robotRules, err = ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent)
+	}
 	if err != nil {
 		// Log at warn so TLS/network issues are visible in production logs
 		log.Warn().
@@ -92,7 +100,8 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 			"https://" + normalisedDomain + "/sitemap_index.xml",
 		}
 
-		// Create a client for checking common locations
+		// Create a client for checking common locations (reuse AIA transport
+		// so servers with incomplete certificate chains still work).
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -101,6 +110,9 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 				}
 				return nil
 			},
+		}
+		if c.aia != nil {
+			client.Transport = c.aia
 		}
 
 		// Check common locations concurrently with a timeout
@@ -201,6 +213,9 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	if c.aia != nil {
+		client.Transport = c.aia
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
