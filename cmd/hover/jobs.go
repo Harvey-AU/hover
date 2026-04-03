@@ -141,7 +141,7 @@ func parseInterval(s string) (time.Duration, error) {
 }
 
 func (c *jobsConfig) authConfig() *authConfig {
-	apiURL := "https://hover.fly.dev"
+	apiURL := "https://hover.app.goodnative.co"
 	if c.PR > 0 {
 		apiURL = fmt.Sprintf("https://hover-pr-%d.fly.dev", c.PR)
 	}
