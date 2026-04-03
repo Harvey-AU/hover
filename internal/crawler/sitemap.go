@@ -64,10 +64,18 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 	}
 
 	// Parse robots.txt first - this gets us both sitemaps and crawl rules
-	robotRules, err := ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent)
+	// Guard against Go's nil-interface trap: a typed nil *aiaTransport
+	// satisfies http.RoundTripper with a non-nil interface value.
+	var robotRules *RobotsRules
+	var err error
+	if c.aia != nil {
+		robotRules, err = ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent, c.aia)
+	} else {
+		robotRules, err = ParseRobotsTxt(ctx, normalisedDomain, c.config.UserAgent)
+	}
 	if err != nil {
-		// Log error but don't fail - no robots.txt means no restrictions
-		log.Debug().
+		// Log at warn so TLS/network issues are visible in production logs
+		log.Warn().
 			Err(err).
 			Str("domain", normalisedDomain).
 			Msg("Failed to parse robots.txt, proceeding with no restrictions")
@@ -92,7 +100,8 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 			"https://" + normalisedDomain + "/sitemap_index.xml",
 		}
 
-		// Create a client for checking common locations
+		// Create a client for checking common locations (reuse AIA transport
+		// so servers with incomplete certificate chains still work).
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -101,6 +110,9 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 				}
 				return nil
 			},
+		}
+		if c.aia != nil {
+			client.Transport = c.aia
 		}
 
 		// Check common locations concurrently with a timeout
@@ -115,7 +127,7 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Debug().Err(err).Str("url", sitemapURL).Msg("Error fetching sitemap")
+				log.Warn().Err(err).Str("url", sitemapURL).Msg("Error fetching sitemap at common location")
 				continue
 			}
 
@@ -201,6 +213,9 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 	req.Header.Set("Accept-Encoding", "gzip")
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	if c.aia != nil {
+		client.Transport = c.aia
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -236,48 +251,53 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 			Msg("Sitemap decompressed successfully")
 	}
 
-	content := string(body)
-
 	// Log the content for debugging
 	log.Debug().
 		Str("url", sitemapURL).
-		Int("content_length", len(content)).
-		Str("content_sample", content[:min(100, len(content))]).
+		Int("content_length", len(body)).
+		Str("content_sample", string(body[:min(100, len(body))])).
 		Msg("Sitemap content received")
 
-	// Check if it's a sitemap index
-	if strings.Contains(content, "<sitemapindex") {
-		// Extract sitemap URLs
-		sitemapURLs := extractURLsFromXML(content, "<sitemap>", "</sitemap>", "<loc>", "</loc>")
+	// Try to unmarshal as a sitemap index first.
+	// encoding/xml handles CDATA, XML entities (&amp; etc.), namespaces,
+	// and whitespace automatically.
+	var index SitemapIndex
+	if err := xml.Unmarshal(body, &index); err == nil && len(index.Sitemaps) > 0 {
+		log.Debug().
+			Str("url", sitemapURL).
+			Int("child_count", len(index.Sitemaps)).
+			Msg("Parsed as sitemap index")
 
-		// Process each sitemap in the index
-		for _, childSitemapURL := range sitemapURLs {
-			// Validate and normalise the child sitemap URL
-			childSitemapURL = util.NormaliseURL(childSitemapURL)
-			if childSitemapURL == "" {
-				log.Warn().Str("url", childSitemapURL).Msg("Invalid child sitemap URL, skipping")
+		for _, child := range index.Sitemaps {
+			childURL := util.NormaliseURL(strings.TrimSpace(child.Loc))
+			if childURL == "" {
+				log.Warn().Str("url", child.Loc).Msg("Invalid child sitemap URL, skipping")
 				continue
 			}
 
-			childURLs, err := c.ParseSitemap(ctx, childSitemapURL)
+			childURLs, err := c.ParseSitemap(ctx, childURL)
 			if err != nil {
-				log.Warn().Err(err).Str("url", childSitemapURL).Msg("Failed to parse child sitemap")
+				log.Warn().Err(err).Str("url", childURL).Msg("Failed to parse child sitemap")
 				continue
 			}
 			urls = append(urls, childURLs...)
 		}
 	} else {
-		// It's a regular sitemap
-		extractedURLs := extractURLsFromXML(content, "<url>", "</url>", "<loc>", "</loc>")
+		// Parse as a regular URL set
+		var urlSet URLSet
+		if err := xml.Unmarshal(body, &urlSet); err != nil {
+			log.Warn().Err(err).Str("url", sitemapURL).Msg("Failed to parse sitemap XML")
+			// Return empty rather than error — malformed sitemaps shouldn't halt crawling
+			return urls, nil
+		}
 
-		// Validate and normalise all extracted URLs
 		var validURLs []string
-		for _, extractedURL := range extractedURLs {
-			validURL := util.NormaliseURL(extractedURL)
+		for _, u := range urlSet.URLs {
+			validURL := util.NormaliseURL(strings.TrimSpace(u.Loc))
 			if validURL != "" {
 				validURLs = append(validURLs, validURL)
 			} else {
-				log.Debug().Str("invalid_url", extractedURL).Msg("Skipping invalid URL from sitemap")
+				log.Debug().Str("invalid_url", u.Loc).Msg("Skipping invalid URL from sitemap")
 			}
 		}
 
@@ -294,52 +314,6 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 		Msg("Finished parsing sitemap")
 
 	return urls, nil
-}
-
-// Helper function to extract URLs from XML content
-func extractURLsFromXML(content, startTag, endTag, locStartTag, locEndTag string) []string {
-	var urls []string
-
-	// Find all instances of the outer tag
-	startIdx := 0
-	for {
-		startTagIdx := strings.Index(content[startIdx:], startTag)
-		if startTagIdx == -1 {
-			break
-		}
-
-		startTagIdx += startIdx
-		endTagIdx := strings.Index(content[startTagIdx:], endTag)
-		if endTagIdx == -1 {
-			break
-		}
-
-		endTagIdx += startTagIdx
-
-		// Extract the section between tags
-		section := content[startTagIdx : endTagIdx+len(endTag)]
-
-		// Find the URL in the section
-		locStartIdx := strings.Index(section, locStartTag)
-		if locStartIdx != -1 {
-			locEndIdx := strings.Index(section[locStartIdx:], locEndTag)
-			if locEndIdx != -1 {
-				locEndIdx += locStartIdx
-
-				// Extract the URL
-				url := section[locStartIdx+len(locStartTag) : locEndIdx]
-				url = strings.TrimSpace(url)
-
-				if url != "" {
-					urls = append(urls, url)
-				}
-			}
-		}
-
-		startIdx = endTagIdx + len(endTag)
-	}
-
-	return urls
 }
 
 // FilterURLs filters URLs based on include/exclude patterns

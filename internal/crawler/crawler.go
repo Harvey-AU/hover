@@ -253,6 +253,7 @@ type Crawler struct {
 	colly      *colly.Collector
 	id         string    // Add an ID field to identify each crawler instance
 	metricsMap *sync.Map // Shared metrics storage for the transport
+	aia        *aiaTransport
 }
 
 // GetUserAgent returns the user agent string for this crawler
@@ -372,9 +373,12 @@ func New(config *Config, id ...string) *Crawler {
 		baseTransport.DialContext = ssrfSafeDialContext()
 	}
 
+	// Wrap with AIA transport to handle servers with incomplete cert chains
+	aiaRT := newAIATransport(baseTransport)
+
 	// Wrap the base transport with our custom tracing transport
 	tracingTransport := &tracingRoundTripper{
-		transport:  baseTransport,
+		transport:  aiaRT,
 		metricsMap: metricsMap,
 	}
 
@@ -409,6 +413,7 @@ func New(config *Config, id ...string) *Crawler {
 		colly:      c,
 		id:         crawlerID,
 		metricsMap: metricsMap,
+		aia:        aiaRT,
 	}
 }
 
