@@ -28,6 +28,55 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+## [cli..1] – 2026-04-03
+
+### Fixed
+
+- CLI now targets production domain (`hover.app.goodnative.co`) by default
+  instead of `hover.fly.dev`
+- CLI release workflow is idempotent — safe to retrigger after partial failures
+- Published `@harvey-au/hover` npm package with MIT licence
+
 ## [0.31.0] – 2026-04-03
 
 ### Added
