@@ -28,7 +28,9 @@ DEFAULT_AUTH_URL = os.environ.get("SUPABASE_AUTH_URL", config.SUPABASE_URL)
 DEFAULT_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", config.DEFAULT_SUPABASE_ANON_KEY)
 DEFAULT_PROVIDER = os.environ.get("BBB_AUTH_PROVIDER", "google")
 DEFAULT_CALLBACK_PORT = int(os.environ.get("BBB_AUTH_CALLBACK_PORT", "8765"))
-LOGIN_PAGE_URL = os.environ.get("BBB_LOGIN_URL", "https://hover.app.goodnative.co/cli-login.html")
+DEFAULT_LOGIN_PAGE_URL = os.environ.get(
+    "BBB_LOGIN_URL", "https://hover.app.goodnative.co/cli-login.html"
+)
 TOKEN_SKEW_SECONDS = 90
 
 
@@ -51,7 +53,17 @@ def _config_dir() -> Path:
 
 
 CONFIG_DIR = _config_dir()
-SESSION_FILE = Path(os.environ.get("BBB_SESSION_FILE", CONFIG_DIR / "session.json"))
+
+
+def _default_session_file() -> Path:
+    override = os.environ.get("BBB_SESSION_FILE")
+    if override:
+        return Path(override).expanduser()
+    return CONFIG_DIR / "session.json"
+
+
+def _preview_login_url(pr_number: int) -> str:
+    return f"https://hover-pr-{pr_number}.fly.dev/cli-login.html"
 
 
 def _debug(msg: str) -> None:
@@ -75,25 +87,25 @@ def _generate_code_challenge(verifier: str) -> str:
     return _base64url(digest)
 
 
-def _load_session() -> dict | None:
+def _load_session(session_file: Path) -> dict | None:
     try:
-        with SESSION_FILE.open("r", encoding="utf-8") as fh:
+        with session_file.open("r", encoding="utf-8") as fh:
             return json.load(fh)
     except FileNotFoundError:
         return None
     except json.JSONDecodeError:
-        _debug(f"Warning: could not parse session file at {SESSION_FILE}, ignoring")
+        _debug(f"Warning: could not parse session file at {session_file}, ignoring")
         return None
 
 
-def _save_session(data: dict) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = SESSION_FILE.with_suffix(".tmp")
+def _save_session(data: dict, session_file: Path) -> None:
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = session_file.with_suffix(".tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
-    tmp_path.replace(SESSION_FILE)
+    tmp_path.replace(session_file)
     try:
-        os.chmod(SESSION_FILE, 0o600)
+        os.chmod(session_file, 0o600)
     except PermissionError:
         pass
 
@@ -108,13 +120,13 @@ def _is_token_valid(session: dict) -> bool:
     return float(expires_at) - TOKEN_SKEW_SECONDS > now
 
 
-def _request_json(url: str, payload: dict) -> dict:
+def _request_json(url: str, payload: dict, anon_key: str) -> dict:
     data = json.dumps(payload).encode("utf-8")
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "apikey": DEFAULT_ANON_KEY,
-        "Authorization": f"Bearer {DEFAULT_ANON_KEY}",
+        "apikey": anon_key,
+        "Authorization": f"Bearer {anon_key}",
     }
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
@@ -266,7 +278,13 @@ def _start_callback_server(state: str, port: int):
     return httpd, event, result
 
 
-def _perform_login(auth_url: str, provider: str, port: int) -> dict:
+def _perform_login(
+    auth_url: str,
+    provider: str,
+    port: int,
+    login_page_url: str,
+    session_file: Path,
+) -> dict:
     state = secrets.token_urlsafe(24)
     server, done_event, result = _start_callback_server(state, port)
     shutdown_lock = threading.Lock()
@@ -290,7 +308,7 @@ def _perform_login(auth_url: str, provider: str, port: int) -> dict:
         "provider": provider,
         "auth_url": auth_url,
     }
-    login_url = f"{LOGIN_PAGE_URL}?{urllib.parse.urlencode(params)}"
+    login_url = f"{login_page_url}?{urllib.parse.urlencode(params)}"
     _debug("Opening browser for Supabase login...")
     _debug(f"If your browser does not open, visit:\n  {login_url}\n")
     opened = webbrowser.open(login_url, new=2, autoraise=True)
@@ -311,32 +329,41 @@ def _perform_login(auth_url: str, provider: str, port: int) -> dict:
         raise RuntimeError("Authentication failed: no session data received")
 
     session["fetched_at"] = time.time()
-    _save_session(session)
-    _debug(f"Saved Supabase session to {SESSION_FILE}")
+    _save_session(session, session_file)
+    _debug(f"Saved Supabase session to {session_file}")
     return session
 
 
-def _refresh_session(auth_url: str, refresh_token: str) -> dict:
+def _refresh_session(auth_url: str, refresh_token: str, anon_key: str, session_file: Path) -> dict:
     token_url = f"{auth_url}/auth/v1/token?grant_type=refresh_token"
-    response = _request_json(token_url, {"refresh_token": refresh_token})
+    response = _request_json(token_url, {"refresh_token": refresh_token}, anon_key)
     response["fetched_at"] = time.time()
-    _save_session(response)
+    _save_session(response, session_file)
     _debug("Refreshed Supabase session using stored refresh token")
     return response
 
 
-def ensure_token(*, force_login: bool = False) -> str:
+def ensure_token(
+    *,
+    force_login: bool = False,
+    auth_url: str,
+    anon_key: str,
+    provider: str,
+    callback_port: int,
+    login_page_url: str,
+    session_file: Path,
+) -> str:
     if force_login:
-        session = _perform_login(DEFAULT_AUTH_URL, DEFAULT_PROVIDER, DEFAULT_CALLBACK_PORT)
+        session = _perform_login(auth_url, provider, callback_port, login_page_url, session_file)
         return session["access_token"]
 
-    session = _load_session()
+    session = _load_session(session_file)
     if session and _is_token_valid(session):
         return session["access_token"]
 
     if session and session.get("refresh_token"):
         try:
-            refreshed = _refresh_session(DEFAULT_AUTH_URL, session["refresh_token"])
+            refreshed = _refresh_session(auth_url, session["refresh_token"], anon_key, session_file)
             return refreshed["access_token"]
         except Exception as exc:  # noqa: BLE001
             _debug(f"Failed to refresh session: {exc!r}")
@@ -346,46 +373,115 @@ def ensure_token(*, force_login: bool = False) -> str:
                 _debug(traceback.format_exc())
 
     _debug("No valid Supabase session found. Starting login flow...")
-    session = _perform_login(DEFAULT_AUTH_URL, DEFAULT_PROVIDER, DEFAULT_CALLBACK_PORT)
+    session = _perform_login(auth_url, provider, callback_port, login_page_url, session_file)
     return session["access_token"]
 
 
-def logout() -> None:
+def logout(session_file: Path) -> None:
     try:
-        SESSION_FILE.unlink()
-        _debug(f"Deleted session file at {SESSION_FILE}")
+        session_file.unlink()
+        _debug(f"Deleted session file at {session_file}")
     except FileNotFoundError:
         _debug("No session file to delete")
 
 
+def _resolve_runtime(args: argparse.Namespace) -> dict[str, object]:
+    pr_number = getattr(args, "pr", None)
+    login_page_url = getattr(args, "login_url", None) or (
+        _preview_login_url(pr_number) if pr_number else DEFAULT_LOGIN_PAGE_URL
+    )
+    auth_url = getattr(args, "auth_url", None) or DEFAULT_AUTH_URL
+    anon_key = getattr(args, "anon_key", None) or DEFAULT_ANON_KEY
+    provider = getattr(args, "provider", None) or DEFAULT_PROVIDER
+    callback_port = getattr(args, "callback_port", None) or DEFAULT_CALLBACK_PORT
+
+    session_file_arg = getattr(args, "session_file", None)
+    if session_file_arg:
+        session_file = Path(session_file_arg).expanduser()
+    elif pr_number:
+        session_file = CONFIG_DIR / f"session-pr-{pr_number}.json"
+    else:
+        session_file = _default_session_file()
+
+    return {
+        "auth_url": auth_url,
+        "anon_key": anon_key,
+        "provider": provider,
+        "callback_port": callback_port,
+        "login_page_url": login_page_url,
+        "session_file": session_file,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Supabase CLI auth helper")
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument(
+        "--pr",
+        type=int,
+        help="Preview PR number. Sets the login page to hover-pr-<pr>.fly.dev and uses an isolated session cache.",
+    )
+    shared.add_argument(
+        "--login-url",
+        help="Override the CLI login page URL explicitly.",
+    )
+    shared.add_argument(
+        "--auth-url",
+        help="Override the Supabase auth base URL.",
+    )
+    shared.add_argument(
+        "--anon-key",
+        help="Override the Supabase publishable key used for auth requests.",
+    )
+    shared.add_argument(
+        "--provider",
+        help="Preferred auth provider hint for the login modal.",
+    )
+    shared.add_argument(
+        "--callback-port",
+        type=int,
+        help="Loopback port for the local callback server.",
+    )
+    shared.add_argument(
+        "--session-file",
+        help="Override the cached session file path.",
+    )
+
     sub = parser.add_subparsers(dest="command", required=True)
 
-    ensure_parser = sub.add_parser("ensure", help="Ensure a valid access token exists")
+    ensure_parser = sub.add_parser(
+        "ensure",
+        help="Ensure a valid access token exists",
+        parents=[shared],
+    )
     ensure_parser.add_argument(
         "--force-login",
         action="store_true",
         help="Ignore cached session and force a new login",
     )
 
-    sub.add_parser("login", help="Force a browser login and cache the session")
-    sub.add_parser("logout", help="Remove cached session data")
-    sub.add_parser("session-path", help="Print the session file path")
+    sub.add_parser(
+        "login",
+        help="Force a browser login and cache the session",
+        parents=[shared],
+    )
+    sub.add_parser("logout", help="Remove cached session data", parents=[shared])
+    sub.add_parser("session-path", help="Print the session file path", parents=[shared])
 
     args = parser.parse_args()
+    runtime = _resolve_runtime(args)
 
     try:
         if args.command == "ensure":
-            token = ensure_token(force_login=args.force_login)
+            token = ensure_token(force_login=args.force_login, **runtime)
             print(token, end="")
         elif args.command == "login":
-            token = ensure_token(force_login=True)
+            token = ensure_token(force_login=True, **runtime)
             print(token, end="")
         elif args.command == "logout":
-            logout()
+            logout(runtime["session_file"])
         elif args.command == "session-path":
-            print(SESSION_FILE)
+            print(runtime["session_file"])
     except KeyboardInterrupt:
         sys.exit(1)
     except Exception as exc:  # noqa: BLE001

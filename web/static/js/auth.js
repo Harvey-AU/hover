@@ -1823,14 +1823,14 @@ function isLoopbackCallback(url) {
   }
 }
 
-async function resumeCliAuthFromStorage() {
+function getStoredCliAuthPayload() {
   if (!window.sessionStorage) {
-    return;
+    return null;
   }
 
   const raw = window.sessionStorage.getItem(CLI_AUTH_STORAGE_KEY);
   if (!raw) {
-    return;
+    return null;
   }
 
   let payload;
@@ -1839,21 +1839,28 @@ async function resumeCliAuthFromStorage() {
   } catch (error) {
     console.warn("CLI auth: invalid stored payload, clearing", error);
     window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
-    return;
+    return null;
   }
 
   const { callbackUrl, state } = payload || {};
   if (!callbackUrl || !state || !isLoopbackCallback(callbackUrl)) {
     window.sessionStorage.removeItem(CLI_AUTH_STORAGE_KEY);
+    return null;
+  }
+
+  return { callbackUrl, state };
+}
+
+async function resumeCliAuthFromStorage() {
+  const payload = getStoredCliAuthPayload();
+  if (!payload) {
     return;
   }
 
   try {
-    if (!supabase) {
-      if (!initialiseSupabase()) {
-        console.warn("CLI auth resume: Supabase initialisation failed");
-        return;
-      }
+    if (!supabase && !initialiseSupabase()) {
+      console.warn("CLI auth resume: Supabase initialisation failed");
+      return;
     }
 
     const {
@@ -1865,10 +1872,10 @@ async function resumeCliAuthFromStorage() {
       return;
     }
 
-    const response = await fetch(callbackUrl, {
+    const response = await fetch(payload.callbackUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session, state }),
+      body: JSON.stringify({ session, state: payload.state }),
     });
 
     if (!response.ok) {
@@ -1887,8 +1894,13 @@ async function resumeCliAuthFromStorage() {
 
 function initCliAuthPage() {
   const params = new URLSearchParams(window.location.search);
-  const callbackUrl = params.get("callback") || "";
-  const state = params.get("state") || "";
+  const storedPayload = getStoredCliAuthPayload();
+  const callbackFromUrl = params.get("callback") || "";
+  const stateFromUrl = params.get("state") || "";
+  const callbackUrl = isLoopbackCallback(callbackFromUrl)
+    ? callbackFromUrl
+    : storedPayload?.callbackUrl || "";
+  const state = stateFromUrl || storedPayload?.state || "";
   const providerHint = params.get("provider") || null;
   const statusEl = document.getElementById("cliStatus");
   const modalContainer = document.getElementById("authModalContainer");
@@ -1916,20 +1928,6 @@ function initCliAuthPage() {
     console.error("CLI auth: Supabase initialisation failed");
     return;
   }
-
-  supabase.auth.getSession().then((existing) => {
-    if (existing?.data?.session) {
-      setStatus("Session already active. Completing CLI login…");
-      sendSessionToCli().catch((error) => {
-        console.error(error);
-        setStatus(
-          error.message ||
-            "Failed to deliver existing session to CLI. Please retry.",
-          true
-        );
-      });
-    }
-  });
 
   try {
     window.sessionStorage.setItem(
@@ -2054,6 +2052,27 @@ function initCliAuthPage() {
 
   (async () => {
     try {
+      // Handle social OAuth returns before checking session state so the CLI
+      // page can recover even when the provider round-trip rewrites the URL.
+      await handleAuthCallback();
+
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
+      if (error) {
+        throw error;
+      }
+      if (session) {
+        setStatus("Session already active. Completing CLI login…");
+        await sendSessionToCli();
+        setStatus("Session sent to CLI. You can close this tab.");
+        if (typeof window.closeAuthModal === "function") {
+          window.closeAuthModal();
+        }
+        return;
+      }
+
       await loadAuthModal();
       await waitForAuthScript();
       if (typeof window.setupAuthHandlers === "function") {

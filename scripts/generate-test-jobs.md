@@ -14,7 +14,7 @@ them sequentially across all batches. This guarantees **all unique domains**
 export AUTH_TOKEN="your-jwt-token-here"
 
 # 2. Run the script (defaults: 5 hours, 30-min intervals, 7 jobs/batch)
-./scripts/load-test-simple.sh
+./scripts/generate-test-jobs.sh
 ```
 
 ## Configuration
@@ -28,7 +28,7 @@ export BATCH_INTERVAL_MINUTES=30                # Default: 30
 export TEST_DURATION_HOURS=5                    # Default: 5
 export JOBS_PER_BATCH=7                         # Default: 7
 
-./scripts/load-test-simple.sh
+./scripts/generate-test-jobs.sh
 ```
 
 ## What It Does
@@ -47,7 +47,7 @@ export BATCH_INTERVAL_MINUTES=15
 export TEST_DURATION_HOURS=1
 export JOBS_PER_BATCH=5
 
-./scripts/load-test-simple.sh
+./scripts/generate-test-jobs.sh
 ```
 
 This creates 4 batches of 5 jobs = 20 jobs over 1 hour.
@@ -89,6 +89,21 @@ The helper already bundles our publishable Supabase anon key, so no additional
 environment variables are required for local usage. Only override
 `SUPABASE_AUTH_URL` / `SUPABASE_ANON_KEY` if you need to target a different
 Supabase project (e.g. staging).
+
+### Preview PRs
+
+For preview apps, pass the PR number directly to both scripts so they use the
+preview app URL and an isolated cached session file:
+
+```bash
+python3 scripts/auth/cli_auth.py login --pr 123 --anon-key sb_publishable_xxx
+./scripts/generate-test-jobs.sh pr:123 anon-key:sb_publishable_xxx jobs:3 interval:30s
+```
+
+`--pr 123` targets `https://hover-pr-123.fly.dev/cli-login.html`, while
+`pr:123` targets `https://hover-pr-123.fly.dev` for the jobs API. The helper
+stores preview sessions separately from the default production cache so a
+preview login does not silently reuse a production token.
 
 ### From Dashboard (Browser DevTools)
 
@@ -142,5 +157,5 @@ export AUTH_TOKEN="your-production-token"
 export BATCH_INTERVAL_MINUTES=60  # Less aggressive
 export JOBS_PER_BATCH=3           # Fewer jobs
 
-./scripts/load-test-simple.sh
+./scripts/generate-test-jobs.sh
 ```

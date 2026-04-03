@@ -11,16 +11,19 @@ NC='\033[0m'
 # Calls the /v1/jobs API endpoint to create real jobs at intervals
 # Creates one job per unique domain in the DOMAINS array
 #
-# Usage: ./load-test-simple.sh [interval:VALUE] [jobs:N] [concurrency:N|random]
+# Usage: ./scripts/generate-test-jobs.sh [interval:VALUE] [jobs:N] [concurrency:N|random] [pr:N] [anon-key:VALUE]
 #  - VALUE can be minutes (default), e.g. `interval:2` or `interval:2m`
 #  - or seconds via an `s` suffix, e.g. `interval:45s`
 #  - `batch:N` remains as a backwards-compatible alias for minutes
 #  - `concurrency:N` sets the per-job concurrency limit (1-50)
 #  - `concurrency:random` generates random concurrency (10-50) for each job (default)
+#  - `pr:N` targets preview app `https://hover-pr-N.fly.dev`
+#  - `anon-key:VALUE` overrides the Supabase publishable key passed to the CLI auth helper
 #
 # Examples:
-#   ./load-test-simple.sh interval:1m jobs:10 concurrency:5
-#   ./load-test-simple.sh interval:30s jobs:20 concurrency:random
+#   ./scripts/generate-test-jobs.sh interval:1m jobs:10 concurrency:5
+#   ./scripts/generate-test-jobs.sh interval:30s jobs:20 concurrency:random
+#   ./scripts/generate-test-jobs.sh pr:123 anon-key:sb_publishable_xxx jobs:3 interval:30s
 #
 # Test Scenarios (Phase 3 - Throughput Optimisation):
 #
@@ -51,6 +54,10 @@ NC='\033[0m'
 BATCH_INTERVAL_SECONDS=180
 JOBS_PER_BATCH=3
 JOB_CONCURRENCY="random"
+PREVIEW_PR=""
+SUPABASE_ANON_KEY_OVERRIDE=""
+LOGIN_URL_OVERRIDE=""
+AUTH_URL_OVERRIDE=""
 
 parse_interval_seconds() {
   local raw="$1"
@@ -122,9 +129,37 @@ for arg in "$@"; do
         exit 1
       fi
       ;;
+    pr:*)
+      PREVIEW_PR="${arg#*:}"
+      if [[ ! "$PREVIEW_PR" =~ ^[0-9]+$ ]]; then
+        echo "Invalid PR number: $PREVIEW_PR (expected integer)"
+        exit 1
+      fi
+      ;;
+    anon-key:*)
+      SUPABASE_ANON_KEY_OVERRIDE="${arg#*:}"
+      if [ -z "$SUPABASE_ANON_KEY_OVERRIDE" ]; then
+        echo "anon-key cannot be empty"
+        exit 1
+      fi
+      ;;
+    login-url:*)
+      LOGIN_URL_OVERRIDE="${arg#*:}"
+      if [ -z "$LOGIN_URL_OVERRIDE" ]; then
+        echo "login-url cannot be empty"
+        exit 1
+      fi
+      ;;
+    auth-url:*)
+      AUTH_URL_OVERRIDE="${arg#*:}"
+      if [ -z "$AUTH_URL_OVERRIDE" ]; then
+        echo "auth-url cannot be empty"
+        exit 1
+      fi
+      ;;
     *)
       echo "Unknown argument: $arg"
-      echo "Usage: $0 [interval:VALUE] [jobs:N] [concurrency:N] [batch:N]"
+      echo "Usage: $0 [interval:VALUE] [jobs:N] [concurrency:N] [batch:N] [pr:N] [anon-key:VALUE] [login-url:URL] [auth-url:URL]"
       exit 1
       ;;
   esac
@@ -140,11 +175,38 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOKEN_FILE="${TOKEN_FILE_PATH:-$REPO_ROOT/sb-auth-auth-token}"
 AUTH_HELPER="$REPO_ROOT/scripts/auth/cli_auth.py"
+AUTH_HELPER_ARGS=()
 
-API_URL="${API_URL:-https://hover.fly.dev}"
+if [ -n "$PREVIEW_PR" ]; then
+  AUTH_HELPER_ARGS+=(--pr "$PREVIEW_PR")
+fi
+
+if [ -n "$SUPABASE_ANON_KEY_OVERRIDE" ]; then
+  AUTH_HELPER_ARGS+=(--anon-key "$SUPABASE_ANON_KEY_OVERRIDE")
+fi
+
+if [ -n "$LOGIN_URL_OVERRIDE" ]; then
+  AUTH_HELPER_ARGS+=(--login-url "$LOGIN_URL_OVERRIDE")
+fi
+
+if [ -n "$AUTH_URL_OVERRIDE" ]; then
+  AUTH_HELPER_ARGS+=(--auth-url "$AUTH_URL_OVERRIDE")
+fi
+
+if [ -n "$PREVIEW_PR" ]; then
+  DEFAULT_API_URL="https://hover-pr-${PREVIEW_PR}.fly.dev"
+else
+  DEFAULT_API_URL="https://hover.fly.dev"
+fi
+
+API_URL="${API_URL:-$DEFAULT_API_URL}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
+PREVIEW_MODE=0
+if [ -n "$PREVIEW_PR" ] || [ -n "$SUPABASE_ANON_KEY_OVERRIDE" ] || [ -n "$LOGIN_URL_OVERRIDE" ] || [ -n "$AUTH_URL_OVERRIDE" ]; then
+  PREVIEW_MODE=1
+fi
 
-if [ -z "$AUTH_TOKEN" ] && [ -f "$TOKEN_FILE" ]; then
+if [ -z "$AUTH_TOKEN" ] && [ -f "$TOKEN_FILE" ] && { [ "$PREVIEW_MODE" -eq 0 ] || [ -n "${TOKEN_FILE_PATH:-}" ]; }; then
   if ! token_from_file=$(
     python3 - "$TOKEN_FILE" <<'PY'
 import json
@@ -168,10 +230,11 @@ PY
 fi
 
 if [ -z "$AUTH_TOKEN" ] && [ -x "$AUTH_HELPER" ]; then
-  if token_from_helper=$(python3 "$AUTH_HELPER" ensure); then
+  if token_from_helper=$(python3 "$AUTH_HELPER" ensure "${AUTH_HELPER_ARGS[@]}"); then
     AUTH_TOKEN="$token_from_helper"
   else
-    echo -e "${YELLOW}Warning: automatic Supabase login failed. Run 'python3 $AUTH_HELPER login'.${NC}"
+    helper_login_cmd=(python3 "$AUTH_HELPER" login "${AUTH_HELPER_ARGS[@]}")
+    echo -e "${YELLOW}Warning: automatic Supabase login failed. Run '${helper_login_cmd[*]}'.${NC}"
   fi
 fi
 
@@ -228,8 +291,9 @@ DOMAINS=(
 if [ -z "$AUTH_TOKEN" ]; then
   echo -e "${RED}ERROR: AUTH_TOKEN not set${NC}"
   if [ -x "$AUTH_HELPER" ]; then
+    helper_login_cmd=(python3 "$AUTH_HELPER" login "${AUTH_HELPER_ARGS[@]}")
     echo "Run the login helper:"
-    echo "  python3 $AUTH_HELPER login"
+    echo "  ${helper_login_cmd[*]}"
   else
     echo "Get a token from your app and run:"
     echo "  export AUTH_TOKEN='your-jwt-token'"
@@ -239,6 +303,9 @@ fi
 
 echo -e "${GREEN}=== Simple Load Test ===${NC}"
 echo "API URL:           $API_URL"
+if [ -n "$PREVIEW_PR" ]; then
+  echo "Preview PR:        $PREVIEW_PR"
+fi
 echo "Batch interval:    $(format_interval "$BATCH_INTERVAL_SECONDS")"
 echo "Jobs per batch:    $JOBS_PER_BATCH"
 if [ "$JOB_CONCURRENCY" == "random" ]; then
