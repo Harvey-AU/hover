@@ -1050,6 +1050,18 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	span.SetTag("job_id", jobID)
 	span.SetTag("domain", domain)
 
+	// Mark job as initialising so the worker pool doesn't prematurely
+	// complete it before sitemap URLs have been enqueued.
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET status = $1
+			WHERE id = $2 AND status = $3
+		`, JobStatusInitialising, jobID, JobStatusPending)
+		return err
+	}); err != nil {
+		log.Error().Err(err).Str("job_id", jobID).Msg("Failed to set job to initialising")
+	}
+
 	log.Info().
 		Str("job_id", jobID).
 		Str("domain", domain).
@@ -1067,6 +1079,16 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			Msg("Failed to discover sitemaps")
 
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to discover sitemaps: %v", err))
+		// Ensure job exits initialising state on error
+		if failErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+				UPDATE jobs SET status = $1, completed_at = $2
+				WHERE id = $3 AND status = $4
+			`, JobStatusFailed, time.Now().UTC(), jobID, JobStatusInitialising)
+			return err
+		}); failErr != nil {
+			log.Error().Err(failErr).Str("job_id", jobID).Msg("Failed to mark initialising job as failed")
+		}
 		return
 	}
 
@@ -1118,6 +1140,17 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		if err := jm.enqueueFallbackURL(ctx, jobID, domain); err != nil {
 			return
 		}
+	}
+
+	// Transition from initialising → pending so the worker pool picks it up
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET status = $1
+			WHERE id = $2 AND status = $3
+		`, JobStatusPending, jobID, JobStatusInitialising)
+		return err
+	}); err != nil {
+		log.Error().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending")
 	}
 
 	// Notify workers immediately that new tasks are available

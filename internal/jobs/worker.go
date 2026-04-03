@@ -1874,6 +1874,9 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 	switch JobStatus(state.Status) {
 	case JobStatusCompleted, JobStatusCancelled, JobStatusFailed:
 		return true, nil
+	case JobStatusInitialising:
+		// Job is still discovering sitemap URLs — do not remove yet
+		return false, nil
 	}
 
 	if state.remainingWork() == 0 && state.Pending == 0 && state.Waiting == 0 && state.Running == 0 {
