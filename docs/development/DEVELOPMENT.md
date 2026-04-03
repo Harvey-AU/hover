@@ -140,6 +140,7 @@ run `supabase db push` manually.
 ```
 
 This script automatically:
+
 - Starts Supabase local if not already running
 - Generates `.env.local` from `supabase status` (DATABASE_URL, auth URL, keys)
 - Launches `air` with hot reloading

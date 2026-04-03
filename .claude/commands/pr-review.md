@@ -1,7 +1,6 @@
 ---
 name: pr-review
-description:
-  Fetch PR review comments, CI check results, and failure details.
+description: Fetch PR review comments, CI check results, and failure details.
 ---
 
 # PR Review

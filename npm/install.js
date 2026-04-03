@@ -39,7 +39,11 @@ function fetch(url) {
   return new Promise((resolve, reject) => {
     https
       .get(url, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
           return fetch(res.headers.location).then(resolve, reject);
         }
         if (res.statusCode !== 200) {
@@ -59,7 +63,9 @@ async function main() {
   const asset = getAssetName();
   const url = `https://github.com/${REPO}/releases/download/v${version}/${asset}`;
 
-  console.log(`Downloading hover v${version} for ${process.platform}-${process.arch}...`);
+  console.log(
+    `Downloading hover v${version} for ${process.platform}-${process.arch}...`
+  );
 
   const buffer = await fetch(url);
 
@@ -69,10 +75,15 @@ async function main() {
   if (isWindows()) {
     const tmpFile = path.join(BIN_DIR, "_download.zip");
     fs.writeFileSync(tmpFile, buffer);
-    execFileSync("powershell", [
-      "-NoProfile", "-Command",
-      `Expand-Archive -Force -Path '${tmpFile}' -DestinationPath '${BIN_DIR}'`
-    ], { stdio: "ignore" });
+    execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Expand-Archive -Force -Path '${tmpFile}' -DestinationPath '${BIN_DIR}'`,
+      ],
+      { stdio: "ignore" }
+    );
     fs.unlinkSync(tmpFile);
   } else {
     const tmpFile = path.join(BIN_DIR, "_download.tar.gz");

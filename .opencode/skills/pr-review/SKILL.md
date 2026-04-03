@@ -14,12 +14,14 @@ or process CodeRabbit feedback.
 
 ## Fetching review data
 
-Run `bash scripts/pr-status-check.sh [PR_NUMBER]` to get structured output.
-The PR number is optional — it auto-detects from the current branch.
+Run `bash scripts/pr-status-check.sh [PR_NUMBER]` to get structured output. The
+PR number is optional — it auto-detects from the current branch.
 
 Output sections:
+
 - **CI CHECKS** — PASS/FAIL/RUNNING/PENDING/SKIP per check
-- **CODERABBIT REVIEW COMMENTS** — deduplicated, with STATUS/FILE/LINE/SEVERITY/SUMMARY
+- **CODERABBIT REVIEW COMMENTS** — deduplicated, with
+  STATUS/FILE/LINE/SEVERITY/SUMMARY
 - **CODERABBIT AGENT PROMPT** — actionable instructions from the latest review
 
 **Do not use raw `gh api` or `gh pr` commands to fetch review data.** The script

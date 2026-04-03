@@ -34,8 +34,8 @@ On merge, CI will:
   load-test jobs without scripts or manual API calls
 - Browser-based CLI authentication via the app's existing auth flow — no
   separate credentials or login page needed
-- Auto-discovery of Supabase auth config from preview app, so `--anon-key` is
-  no longer required
+- Auto-discovery of Supabase auth config from preview app, so `--anon-key` is no
+  longer required
 - Session persistence and token refresh for CLI — authenticate once, reuse
   across sessions
 - npm distribution (`npm install -g @harvey-au/hover`) with automatic binary
@@ -46,8 +46,8 @@ On merge, CI will:
 
 ### Removed
 
-- Hosted `cli-login.html` auth page and Python auth helper scripts — replaced
-  by native browser auth flow
+- Hosted `cli-login.html` auth page and Python auth helper scripts — replaced by
+  native browser auth flow
 
 ### Fixed
 
@@ -58,9 +58,9 @@ On merge, CI will:
 
 ### Fixed
 
-- Sitemap parser now uses Go's `encoding/xml` decoder instead of string matching,
-  fixing sitemaps that use CDATA wrappers (e.g. WordPress All in One SEO) or XML
-  entity-encoded URLs (`&amp;` in query strings)
+- Sitemap parser now uses Go's `encoding/xml` decoder instead of string
+  matching, fixing sitemaps that use CDATA wrappers (e.g. WordPress All in One
+  SEO) or XML entity-encoded URLs (`&amp;` in query strings)
 - AIA (Authority Information Access) transport fetches missing intermediate
   certificates at runtime, fixing TLS failures on servers with incomplete
   certificate chains (e.g. acsi.org.au)

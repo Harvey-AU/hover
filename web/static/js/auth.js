@@ -228,9 +228,7 @@ function clearPostAuthReturnTarget() {
 }
 
 function setPostAuthReturnTargetFromCurrentPath() {
-  if (
-    window.location.pathname === "/"
-  ) {
+  if (window.location.pathname === "/") {
     return;
   }
   const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -1889,7 +1887,6 @@ function setupLoginPageHandlers() {
   // This is now handled by event delegation in setupAuthHandlers()
   // No need for direct element handlers since they're covered by delegation
 }
-
 
 function isValidExtensionTargetOrigin(rawOrigin) {
   if (!rawOrigin) return false;

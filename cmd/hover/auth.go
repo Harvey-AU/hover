@@ -312,7 +312,7 @@ func openBrowser(url string) {
 	default:
 		return
 	}
-	cmd.Start() //nolint:errcheck // best-effort
+	cmd.Start() //nolint:errcheck,gosec // best-effort browser open
 }
 
 // discoveredConfig holds auth config fetched from a running app's /config.js.

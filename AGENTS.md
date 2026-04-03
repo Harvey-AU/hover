@@ -59,10 +59,10 @@ schema changes.
 
 **Local dev auth:** Use `GET /dev/auto-login` to sign in during local
 development — no OAuth flow or manual credential entry required. The Go server
-fetches a session server-side and injects it into `localStorage`, then
-redirects to `/dashboard`. Only active when `APP_ENV=development` (returns 404
-otherwise). After `supabase db reset`, the dev user (`dev@example.com` /
-`devpassword`) is re-seeded automatically. See
+fetches a session server-side and injects it into `localStorage`, then redirects
+to `/dashboard`. Only active when `APP_ENV=development` (returns 404 otherwise).
+After `supabase db reset`, the dev user (`dev@example.com` / `devpassword`) is
+re-seeded automatically. See
 `docs/development/DEVELOPMENT.md#local-authentication` for full detail.
 
 ## Automated review gates

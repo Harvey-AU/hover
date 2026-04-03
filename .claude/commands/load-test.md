@@ -43,5 +43,5 @@ The old shell script still works as a thin wrapper:
 
 ## Output
 
-The CLI prints batch progress and a throughput summary when complete.
-Press `Ctrl+C` to stop early.
+The CLI prints batch progress and a throughput summary when complete. Press
+`Ctrl+C` to stop early.

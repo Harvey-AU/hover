@@ -1,7 +1,7 @@
 # Simple Load Test Script
 
-Thin wrapper around the native `hover` CLI binary. See `cmd/hover/` for the
-full implementation.
+Thin wrapper around the native `hover` CLI binary. See `cmd/hover/` for the full
+implementation.
 
 ## Quick Start
 
@@ -29,22 +29,22 @@ Or via the legacy wrapper script:
 
 ## CLI Flags
 
-| Flag            | Default   | Description                           |
-| --------------- | --------- | ------------------------------------- |
-| `--pr N`        | —         | Target preview app hover-pr-N.fly.dev |
-| `--anon-key K`  | built-in  | Supabase publishable key              |
-| `--interval D`  | 3m        | Batch interval (e.g. 30s, 2m)        |
-| `--jobs N`      | 3         | Jobs per batch                        |
-| `--concurrency` | random    | Per-job concurrency (1-50 or random)  |
-| `--auth-url U`  | default   | Override Supabase auth base URL       |
-| `--api-url U`   | derived   | Override API base URL                 |
+| Flag            | Default  | Description                           |
+| --------------- | -------- | ------------------------------------- |
+| `--pr N`        | —        | Target preview app hover-pr-N.fly.dev |
+| `--anon-key K`  | built-in | Supabase publishable key              |
+| `--interval D`  | 3m       | Batch interval (e.g. 30s, 2m)         |
+| `--jobs N`      | 3        | Jobs per batch                        |
+| `--concurrency` | random   | Per-job concurrency (1-50 or random)  |
+| `--auth-url U`  | default  | Override Supabase auth base URL       |
+| `--api-url U`   | derived  | Override API base URL                 |
 
 ## Session Management
 
 Sessions are cached under `~/.config/hover/auth/`. Preview PRs use separate
-session files (`session-pr-<N>.json`) so different previews don't collide.
-The CLI automatically refreshes expired sessions when a refresh token is
-available, and falls back to a new browser login when needed.
+session files (`session-pr-<N>.json`) so different previews don't collide. The
+CLI automatically refreshes expired sessions when a refresh token is available,
+and falls back to a new browser login when needed.
 
 ## Monitor Jobs
 
