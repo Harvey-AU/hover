@@ -63,25 +63,34 @@ jobs:
         run: |
           VERSION="${GIT_TAG#cli-v}"
 
-          cat > README.md <<EOF
-          # @harvey-au/hover
+          cat > README.md <<'README'
+# @harvey-au/hover
 
-          CLI for the Hover cache-warming platform.
+CLI for the Hover cache-warming platform.
 
-          ## Install
+## Install
 
-          \`\`\`sh
-          npm install -g @harvey-au/hover
-          \`\`\`
+```sh
+npm install -g @harvey-au/hover
+```
 
-          ## Usage
+## Usage
 
-          \`\`\`sh
-          hover jobs generate --pr <number>
-          \`\`\`
+```sh
+hover jobs generate [options]
+```
 
-          See [GitHub releases](https://github.com/Harvey-AU/hover/releases) for changelogs.
-          EOF
+### Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--jobs <N>` | Jobs per batch | `3` |
+| `--interval <dur>` | Batch interval (e.g. `30s`, `2m`) | `3m` |
+| `--concurrency <N>` | Per-job concurrency `1-50`, or `random` | `random` |
+| `--api-url <url>` | Target API base URL | `hover.fly.dev` |
+
+See [GitHub releases](https://github.com/Harvey-AU/hover/releases) for changelogs.
+README
 
           npm version "$VERSION" --no-git-tag-version
           npm publish --access public
