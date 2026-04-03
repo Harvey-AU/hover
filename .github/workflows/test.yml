@@ -143,7 +143,6 @@ jobs:
           path: coverage-unit.out
 
       - name: Load secrets from 1Password
-        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
@@ -215,7 +214,7 @@ jobs:
           path: junit.xml
 
       - name: Load secrets from 1Password
-        if: always() && secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
+        if: always()
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
@@ -285,7 +284,6 @@ jobs:
           fi
 
       - name: Load secrets from 1Password
-        if: secrets.OP_SERVICE_ACCOUNT_TOKEN != ''
         uses: 1password/load-secrets-action@v2
         with:
           export-env: true
