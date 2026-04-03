@@ -1222,15 +1222,99 @@ async function executeEmailSignup() {
   }
 }
 
+/**
+ * CLI callback hook: when the page is opened with ?cli_callback=<loopback-url>,
+ * POST the Supabase session to the CLI's local server after successful auth.
+ * Returns true if a callback was sent, false otherwise.
+ */
+async function trySendCliCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const callbackUrl = params.get("cli_callback");
+  if (!callbackUrl) {
+    return false;
+  }
+
+  // Only allow loopback targets to prevent session exfiltration.
+  try {
+    const parsed = new URL(callbackUrl);
+    const isLoopback =
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "::1";
+    if (!isLoopback || parsed.protocol !== "http:") {
+      console.warn("CLI callback: rejected non-loopback URL", callbackUrl);
+      return false;
+    }
+  } catch (_error) {
+    return false;
+  }
+
+  try {
+    if (!supabase) {
+      return false;
+    }
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
+    if (error || !session) {
+      return false;
+    }
+
+    const response = await fetch(callbackUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session }),
+    });
+
+    if (response.ok) {
+      document.title = "Hover CLI — Authenticated";
+      // Replace the page body with a safe "done" message.
+      while (document.body.firstChild) {
+        document.body.removeChild(document.body.firstChild);
+      }
+      const wrapper = document.createElement("div");
+      wrapper.style.cssText =
+        "display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:system-ui;color:#e0e0e0;background:#0a0a0a";
+      const inner = document.createElement("div");
+      inner.style.textAlign = "center";
+      const heading = document.createElement("h2");
+      heading.textContent = "Authentication complete";
+      const detail = document.createElement("p");
+      detail.textContent =
+        "You can close this tab and return to your terminal.";
+      inner.appendChild(heading);
+      inner.appendChild(detail);
+      wrapper.appendChild(inner);
+      document.body.appendChild(wrapper);
+      return true;
+    }
+    console.error("CLI callback failed:", response.status);
+  } catch (error) {
+    console.error("CLI callback error:", error);
+  }
+  return false;
+}
+
 async function defaultHandleAuthSuccess(user) {
   await registerUserWithBackend(user);
   closeAuthModal();
   updateUserInfo();
   updateAuthState(true);
+
+  // CLI callback: if the page was opened with ?cli_callback=<url>, send the
+  // Supabase session to the CLI's loopback server before any redirect.
+  const cliCallbackSent = await trySendCliCallback();
+
   if (window.dataBinder) {
     await window.dataBinder.refresh();
   }
   await handlePendingDomain();
+
+  // If we sent the session to the CLI, don't redirect — show a done message.
+  if (cliCallbackSent) {
+    return;
+  }
 
   const returnTarget = getPostAuthReturnTarget();
   if (returnTarget) {

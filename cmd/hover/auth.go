@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,11 +21,10 @@ import (
 const (
 	defaultAuthURL      = "https://hover.auth.goodnative.co"
 	defaultAnonKey      = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
-	tokenSkewSeconds    = 90
-	callbackTimeout     = 5 * time.Minute
-	callbackPort        = 8765
-	supabaseTokenPath   = "/auth/v1/token"
-	supabaseAuthorizePath = "/auth/v1/authorize"
+	tokenSkewSeconds  = 90
+	callbackTimeout   = 5 * time.Minute
+	callbackPort      = 8765
+	supabaseTokenPath = "/auth/v1/token"
 )
 
 // session represents a cached Supabase auth session.
@@ -188,59 +184,78 @@ func refreshSession(ctx context.Context, cfg *authConfig, refreshToken string) (
 	return &s, nil
 }
 
-// browserLogin performs a PKCE OAuth flow via a local loopback server.
-// It opens the user's browser to the Supabase authorize endpoint directly
-// (no hosted cli-login.html needed). On completion, the browser redirects
-// back to 127.0.0.1 where we exchange the code for a session.
+// browserLogin opens the app's existing auth page in the browser with a
+// cli_callback parameter. After the user signs in using the app's normal
+// auth flow (email, Google, GitHub — whatever the app supports), a small
+// hook in auth.js detects the callback and POSTs the session to our
+// loopback server.
 func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
-	verifier := generateCodeVerifier()
-	challenge := generateCodeChallenge(verifier)
-
-	// Bind the loopback listener first so we know the port.
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", callbackPort))
 	if err != nil {
 		return nil, fmt.Errorf("could not bind 127.0.0.1:%d: %w", callbackPort, err)
 	}
-	redirectURL := fmt.Sprintf("http://127.0.0.1:%d/callback", callbackPort)
 
-	// Build the Supabase authorize URL. We use Google as the default provider
-	// with PKCE. The user can choose another provider in the consent screen.
-	authorizeURL := cfg.AuthURL + supabaseAuthorizePath + "?" + url.Values{
-		"provider":              {"google"},
-		"redirect_to":           {redirectURL},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
-		"response_type":         {"code"},
-	}.Encode()
-
-	fmt.Fprintln(os.Stderr, "Opening browser for authentication...")
-	fmt.Fprintf(os.Stderr, "If your browser does not open, visit:\n  %s\n\n", authorizeURL)
-	openBrowser(authorizeURL)
-
-	// Wait for the OAuth redirect with the code.
-	codeCh := make(chan string, 1)
+	sessCh := make(chan *session, 1)
 	errCh := make(chan error, 1)
 
+	callbackURL := fmt.Sprintf("http://127.0.0.1:%d/callback", callbackPort)
+
 	mux := http.NewServeMux()
+
+	// CORS preflight — the app page needs to POST cross-origin to localhost.
+	handleCORS := func(w http.ResponseWriter, r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+			w.Header().Set("Access-Control-Allow-Private-Network", "true")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return true
+		}
+		return false
+	}
+
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errMsg := r.URL.Query().Get("error_description")
-			if errMsg == "" {
-				errMsg = r.URL.Query().Get("error")
-			}
-			if errMsg == "" {
-				errMsg = "no authorisation code received"
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusBadRequest)
-			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", errMsg)
-			errCh <- fmt.Errorf("auth callback error: %s", errMsg)
+		if handleCORS(w, r) {
 			return
 		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+
+		// Accept both {session: {...}} and flat session payloads.
+		var wrapper struct {
+			Session json.RawMessage `json:"session"`
+		}
+		var raw json.RawMessage
+		if err := json.Unmarshal(body, &wrapper); err == nil && len(wrapper.Session) > 0 {
+			raw = wrapper.Session
+		} else {
+			raw = body
+		}
+
+		var s session
+		if err := json.Unmarshal(raw, &s); err != nil || s.AccessToken == "" {
+			http.Error(w, "invalid session", http.StatusBadRequest)
+			return
+		}
+		s.FetchedAt = float64(time.Now().Unix())
+
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, "<html><body><h2>Authentication complete</h2><p>You can close this tab and return to your terminal.</p></body></html>")
-		codeCh <- code
+		fmt.Fprint(w, `<html><body><h2>Authentication complete</h2><p>You can close this tab and return to your terminal.</p></body></html>`)
+		sessCh <- &s
 	})
 
 	srv := &http.Server{Handler: mux}
@@ -259,10 +274,16 @@ func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
 		wg.Wait()
 	}()
 
-	// Wait for code or timeout.
+	// Open the app's homepage with the cli_callback param. The app's auth.js
+	// detects this and sends the session back after successful authentication.
+	loginURL := cfg.APIURL + "/?cli_callback=" + url.QueryEscape(callbackURL)
+	fmt.Fprintln(os.Stderr, "Opening browser for authentication...")
+	fmt.Fprintf(os.Stderr, "If your browser does not open, visit:\n  %s\n\n", loginURL)
+	openBrowser(loginURL)
+
 	select {
-	case code := <-codeCh:
-		return exchangeCode(ctx, cfg, code, verifier, redirectURL)
+	case s := <-sessCh:
+		return s, nil
 	case err := <-errCh:
 		return nil, err
 	case <-time.After(callbackTimeout):
@@ -270,57 +291,6 @@ func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-// exchangeCode trades an authorisation code for a Supabase session.
-func exchangeCode(ctx context.Context, cfg *authConfig, code, verifier, redirectURL string) (*session, error) {
-	tokenURL := cfg.AuthURL + supabaseTokenPath + "?grant_type=pkce"
-	payload := fmt.Sprintf(`{"auth_code":%q,"code_verifier":%q}`, code, verifier)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("apikey", cfg.AnonKey)
-	req.Header.Set("Authorization", "Bearer "+cfg.AnonKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("code exchange failed (HTTP %d): %s", resp.StatusCode, body)
-	}
-
-	var s session
-	if err := json.Unmarshal(body, &s); err != nil {
-		return nil, fmt.Errorf("invalid token response: %w", err)
-	}
-	s.FetchedAt = float64(time.Now().Unix())
-	return &s, nil
-}
-
-// PKCE helpers
-
-func generateCodeVerifier() string {
-	b := make([]byte, 96) // 96 bytes → 128 base64url chars
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
-	}
-	return base64URLEncode(b)[:128]
-}
-
-func generateCodeChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64URLEncode(h[:])
-}
-
-func base64URLEncode(data []byte) string {
-	return strings.TrimRight(base64.URLEncoding.EncodeToString(data), "=")
 }
 
 // openBrowser tries to open a URL in the default browser.

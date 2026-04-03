@@ -60,7 +60,7 @@ Usage:
 
 Options:
   --pr <N>             Target preview app hover-pr-<N>.fly.dev
-  --anon-key <key>     Supabase publishable (anon) key
+  --anon-key <key>     Supabase publishable key (auto-discovered if omitted)
   --interval <dur>     Batch interval (e.g. 30s, 2m) [default: 3m]
   --jobs <N>           Jobs per batch [default: 3]
   --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
