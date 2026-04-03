@@ -21,11 +21,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Set CLI version from tag
+      - name: Create version tag for goreleaser
         env:
           GIT_TAG: ${{ github.ref_name }}
         run: |
-          echo "GORELEASER_CURRENT_TAG=${GIT_TAG#cli-}" >> $GITHUB_ENV
+          # Goreleaser needs a semver tag on HEAD. Create a temporary
+          # v* tag from the cli-v* tag so archives are named correctly.
+          VERSION_TAG="${GIT_TAG#cli-}"
+          git tag "$VERSION_TAG"
+          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -33,6 +37,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up version tag
+        if: always()
+        run: git tag -d "$VERSION_TAG" 2>/dev/null || true
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
