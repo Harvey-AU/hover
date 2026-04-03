@@ -1,0 +1,22 @@
+{
+  "name": "@harvey-au/hover",
+  "version": "0.0.0",
+  "description": "CLI for the Hover cache-warming platform",
+  "bin": {
+    "hover": "bin/hover"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "os": ["darwin", "linux"],
+  "cpu": ["x64", "arm64"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Harvey-AU/hover"
+  },
+  "license": "UNLICENSED"
+}
