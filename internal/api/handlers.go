@@ -425,7 +425,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/extension-auth", h.ServeExtensionAuth)
 	mux.HandleFunc("/extension-auth/", h.ServeExtensionAuth)
 	mux.HandleFunc("/extension-auth.html", h.ServeExtensionAuth)
-mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
+	mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
 	mux.HandleFunc("/jobs/", h.ServeJobDetails)
 
 	// Favicon — serve the app logo for browser tab icons.

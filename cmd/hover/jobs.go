@@ -17,13 +17,13 @@ import (
 
 // jobsConfig holds parsed flags for "hover jobs generate".
 type jobsConfig struct {
-	PR           int
-	AnonKey      string
+	PR              int
+	AnonKey         string
 	AuthURLOverride string
 	APIURLOverride  string
-	Interval     time.Duration
-	JobsPerBatch int
-	Concurrency  string // "random" or integer 1-50
+	Interval        time.Duration
+	JobsPerBatch    int
+	Concurrency     string // "random" or integer 1-50
 }
 
 func parseJobsFlags(args []string) (*jobsConfig, error) {
@@ -347,7 +347,7 @@ func runJobsGenerate(args []string) error {
 
 func resolveConcurrency(setting string) int {
 	if setting == "random" {
-		return rand.IntN(41) + 10 // 10-50
+		return rand.IntN(41) + 10 //nolint:gosec // non-security randomisation for load spread
 	}
 	n, _ := strconv.Atoi(setting)
 	return n

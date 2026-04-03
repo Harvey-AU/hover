@@ -21,22 +21,22 @@ import (
 )
 
 const (
-	defaultAuthURL      = "https://hover.auth.goodnative.co"
-	defaultAnonKey      = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
+	defaultAuthURL    = "https://hover.auth.goodnative.co"
+	defaultAnonKey    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
 	tokenSkewSeconds  = 90
 	callbackTimeout   = 5 * time.Minute
 	callbackPort      = 8765
-	supabaseTokenPath = "/auth/v1/token"
+	supabaseTokenPath = "/auth/v1/token" //nolint:gosec // URL path, not a credential
 )
 
 // session represents a cached Supabase auth session.
 type session struct {
-	AccessToken  string  `json:"access_token"`
-	RefreshToken string  `json:"refresh_token"`
-	ExpiresIn    float64 `json:"expires_in"`
-	ExpiresAt    float64 `json:"expires_at,omitempty"`
-	FetchedAt    float64 `json:"fetched_at"`
-	TokenType    string  `json:"token_type,omitempty"`
+	AccessToken  string          `json:"access_token"`
+	RefreshToken string          `json:"refresh_token"`
+	ExpiresIn    float64         `json:"expires_in"`
+	ExpiresAt    float64         `json:"expires_at,omitempty"`
+	FetchedAt    float64         `json:"fetched_at"`
+	TokenType    string          `json:"token_type,omitempty"`
 	User         json.RawMessage `json:"user,omitempty"`
 }
 
@@ -90,7 +90,7 @@ func configDir() string {
 }
 
 func loadSession(path string) (*session, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is from configDir(), not user input
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -260,11 +260,11 @@ func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<html><body><h2>Authentication complete</h2><p>You can close this tab and return to your terminal.</p></body></html>`)
+		_, _ = fmt.Fprint(w, `<html><body><h2>Authentication complete</h2><p>You can close this tab and return to your terminal.</p></body></html>`)
 		sessCh <- &s
 	})
 
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second} //nolint:gosec // loopback only
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -276,7 +276,7 @@ func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
 	}()
 
 	defer func() {
-		srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background())
 		wg.Wait()
 	}()
 
