@@ -1,53 +1,47 @@
 # Run Load Test
 
-Execute the load test script to create test jobs at regular intervals.
+Execute the load test via the native hover CLI.
 
 ## Prerequisites
 
-1. Get an auth token:
+1. Build the CLI:
 
    ```bash
-   python3 scripts/auth/cli_auth.py login
+   go build -o hover ./cmd/hover/
    ```
 
-   Or export manually: `export AUTH_TOKEN="your-jwt-token"`
+2. Run your first command — the CLI handles auth automatically:
 
-2. Configure (optional):
    ```bash
-   export API_URL="https://hover.app.goodnative.co"  # Default: http://localhost:8080
-   export BATCH_INTERVAL_MINUTES=30               # Default: 30
-   export TEST_DURATION_HOURS=5                   # Default: 5
-   export JOBS_PER_BATCH=7                        # Default: 7
+   ./hover jobs generate --pr 288 --anon-key <your-anon-key> --interval 30s --jobs 10
    ```
 
-## Run the test
-
-```bash
-./scripts/generate-test-jobs.sh
-```
+   On first run (or if your session has expired), the CLI opens your browser for
+   Supabase OAuth and caches the session for reuse.
 
 ## Quick presets
 
-**1-hour quick test:**
+**Quick test against a preview PR:**
 
 ```bash
-export BATCH_INTERVAL_MINUTES=15
-export TEST_DURATION_HOURS=1
-export JOBS_PER_BATCH=5
-./scripts/generate-test-jobs.sh
+./hover jobs generate --pr 288 --anon-key <key> --interval 30s --jobs 5 --concurrency 3
 ```
 
 **Production (gentle):**
 
 ```bash
-export API_URL="https://hover.app.goodnative.co"
-export BATCH_INTERVAL_MINUTES=60
-export JOBS_PER_BATCH=3
-./scripts/generate-test-jobs.sh
+./hover jobs generate --interval 5m --jobs 3 --concurrency random
+```
+
+## Legacy wrapper
+
+The old shell script still works as a thin wrapper:
+
+```bash
+./scripts/generate-test-jobs.sh pr:288 anon-key:xxx jobs:5 interval:30s
 ```
 
 ## Output
 
-Creates `load_test_jobs.csv` with batch, domain, job_id, and timestamp.
-
-Press `Ctrl+C` to stop early.
+The CLI prints batch progress and a throughput summary when complete. Press
+`Ctrl+C` to stop early.

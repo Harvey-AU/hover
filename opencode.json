@@ -90,7 +90,6 @@
       "gh issue list *": "allow",
       "gh issue view *": "allow",
 
-
       "npm run *": "allow",
       "npm test": "allow",
       "npm test *": "allow",

@@ -425,7 +425,6 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/extension-auth", h.ServeExtensionAuth)
 	mux.HandleFunc("/extension-auth/", h.ServeExtensionAuth)
 	mux.HandleFunc("/extension-auth.html", h.ServeExtensionAuth)
-	mux.HandleFunc("/cli-login.html", h.ServeCliLogin)
 	mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
 	mux.HandleFunc("/jobs/", h.ServeJobDetails)
 
@@ -575,11 +574,6 @@ func (h *Handler) ServeAuthCallback(w http.ResponseWriter, r *http.Request) {
 // ServeDebugAuth serves the debug auth test page
 func (h *Handler) ServeDebugAuth(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "debug-auth.html")
-}
-
-// ServeCliLogin serves the CLI login page for browser-based auth flows
-func (h *Handler) ServeCliLogin(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "cli-login.html")
 }
 
 // ServeExtensionAuth serves the extension auth popup bridge page.

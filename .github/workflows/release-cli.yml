@@ -1,0 +1,79 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release CLI
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set CLI version from tag
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+        run: |
+          echo "GORELEASER_CURRENT_TAG=${GIT_TAG#cli-}" >> $GITHUB_ENV
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          NPM_TOKEN: op://Good Native/npm/npm_access_token
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        working-directory: npm
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: |
+          VERSION="${GIT_TAG#cli-v}"
+
+          cat > README.md <<EOF
+          # @harvey-au/hover
+
+          CLI for the Hover cache-warming platform.
+
+          ## Install
+
+          \`\`\`sh
+          npm install -g @harvey-au/hover
+          \`\`\`
+
+          ## Usage
+
+          \`\`\`sh
+          hover jobs generate --pr <number>
+          \`\`\`
+
+          See [GitHub releases](https://github.com/Harvey-AU/hover/releases) for changelogs.
+          EOF
+
+          npm version "$VERSION" --no-git-tag-version
+          npm publish --access public

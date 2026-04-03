@@ -25,7 +25,7 @@ type aiaTransport struct {
 	base *http.Transport
 
 	mu    sync.RWMutex
-	pool  *x509.CertPool // custom pool = system roots + fetched intermediates
+	pool  *x509.CertPool  // custom pool = system roots + fetched intermediates
 	cache map[string]bool // tracks AIA URLs we've already fetched
 }
 
@@ -45,7 +45,7 @@ func (t *aiaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Ensure the base transport uses our augmented cert pool.
 	t.mu.RLock()
 	if t.base.TLSClientConfig == nil {
-		t.base.TLSClientConfig = &tls.Config{}
+		t.base.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	t.base.TLSClientConfig.RootCAs = t.pool
 	t.mu.RUnlock()
