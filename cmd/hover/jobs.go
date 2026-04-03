@@ -141,14 +141,6 @@ func parseInterval(s string) (time.Duration, error) {
 }
 
 func (c *jobsConfig) authConfig() *authConfig {
-	authURL := defaultAuthURL
-	if c.AuthURLOverride != "" {
-		authURL = c.AuthURLOverride
-	}
-	anonKey := defaultAnonKey
-	if c.AnonKey != "" {
-		anonKey = c.AnonKey
-	}
 	apiURL := "https://hover.fly.dev"
 	if c.PR > 0 {
 		apiURL = fmt.Sprintf("https://hover-pr-%d.fly.dev", c.PR)
@@ -156,6 +148,30 @@ func (c *jobsConfig) authConfig() *authConfig {
 	if c.APIURLOverride != "" {
 		apiURL = c.APIURLOverride
 	}
+
+	authURL := c.AuthURLOverride
+	anonKey := c.AnonKey
+
+	// Auto-discover auth config from the target app's /config.js when not
+	// explicitly overridden. This ensures preview PRs use their own Supabase
+	// project rather than falling back to the production defaults.
+	if authURL == "" || anonKey == "" {
+		discovered := discoverConfig(apiURL)
+		if authURL == "" {
+			authURL = discovered.authURL
+		}
+		if anonKey == "" {
+			anonKey = discovered.anonKey
+		}
+	}
+
+	if authURL == "" {
+		authURL = defaultAuthURL
+	}
+	if anonKey == "" {
+		anonKey = defaultAnonKey
+	}
+
 	return &authConfig{
 		AuthURL: authURL,
 		AnonKey: anonKey,

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -336,4 +337,60 @@ func openBrowser(url string) {
 		return
 	}
 	cmd.Start() //nolint:errcheck // best-effort
+}
+
+// discoveredConfig holds auth config fetched from a running app's /config.js.
+type discoveredConfig struct {
+	authURL string
+	anonKey string
+}
+
+var (
+	reSupabaseURL = regexp.MustCompile(`"supabaseUrl"\s*:\s*"([^"]+)"`)
+	reAnonKey     = regexp.MustCompile(`"supabaseAnonKey"\s*:\s*"([^"]+)"`)
+)
+
+// discoverConfig fetches /config.js from the target API and extracts the
+// Supabase URL and anon key so preview PRs automatically use the correct
+// Supabase project.
+func discoverConfig(apiURL string) discoveredConfig {
+	var dc discoveredConfig
+	configURL := strings.TrimSuffix(apiURL, "/") + "/config.js"
+	fmt.Fprintf(os.Stderr, "Discovering auth config from %s...\n", configURL)
+
+	req, err := http.NewRequest("GET", configURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not build config request: %v\n", err)
+		return dc
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not fetch config: %v\n", err)
+		return dc
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Warning: config endpoint returned HTTP %d\n", resp.StatusCode)
+		return dc
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read config response: %v\n", err)
+		return dc
+	}
+
+	if m := reSupabaseURL.FindSubmatch(body); len(m) > 1 {
+		dc.authURL = string(m[1])
+	}
+	if m := reAnonKey.FindSubmatch(body); len(m) > 1 {
+		dc.anonKey = string(m[1])
+	}
+
+	if dc.authURL != "" {
+		fmt.Fprintf(os.Stderr, "Discovered auth URL: %s\n", dc.authURL)
+	}
+	return dc
 }
