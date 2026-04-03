@@ -1982,15 +1982,15 @@ function initCliAuthPage() {
   }
 
   function overrideHandleAuthSuccess() {
-    const baseHandler =
-      typeof window.handleAuthSuccess === "function"
-        ? window.handleAuthSuccess
-        : defaultHandleAuthSuccess;
-
     window.handleAuthSuccess = async function (user) {
       try {
         setStatus("Auth successful. Finalising session…");
-        await baseHandler(user);
+        // The CLI login page must not run the default post-auth redirect flow,
+        // or the browser can navigate to /dashboard before the loopback
+        // callback receives the Supabase session.
+        await registerUserWithBackend(user);
+        updateUserInfo();
+        updateAuthState(true);
         await sendSessionToCli();
         setStatus("Session sent to CLI. You can close this tab.");
         if (typeof window.closeAuthModal === "function") {
