@@ -1,0 +1,3 @@
+#!/bin/sh
+echo "hover binary not installed. Run: npm rebuild @harvey-au/hover" >&2
+exit 1
