@@ -52,6 +52,7 @@ jobs:
             echo "⚠️  [Unreleased] section is empty - release will have blank changelog"
           else
             echo "✅ Changelog has been updated with changes"
+            echo "$UNRELEASED_CONTENT" > /tmp/unreleased_content.md
           fi
 
           # Determine release type from changelog header
@@ -129,17 +130,8 @@ jobs:
             const fs = require('fs');
             let changelogContent = '';
             try {
-              const raw = fs.readFileSync('CHANGELOG.md', 'utf8');
-              // Find the actual ## [Unreleased] heading (at start of line).
-              const headingMatch = raw.match(/^## \[Unreleased[^\]]*\]/m);
-              if (headingMatch) {
-                const afterHeader = raw.indexOf('\n', headingMatch.index);
-                const rest = raw.slice(afterHeader + 1);
-                const nextHeading = rest.search(/^## \[/m);
-                const section = nextHeading !== -1 ? rest.slice(0, nextHeading) : rest;
-                changelogContent = section.trim();
-              }
-            } catch (e) { /* ignore */ }
+              changelogContent = fs.readFileSync('/tmp/unreleased_content.md', 'utf8').trim();
+            } catch (e) { /* no content */ }
 
             const isThrottleError = (error) => {
               const status = error?.status;
