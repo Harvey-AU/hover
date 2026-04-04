@@ -52,7 +52,11 @@ jobs:
             echo "⚠️  [Unreleased] section is empty - release will have blank changelog"
           else
             echo "✅ Changelog has been updated with changes"
-            echo "$UNRELEASED_CONTENT" > /tmp/unreleased_content.md
+            {
+              echo "changelog_content<<CHANGELOG_EOF"
+              echo "$UNRELEASED_CONTENT"
+              echo "CHANGELOG_EOF"
+            } >> $GITHUB_OUTPUT
           fi
 
           # Determine release type from changelog header
@@ -119,6 +123,7 @@ jobs:
           CLI_CHANGED: ${{ steps.check.outputs.cli_changed }}
           CLI_CURRENT: ${{ steps.check.outputs.cli_current }}
           CLI_NEXT: ${{ steps.check.outputs.cli_next }}
+          CHANGELOG_CONTENT: ${{ steps.check.outputs.changelog_content }}
         with:
           script: |
             const releaseType = process.env.RELEASE_TYPE;
@@ -127,11 +132,7 @@ jobs:
             const cliChanged = process.env.CLI_CHANGED === 'true';
             const cliCurrent = process.env.CLI_CURRENT;
             const cliNext = process.env.CLI_NEXT;
-            const fs = require('fs');
-            let changelogContent = '';
-            try {
-              changelogContent = fs.readFileSync('/tmp/unreleased_content.md', 'utf8').trim();
-            } catch (e) { /* no content */ }
+            const changelogContent = (process.env.CHANGELOG_CONTENT || '').trim();
 
             const isThrottleError = (error) => {
               const status = error?.status;
