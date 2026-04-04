@@ -160,7 +160,7 @@ jobs:
             };
 
             const lines = [
-              `## Release Versions`,
+              `# Release Versions`,
               ``,
               `**App** ${releaseType}: \`${currentVersion}\` → \`${nextVersion}\``,
             ];
@@ -168,7 +168,7 @@ jobs:
               lines.push(`**CLI** patch: \`${cliCurrent}\` → \`${cliNext}\``);
             }
             if (changelogContent) {
-              lines.push(``, `### Changelog`, ``, changelogContent);
+              lines.push(``, `# Changelog`, ``, changelogContent);
             }
             const body = lines.join('\n');
 
