@@ -158,10 +158,6 @@ jobs:
             if (cliChanged) {
               lines.push(`**CLI** patch: \`${cliCurrent}\` → \`${cliNext}\``);
             }
-            lines.push(
-              ``,
-              `Changelog heading controls release type: \`[Unreleased]\` = patch, \`[Unreleased:minor]\` = minor, \`[Unreleased:major]\` = major.`,
-            );
             const body = lines.join('\n');
 
             try {
