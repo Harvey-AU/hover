@@ -32,7 +32,8 @@ On merge, CI will:
 
 ### Fixed
 
-- CLI release now publishes under `cli-v*` tag to avoid collision with app releases
+- CLI release now publishes under `cli-v*` tag to avoid collision with app
+  releases
 - CLI release triggers independently of changelog (on CLI file changes)
 - Cancellable confirmation prompt via Ctrl+C
 - Sanitised error output in org switching (no raw HTTP body)
