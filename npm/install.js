@@ -61,7 +61,7 @@ function fetch(url) {
 async function main() {
   const version = getVersion();
   const asset = getAssetName();
-  const url = `https://github.com/${REPO}/releases/download/v${version}/${asset}`;
+  const url = `https://github.com/${REPO}/releases/download/cli-v${version}/${asset}`;
 
   console.log(
     `Downloading hover v${version} for ${process.platform}-${process.arch}...`
@@ -91,6 +91,9 @@ async function main() {
     execFileSync("tar", ["xzf", tmpFile, "-C", BIN_DIR], { stdio: "ignore" });
     fs.unlinkSync(tmpFile);
     fs.chmodSync(BIN_PATH, 0o755);
+  }
+  if (!fs.existsSync(BIN_PATH)) {
+    throw new Error(`Binary not found after extraction: ${BIN_PATH}`);
   }
   console.log("hover installed successfully.");
 }

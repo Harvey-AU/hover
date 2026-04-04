@@ -28,7 +28,17 @@ jobs:
           # Goreleaser needs a semver tag on HEAD. Create a temporary
           # v* tag from the cli-v* tag so archives are named correctly.
           VERSION_TAG="${GIT_TAG#cli-}"
-          git tag -f "$VERSION_TAG"
+          if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
+            EXISTING=$(git rev-list -n1 "$VERSION_TAG")
+            CURRENT=$(git rev-parse HEAD)
+            if [ "$EXISTING" != "$CURRENT" ]; then
+              echo "::error::Tag $VERSION_TAG exists but points to $EXISTING, not HEAD ($CURRENT)"
+              exit 1
+            fi
+            echo "::warning::Tag $VERSION_TAG already exists on HEAD — using GORELEASER_CURRENT_TAG only"
+          else
+            git tag "$VERSION_TAG"
+          fi
           echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
 
       - uses: goreleaser/goreleaser-action@v6

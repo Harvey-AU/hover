@@ -6,10 +6,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 )
+
+// version is set at build time via ldflags.
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -33,12 +40,14 @@ func main() {
 				os.Exit(0)
 			}
 		}
+		checkLatestVersion()
 		if err := runJobsGenerate(os.Args[3:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("hover v0.1.0")
+		fmt.Printf("hover v%s\n", version)
+		checkLatestVersion()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -46,6 +55,58 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+// checkLatestVersion queries the GitHub API for the latest CLI release tag
+// and prints a notice if a newer version is available.
+func checkLatestVersion() {
+	if version == "dev" {
+		return
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("https://api.github.com/repos/Harvey-AU/hover/git/matching-refs/tags/cli-v")
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	var refs []struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&refs); err != nil || len(refs) == 0 {
+		return
+	}
+
+	semverRe := regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+	var latest string
+	for _, r := range refs {
+		v := strings.TrimPrefix(r.Ref, "refs/tags/cli-v")
+		if !semverRe.MatchString(v) {
+			continue
+		}
+		if compareSemver(v, latest) > 0 {
+			latest = v
+		}
+	}
+	if latest != "" && compareSemver(latest, version) > 0 {
+		fmt.Fprintf(os.Stderr, "\nA newer version is available: v%s (current: v%s)\nUpdate with: npm install -g @harvey-au/hover\n", latest, version)
+	}
+}
+
+// compareSemver returns >0 if a > b, <0 if a < b, 0 if equal.
+func compareSemver(a, b string) int {
+	parse := func(s string) [3]int {
+		var parts [3]int
+		_, _ = fmt.Sscanf(s, "%d.%d.%d", &parts[0], &parts[1], &parts[2]) //nolint:errcheck // best-effort parse, zero-value on failure is fine
+		return parts
+	}
+	pa, pb := parse(a), parse(b)
+	for i := range pa {
+		if pa[i] != pb[i] {
+			return pa[i] - pb[i]
+		}
+	}
+	return 0
 }
 
 func printUsage() {
@@ -65,6 +126,7 @@ Options:
   --jobs <N>           Jobs per batch [default: 3]
   --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
   --auth-url <url>     Override Supabase auth base URL
-  --api-url <url>      Override API base URL`
+  --api-url <url>      Override API base URL
+  --yes, -y            Skip confirmation prompt`
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(usage))
 }

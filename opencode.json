@@ -87,6 +87,11 @@
       "gh pr status *": "allow",
       "gh pr create *": "ask",
       "gh pr merge *": "ask",
+      "gh pr checks *": "allow",
+      "gh pr comment *": "allow",
+      "gh run view *": "allow",
+      "gh run list *": "allow",
+      "gh run rerun --failed *": "allow",
       "gh issue list *": "allow",
       "gh issue view *": "allow",
 
@@ -96,6 +101,7 @@
       "npm list *": "allow",
       "npm outdated": "allow",
       "npm audit": "allow",
+      "npm audit *": "allow",
       "npm install": "ask",
       "npm install *": "ask",
       "npm uninstall *": "ask",
@@ -105,10 +111,19 @@
 
       "go test *": "allow",
       "go build *": "allow",
+      "go run *": "allow",
       "go vet *": "allow",
       "go fmt *": "allow",
+      "go mod tidy": "allow",
+      "go mod tidy *": "allow",
+      "go mod edit *": "allow",
+      "go list *": "allow",
+      "go tool cover *": "allow",
+      "go version": "allow",
       "gofmt *": "allow",
       "goimports *": "allow",
+      "golangci-lint run *": "allow",
+      "air": "allow",
 
       "npx prettier *": "allow",
       "npx eslint *": "allow",
@@ -116,7 +131,31 @@
       "bash scripts/*.sh": "allow",
       "bash scripts/*.sh *": "allow",
 
-      "rm *": "ask"
+      "git show *": "allow",
+      "git tag *": "allow",
+      "git stash *": "allow",
+      "git worktree *": "allow",
+
+      "supabase start": "allow",
+      "supabase stop": "allow",
+      "supabase status *": "allow",
+
+      "docker build *": "allow",
+      "docker ps *": "allow",
+      "docker logs *": "allow",
+
+      "fly logs *": "allow",
+      "fly status *": "allow",
+      "fly domains *": "allow",
+      "fly apps list *": "allow",
+      "flyctl logs *": "allow",
+      "flyctl status *": "allow",
+
+      "./dev.sh": "allow",
+      "./scripts/test-db.sh *": "allow",
+
+      "rm *": "ask",
+      "rm -rf *": "ask"
     },
     "edit": "allow",
     "read": {

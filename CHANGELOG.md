@@ -28,45 +28,25 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.31.1] – 2026-04-04
+
+### Added
+
+- CLI version injected at build time (replaces hardcoded `v0.1.0`)
+- CLI update check on startup — notifies when a newer version is available
+- Identity and org display before job generation (`Logged in as X in Y`)
+- Org switching prompt in CLI (`C` to change active organisation)
+- CLI version included in PR release preview comment
+
+### Fixed
+
+- npm `install.js` downloads from `cli-v*` tags instead of `v*`
+- Auto-release CLI change detection now includes `npm/` directory
+- Release preview comment no longer picks up `cli-v*` tags as app version
+- Prevent tag collision in CLI release workflow when `v*` tag already exists
+- Binary existence validated after npm postinstall extraction
+
 ## [0.31.1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
-
-## [cli..1] – 2026-04-03
 
 ### Fixed
 

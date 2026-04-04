@@ -29,9 +29,7 @@
       "Bash(pgrep:*)",
       "Bash(timeout:*)",
       "Bash(gtimeout:*)",
-      "Bash(source:*)",
       "Bash(unalias:*)",
-      "Bash(open:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git status:*)",
@@ -40,7 +38,6 @@
       "Bash(git fetch:*)",
       "Bash(git pull:*)",
       "Bash(git checkout:*)",
-      "Bash(git rm:*)",
       "Bash(git tag:*)",
       "Bash(git stash:*)",
       "Bash(git worktree:*)",
@@ -69,22 +66,9 @@
       "Bash(npm run test:*)",
       "Bash(npm run dev:*)",
       "Bash(npm test)",
-      "Bash(npx:*)",
       "Bash(claude --version)",
-      "Bash(claude mcp:*)",
       "Bash(./scripts/test-db.sh:*)",
       "WebSearch",
-      "WebFetch(domain:docs.anthropic.com)",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:supabase.com)",
-      "WebFetch(domain:goo.gle)",
-      "WebFetch(domain:docs.developers.webflow.com)",
-      "WebFetch(domain:developers.webflow.com)",
-      "WebFetch(domain:loops.so)",
-      "WebFetch(domain:knock.app)",
-      "WebFetch(domain:www.emailtooltester.com)",
-      "WebFetch(domain:www.implicator.ai)",
-      "WebFetch(domain:codingforseo.com)",
       "Edit",
       "Write",
       "MultiEdit",
@@ -99,7 +83,6 @@
       "mcp__supabase__get_logs",
       "mcp__supabase__list_projects",
       "mcp__supabase__list_tables",
-      "mcp__supabase__execute_sql",
       "mcp__plugin_serena_serena__initial_instructions",
       "mcp__plugin_serena_serena__list_dir",
       "mcp__plugin_serena_serena__get_symbols_overview",
@@ -119,9 +102,20 @@
       "Bash(bash scripts/pr-status-check.sh)",
       "Bash(bash scripts/pr-comment-reply.sh:*)",
       "Bash(bash scripts/pr-comment-reply.sh)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(git show:*)",
+      "Bash(npx prettier --write:*)",
+      "Bash(npx eslint --fix:*)"
     ],
-    "deny": []
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)",
+      "Bash(npm publish:*)"
+    ]
+  },
+  "env": {
+    "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   },
   "enableAllProjectMcpServers": false
 }

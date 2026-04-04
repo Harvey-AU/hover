@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -24,6 +25,7 @@ type jobsConfig struct {
 	Interval        time.Duration
 	JobsPerBatch    int
 	Concurrency     string // "random" or integer 1-50
+	Yes             bool   // skip interactive confirmation
 }
 
 func parseJobsFlags(args []string) (*jobsConfig, error) {
@@ -119,6 +121,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			}
 			c.Concurrency = v
 
+		case "--yes", "-y":
+			c.Yes = true
+
 		default:
 			return nil, fmt.Errorf("unknown flag: %s", key)
 		}
@@ -177,6 +182,102 @@ func (c *jobsConfig) authConfig() *authConfig {
 		AnonKey: anonKey,
 		APIURL:  apiURL,
 		PR:      c.PR,
+	}
+}
+
+// isTerminal reports whether stdin is connected to an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// scanLine reads one line from the scanner in a goroutine so the caller can
+// select on ctx.Done(). Returns the scanned text or an error on EOF/cancel.
+func scanLine(ctx context.Context, scanner *bufio.Scanner) (string, error) {
+	type result struct {
+		text string
+		ok   bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		ok := scanner.Scan()
+		ch <- result{scanner.Text(), ok}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		if !r.ok {
+			return "", fmt.Errorf("aborted")
+		}
+		return r.text, nil
+	}
+}
+
+// confirmOrSwitchOrg prompts the user to proceed or switch organisation.
+// Skips the prompt when autoConfirm is true or stdin is not a terminal.
+func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *identity, autoConfirm bool) error {
+	if autoConfirm || !isTerminal() {
+		fmt.Fprintln(os.Stderr)
+		return nil
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Fprintf(os.Stderr, "\nContinue: \033[1mY\033[0m")
+		if len(id.Orgs) > 1 {
+			fmt.Fprintf(os.Stderr, " or Change organisation: \033[1mC\033[0m")
+		}
+		fmt.Fprintf(os.Stderr, " ")
+
+		line, err := scanLine(ctx, scanner)
+		if err != nil {
+			return err
+		}
+		input := strings.TrimSpace(strings.ToLower(line))
+
+		switch input {
+		case "y", "yes":
+			fmt.Fprintln(os.Stderr)
+			return nil
+		case "c", "change":
+			if len(id.Orgs) <= 1 {
+				fmt.Fprintln(os.Stderr, "No other organisations available.")
+				continue
+			}
+			fmt.Fprintln(os.Stderr, "\nChoose organisation:")
+			for i, org := range id.Orgs {
+				marker := "  "
+				if org.ID == id.ActiveOrgID {
+					marker = "* "
+				}
+				fmt.Fprintf(os.Stderr, "  %s%d. %s\n", marker, i+1, org.Name)
+			}
+			fmt.Fprintf(os.Stderr, "\nSelect (1-%d): ", len(id.Orgs))
+			line, err := scanLine(ctx, scanner)
+			if err != nil {
+				return err
+			}
+			choice, err := strconv.Atoi(strings.TrimSpace(line))
+			if err != nil || choice < 1 || choice > len(id.Orgs) {
+				fmt.Fprintln(os.Stderr, "Invalid selection.")
+				continue
+			}
+			selected := id.Orgs[choice-1]
+			if selected.ID == id.ActiveOrgID {
+				fmt.Fprintf(os.Stderr, "Already using %s.\n", selected.Name)
+				continue
+			}
+			if err := switchOrg(ctx, cfg, token, selected.ID); err != nil {
+				return fmt.Errorf("failed to switch org: %w", err)
+			}
+			id.ActiveOrgID = selected.ID
+			fmt.Fprintf(os.Stderr, "Switched to \033[1m%s\033[0m\n", selected.Name)
+		default:
+			fmt.Fprintln(os.Stderr, "Invalid input.")
+		}
 	}
 }
 
@@ -245,6 +346,9 @@ func runJobsGenerate(args []string) error {
 		return err
 	}
 
+	// Fetch identity and show confirmation prompt.
+	id := fetchIdentity(ctx, ac, token)
+
 	// Shuffle domains.
 	domains := make([]string, len(testDomains))
 	copy(domains, testDomains)
@@ -254,22 +358,25 @@ func runJobsGenerate(args []string) error {
 
 	totalBatches := (len(domains) + cfg.JobsPerBatch - 1) / cfg.JobsPerBatch
 
-	fmt.Fprintf(os.Stderr, "\n\033[32m=== Hover Load Test ===\033[0m\n")
-	fmt.Fprintf(os.Stderr, "API URL:           %s\n", ac.APIURL)
-	if cfg.PR > 0 {
-		fmt.Fprintf(os.Stderr, "Preview PR:        %d\n", cfg.PR)
+	// Identity line.
+	fmt.Fprintln(os.Stderr)
+	if id.UserName != "" && id.ActiveOrgName() != "" {
+		if len(id.Orgs) > 1 {
+			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m [press \033[1mc\033[0m to change org]\n", id.UserName, id.ActiveOrgName())
+		} else {
+			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m\n", id.UserName, id.ActiveOrgName())
+		}
+	} else if id.UserName != "" {
+		fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m\n", id.UserName)
 	}
-	fmt.Fprintf(os.Stderr, "Batch interval:    %s\n", formatDuration(cfg.Interval))
-	fmt.Fprintf(os.Stderr, "Jobs per batch:    %d\n", cfg.JobsPerBatch)
-	if cfg.Concurrency == "random" {
-		fmt.Fprintf(os.Stderr, "Job concurrency:   random (10-50 tasks/job)\n")
-	} else {
-		fmt.Fprintf(os.Stderr, "Job concurrency:   %s tasks/job\n", cfg.Concurrency)
+
+	// Job settings summary.
+	fmt.Fprintf(os.Stderr, "Generating: %d jobs, %d per batch, %s interval\n", len(domains), cfg.JobsPerBatch, formatDuration(cfg.Interval))
+
+	// Confirmation prompt — allow org switch if multiple orgs available.
+	if err := confirmOrSwitchOrg(ctx, ac, token, id, cfg.Yes); err != nil {
+		return err
 	}
-	fmt.Fprintf(os.Stderr, "Available domains: %d\n", len(domains))
-	fmt.Fprintf(os.Stderr, "\nWill create %d jobs across %d batches\n", len(domains), totalBatches)
-	estDuration := time.Duration(totalBatches-1) * cfg.Interval
-	fmt.Fprintf(os.Stderr, "Estimated duration: %s\n\n", formatDuration(estDuration))
 
 	startTime := time.Now()
 	jobsCreated := 0

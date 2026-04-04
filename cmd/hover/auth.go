@@ -315,6 +315,106 @@ func openBrowser(url string) {
 	cmd.Start() //nolint:errcheck,gosec // best-effort browser open
 }
 
+// orgInfo represents an organisation returned by the API.
+type orgInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// identity holds the resolved user name, org list, and active org.
+type identity struct {
+	UserName    string
+	Orgs        []orgInfo
+	ActiveOrgID string
+}
+
+// ActiveOrgName returns the name of the active organisation.
+func (id *identity) ActiveOrgName() string {
+	for _, org := range id.Orgs {
+		if org.ID == id.ActiveOrgID {
+			return org.Name
+		}
+	}
+	return ""
+}
+
+// fetchIdentity retrieves the user's name from the cached session and
+// their organisations from the API.
+func fetchIdentity(ctx context.Context, cfg *authConfig, token string) *identity {
+	id := &identity{}
+
+	// Extract user name from the cached session.
+	sf := cfg.sessionFile()
+	sess, err := loadSession(sf)
+	if err == nil && sess != nil && len(sess.User) > 0 {
+		var user struct {
+			UserMetadata struct {
+				FullName string `json:"full_name"`
+				Name     string `json:"name"`
+			} `json:"user_metadata"`
+			Email string `json:"email"`
+		}
+		if json.Unmarshal(sess.User, &user) == nil {
+			id.UserName = user.UserMetadata.FullName
+			if id.UserName == "" {
+				id.UserName = user.UserMetadata.Name
+			}
+		}
+	}
+
+	// Fetch organisations from the API.
+	req, err := http.NewRequestWithContext(ctx, "GET", cfg.APIURL+"/v1/organisations", nil)
+	if err != nil {
+		return id
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return id
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return id
+	}
+
+	var result struct {
+		Data struct {
+			Organisations []orgInfo `json:"organisations"`
+			ActiveOrgID   string    `json:"active_organisation_id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return id
+	}
+	id.Orgs = result.Data.Organisations
+	id.ActiveOrgID = result.Data.ActiveOrgID
+	return id
+}
+
+// switchOrg calls POST /v1/organisations/switch to change the active org.
+func switchOrg(ctx context.Context, cfg *authConfig, token, orgID string) error {
+	payload := fmt.Sprintf(`{"organisation_id":%q}`, orgID)
+	req, err := http.NewRequestWithContext(ctx, "POST", cfg.APIURL+"/v1/organisations/switch", strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("switch org failed (HTTP %d)", resp.StatusCode)
+	}
+	return nil
+}
+
 // discoveredConfig holds auth config fetched from a running app's /config.js.
 type discoveredConfig struct {
 	authURL string
