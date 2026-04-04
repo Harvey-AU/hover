@@ -5,6 +5,8 @@ on:
     branches:
       - main
     paths-ignore:
+      - "**.md"
+      - "!CHANGELOG.md"
       - "docs/**"
       - "LICENSE"
       - ".gitignore"
@@ -14,6 +16,7 @@ on:
       - ".prettierrc"
       - ".prettierignore"
       - ".golangci.yml"
+      - ".github/**"
 
 jobs:
   check-changelog:
