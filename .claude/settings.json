@@ -119,9 +119,13 @@
       "Bash(bash scripts/pr-status-check.sh)",
       "Bash(bash scripts/pr-comment-reply.sh:*)",
       "Bash(bash scripts/pr-comment-reply.sh)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(git show:*)"
     ],
     "deny": []
+  },
+  "env": {
+    "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   },
   "enableAllProjectMcpServers": false
 }

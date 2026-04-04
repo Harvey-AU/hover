@@ -43,7 +43,7 @@ jobs:
           go-version: "1.26.0"
 
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # master
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
@@ -293,7 +293,7 @@ jobs:
 
     steps:
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # master
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
