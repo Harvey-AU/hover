@@ -86,6 +86,7 @@ jobs:
           fi
 
           NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "current_version=$CURRENT_TAG" >> $GITHUB_OUTPUT
           echo "next_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
           # Check if CLI files changed in this PR
@@ -94,6 +95,7 @@ jobs:
             CLI_CHANGED="true"
             LATEST_CLI_TAG=$(git tag -l 'cli-v*' --sort=-version:refname | head -1)
             if [ -z "$LATEST_CLI_TAG" ]; then
+              LATEST_CLI_TAG="cli-v0.0.0"
               CLI_NEXT="cli-v0.1.0"
             else
               CLI_VER="${LATEST_CLI_TAG#cli-v}"
@@ -101,23 +103,27 @@ jobs:
               CPAT=$((CPAT + 1))
               CLI_NEXT="cli-v${CMAJ}.${CMIN}.${CPAT}"
             fi
+            echo "cli_current=$LATEST_CLI_TAG" >> $GITHUB_OUTPUT
             echo "cli_next=$CLI_NEXT" >> $GITHUB_OUTPUT
           fi
           echo "cli_changed=$CLI_CHANGED" >> $GITHUB_OUTPUT
-          echo "Next version will be: $NEW_VERSION"
 
       - name: Comment on PR with version info
         uses: actions/github-script@v8
         env:
           RELEASE_TYPE: ${{ steps.check.outputs.release_type }}
+          CURRENT_VERSION: ${{ steps.check.outputs.current_version }}
           NEXT_VERSION: ${{ steps.check.outputs.next_version }}
           CLI_CHANGED: ${{ steps.check.outputs.cli_changed }}
+          CLI_CURRENT: ${{ steps.check.outputs.cli_current }}
           CLI_NEXT: ${{ steps.check.outputs.cli_next }}
         with:
           script: |
             const releaseType = process.env.RELEASE_TYPE;
+            const currentVersion = process.env.CURRENT_VERSION;
             const nextVersion = process.env.NEXT_VERSION;
             const cliChanged = process.env.CLI_CHANGED === 'true';
+            const cliCurrent = process.env.CLI_CURRENT;
             const cliNext = process.env.CLI_NEXT;
 
             const isThrottleError = (error) => {
@@ -144,26 +150,19 @@ jobs:
               }
             };
 
-            const cliLine = cliChanged
-              ? `\n            - **CLI Version:** \`${cliNext}\` (npm: \`@harvey-au/hover\`)`
-              : '';
-
-            const body = `## 🏷️ Release Preview
-
-            When this PR is merged, it will automatically create:
-
-            - **Version:** \`${nextVersion}\` (${releaseType} release)
-            - **Tag:** \`${nextVersion}\`${cliLine}
-            - **GitHub Release:** Pre-release with changelog content
-
-            The changelog will be updated and committed automatically.
-
-            ---
-
-            💡 **Tip:** Update the changelog heading to control release type:
-            - \`## [Unreleased]\` or \`## [Unreleased:patch]\` → patch release (default)
-            - \`## [Unreleased:minor]\` → minor release
-            - \`## [Unreleased:major]\` → major release`;
+            const lines = [
+              `## Release Preview`,
+              ``,
+              `**App** ${releaseType}: \`${currentVersion}\` → \`${nextVersion}\``,
+            ];
+            if (cliChanged) {
+              lines.push(`**CLI** patch: \`${cliCurrent}\` → \`${cliNext}\``);
+            }
+            lines.push(
+              ``,
+              `Changelog heading controls release type: \`[Unreleased]\` = patch, \`[Unreleased:minor]\` = minor, \`[Unreleased:major]\` = major.`,
+            );
+            const body = lines.join('\n');
 
             try {
               // Find existing comment
