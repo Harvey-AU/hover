@@ -108,16 +108,17 @@ jobs:
         if: steps.skip.outputs.should_skip != 'true'
         id: cli
         run: |
-          # Find the previous tag to compare against
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -z "$PREV_TAG" ]; then
+          # Compare against the latest CLI tag, not the app tag
+          PREV_CLI_TAG=$(git tag -l 'cli-v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -1)
+          if [ -z "$PREV_CLI_TAG" ]; then
             echo "cli_changed=true" >> $GITHUB_OUTPUT
-          elif git diff --name-only "$PREV_TAG"..HEAD -- cmd/hover/ npm/ | grep -q .; then
+            echo "No previous CLI tag — will create first release"
+          elif git diff --name-only "$PREV_CLI_TAG"..HEAD -- cmd/hover/ npm/ .goreleaser.yml .github/workflows/release-cli.yml | grep -q .; then
             echo "cli_changed=true" >> $GITHUB_OUTPUT
-            echo "CLI code changed since $PREV_TAG"
+            echo "CLI code changed since $PREV_CLI_TAG"
           else
             echo "cli_changed=false" >> $GITHUB_OUTPUT
-            echo "No CLI changes since $PREV_TAG — skipping CLI release"
+            echo "No CLI changes since $PREV_CLI_TAG — skipping CLI release"
           fi
 
       - name: Create and push tag
