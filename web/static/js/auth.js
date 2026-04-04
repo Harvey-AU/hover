@@ -1469,9 +1469,9 @@ async function initAuthCallbackPage() {
   // send the session to the CLI's loopback server now.
   const pendingCliCallback = getPendingCliCallback();
   if (pendingCliCallback) {
-    clearPendingCliCallback();
     const sent = await trySendCliCallback(pendingCliCallback);
     if (sent) {
+      clearPendingCliCallback();
       return;
     }
   }
@@ -1809,13 +1809,24 @@ function setupAuthHandlers() {
 
   // CLI auth: show login modal on public routes when cli_callback is present.
   (async () => {
-    const params = new URLSearchParams(window.location.search);
-    if (!params.get("cli_callback")) return;
-    const { data } = await supabase.auth.getSession();
-    if (!data?.session) {
-      await loadAuthModal();
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.get("cli_callback")) return;
+
+      // Ensure Supabase client is initialized before calling getSession.
       await waitForAuthScript();
-      showAuthModal();
+      if (!supabase || !supabase.auth) {
+        console.error("CLI auth: Supabase client not initialized");
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (!data?.session) {
+        await loadAuthModal();
+        showAuthModal();
+      }
+    } catch (error) {
+      console.error("CLI auth modal auto-open failed:", error);
     }
   })();
 }
