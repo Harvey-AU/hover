@@ -67,7 +67,8 @@ jobs:
           echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
 
           # Calculate next version
-          CURRENT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.6.4")
+          CURRENT_TAG=$(git tag -l 'v[0-9]*' --sort=-version:refname | head -1)
+          CURRENT_TAG=${CURRENT_TAG:-v0.6.4}
           CURRENT_VERSION=${CURRENT_TAG#v}
           CURRENT_VERSION=${CURRENT_VERSION%%-*}
 
