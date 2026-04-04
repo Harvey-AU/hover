@@ -183,7 +183,7 @@ jobs:
 
               const botComment = comments.find(comment =>
                 comment.user.type === 'Bot' &&
-                comment.body.includes('Release Versions') || comment.body.includes('Release Preview')
+                (comment.body.includes('Release Versions') || comment.body.includes('Release Preview'))
               );
 
               if (botComment) {
