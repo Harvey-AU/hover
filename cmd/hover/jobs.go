@@ -194,6 +194,29 @@ func isTerminal() bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
+// scanLine reads one line from the scanner in a goroutine so the caller can
+// select on ctx.Done(). Returns the scanned text or an error on EOF/cancel.
+func scanLine(ctx context.Context, scanner *bufio.Scanner) (string, error) {
+	type result struct {
+		text string
+		ok   bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		ok := scanner.Scan()
+		ch <- result{scanner.Text(), ok}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		if !r.ok {
+			return "", fmt.Errorf("aborted")
+		}
+		return r.text, nil
+	}
+}
+
 // confirmOrSwitchOrg prompts the user to proceed or switch organisation.
 // Skips the prompt when autoConfirm is true or stdin is not a terminal.
 func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *identity, autoConfirm bool) error {
@@ -205,14 +228,15 @@ func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *
 	for {
 		fmt.Fprintf(os.Stderr, "\nContinue: \033[1mY\033[0m")
 		if len(id.Orgs) > 1 {
-			fmt.Fprintf(os.Stderr, " or Change org: \033[1mC\033[0m")
+			fmt.Fprintf(os.Stderr, " or Change organisation: \033[1mC\033[0m")
 		}
 		fmt.Fprintf(os.Stderr, " ")
 
-		if !scanner.Scan() {
-			return fmt.Errorf("aborted")
+		line, err := scanLine(ctx, scanner)
+		if err != nil {
+			return err
 		}
-		input := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		input := strings.TrimSpace(strings.ToLower(line))
 
 		switch input {
 		case "y", "yes":
@@ -232,10 +256,11 @@ func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *
 				fmt.Fprintf(os.Stderr, "  %s%d. %s\n", marker, i+1, org.Name)
 			}
 			fmt.Fprintf(os.Stderr, "\nSelect (1-%d): ", len(id.Orgs))
-			if !scanner.Scan() {
-				return fmt.Errorf("aborted")
+			line, err := scanLine(ctx, scanner)
+			if err != nil {
+				return err
 			}
-			choice, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+			choice, err := strconv.Atoi(strings.TrimSpace(line))
 			if err != nil || choice < 1 || choice > len(id.Orgs) {
 				fmt.Fprintln(os.Stderr, "Invalid selection.")
 				continue

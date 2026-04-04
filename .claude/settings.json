@@ -103,7 +103,9 @@
       "Bash(bash scripts/pr-comment-reply.sh:*)",
       "Bash(bash scripts/pr-comment-reply.sh)",
       "Bash(npm audit:*)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "Bash(npx prettier --write:*)",
+      "Bash(npx eslint --fix:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",

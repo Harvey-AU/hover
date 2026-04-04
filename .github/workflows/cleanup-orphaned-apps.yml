@@ -20,7 +20,7 @@ jobs:
           FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
       - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # master
+        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
       - name: Find and destroy orphaned preview apps
         env:

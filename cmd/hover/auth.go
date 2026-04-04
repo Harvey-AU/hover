@@ -410,8 +410,7 @@ func switchOrg(ctx context.Context, cfg *authConfig, token, orgID string) error 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("switch org failed (HTTP %d): %s", resp.StatusCode, body)
+		return fmt.Errorf("switch org failed (HTTP %d)", resp.StatusCode)
 	}
 	return nil
 }
