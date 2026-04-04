@@ -92,7 +92,7 @@ func checkLatestVersion() {
 func compareSemver(a, b string) int {
 	parse := func(s string) [3]int {
 		var parts [3]int
-		fmt.Sscanf(s, "%d.%d.%d", &parts[0], &parts[1], &parts[2])
+		_, _ = fmt.Sscanf(s, "%d.%d.%d", &parts[0], &parts[1], &parts[2]) //nolint:errcheck // best-effort parse, zero-value on failure is fine
 		return parts
 	}
 	pa, pb := parse(a), parse(b)
