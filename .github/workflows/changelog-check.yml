@@ -130,9 +130,14 @@ jobs:
             let changelogContent = '';
             try {
               const raw = fs.readFileSync('CHANGELOG.md', 'utf8');
-              const match = raw.match(/^## \[Unreleased[^\]]*\]\s*\n([\s\S]*?)(?=\n## \[|$)/m);
-              if (match) {
-                changelogContent = match[1].trim();
+              // Find the actual ## [Unreleased] heading (at start of line).
+              const headingMatch = raw.match(/^## \[Unreleased[^\]]*\]/m);
+              if (headingMatch) {
+                const afterHeader = raw.indexOf('\n', headingMatch.index);
+                const rest = raw.slice(afterHeader + 1);
+                const nextHeading = rest.search(/^## \[/m);
+                const section = nextHeading !== -1 ? rest.slice(0, nextHeading) : rest;
+                changelogContent = section.trim();
               }
             } catch (e) { /* ignore */ }
 
