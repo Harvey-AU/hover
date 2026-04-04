@@ -21,25 +21,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Create version tag for goreleaser
+      - name: Prepare version tag
         env:
           GIT_TAG: ${{ github.ref_name }}
         run: |
-          # Goreleaser needs a semver tag on HEAD. Create a temporary
-          # v* tag from the cli-v* tag so archives are named correctly.
-          VERSION_TAG="${GIT_TAG#cli-}"
-          if git rev-parse "$VERSION_TAG" >/dev/null 2>&1; then
-            EXISTING=$(git rev-list -n1 "$VERSION_TAG")
-            CURRENT=$(git rev-parse HEAD)
-            if [ "$EXISTING" != "$CURRENT" ]; then
-              echo "::error::Tag $VERSION_TAG exists but points to $EXISTING, not HEAD ($CURRENT)"
-              exit 1
-            fi
-            echo "::warning::Tag $VERSION_TAG already exists on HEAD — using GORELEASER_CURRENT_TAG only"
-          else
-            git tag "$VERSION_TAG"
-          fi
-          echo "VERSION_TAG=$VERSION_TAG" >> $GITHUB_ENV
+          # Goreleaser derives archive names from the tag. Create a local-only
+          # semver tag so filenames stay hover_0.1.2_os_arch, then tell
+          # goreleaser to publish the release on the cli-v* tag.
+          SEMVER_TAG="${GIT_TAG#cli-}"
+          git tag -f "$SEMVER_TAG" HEAD
+          echo "SEMVER_TAG=$SEMVER_TAG" >> $GITHUB_ENV
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -47,11 +38,7 @@ jobs:
           args: release --clean --skip=validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ env.VERSION_TAG }}
-
-      - name: Clean up version tag
-        if: always()
-        run: git tag -d "$VERSION_TAG" 2>/dev/null || true
+          GORELEASER_CURRENT_TAG: ${{ env.SEMVER_TAG }}
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2

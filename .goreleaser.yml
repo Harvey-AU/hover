@@ -33,6 +33,8 @@ checksum:
 release:
   mode: replace
   replace_existing_artifacts: true
+  name_template: "CLI {{ .Version }}"
+  tag_name: "cli-v{{ .Version }}"
 
 changelog:
   disable: true
