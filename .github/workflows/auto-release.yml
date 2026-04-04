@@ -175,7 +175,7 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -z "$PREV_TAG" ]; then
             echo "cli_changed=true" >> $GITHUB_OUTPUT
-          elif git diff --name-only "$PREV_TAG"..HEAD -- cmd/hover/ | grep -q .; then
+          elif git diff --name-only "$PREV_TAG"..HEAD -- cmd/hover/ npm/ | grep -q .; then
             echo "cli_changed=true" >> $GITHUB_OUTPUT
             echo "CLI code changed since $PREV_TAG"
           else
