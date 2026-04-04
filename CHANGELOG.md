@@ -28,6 +28,12 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.31.3] – 2026-04-04
+
+### Fixed
+
+- npm install downloads from correct `cli-v*` release tag
+
 ## [0.31.2] – 2026-04-04
 
 ### Fixed
