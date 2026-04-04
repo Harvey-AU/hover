@@ -105,7 +105,12 @@
       "Bash(npm audit:*)",
       "Bash(git show:*)"
     ],
-    "deny": []
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)",
+      "Bash(npm publish:*)"
+    ]
   },
   "env": {
     "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
