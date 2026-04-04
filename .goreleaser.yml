@@ -31,10 +31,7 @@ checksum:
   name_template: "checksums.txt"
 
 release:
-  mode: replace
-  replace_existing_artifacts: true
-  name_template: "CLI {{ .Version }}"
-  tag_name: "cli-v{{ .Version }}"
+  disable: true
 
 changelog:
   disable: true

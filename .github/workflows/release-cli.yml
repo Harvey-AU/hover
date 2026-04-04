@@ -26,8 +26,7 @@ jobs:
           GIT_TAG: ${{ github.ref_name }}
         run: |
           # Goreleaser derives archive names from the tag. Create a local-only
-          # semver tag so filenames stay hover_0.1.2_os_arch, then tell
-          # goreleaser to publish the release on the cli-v* tag.
+          # semver tag so filenames stay hover_0.1.3_os_arch.
           SEMVER_TAG="${GIT_TAG#cli-}"
           git tag -f "$SEMVER_TAG" HEAD
           echo "SEMVER_TAG=$SEMVER_TAG" >> $GITHUB_ENV
@@ -39,6 +38,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ env.SEMVER_TAG }}
+
+      - name: Create GitHub release under cli-v tag
+        env:
+          GIT_TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GIT_TAG#cli-}"
+          gh release create "$GIT_TAG" \
+            --title "CLI ${VERSION#v}" \
+            --notes "CLI release ${GIT_TAG}" \
+            dist/hover_*.tar.gz dist/hover_*.zip dist/checksums.txt
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
