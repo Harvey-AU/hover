@@ -58,6 +58,7 @@ let authSyncRetryTimer = null;
 let authSyncRetryCount = 0;
 let authCallbackRedirectIssued = false;
 const PENDING_INVITE_TOKEN_STORAGE_KEY = "gnh_pending_invite_token";
+const PENDING_CLI_CALLBACK_STORAGE_KEY = "gnh_pending_cli_callback";
 const POST_AUTH_RETURN_TARGET_STORAGE_KEY = "gnh_post_auth_return_target";
 const OAUTH_CALLBACK_QUERY_KEYS = [
   "error",
@@ -147,6 +148,31 @@ function setPendingInviteToken(token) {
 function clearPendingInviteToken() {
   try {
     window.sessionStorage.removeItem(PENDING_INVITE_TOKEN_STORAGE_KEY);
+  } catch (_error) {
+    // sessionStorage may be unavailable.
+  }
+}
+
+function getPendingCliCallback() {
+  try {
+    return window.sessionStorage.getItem(PENDING_CLI_CALLBACK_STORAGE_KEY);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function setPendingCliCallback(url) {
+  if (!url) return;
+  try {
+    window.sessionStorage.setItem(PENDING_CLI_CALLBACK_STORAGE_KEY, url);
+  } catch (_error) {
+    // sessionStorage may be unavailable.
+  }
+}
+
+function clearPendingCliCallback() {
+  try {
+    window.sessionStorage.removeItem(PENDING_CLI_CALLBACK_STORAGE_KEY);
   } catch (_error) {
     // sessionStorage may be unavailable.
   }
@@ -1225,9 +1251,9 @@ async function executeEmailSignup() {
  * POST the Supabase session to the CLI's local server after successful auth.
  * Returns true if a callback was sent, false otherwise.
  */
-async function trySendCliCallback() {
+async function trySendCliCallback(callbackUrlOverride) {
   const params = new URLSearchParams(window.location.search);
-  const callbackUrl = params.get("cli_callback");
+  const callbackUrl = callbackUrlOverride || params.get("cli_callback");
   if (!callbackUrl) {
     return false;
   }
@@ -1381,6 +1407,10 @@ async function handleSocialLogin(provider, options = {}) {
       if (inviteToken) {
         setPendingInviteToken(inviteToken);
       }
+      const cliCallback = params.get("cli_callback");
+      if (cliCallback) {
+        setPendingCliCallback(cliCallback);
+      }
       return getOAuthCallbackURL({ invite_token: inviteToken || undefined });
     };
 
@@ -1433,6 +1463,17 @@ async function initAuthCallbackPage() {
 
   if (authCallbackRedirectIssued) {
     return;
+  }
+
+  // CLI callback: if a pending cli_callback was stored before OAuth redirect,
+  // send the session to the CLI's loopback server now.
+  const pendingCliCallback = getPendingCliCallback();
+  if (pendingCliCallback) {
+    const sent = await trySendCliCallback(pendingCliCallback);
+    if (sent) {
+      clearPendingCliCallback();
+      return;
+    }
   }
 
   const returnTarget = getPostAuthReturnTarget();
@@ -1765,6 +1806,29 @@ function setupAuthHandlers() {
   if (!initialiseAuthStateSync()) {
     scheduleAuthStateSyncRetry();
   }
+
+  // CLI auth: show login modal on public routes when cli_callback is present.
+  (async () => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (!params.get("cli_callback")) return;
+
+      // Ensure Supabase client is initialized before calling getSession.
+      await waitForAuthScript();
+      if (!supabase || !supabase.auth) {
+        console.error("CLI auth: Supabase client not initialized");
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (!data?.session) {
+        await loadAuthModal();
+        showAuthModal();
+      }
+    } catch (error) {
+      console.error("CLI auth modal auto-open failed:", error);
+    }
+  })();
 }
 
 function initialiseAuthStateSync() {
@@ -1784,6 +1848,7 @@ function initialiseAuthStateSync() {
       updateAuthState(isAuthenticated);
       if (isAuthenticated) {
         updateUserInfo();
+        trySendCliCallback();
       }
     })
     .catch((error) => {
