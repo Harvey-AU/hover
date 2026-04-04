@@ -94,7 +94,7 @@ jobs:
           CLI_CHANGED="false"
           if git diff --name-only "origin/main"...HEAD -- cmd/hover/ npm/ | grep -q .; then
             CLI_CHANGED="true"
-            LATEST_CLI_TAG=$(git tag -l 'cli-v*' --sort=-version:refname | head -1)
+            LATEST_CLI_TAG=$(git tag -l 'cli-v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -1)
             if [ -z "$LATEST_CLI_TAG" ]; then
               LATEST_CLI_TAG="cli-v0.0.0"
               CLI_NEXT="cli-v0.1.0"
