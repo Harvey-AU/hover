@@ -47,10 +47,16 @@ jobs:
           UNRELEASED_CONTENT=$(sed -n '/^## \[Unreleased/,/^## \[0-9/p' CHANGELOG.md | sed '$d' | tail -n +2)
 
           # Check if there's actual content (not just whitespace)
-          if [ -z "$(echo "$UNRELEASED_CONTENT" | grep -v '^[[:space:]]*$')" ]; then
+          TRIMMED_CONTENT=$(echo "$UNRELEASED_CONTENT" | grep -v '^[[:space:]]*$' || true)
+          if [ -z "$TRIMMED_CONTENT" ]; then
             echo "⚠️  [Unreleased] section is empty - release will have blank changelog"
           else
             echo "✅ Changelog has been updated with changes"
+            {
+              echo "changelog_content<<CHANGELOG_EOF"
+              echo "$TRIMMED_CONTENT"
+              echo "CHANGELOG_EOF"
+            } >> $GITHUB_OUTPUT
           fi
 
           # Determine release type from changelog header
@@ -117,6 +123,7 @@ jobs:
           CLI_CHANGED: ${{ steps.check.outputs.cli_changed }}
           CLI_CURRENT: ${{ steps.check.outputs.cli_current }}
           CLI_NEXT: ${{ steps.check.outputs.cli_next }}
+          CHANGELOG_CONTENT: ${{ steps.check.outputs.changelog_content }}
         with:
           script: |
             const releaseType = process.env.RELEASE_TYPE;
@@ -125,6 +132,7 @@ jobs:
             const cliChanged = process.env.CLI_CHANGED === 'true';
             const cliCurrent = process.env.CLI_CURRENT;
             const cliNext = process.env.CLI_NEXT;
+            const changelogContent = (process.env.CHANGELOG_CONTENT || '').trim();
 
             const isThrottleError = (error) => {
               const status = error?.status;
@@ -151,12 +159,15 @@ jobs:
             };
 
             const lines = [
-              `## Release Preview`,
+              `## Release Versions`,
               ``,
               `**App** ${releaseType}: \`${currentVersion}\` → \`${nextVersion}\``,
             ];
             if (cliChanged) {
               lines.push(`**CLI** patch: \`${cliCurrent}\` → \`${cliNext}\``);
+            }
+            if (changelogContent) {
+              lines.push(``, `### Changelog`, ``, changelogContent);
             }
             const body = lines.join('\n');
 
@@ -170,7 +181,7 @@ jobs:
 
               const botComment = comments.find(comment =>
                 comment.user.type === 'Bot' &&
-                comment.body.includes('🏷️ Release Preview')
+                comment.body.includes('## Release Versions')
               );
 
               if (botComment) {
