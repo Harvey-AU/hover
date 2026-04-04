@@ -1,3 +1,8 @@
 #!/bin/sh
-echo "hover binary not installed. Run: npm rebuild @harvey-au/hover" >&2
+echo "Error: hover binary is missing or failed to extract during installation." >&2
+echo "Please try the following repair commands:" >&2
+echo "  npm rebuild @harvey-au/hover" >&2
+echo "  npm install --verbose" >&2
+echo "" >&2
+echo "If the issue persists, check your npm install/rebuild logs and PATH configuration." >&2
 exit 1
