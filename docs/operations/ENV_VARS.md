@@ -163,10 +163,11 @@ them as environment variables. Example:
 ### Secret Rotation
 
 1. Update the secret in 1Password.
-2. **Fly.io production:** Run `1password-secrets fly import hover`.
+2. **Fly.io production:** Secrets sync automatically on the next deploy. For
+   immediate rotation without a code change, trigger the Fly Deploy workflow
+   manually from GitHub Actions.
 3. **CI workflows:** The next workflow run picks up the new value automatically.
-4. **Fly.io preview apps:** Destroy and recreate the review app, or re-run the
-   PR workflow.
+4. **Fly.io preview apps:** Re-run the PR workflow to reload from 1Password.
 
 ### Removing Legacy GitHub Secrets
 

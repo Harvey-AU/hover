@@ -36,7 +36,36 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          # CI-only
           FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+          # Runtime secrets — hover-supabase
+          DATABASE_URL: op://Good Native/hover-supabase/DATABASE_URL
+          DATABASE_DIRECT_URL: op://Good Native/hover-supabase/DATABASE_DIRECT_URL
+          SUPABASE_JWT_SECRET: op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
+          SUPABASE_SERVICE_ROLE_KEY: op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
+          # Runtime secrets — hover-runtime
+          SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
+          LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
+          SLACK_CLIENT_SECRET: op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
+          WEBFLOW_CLIENT_SECRET: op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
+          GOOGLE_CLIENT_SECRET: op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
+          OTEL_EXPORTER_OTLP_HEADERS: op://Good Native/hover-runtime/OTEL_EXPORTER_OTLP_HEADERS
 
       - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
+
+      - name: Sync secrets to Fly
+        run: |
+          flyctl secrets set \
+            DATABASE_URL="$DATABASE_URL" \
+            DATABASE_DIRECT_URL="$DATABASE_DIRECT_URL" \
+            SUPABASE_JWT_SECRET="$SUPABASE_JWT_SECRET" \
+            SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            LOOPS_API_KEY="$LOOPS_API_KEY" \
+            SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
+            WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
+            GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            --stage
+
       - run: flyctl deploy --remote-only
