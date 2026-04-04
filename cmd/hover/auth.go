@@ -359,9 +359,6 @@ func fetchIdentity(ctx context.Context, cfg *authConfig, token string) *identity
 			if id.UserName == "" {
 				id.UserName = user.UserMetadata.Name
 			}
-			if id.UserName == "" {
-				id.UserName = user.Email
-			}
 		}
 	}
 

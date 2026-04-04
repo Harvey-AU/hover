@@ -25,6 +25,7 @@ type jobsConfig struct {
 	Interval        time.Duration
 	JobsPerBatch    int
 	Concurrency     string // "random" or integer 1-50
+	Yes             bool   // skip interactive confirmation
 }
 
 func parseJobsFlags(args []string) (*jobsConfig, error) {
@@ -120,6 +121,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			}
 			c.Concurrency = v
 
+		case "--yes", "-y":
+			c.Yes = true
+
 		default:
 			return nil, fmt.Errorf("unknown flag: %s", key)
 		}
@@ -181,8 +185,22 @@ func (c *jobsConfig) authConfig() *authConfig {
 	}
 }
 
+// isTerminal reports whether stdin is connected to an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 // confirmOrSwitchOrg prompts the user to proceed or switch organisation.
-func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *identity) error {
+// Skips the prompt when autoConfirm is true or stdin is not a terminal.
+func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *identity, autoConfirm bool) error {
+	if autoConfirm || !isTerminal() {
+		fmt.Fprintln(os.Stderr)
+		return nil
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Fprintf(os.Stderr, "\nContinue: \033[1mY\033[0m")
@@ -331,7 +349,7 @@ func runJobsGenerate(args []string) error {
 	fmt.Fprintf(os.Stderr, "Generating: %d jobs, %d per batch, %s interval\n", len(domains), cfg.JobsPerBatch, formatDuration(cfg.Interval))
 
 	// Confirmation prompt — allow org switch if multiple orgs available.
-	if err := confirmOrSwitchOrg(ctx, ac, token, id); err != nil {
+	if err := confirmOrSwitchOrg(ctx, ac, token, id, cfg.Yes); err != nil {
 		return err
 	}
 

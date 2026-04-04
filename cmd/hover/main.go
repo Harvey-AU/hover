@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,8 +19,6 @@ import (
 var version = "dev"
 
 func main() {
-	checkLatestVersion()
-
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -41,12 +40,14 @@ func main() {
 				os.Exit(0)
 			}
 		}
+		checkLatestVersion()
 		if err := runJobsGenerate(os.Args[3:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "version":
 		fmt.Printf("hover v%s\n", version)
+		checkLatestVersion()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -76,9 +77,13 @@ func checkLatestVersion() {
 		return
 	}
 
+	semverRe := regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 	var latest string
 	for _, r := range refs {
 		v := strings.TrimPrefix(r.Ref, "refs/tags/cli-v")
+		if !semverRe.MatchString(v) {
+			continue
+		}
 		if compareSemver(v, latest) > 0 {
 			latest = v
 		}
@@ -121,6 +126,7 @@ Options:
   --jobs <N>           Jobs per batch [default: 3]
   --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
   --auth-url <url>     Override Supabase auth base URL
-  --api-url <url>      Override API base URL`
+  --api-url <url>      Override API base URL
+  --yes, -y            Skip confirmation prompt`
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(usage))
 }
