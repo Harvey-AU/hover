@@ -105,9 +105,7 @@ jobs:
           git push --force-with-lease origin main
 
       - name: Check for CLI changes
-        if:
-          steps.check.outputs.should_release == 'true' &&
-          steps.skip.outputs.should_skip != 'true'
+        if: steps.skip.outputs.should_skip != 'true'
         id: cli
         run: |
           # Find the previous tag to compare against
@@ -136,7 +134,6 @@ jobs:
 
       - name: Create and push CLI tag
         if:
-          steps.check.outputs.should_release == 'true' &&
           steps.skip.outputs.should_skip != 'true' &&
           steps.cli.outputs.cli_changed == 'true'
         run: |

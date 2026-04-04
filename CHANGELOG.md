@@ -28,6 +28,15 @@ On merge, CI will:
 
 ## [Unreleased]
 
+## [0.31.2] – 2026-04-04
+
+### Fixed
+
+- CLI release now publishes under `cli-v*` tag to avoid collision with app releases
+- CLI release triggers independently of changelog (on CLI file changes)
+- Cancellable confirmation prompt via Ctrl+C
+- Sanitised error output in org switching (no raw HTTP body)
+
 ## [0.31.1] – 2026-04-04
 
 ### Added
