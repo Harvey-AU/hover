@@ -916,7 +916,7 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 				SELECT j.id,
 					   ROW_NUMBER() OVER (
 						   PARTITION BY j.domain_id, j.organisation_id
-						   ORDER BY j.created_at DESC
+						   ORDER BY COALESCE(j.completed_at, j.created_at) DESC
 					   ) AS rn
 				FROM jobs j
 				WHERE j.status IN ('completed', 'failed', 'cancelled')
