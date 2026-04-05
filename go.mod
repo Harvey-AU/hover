@@ -1,6 +1,6 @@
 module github.com/Harvey-AU/hover
 
-go 1.26.0
+go 1.26.1
 
 require (
 	github.com/AfterShip/email-verifier v1.4.1

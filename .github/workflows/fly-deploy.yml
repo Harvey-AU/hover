@@ -28,7 +28,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
