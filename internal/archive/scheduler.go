@@ -120,7 +120,7 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 			return
 		}
 		data, err = io.ReadAll(rc)
-		rc.Close()
+		_ = rc.Close()
 		if err != nil {
 			lg.Error().Err(err).Msg("Failed to read cold-storage fallback body")
 			return
