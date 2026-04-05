@@ -39,7 +39,12 @@ func NewArchiver(provider ColdStorageProvider, storage storageDownloader, cfg Co
 // Run blocks until ctx is cancelled or stopCh is closed, running archive
 // sweeps at the configured interval.
 func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
-	ticker := time.NewTicker(a.cfg.Interval)
+	interval := a.cfg.Interval
+	if interval <= 0 {
+		interval = time.Hour
+		log.Warn().Dur("fallback_interval", interval).Msg("Archive interval was non-positive, using default")
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	log.Info().
