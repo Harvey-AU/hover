@@ -69,6 +69,9 @@ const (
 	defaultRetryBaseDelay      = 200 * time.Millisecond
 	defaultRetryMaxDelay       = 1500 * time.Millisecond
 
+	// fdPressureThreshold is the fraction of the fd limit at which pressure is reported
+	fdPressureThreshold = 0.90
+
 	waitingReasonConcurrencyLimit = "concurrency_limit"
 	waitingReasonQuotaExhausted   = "quota_exhausted"
 )
@@ -766,7 +769,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 	if fdErr == nil {
 		fdPressure := util.FDPressureFrom(fdCurrent, fdLimit)
 		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
-		if fdPressure > 0.90 {
+		if fdPressure > fdPressureThreshold {
 			log.Warn().
 				Int("fd_current", fdCurrent).
 				Int("fd_limit", fdLimit).
