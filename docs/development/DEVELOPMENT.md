@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.26** - We use Go 1.26 for advanced features and runtime improvements
+- **Go 1.26.1** - We use Go 1.26.1 for the latest runtime fixes and improvements
 - **Docker Desktop** - Required for local Supabase instance
   ([Download here](https://docs.docker.com/desktop/))
 - **Supabase CLI** - Database management (`npm install -g supabase` or
@@ -442,14 +442,14 @@ go test -v -coverprofile=coverage.out ./...
 
 #### Running golangci-lint Locally
 
-If your local golangci-lint doesn't support Go 1.26, use Docker:
+If your local golangci-lint doesn't support Go 1.26.1, use Docker:
 
 ```bash
 # Run linting via Docker (recommended)
 docker run --rm -v "$(pwd)":/workspace -w /workspace \
   golangci/golangci-lint:v2.9.0 golangci-lint run
 
-# Or install Go 1.26-compatible version
+# Or install a Go 1.26.1-compatible version
 brew upgrade golangci-lint  # macOS
 # Then run: golangci-lint run
 ```
