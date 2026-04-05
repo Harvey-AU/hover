@@ -53,7 +53,8 @@ Built by the Good Native team in Castlemaine, Victoria, Australia.
 git clone https://github.com/Harvey-AU/hover.git hover
 cd hover
 
-# Enable pre-commit hooks for automatic formatting
+# Set up tracked Git hooks once per clone
+# Future worktrees inherit this shared hooks path automatically
 bash scripts/setup-hooks.sh
 
 # Start development environment
