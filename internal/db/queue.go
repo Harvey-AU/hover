@@ -763,8 +763,8 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 
 	// Check fd pressure before acquiring a DB connection
 	fdCurrent, fdLimit, fdErr := util.FDUsage()
-	if fdErr == nil && fdLimit > 0 {
-		fdPressure := float64(fdCurrent) / float64(fdLimit)
+	if fdErr == nil {
+		fdPressure := util.FDPressureFrom(fdCurrent, fdLimit)
 		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
 		if fdPressure > 0.90 {
 			log.Warn().
