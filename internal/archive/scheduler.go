@@ -79,7 +79,11 @@ func (a *Archiver) sweep(ctx context.Context) {
 			Int("candidates", len(candidates)).
 			Msg("Archiving candidates")
 
-		sem := make(chan struct{}, a.cfg.Concurrency)
+		concurrency := a.cfg.Concurrency
+		if concurrency <= 0 {
+			concurrency = 1
+		}
+		sem := make(chan struct{}, concurrency)
 		var wg sync.WaitGroup
 
 		for _, c := range candidates {
@@ -137,15 +141,21 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		return
 	}
 
-	// 4. Mark archived in DB (clears hot-storage columns)
-	if err := src.OnArchived(ctx, c, a.provider.Provider(), a.cfg.Bucket, key); err != nil {
-		lg.Error().Err(err).Msg("Failed to mark task as archived")
+	// 4. Delete from hot storage before clearing DB references.
+	// Ordering rationale: deleting first avoids permanent orphans in Supabase
+	// (if OnArchived succeeded but Delete failed, the DB reference is gone and
+	// the blob is unreachable). If Delete succeeds but OnArchived fails, the
+	// next sweep will re-download from cold storage — the cold copy is already
+	// verified above.
+	if err := a.storage.Delete(ctx, c.StorageBucket, c.StoragePath); err != nil {
+		lg.Error().Err(err).Msg("Failed to delete from hot storage — skipping DB mark to allow retry")
 		return
 	}
 
-	// 5. Delete from hot storage — best effort
-	if err := a.storage.Delete(ctx, c.StorageBucket, c.StoragePath); err != nil {
-		lg.Warn().Err(err).Msg("Failed to delete from hot storage after archival")
+	// 5. Mark archived in DB (clears hot-storage columns)
+	if err := src.OnArchived(ctx, c, a.provider.Provider(), a.cfg.Bucket, key); err != nil {
+		lg.Error().Err(err).Str("key", key).Msg("Failed to mark task as archived after hot-storage delete")
+		return
 	}
 
 	lg.Debug().Str("key", key).Msg("Task HTML archived successfully")

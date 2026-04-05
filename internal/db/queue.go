@@ -924,6 +924,7 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 			FROM tasks t
 			JOIN ranked r ON r.id = t.job_id
 			WHERE r.rn > $1
+			  AND t.html_storage_bucket IS NOT NULL
 			  AND t.html_storage_path IS NOT NULL
 			  AND t.html_archived_at IS NULL
 			LIMIT $2
@@ -932,6 +933,9 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 			return fmt.Errorf("archive candidate query failed: %w", err)
 		}
 		defer rows.Close()
+
+		// Reset slice so retried Execute callbacks don't accumulate duplicates.
+		candidates = candidates[:0]
 
 		for rows.Next() {
 			var c ArchiveCandidate
@@ -951,7 +955,7 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 // and clears the hot-storage reference so it can be reclaimed.
 func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error {
 	return q.Execute(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		result, err := tx.ExecContext(ctx, `
 			UPDATE tasks
 			SET html_archive_provider = $2,
 				html_archive_bucket   = $3,
@@ -960,9 +964,26 @@ func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket
 				html_storage_bucket   = NULL,
 				html_storage_path     = NULL
 			WHERE id = $1
+			  AND html_archived_at IS NULL
 		`, taskID, provider, bucket, key)
 		if err != nil {
 			return fmt.Errorf("mark task %s archived: %w", taskID, err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark task %s archived: reading rows affected: %w", taskID, err)
+		}
+		if rowsAffected == 0 {
+			// Already archived or task doesn't exist — check which.
+			var exists bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
+			if err != nil {
+				return fmt.Errorf("mark task %s archived: existence check: %w", taskID, err)
+			}
+			if exists {
+				return nil // already archived — idempotent success
+			}
+			return fmt.Errorf("mark task %s archived: task not found", taskID)
 		}
 		return nil
 	})
