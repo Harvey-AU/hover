@@ -31,8 +31,8 @@ On merge, CI will:
 ### Changed
 
 - shared Webflow extension job fetching, site scoping, and realtime fallback
-  logic into `web/static/app/lib/site-jobs.js`, reducing duplication between
-  the app layer and extension bridge runtime
+  logic into `web/static/app/lib/site-jobs.js`, reducing duplication between the
+  app layer and extension bridge runtime
 - aligned extension reuse docs with the current ES modules migration state and
   the remaining hybrid auth popup architecture
 

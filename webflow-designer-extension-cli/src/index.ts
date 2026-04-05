@@ -760,7 +760,7 @@ function cleanupRealtimeSubscription(): void {
   }
 }
 
-async function subscribeToJobUpdates(): Promise<void> {
+function subscribeToJobUpdates(): void {
   const orgId = state.activeOrganisationId;
   if (!orgId || !supabaseClient) {
     return;

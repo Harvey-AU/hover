@@ -119,7 +119,12 @@ export function buildCompletedJobsSignature(
  */
 export function buildChartJobsSignature(jobs = [], options = {}) {
   const chartJobs = filterJobsByDomains(jobs, options)
-    .filter((job) => String(job.status || "").trim().toLowerCase() === "completed")
+    .filter(
+      (job) =>
+        String(job.status || "")
+          .trim()
+          .toLowerCase() === "completed"
+    )
     .slice(0, 12);
 
   return chartJobs
@@ -301,7 +306,9 @@ export function subscribeToJobUpdates(options) {
 }
 
 function defaultIsActiveJobStatus(status) {
-  const normalised = String(status || "").trim().toLowerCase();
+  const normalised = String(status || "")
+    .trim()
+    .toLowerCase();
   return [
     "pending",
     "queued",
