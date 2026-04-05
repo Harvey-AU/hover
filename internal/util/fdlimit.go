@@ -34,7 +34,7 @@ func FDUsage() (current, limit int, err error) {
 			return current, limit, nil
 		}
 	}
-	return current, 0, fmt.Errorf("Max open files line not found in /proc/self/limits")
+	return current, 0, fmt.Errorf("max open files line not found in /proc/self/limits")
 }
 
 // FDPressure returns the ratio of open fds to the soft limit (0.0–1.0).
