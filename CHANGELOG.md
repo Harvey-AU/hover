@@ -30,6 +30,10 @@ On merge, CI will:
 
 ### Fixed
 
+- Badly formatted test entry
+
+### Fixed
+
 - Fix file descriptor exhaustion under load caused by per-request HTTP transport
   leak in `CheckCacheStatus()` — each probe call created a new `http.Transport`
   that held idle connections open indefinitely, exhausting 10240 fds during
