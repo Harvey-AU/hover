@@ -12,6 +12,7 @@ import * as apiClient from "/app/lib/api-client.js";
 import * as formatters from "/app/lib/formatters.js";
 import * as integrationHttp from "/app/lib/integration-http.js";
 import * as siteJobs from "/app/lib/site-jobs.js";
+import * as webflowSites from "/app/lib/webflow-sites.js";
 
 // Expose shared modules for index.js consumption
 window.HoverLib = {
@@ -19,6 +20,7 @@ window.HoverLib = {
   fmt: formatters,
   http: integrationHttp,
   jobs: siteJobs,
+  webflow: webflowSites,
 };
 
 // Signal that shared libs are ready

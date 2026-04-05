@@ -166,6 +166,25 @@ declare const HoverLib: {
       onSubscriptionIssue?: (status?: string, err?: Error) => void;
     }) => () => void;
   };
+  webflow: {
+    startWebflowConnection: () => Promise<{ auth_url?: string }>;
+    listWebflowConnections: () => Promise<unknown[]>;
+    findMatchingWebflowSite: (options: {
+      api?: typeof HoverLib.api;
+      connections?: unknown[];
+      siteDomain?: string | null;
+      siteDomainCandidates?: string[];
+      limit?: number;
+    }) => Promise<unknown | null>;
+    setWebflowSiteAutoPublish: (
+      siteId: string,
+      options: {
+        api?: typeof HoverLib.api;
+        connectionId: string;
+        enabled: boolean;
+      }
+    ) => Promise<void>;
+  };
 };
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
@@ -272,13 +291,6 @@ type WebflowSiteSetting = {
   auto_publish_enabled: boolean;
   schedule_interval_hours?: number;
   scheduler_id?: string;
-};
-
-type WebflowSitesResponse = {
-  sites: WebflowSiteSetting[];
-  pagination?: {
-    has_next: boolean;
-  };
 };
 
 type AuthMessage = {
@@ -624,18 +636,6 @@ function asInput(element: Element | null): HTMLInputElement | null {
 
 function asSelect(element: Element | null): HTMLSelectElement | null {
   return element instanceof HTMLSelectElement ? element : null;
-}
-
-function getSiteDomainCandidates(): string[] {
-  const normalised = new Set(
-    state.siteDomainCandidates
-      .map((candidate) => normalizeDomain(candidate))
-      .filter(Boolean)
-  );
-  if (state.siteDomain) {
-    normalised.add(state.siteDomain);
-  }
-  return [...normalised];
 }
 
 function hide(el: HTMLElement | null): void {
@@ -1590,13 +1590,14 @@ async function loadCurrentSchedule(): Promise<void> {
 
 async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
   if (!state.token || !state.siteDomain) {
+    state.webflowConnected = false;
+    state.webflowAutoPublishEnabled = false;
     renderWebflowStatus(false);
     return null;
   }
 
-  const connections = (await HoverLib.api.get(
-    "/v1/integrations/webflow"
-  )) as WebflowConnection[];
+  const connections =
+    (await HoverLib.webflow.listWebflowConnections()) as WebflowConnection[];
 
   if (!connections || connections.length === 0) {
     state.webflowConnected = false;
@@ -1607,41 +1608,12 @@ async function findConnectedWebflowSite(): Promise<WebflowSiteSetting | null> {
 
   state.webflowConnected = true;
 
-  const candidates = getSiteDomainCandidates();
-  let matched: WebflowSiteSetting | null = null;
-
-  for (const connection of connections) {
-    let page = 1;
-
-    while (true) {
-      const sites = (await HoverLib.api.get(
-        `/v1/integrations/webflow/${connection.id}/sites?page=${page}&limit=50`
-      )) as WebflowSitesResponse;
-
-      const candidate = sites.sites?.find((site) => {
-        const domain = normalizeDomain(site.primary_domain);
-        return candidates.includes(domain);
-      });
-
-      if (candidate) {
-        matched = {
-          ...candidate,
-          connection_id: connection.id,
-        };
-        break;
-      }
-
-      if (!sites.pagination?.has_next) {
-        break;
-      }
-
-      page += 1;
-    }
-
-    if (matched) {
-      break;
-    }
-  }
+  const matched = (await HoverLib.webflow.findMatchingWebflowSite({
+    api: HoverLib.api,
+    connections,
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  })) as WebflowSiteSetting | null;
 
   if (matched) {
     state.webflowAutoPublishEnabled = Boolean(matched.auto_publish_enabled);
@@ -1677,9 +1649,13 @@ async function setWebflowAutoPublish(enabled: boolean): Promise<void> {
   };
 
   try {
-    await HoverLib.api.put(
-      `/v1/integrations/webflow/sites/${siteSetting.webflow_site_id}/auto-publish`,
-      payload
+    await HoverLib.webflow.setWebflowSiteAutoPublish(
+      siteSetting.webflow_site_id,
+      {
+        api: HoverLib.api,
+        connectionId: payload.connection_id,
+        enabled: payload.enabled,
+      }
     );
   } catch (error) {
     // Revert on failure.
@@ -1893,7 +1869,7 @@ async function connectWebflow(): Promise<void> {
     }
   }
 
-  const response = (await HoverLib.api.post("/v1/integrations/webflow")) as {
+  const response = (await HoverLib.webflow.startWebflowConnection()) as {
     auth_url: string;
   };
 
