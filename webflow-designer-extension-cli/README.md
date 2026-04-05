@@ -54,6 +54,6 @@ Expected behaviour:
 - Popup page is bootstrapped by `web/static/app/pages/webflow-login.js`, which
   still reuses the shared auth modal and OAuth helpers from `/js/auth.js`.
 - On success, popup posts
-  `{ source: "gnh-extension-auth", state, extensionState, accessToken }` back
-  to the extension.
+  `{ source: "gnh-extension-auth", state, extensionState, accessToken }` back to
+  the extension.
 - The extension validates popup origin and state before accepting the token.
