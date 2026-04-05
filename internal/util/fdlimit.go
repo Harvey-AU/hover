@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -23,13 +24,17 @@ func FDUsage() (current, limit int, err error) {
 		if strings.HasPrefix(line, "Max open files") {
 			fields := strings.Fields(line)
 			// Format: "Max open files  <soft>  <hard>  <unit>"
-			if len(fields) >= 5 {
-				limit, _ = strconv.Atoi(fields[3])
+			if len(fields) < 5 {
+				return current, 0, fmt.Errorf("unexpected format for Max open files line: %q", line)
 			}
-			break
+			limit, err = strconv.Atoi(fields[3])
+			if err != nil {
+				return current, 0, fmt.Errorf("failed to parse fd soft limit %q: %w", fields[3], err)
+			}
+			return current, limit, nil
 		}
 	}
-	return current, limit, nil
+	return current, 0, fmt.Errorf("Max open files line not found in /proc/self/limits")
 }
 
 // FDPressure returns the ratio of open fds to the soft limit (0.0–1.0).

@@ -431,7 +431,7 @@ func New(config *Config, id ...string) *Crawler {
 		aia:        aiaRT,
 		probeClient: &http.Client{
 			Timeout:   config.DefaultTimeout,
-			Transport: probeTransport,
+			Transport: newAIATransport(probeTransport),
 		},
 	}
 }
