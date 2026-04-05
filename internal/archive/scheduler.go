@@ -119,10 +119,17 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 			lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
 			return
 		}
-		data, err = io.ReadAll(rc)
-		_ = rc.Close()
-		if err != nil {
-			lg.Error().Err(err).Msg("Failed to read cold-storage fallback body")
+		data, readErr := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if readErr != nil {
+			lg.Error().Err(readErr).Msg("Failed to read cold-storage fallback body")
+			return
+		}
+		if closeErr != nil {
+			lg.Warn().Err(closeErr).Msg("Failed to close cold-storage fallback body")
+			return
+		}
+		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
 			return
 		}
 		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
