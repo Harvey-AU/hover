@@ -133,6 +133,45 @@ declare const HoverLib: {
       context?: string
     ) => Promise<Response>;
   };
+  organisations: {
+    loadOrganisationContext: (options?: {
+      api?: typeof HoverLib.api;
+      includeUsage?: boolean;
+    }) => Promise<{
+      organisations: unknown[];
+      activeOrganisationId: string;
+      usage: unknown | null;
+    }>;
+    switchOrganisation: (
+      organisationId: string,
+      options?: { api?: typeof HoverLib.api }
+    ) => Promise<unknown | null>;
+  };
+  schedulers: {
+    findSchedulerByDomain: (
+      domain: string,
+      options?: {
+        api?: typeof HoverLib.api;
+        schedulers?: unknown[];
+      }
+    ) => Promise<unknown | null>;
+    saveSchedulerForDomain: (
+      domain: string,
+      scheduleIntervalHours: number,
+      options?: {
+        api?: typeof HoverLib.api;
+        currentScheduler?: unknown | null;
+        extra?: Record<string, unknown>;
+      }
+    ) => Promise<unknown>;
+    disableScheduler: (
+      schedulerId: string,
+      options?: {
+        api?: typeof HoverLib.api;
+        expectedIsEnabled?: boolean;
+      }
+    ) => Promise<unknown>;
+  };
   jobs: {
     fetchJobs: (options?: {
       limit?: number;
@@ -198,11 +237,6 @@ type ApiError = {
 type Organisation = {
   id: string;
   name: string;
-};
-
-type OrganisationsResponse = {
-  organisations: Organisation[];
-  active_organisation_id?: string;
 };
 
 type UsageStats = {
@@ -1561,15 +1595,18 @@ async function loadUsageAndOrgs(): Promise<void> {
     return;
   }
 
-  const [orgData, usageData] = (await Promise.all([
-    HoverLib.api.get("/v1/organisations"),
-    HoverLib.api.get("/v1/usage"),
-  ])) as [OrganisationsResponse, UsageResponse];
+  const context = (await HoverLib.organisations.loadOrganisationContext({
+    api: HoverLib.api,
+  })) as {
+    organisations: Organisation[];
+    activeOrganisationId: string;
+    usage: UsageStats | null;
+  };
 
-  state.organisations = orgData.organisations || [];
+  state.organisations = context.organisations || [];
   state.activeOrganisationId =
-    orgData.active_organisation_id || state.activeOrganisationId;
-  state.usage = usageData.usage || null;
+    context.activeOrganisationId || state.activeOrganisationId;
+  state.usage = context.usage || null;
 }
 
 async function loadCurrentSchedule(): Promise<void> {
@@ -1579,12 +1616,13 @@ async function loadCurrentSchedule(): Promise<void> {
     return;
   }
 
-  const siteDomain = normalizeDomain(state.siteDomain);
-  const schedulers = (await HoverLib.api.get("/v1/schedulers")) as Scheduler[];
-  const matching = schedulers.find(
-    (scheduler) => normalizeDomain(scheduler.domain) === siteDomain
-  );
-  state.currentScheduler = matching || null;
+  const matching = (await HoverLib.schedulers.findSchedulerByDomain(
+    state.siteDomain,
+    {
+      api: HoverLib.api,
+    }
+  )) as Scheduler | null;
+  state.currentScheduler = matching;
   renderScheduleState();
 }
 
@@ -1686,8 +1724,9 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const domain = state.siteDomain;
   if (value === "off") {
     if (state.currentScheduler) {
-      await HoverLib.api.put(`/v1/schedulers/${state.currentScheduler.id}`, {
-        is_enabled: false,
+      await HoverLib.schedulers.disableScheduler(state.currentScheduler.id, {
+        api: HoverLib.api,
+        expectedIsEnabled: state.currentScheduler.is_enabled,
       });
     }
     state.currentScheduler = null;
@@ -1699,16 +1738,23 @@ async function setJobSchedule(value: ScheduleOption): Promise<void> {
   const scheduleHours = Number(value);
 
   if (!state.currentScheduler) {
-    const created = (await HoverLib.api.post("/v1/schedulers", {
+    const created = (await HoverLib.schedulers.saveSchedulerForDomain(
       domain,
-      schedule_interval_hours: scheduleHours,
-    })) as Scheduler;
+      scheduleHours,
+      {
+        api: HoverLib.api,
+      }
+    )) as Scheduler;
     state.currentScheduler = created;
     setStatus("Schedule enabled.", "");
   } else {
-    const updated = (await HoverLib.api.put(
-      `/v1/schedulers/${state.currentScheduler.id}`,
-      { schedule_interval_hours: scheduleHours, is_enabled: true }
+    const updated = (await HoverLib.schedulers.saveSchedulerForDomain(
+      domain,
+      scheduleHours,
+      {
+        api: HoverLib.api,
+        currentScheduler: state.currentScheduler,
+      }
     )) as Scheduler;
     state.currentScheduler = updated;
     setStatus("Schedule updated.", "");
@@ -1843,8 +1889,8 @@ async function switchOrganisation(): Promise<void> {
 
   setDisabledAll(true);
   try {
-    await HoverLib.api.post("/v1/organisations/switch", {
-      organisation_id: select.value,
+    await HoverLib.organisations.switchOrganisation(select.value, {
+      api: HoverLib.api,
     });
     state.activeOrganisationId = select.value;
     await refreshDashboard();

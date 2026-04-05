@@ -8,13 +8,17 @@
  * No remaining legacy script dependencies.
  */
 
-import { get, post, put, del } from "/app/lib/api-client.js";
+import { get, post, put } from "/app/lib/api-client.js";
 import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
 import { createJobCard } from "/app/components/hover-job-card.js";
 import { showToast } from "/app/components/hover-toast.js";
 import { formatCount } from "/app/lib/formatters.js";
 import { initCreateOrgModal } from "/app/lib/settings/organisations.js";
 import { initAdminResetButton } from "/app/lib/admin.js";
+import {
+  deleteScheduler,
+  saveSchedulerForDomain,
+} from "/app/lib/scheduler-api.js";
 import {
   ensureDomainByName,
   setupDomainSearchInput,
@@ -380,12 +384,12 @@ async function handleJobCreation(event) {
         return;
       }
 
-      const scheduler = await post("/v1/schedulers", {
-        domain,
-        schedule_interval_hours: hours,
-        max_pages: maxPages,
-        find_links: true,
-        concurrency: requestBody.concurrency || 20,
+      const scheduler = await saveSchedulerForDomain(domain, hours, {
+        extra: {
+          max_pages: maxPages,
+          find_links: true,
+          concurrency: requestBody.concurrency || 20,
+        },
       });
 
       try {
@@ -396,7 +400,7 @@ async function handleJobCreation(event) {
           jobError
         );
         try {
-          await del(`/v1/schedulers/${encodeURIComponent(scheduler.id)}`);
+          await deleteScheduler(scheduler.id);
         } catch (cleanupError) {
           console.error("Failed to clean up scheduler:", cleanupError);
         }
