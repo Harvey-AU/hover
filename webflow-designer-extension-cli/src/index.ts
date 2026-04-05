@@ -766,6 +766,9 @@ function subscribeToJobUpdates(): void {
     return;
   }
 
+  // The shared subscription owns realtime fallback polling, so the older
+  // active-job interval must stop before we hand control across.
+  stopJobStatusPolling();
   cleanupRealtimeSubscription();
   jobsSubscriptionCleanup = HoverLib.jobs.subscribeToJobUpdates({
     orgId,

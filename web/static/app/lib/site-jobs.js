@@ -130,7 +130,7 @@ export function buildChartJobsSignature(jobs = [], options = {}) {
   return chartJobs
     .map(
       (job) =>
-        `${job.id || ""}:${job.status || ""}:${job.failed_tasks || 0}:${job.skipped_tasks || 0}:${job.completed_at || ""}:${job.total_tasks || 0}`
+        `${job.id || ""}:${job.status || ""}:${job.failed_tasks || 0}:${job.skipped_tasks || 0}:${job.completed_at || ""}:${job.total_tasks || 0}:${job.stats?.total_broken_links || 0}:${job.stats?.slow_page_buckets?.over_10s || 0}:${job.stats?.slow_page_buckets?.["5_to_10s"] || 0}:${job.stats?.slow_page_buckets?.["3_to_5s"] || 0}`
     )
     .join("|");
 }
