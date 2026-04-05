@@ -10,7 +10,10 @@
  *   2. <script src="supabase.js">         — sets window.supabase (CDN UMD)
  *   3. <script type="module" src="/app/pages/webflow-login.js">
  *
- * No gnh-bootstrap.js. No GNH_APP.whenReady(). No GNHAuth globals required.
+ * No gnh-bootstrap.js. No GNH_APP.whenReady().
+ * The popup still reuses the legacy GNHAuth bundle for modal loading,
+ * callback handling, and backend registration while the redirect contract
+ * remains centralised in auth.js.
  *
  * Auth redirect contract (from AGENTS.md):
  *   - Deep-link URLs must return to the exact originating URL.
@@ -22,27 +25,20 @@
  */
 
 import { isConfigured, supabaseUrl, supabaseAnonKey } from "/app/lib/config.js";
-import {
-  getSession,
-  onAuthStateChange,
-  signOut,
-} from "/app/lib/auth-session.js";
+import { getSession, onAuthStateChange } from "/app/lib/auth-session.js";
 import { showToast } from "/app/components/hover-toast.js";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
-
-/** postMessage target origin for the Webflow Designer extension. */
-const EXTENSION_ORIGIN = "https://webflow.com";
 
 /**
  * The state token passed by the extension when opening this popup.
  * Included in the postMessage payload so index.ts can verify it.
  * Passed as both ?state= and ?extension_state= in the URL.
  */
+const SEARCH_PARAMS = new URLSearchParams(window.location.search);
+const TARGET_ORIGIN = SEARCH_PARAMS.get("origin") || "";
 const EXTENSION_STATE =
-  new URLSearchParams(window.location.search).get("extension_state") ||
-  new URLSearchParams(window.location.search).get("state") ||
-  "";
+  SEARCH_PARAMS.get("extension_state") || SEARCH_PARAMS.get("state") || "";
 
 // ── Element references ─────────────────────────────────────────────────────────
 
@@ -63,6 +59,10 @@ async function init() {
     return;
   }
 
+  if (window.opener && !validatePopupContract()) {
+    return;
+  }
+
   // Initialise the Supabase client if auth.js hasn't done it yet.
   // auth.js.initialiseSupabase() is still the canonical initialiser;
   // we call it here as a safety net in case core.js is not present.
@@ -77,7 +77,13 @@ async function init() {
 
   // Load the shared auth modal (legacy component — reused as-is for Phase 1).
   // Phase 2+ will replace this with a native module component.
-  await loadAuthModal();
+  try {
+    await loadAuthModalFromLegacy();
+  } catch (error) {
+    console.error("webflow-login: failed to load auth modal", error);
+    setStatus("Sign-in modal failed to load — please refresh.", "error");
+    return;
+  }
 
   // Handle any OAuth callback tokens already in the URL/hash.
   await handleCallbackIfPresent();
@@ -121,7 +127,7 @@ async function handleAuthenticated(session) {
 
   // Register with backend (idempotent — 409 is success).
   if (session.user) {
-    await registerUser(session.user).catch((err) => {
+    await registerUserWithBackend(session.user).catch((err) => {
       console.warn(
         "webflow-login: backend registration failed (non-fatal)",
         err
@@ -153,7 +159,7 @@ async function handleAuthenticated(session) {
           avatarUrl: session.user?.user_metadata?.avatar_url ?? "",
         },
       },
-      EXTENSION_ORIGIN
+      TARGET_ORIGIN
     );
 
     setStatus("Signed in — you can close this window.", "success");
@@ -204,41 +210,16 @@ async function handleCallbackIfPresent() {
 /**
  * @param {import("@supabase/supabase-js").User} user
  */
-async function registerUser(user) {
-  const session = await getSession();
-  if (!session?.access_token) return;
-
-  const metadata = user.user_metadata || {};
-  const firstName =
-    (metadata.given_name || metadata.first_name || "").trim() || null;
-  const lastName =
-    (metadata.family_name || metadata.last_name || "").trim() || null;
-  const fullName =
-    (
-      metadata.full_name ||
-      metadata.name ||
-      [firstName, lastName].filter(Boolean).join(" ") ||
-      ""
-    ).trim() || null;
-
-  const res = await fetch("/v1/auth/register", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify({
-      user_id: user.id,
-      email: user.email,
-      first_name: firstName,
-      last_name: lastName,
-      full_name: fullName,
-    }),
-  });
-
-  if (!res.ok && res.status !== 409) {
-    throw new Error(`Backend registration failed: ${res.status}`);
+async function registerUserWithBackend(user) {
+  if (typeof window.GNHAuth?.registerUserWithBackend === "function") {
+    const registered = await window.GNHAuth.registerUserWithBackend(user);
+    if (!registered) {
+      throw new Error("Backend registration failed");
+    }
+    return;
   }
+
+  throw new Error("Legacy backend registration helper unavailable");
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────
@@ -256,28 +237,13 @@ function setStatus(message, variant = "info") {
 }
 
 /** Load and inject the shared auth modal HTML, then show the login form. */
-async function loadAuthModal() {
-  const container = el("authModalContainer");
-  if (!container) return;
-
-  try {
-    const res = await fetch("/auth-modal.html", { cache: "no-store" });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    // Verify content-type before injecting — guards against unexpected proxy responses.
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("text/html")) {
-      throw new Error(`Unexpected content-type: ${ct}`);
-    }
-    const html = await res.text();
-    // Parse via DOMParser and only insert non-script nodes to prevent XSS
-    // in the unlikely event the response is tampered.
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    doc.querySelectorAll("script").forEach((s) => s.remove());
-    container.append(...doc.body.childNodes);
-  } catch (err) {
-    console.error("webflow-login: failed to load auth modal", err);
-    setStatus("Sign-in modal failed to load — please refresh.", "error");
+async function loadAuthModalFromLegacy() {
+  if (typeof window.GNHAuth?.loadAuthModal === "function") {
+    await window.GNHAuth.loadAuthModal();
+    return;
   }
+
+  throw new Error("Auth modal loader unavailable");
 }
 
 /** Show the auth modal in login mode. */
@@ -289,6 +255,42 @@ function showLogin() {
   if (typeof window.showLoginForm === "function") {
     window.showLoginForm();
   }
+}
+
+function validatePopupContract() {
+  if (!window.opener || window.opener.closed) {
+    setStatus(
+      "This login window must be opened from the Webflow extension.",
+      "error"
+    );
+    return false;
+  }
+
+  if (
+    typeof window.GNHAuth?.isValidExtensionTargetOrigin === "function" &&
+    !window.GNHAuth.isValidExtensionTargetOrigin(TARGET_ORIGIN)
+  ) {
+    setStatus("Invalid extension origin. Please reopen sign-in.", "error");
+    return false;
+  }
+
+  try {
+    const referrerOrigin = document.referrer
+      ? new URL(document.referrer).origin
+      : "";
+    if (referrerOrigin && TARGET_ORIGIN && referrerOrigin !== TARGET_ORIGIN) {
+      setStatus(
+        "Origin mismatch. Please relaunch from the extension.",
+        "error"
+      );
+      return false;
+    }
+  } catch (_error) {
+    setStatus("Unable to validate opener origin. Please relaunch.", "error");
+    return false;
+  }
+
+  return true;
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────────

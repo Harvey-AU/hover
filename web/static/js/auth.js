@@ -2199,6 +2199,7 @@ if (typeof module !== "undefined" && module.exports) {
     setupAuthModalHandlers,
     setupLoginPageHandlers,
     handleLogout,
+    isValidExtensionTargetOrigin,
     defaultHandleAuthSuccess,
     initAuthCallbackPage,
     initExtensionAuthPage,
@@ -2239,6 +2240,7 @@ if (typeof module !== "undefined" && module.exports) {
     setupAuthModalHandlers,
     setupLoginPageHandlers,
     handleLogout,
+    isValidExtensionTargetOrigin,
     initAuthCallbackPage,
     initExtensionAuthPage,
     clearPendingInviteToken,
@@ -2274,6 +2276,7 @@ if (typeof module !== "undefined" && module.exports) {
   window.setupAuthModalHandlers = setupAuthModalHandlers;
   window.setupLoginPageHandlers = setupLoginPageHandlers;
   window.handleLogout = handleLogout;
+  window.isValidExtensionTargetOrigin = isValidExtensionTargetOrigin;
   window.handleAuthSuccess = defaultHandleAuthSuccess;
   window.initExtensionAuthPage = initExtensionAuthPage;
   window.initAuthCallbackPage = initAuthCallbackPage;
