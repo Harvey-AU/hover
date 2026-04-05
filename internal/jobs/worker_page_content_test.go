@@ -39,6 +39,10 @@ func (s *stubStorageUploader) Delete(ctx context.Context, bucket, path string) e
 	return nil
 }
 
+func (s *stubStorageUploader) Download(_ context.Context, _, _ string) ([]byte, error) {
+	return nil, nil
+}
+
 func gunzipTestPayload(t *testing.T, payload []byte) []byte {
 	t.Helper()
 
