@@ -1,0 +1,460 @@
+/* ─── Dashboard Surface — extension-aligned shared styles ──────────────────
+ *
+ * Depends on tokens.css, base.css, and components.css being loaded first.
+ * Applies the Webflow extension visual language to /dashboard while keeping
+ * dashboard-specific layout hooks explicit.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+body.page-dashboard {
+  color: var(--text-colour--primary);
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(142, 218, 239, 0.12),
+      transparent 28%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(16, 26, 69, 0.98) 0%,
+      rgba(3, 4, 35, 1) 48%,
+      rgba(3, 4, 35, 1) 100%
+    );
+}
+
+body.page-dashboard .global-nav .header {
+  background: rgba(3, 4, 35, 0.92);
+  border-bottom: var(--border-size--thin) solid var(--border-colour--active);
+  backdrop-filter: blur(18px);
+}
+
+body.page-dashboard .global-nav .container {
+  max-width: 1240px;
+  padding: 0 var(--spacing--6xl);
+}
+
+body.page-dashboard .global-nav .logo,
+body.page-dashboard .global-nav .logo:hover,
+body.page-dashboard .global-nav .nav-title,
+body.page-dashboard .global-nav .user-info,
+body.page-dashboard .global-nav .gnh-org-single {
+  color: var(--text-colour--primary);
+}
+
+body.page-dashboard .global-nav .nav-separator {
+  color: var(--text-colour--disabled);
+}
+
+body.page-dashboard .global-nav .gnh-org-switcher-btn,
+body.page-dashboard .global-nav .gnh-org-create-btn,
+body.page-dashboard .global-nav .gnh-dropdown-item,
+body.page-dashboard .global-nav .gnh-notifications-footer-btn,
+body.page-dashboard .global-nav .gnh-button,
+body.page-dashboard .global-nav .gnh-button-outline,
+body.page-dashboard .global-nav .gnh-button-primary {
+  color: var(--colour--brand-primary);
+  background: var(--background-colour--canvas);
+  border-color: var(--border-colour--active);
+}
+
+body.page-dashboard .global-nav .gnh-org-switcher-btn:hover,
+body.page-dashboard .global-nav .gnh-org-create-btn:hover,
+body.page-dashboard .global-nav .gnh-dropdown-item:hover,
+body.page-dashboard .global-nav .gnh-notifications-footer-btn:hover,
+body.page-dashboard .global-nav .gnh-button-outline:hover {
+  background: var(--background-colour--hover-subtle);
+  border-color: var(--border-colour--strong);
+}
+
+body.page-dashboard .global-nav .gnh-button-primary {
+  color: var(--text-colour--on-brand);
+  background: var(--background-colour--brand);
+  border-color: var(--background-colour--brand);
+}
+
+body.page-dashboard .global-nav .gnh-button-primary:hover {
+  background: var(--background-colour--brand-hover);
+  border-color: var(--background-colour--brand-hover);
+}
+
+body.page-dashboard .global-nav .gnh-org-dropdown,
+body.page-dashboard .global-nav .gnh-dropdown-menu,
+body.page-dashboard .global-nav .gnh-notifications-dropdown {
+  background: var(--background-colour--panel);
+  border: var(--border-size--default) solid var(--border-colour--default);
+  box-shadow: var(--shadow--overlay);
+}
+
+body.page-dashboard .global-nav .gnh-org-dropdown-header,
+body.page-dashboard .global-nav .gnh-org-dropdown-footer,
+body.page-dashboard .global-nav .gnh-dropdown-divider,
+body.page-dashboard .global-nav .gnh-notifications-header,
+body.page-dashboard .global-nav .gnh-notifications-footer {
+  border-color: var(--border-colour--default);
+}
+
+body.page-dashboard .global-nav .gnh-org-item,
+body.page-dashboard .global-nav .gnh-notification-item {
+  color: var(--text-colour--primary);
+}
+
+body.page-dashboard .global-nav .gnh-org-item:hover,
+body.page-dashboard .global-nav .gnh-notification-item:hover {
+  background: var(--background-colour--hover-subtle);
+}
+
+body.page-dashboard .global-nav .gnh-org-item.active {
+  background: rgba(97, 208, 239, 0.18);
+  color: var(--colour--brand-primary);
+}
+
+body.page-dashboard .main-content {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: var(--spacing--7xl) var(--spacing--6xl) var(--spacing--8xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing--6xl);
+}
+
+.dashboard-surface-card {
+  background: linear-gradient(
+    180deg,
+    rgba(16, 26, 69, 0.96) 0%,
+    rgba(3, 4, 35, 0.98) 100%
+  );
+  border: var(--border-size--default) solid var(--border-colour--default);
+  border-radius: calc(var(--radius--control) * 2);
+  box-shadow: var(--shadow--overlay);
+}
+
+.dashboard-quick-run {
+  padding: var(--spacing--7xl);
+}
+
+.dashboard-quick-run__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing--sm);
+  margin-bottom: var(--spacing--6xl);
+}
+
+.dashboard-quick-run__title {
+  margin: 0;
+  font-size: calc(var(--font-size--display) * 1.25);
+  font-weight: 700;
+  color: var(--colour--brand-primary);
+}
+
+.dashboard-quick-run__copy {
+  margin: 0;
+  color: var(--text-colour--secondary);
+}
+
+.dashboard-quick-run__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) repeat(3, minmax(0, 0.8fr)) auto;
+  gap: var(--spacing--6xl);
+  align-items: end;
+}
+
+.dashboard-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing--sm);
+  min-width: 0;
+}
+
+.dashboard-field__label {
+  font-size: var(--font-size--caption);
+  font-weight: 700;
+  color: var(--text-colour--secondary);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.dashboard-field__control {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--spacing--4xl);
+  border: var(--border-size--default) solid var(--border-colour--active);
+  border-radius: var(--radius--control);
+  background: rgba(3, 4, 35, 0.78);
+  color: var(--text-colour--primary);
+  font: inherit;
+}
+
+.dashboard-field__control:focus {
+  outline: none;
+  border-color: var(--colour--brand-primary-hover);
+  box-shadow: 0 0 0 3px rgba(142, 218, 239, 0.14);
+}
+
+.dashboard-field__control::placeholder {
+  color: var(--text-colour--disabled);
+}
+
+.dashboard-field__control option {
+  color: var(--text-colour--primary);
+  background: var(--background-colour--panel);
+}
+
+.dashboard-quick-run__submit {
+  min-height: 44px;
+  padding: 0 var(--spacing--6xl);
+  white-space: nowrap;
+}
+
+body.page-dashboard .dashboard-actions,
+body.page-dashboard .gnh-jobs-section,
+body.page-dashboard .gnh-stat-card,
+body.page-dashboard .dashboard-login-card,
+body.page-dashboard .gnh-modal-content {
+  background: linear-gradient(
+    180deg,
+    rgba(16, 26, 69, 0.96) 0%,
+    rgba(3, 4, 35, 0.98) 100%
+  );
+  border: var(--border-size--default) solid var(--border-colour--default);
+  box-shadow: var(--shadow--overlay);
+}
+
+body.page-dashboard .dashboard-actions {
+  margin-bottom: 0;
+  padding: var(--spacing--6xl);
+  border-radius: calc(var(--radius--control) * 2);
+}
+
+body.page-dashboard .dashboard-filters {
+  gap: var(--spacing--6xl);
+}
+
+body.page-dashboard .filter-group {
+  gap: var(--spacing--sm);
+}
+
+body.page-dashboard .filter-label {
+  font-size: var(--font-size--caption);
+  font-weight: 700;
+  color: var(--text-colour--secondary);
+  letter-spacing: 0.03em;
+}
+
+body.page-dashboard .filter-select,
+body.page-dashboard .gnh-form-input {
+  border: var(--border-size--default) solid var(--border-colour--active);
+  border-radius: var(--radius--control);
+  background: rgba(3, 4, 35, 0.78);
+  color: var(--text-colour--primary);
+}
+
+body.page-dashboard .filter-select:focus,
+body.page-dashboard .gnh-form-input:focus {
+  border-color: var(--colour--brand-primary-hover);
+  box-shadow: 0 0 0 3px rgba(142, 218, 239, 0.14);
+}
+
+body.page-dashboard .gnh-btn,
+body.page-dashboard .gnh-button {
+  min-height: 38px;
+  border-radius: var(--radius--control);
+  border: var(--border-size--default) solid transparent;
+  font: inherit;
+  font-weight: 700;
+  transition:
+    background var(--motion-duration--fast) var(--motion-easing--standard),
+    border-color var(--motion-duration--fast) var(--motion-easing--standard),
+    color var(--motion-duration--fast) var(--motion-easing--standard);
+}
+
+body.page-dashboard .gnh-btn-primary,
+body.page-dashboard .gnh-button-primary {
+  color: var(--text-colour--on-brand);
+  background: var(--background-colour--brand);
+  border-color: var(--background-colour--brand);
+}
+
+body.page-dashboard .gnh-btn-primary:hover,
+body.page-dashboard .gnh-button-primary:hover {
+  background: var(--background-colour--brand-hover);
+  border-color: var(--background-colour--brand-hover);
+}
+
+body.page-dashboard .gnh-btn-secondary,
+body.page-dashboard .gnh-button-outline {
+  color: var(--colour--brand-primary);
+  background: rgba(97, 208, 239, 0.12);
+  border-color: var(--border-colour--active);
+}
+
+body.page-dashboard .gnh-btn-secondary:hover,
+body.page-dashboard .gnh-button-outline:hover {
+  background: var(--background-colour--hover-subtle);
+  border-color: var(--border-colour--strong);
+}
+
+body.page-dashboard .page-actions {
+  gap: var(--spacing--xl);
+}
+
+body.page-dashboard .gnh-stats-grid {
+  gap: var(--spacing--6xl);
+  margin-bottom: 0;
+}
+
+body.page-dashboard .gnh-stat-card {
+  padding: var(--spacing--7xl);
+  border-radius: calc(var(--radius--control) * 2);
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+}
+
+body.page-dashboard .gnh-stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(
+    180deg,
+    var(--colour--brand-primary) 0%,
+    rgba(97, 208, 239, 0.15) 100%
+  );
+}
+
+body.page-dashboard .gnh-stat-value {
+  font-size: clamp(2rem, 5vw, 2.6rem);
+  margin-bottom: var(--spacing--sm);
+  color: var(--colour--brand-primary);
+}
+
+body.page-dashboard .gnh-stat-label {
+  color: var(--text-colour--secondary);
+  letter-spacing: 0.06em;
+}
+
+body.page-dashboard .gnh-jobs-section {
+  border-radius: calc(var(--radius--control) * 2);
+  margin-bottom: 0;
+}
+
+body.page-dashboard .gnh-section-header {
+  padding: var(--spacing--7xl) var(--spacing--7xl) 0;
+  margin-bottom: var(--spacing--6xl);
+}
+
+body.page-dashboard .gnh-section-header h3 {
+  color: var(--text-colour--primary);
+}
+
+body.page-dashboard .gnh-jobs-list {
+  padding: 0 var(--spacing--7xl) var(--spacing--7xl);
+}
+
+.dashboard-login-card {
+  max-width: 430px;
+  margin: 80px auto;
+  padding: var(--spacing--8xl);
+  border-radius: calc(var(--radius--control) * 2);
+}
+
+.dashboard-login-card__header {
+  text-align: center;
+  margin-bottom: var(--spacing--7xl);
+}
+
+.dashboard-login-card__icon {
+  font-size: 44px;
+  margin-bottom: var(--spacing--xl);
+}
+
+.dashboard-login-card__title {
+  margin: 0 0 var(--spacing--sm);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--colour--brand-primary);
+}
+
+.dashboard-login-card__copy,
+.dashboard-helper-text {
+  margin: 0;
+  font-size: var(--font-size--caption);
+  line-height: 1.5;
+  color: var(--text-colour--secondary);
+}
+
+.dashboard-login-card__actions {
+  display: flex;
+  gap: var(--spacing--xl);
+  margin-bottom: var(--spacing--6xl);
+}
+
+.dashboard-login-card__actions .gnh-button {
+  flex: 1;
+}
+
+.dashboard-modal-actions {
+  display: flex;
+  gap: var(--spacing--xl);
+  justify-content: flex-end;
+  margin-top: var(--spacing--8xl);
+}
+
+body.page-dashboard .gnh-modal-content {
+  border-radius: calc(var(--radius--control) * 2);
+}
+
+body.page-dashboard .gnh-modal-title,
+body.page-dashboard .gnh-form-group label {
+  color: var(--text-colour--primary);
+}
+
+body.page-dashboard .gnh-modal-close {
+  color: var(--text-colour--secondary);
+}
+
+body.page-dashboard .gnh-modal-close:hover {
+  color: var(--text-colour--primary);
+}
+
+@media (max-width: 980px) {
+  .dashboard-quick-run__form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-quick-run__submit {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  body.page-dashboard .global-nav .container,
+  body.page-dashboard .main-content {
+    padding-left: var(--spacing--4xl);
+    padding-right: var(--spacing--4xl);
+  }
+
+  body.page-dashboard .dashboard-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  body.page-dashboard .dashboard-filters,
+  .dashboard-login-card__actions,
+  .dashboard-modal-actions {
+    flex-direction: column;
+  }
+
+  .dashboard-quick-run,
+  .dashboard-login-card,
+  body.page-dashboard .gnh-stat-card,
+  body.page-dashboard .gnh-section-header,
+  body.page-dashboard .gnh-jobs-list {
+    padding-left: var(--spacing--6xl);
+    padding-right: var(--spacing--6xl);
+  }
+
+  .dashboard-quick-run__form {
+    grid-template-columns: 1fr;
+  }
+}
