@@ -249,11 +249,12 @@ func buildRequestAttemptDiagnostics(
 
 // Crawler represents a URL crawler with configuration and metrics
 type Crawler struct {
-	config     *Config
-	colly      *colly.Collector
-	id         string    // Add an ID field to identify each crawler instance
-	metricsMap *sync.Map // Shared metrics storage for the transport
-	aia        *aiaTransport
+	config      *Config
+	colly       *colly.Collector
+	id          string    // Add an ID field to identify each crawler instance
+	metricsMap  *sync.Map // Shared metrics storage for the transport
+	aia         *aiaTransport
+	probeClient *http.Client // Shared client for cache probe requests — avoids per-call transport leaks
 }
 
 // GetUserAgent returns the user agent string for this crawler
@@ -359,6 +360,7 @@ func New(config *Config, id ...string) *Crawler {
 
 	// Set up base transport with SSRF-safe dialer
 	baseTransport := &http.Transport{
+		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
 		MaxIdleConnsPerHost: 25,
 		MaxConnsPerHost:     50,
 		IdleConnTimeout:     120 * time.Second,
@@ -408,12 +410,29 @@ func New(config *Config, id ...string) *Crawler {
 
 	// Note: OnHTML handler will be registered on the clone in WarmURL to ensure proper context access
 
+	// Build a shared probe transport for cache-status HEAD requests.
+	// Reusing a single client avoids leaking a new http.Transport per probe call.
+	probeTransport := &http.Transport{
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 5,
+		MaxConnsPerHost:     10,
+		IdleConnTimeout:     30 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	if !config.SkipSSRFCheck {
+		probeTransport.DialContext = ssrfSafeDialContext()
+	}
+
 	return &Crawler{
 		config:     config,
 		colly:      c,
 		id:         crawlerID,
 		metricsMap: metricsMap,
 		aia:        aiaRT,
+		probeClient: &http.Client{
+			Timeout:   config.DefaultTimeout,
+			Transport: newAIATransport(probeTransport),
+		},
 	}
 }
 
@@ -1023,21 +1042,7 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (Probe
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 
-	// Use SSRF-safe transport if protection is enabled
-	transport := &http.Transport{
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
-
-	if !c.config.SkipSSRFCheck {
-		transport.DialContext = ssrfSafeDialContext()
-	}
-
-	client := &http.Client{
-		Timeout:   c.config.DefaultTimeout,
-		Transport: transport,
-	}
-
-	resp, err := client.Do(req)
+	resp, err := c.probeClient.Do(req)
 	if err != nil {
 		return buildProbeErrorDiagnostics(req.Method, targetURL, err), err
 	}
@@ -1063,6 +1068,7 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 	}
 
 	transport := &http.Transport{
+		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
 		MaxIdleConnsPerHost: 25,
 		MaxConnsPerHost:     50,
 		IdleConnTimeout:     120 * time.Second,

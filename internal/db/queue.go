@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Harvey-AU/hover/internal/observability"
+	"github.com/Harvey-AU/hover/internal/util"
 )
 
 var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")
@@ -67,6 +68,9 @@ const (
 	defaultTxRetries           = 3
 	defaultRetryBaseDelay      = 200 * time.Millisecond
 	defaultRetryMaxDelay       = 1500 * time.Millisecond
+
+	// fdPressureThreshold is the fraction of the fd limit at which pressure is reported
+	fdPressureThreshold = 0.90
 
 	waitingReasonConcurrencyLimit = "concurrency_limit"
 	waitingReasonQuotaExhausted   = "quota_exhausted"
@@ -756,6 +760,22 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 				Int("semaphore_in_use", len(q.poolSemaphore)).
 				Msg("Pool semaphore rejected request - context done before acquiring slot")
 			observability.RecordDBPoolRejection(ctx)
+			return noop, ErrPoolSaturated
+		}
+	}
+
+	// Check fd pressure before acquiring a DB connection
+	fdCurrent, fdLimit, fdErr := util.FDUsage()
+	if fdErr == nil {
+		fdPressure := util.FDPressureFrom(fdCurrent, fdLimit)
+		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
+		if fdPressure > fdPressureThreshold {
+			log.Warn().
+				Int("fd_current", fdCurrent).
+				Int("fd_limit", fdLimit).
+				Float64("fd_pressure", fdPressure).
+				Msg("File descriptor pressure critical — rejecting DB operation")
+			release()
 			return noop, ErrPoolSaturated
 		}
 	}
