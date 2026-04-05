@@ -21,6 +21,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/Harvey-AU/hover/internal/observability"
+	"github.com/Harvey-AU/hover/internal/util"
 )
 
 var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")
@@ -756,6 +757,22 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 				Int("semaphore_in_use", len(q.poolSemaphore)).
 				Msg("Pool semaphore rejected request - context done before acquiring slot")
 			observability.RecordDBPoolRejection(ctx)
+			return noop, ErrPoolSaturated
+		}
+	}
+
+	// Check fd pressure before acquiring a DB connection
+	fdCurrent, fdLimit, fdErr := util.FDUsage()
+	if fdErr == nil && fdLimit > 0 {
+		fdPressure := float64(fdCurrent) / float64(fdLimit)
+		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
+		if fdPressure > 0.90 {
+			log.Warn().
+				Int("fd_current", fdCurrent).
+				Int("fd_limit", fdLimit).
+				Float64("fd_pressure", fdPressure).
+				Msg("File descriptor pressure critical — rejecting DB operation")
+			release()
 			return noop, ErrPoolSaturated
 		}
 	}
