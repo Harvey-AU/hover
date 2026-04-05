@@ -22,7 +22,8 @@
 git clone https://github.com/[your-username]/hover.git
 cd hover
 
-# Setup Git hooks for automatic formatting
+# Set up tracked Git hooks once per clone
+# Future worktrees inherit this shared hooks path automatically
 bash scripts/setup-hooks.sh
 ```
 
@@ -31,6 +32,7 @@ The Git hooks will automatically format your code before each commit:
 - ✅ Go files formatted with `gofmt`
 - ✅ Markdown, YAML, JSON formatted with Prettier
 - ✅ No manual formatting needed!
+- ✅ Future worktrees reuse the same tracked hooks path
 
 ### 2. Start Development Environment
 
