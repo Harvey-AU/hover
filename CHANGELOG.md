@@ -43,7 +43,8 @@ On merge, CI will:
 - Add file descriptor pressure detection in `ensurePoolCapacity` — rejects DB
   operations early with `ErrPoolSaturated` (triggering existing retry/backoff)
   when fd usage exceeds 90%, instead of failing with cryptic DNS errors
-- Raise container fd soft limit to hard limit ceiling in Dockerfile as safety net
+- Raise container fd soft limit to hard limit ceiling in Dockerfile as safety
+  net
 
 ### Added
 
