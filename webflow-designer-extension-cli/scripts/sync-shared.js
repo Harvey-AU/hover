@@ -31,6 +31,7 @@ const LIB_MODULES = [
   "lib/auth-session.js",
   "lib/formatters.js",
   "lib/integration-http.js",
+  "lib/site-jobs.js",
   "lib/domain-search.js",
   "lib/invite-flow.js",
 ];

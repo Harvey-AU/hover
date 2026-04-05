@@ -38,12 +38,7 @@ const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
 const JOB_POLLING_INTERVAL_MS = 6000;
-
-// Realtime subscription constants (mirrors dashboard pattern)
-const REALTIME_DEBOUNCE_MS = 250;
-const SUBSCRIBE_RETRY_INTERVAL_MS = 1000;
 const FALLBACK_POLLING_INTERVAL_MS = 1000;
-const MAX_SUBSCRIBE_RETRIES = 15;
 
 const APP_ROUTES = {
   dashboard: "/dashboard",
@@ -138,6 +133,39 @@ declare const HoverLib: {
       context?: string
     ) => Promise<Response>;
   };
+  jobs: {
+    fetchJobs: (options?: {
+      limit?: number;
+      range?: string;
+      include?: string;
+    }) => Promise<unknown[]>;
+    normaliseDomain: (input: string) => string;
+    filterJobsByDomains: (
+      jobs: unknown[],
+      options?: { siteDomain?: string | null; siteDomainCandidates?: string[] }
+    ) => unknown[];
+    pickLatestJobByDomains: (
+      jobs: unknown[],
+      options?: { siteDomain?: string | null; siteDomainCandidates?: string[] }
+    ) => unknown | null;
+    buildCompletedJobsSignature: (
+      jobs: unknown[],
+      options?: { siteDomain?: string | null; siteDomainCandidates?: string[] },
+      isActiveJobStatus?: (status: string) => boolean
+    ) => string;
+    buildChartJobsSignature: (
+      jobs: unknown[],
+      options?: { siteDomain?: string | null; siteDomainCandidates?: string[] }
+    ) => string;
+    subscribeToJobUpdates: (options: {
+      orgId: string;
+      onUpdate: () => void;
+      supabaseClient?: SupabaseClient | null;
+      channelName?: string;
+      getFallbackInterval?: () => number;
+      onSubscriptionIssue?: (status?: string, err?: Error) => void;
+    }) => () => void;
+  };
 };
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
@@ -215,10 +243,6 @@ type JobExportPayload = {
   export_type?: string;
   columns?: ExportColumn[];
   tasks?: Record<string, unknown>[];
-};
-
-type JobListResponse = {
-  jobs: JobItem[];
 };
 
 type Scheduler = {
@@ -486,14 +510,8 @@ let lastChartJobsSignature = "";
 
 // Supabase realtime state
 let supabaseClient: SupabaseClient | null = null;
-let jobsChannel: RealtimeChannel | null = null;
-let subscribeRetryCount = 0;
-let subscribeRetryTimeoutId: number | null = null;
-let fallbackPollingIntervalId: number | null = null;
-let lastRealtimeRefresh = 0;
-let throttleTimeoutId: number | null = null;
 let isRealtimeRefreshing = false;
-let cleanupHandlerRegistered = false;
+let jobsSubscriptionCleanup: (() => void) | null = null;
 
 function getStoredBaseUrl(): string {
   const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
@@ -639,15 +657,7 @@ function setText(node: Element | null, value: string): void {
 }
 
 function normalizeDomain(input: string): string {
-  const trimmed = input
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "");
-  if (!trimmed) {
-    return "";
-  }
-  return trimmed.split("/")[0] || trimmed;
+  return HoverLib.jobs.normaliseDomain(input);
 }
 
 function normalizeJobStatus(status: string): string {
@@ -661,38 +671,28 @@ function isActiveJobStatus(status: string): boolean {
 function pickLatestJobForCurrentSite(
   jobs: JobItem[] | undefined
 ): JobItem | null {
-  const candidates = getSiteDomainCandidates();
-  return (
-    jobs?.find((job) => {
-      const jobDomain = normalizeDomain(job.domains?.name || "");
-      return !candidates.length || candidates.includes(jobDomain);
-    }) || null
-  );
+  return (HoverLib.jobs.pickLatestJobByDomains(jobs || [], {
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  }) || null) as JobItem | null;
 }
 
 function buildCompletedJobsSignature(jobs: JobItem[] | undefined): string {
-  const completed = filterSiteJobs(jobs || [])
-    .filter((job) => !isActiveJobStatus(job.status))
-    .slice(0, 6);
-
-  return completed
-    .map(
-      (job) =>
-        `${job.id}:${job.status}:${job.total_tasks}:${job.completed_tasks}:${job.failed_tasks}:${job.skipped_tasks}:${job.completed_at || ""}`
-    )
-    .join("|");
+  return HoverLib.jobs.buildCompletedJobsSignature(
+    jobs || [],
+    {
+      siteDomain: state.siteDomain,
+      siteDomainCandidates: state.siteDomainCandidates,
+    },
+    isActiveJobStatus
+  );
 }
 
 function buildChartJobsSignature(jobs: JobItem[] | undefined): string {
-  const chartJobs = filterSiteJobs(jobs || [])
-    .filter((job) => normalizeJobStatus(job.status) === "completed")
-    .slice(0, 12);
-  return chartJobs
-    .map(
-      (job) =>
-        `${job.id}:${job.status}:${job.failed_tasks}:${job.skipped_tasks}:${job.completed_at || ""}:${job.total_tasks}`
-    )
-    .join("|");
+  return HoverLib.jobs.buildChartJobsSignature(jobs || [], {
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  });
 }
 
 function stopJobStatusPolling(): void {
@@ -703,10 +703,9 @@ function stopJobStatusPolling(): void {
 }
 
 function startJobStatusPolling(): void {
-  // When realtime is active, the realtime subscription + fallback polling
-  // handle all refreshes. Only start the legacy 6s poller if we have no
-  // realtime channel (e.g. Supabase config unavailable).
-  if (jobsChannel || fallbackPollingIntervalId) {
+  // When realtime is active, the shared subscription also owns fallback polling.
+  // Only start the legacy 6 s poller if we have no shared subscription.
+  if (jobsSubscriptionCleanup) {
     return;
   }
 
@@ -732,7 +731,6 @@ function startJobStatusPolling(): void {
 async function realtimeRefresh(): Promise<void> {
   if (isRealtimeRefreshing) return;
   isRealtimeRefreshing = true;
-  lastRealtimeRefresh = Date.now();
 
   try {
     // Refresh both job state and usage stats, matching the dashboard pattern.
@@ -755,155 +753,44 @@ async function refreshUsage(): Promise<void> {
   }
 }
 
-function throttledRealtimeRefresh(): void {
-  // Receiving a real event proves realtime works — stop fallback polling.
-  clearFallbackPolling();
-
-  const now = Date.now();
-  const timeSinceLastRefresh = now - lastRealtimeRefresh;
-
-  if (timeSinceLastRefresh >= REALTIME_DEBOUNCE_MS && !isRealtimeRefreshing) {
-    void realtimeRefresh();
-    return;
-  }
-
-  // Schedule a refresh when the throttle window expires.
-  if (!throttleTimeoutId && !isRealtimeRefreshing) {
-    const delay = REALTIME_DEBOUNCE_MS - timeSinceLastRefresh;
-    throttleTimeoutId = window.setTimeout(
-      () => {
-        throttleTimeoutId = null;
-        if (!isRealtimeRefreshing) {
-          void realtimeRefresh();
-        }
-      },
-      Math.max(delay, 100)
-    );
-  }
-}
-
-function startFallbackPolling(): void {
-  if (fallbackPollingIntervalId) return;
-
-  fallbackPollingIntervalId = window.setInterval(() => {
-    void realtimeRefresh();
-  }, FALLBACK_POLLING_INTERVAL_MS);
-}
-
-function clearFallbackPolling(): void {
-  if (fallbackPollingIntervalId) {
-    window.clearInterval(fallbackPollingIntervalId);
-    fallbackPollingIntervalId = null;
-  }
-}
-
 function cleanupRealtimeSubscription(): void {
-  if (subscribeRetryTimeoutId) {
-    window.clearTimeout(subscribeRetryTimeoutId);
-    subscribeRetryTimeoutId = null;
+  if (jobsSubscriptionCleanup) {
+    jobsSubscriptionCleanup();
+    jobsSubscriptionCleanup = null;
   }
-
-  if (throttleTimeoutId) {
-    window.clearTimeout(throttleTimeoutId);
-    throttleTimeoutId = null;
-  }
-
-  clearFallbackPolling();
-
-  if (jobsChannel && supabaseClient) {
-    void supabaseClient.removeChannel(jobsChannel);
-    jobsChannel = null;
-  }
-
-  subscribeRetryCount = 0;
-  cleanupHandlerRegistered = false;
 }
 
 async function subscribeToJobUpdates(): Promise<void> {
   const orgId = state.activeOrganisationId;
   if (!orgId || !supabaseClient) {
-    if (subscribeRetryCount < MAX_SUBSCRIBE_RETRIES) {
-      subscribeRetryCount++;
-      subscribeRetryTimeoutId = window.setTimeout(
-        () => void subscribeToJobUpdates(),
-        SUBSCRIBE_RETRY_INTERVAL_MS
-      );
-    } else {
-      console.warn("[Realtime] Max retries reached, enabling fallback polling");
-      startFallbackPolling();
-    }
     return;
   }
 
-  // Reset retry state on success.
-  subscribeRetryCount = 0;
-  subscribeRetryTimeoutId = null;
-
-  // Clean up existing subscription if any.
-  if (jobsChannel && supabaseClient) {
-    try {
-      await supabaseClient.removeChannel(jobsChannel);
-    } catch (_e) {
-      // Ignore removal errors.
-    }
-    jobsChannel = null;
-  }
-
-  // Register cleanup handler once.
-  if (!cleanupHandlerRegistered) {
-    window.addEventListener("beforeunload", cleanupRealtimeSubscription);
-    cleanupHandlerRegistered = true;
-  }
-
-  try {
-    const channel = supabaseClient
-      .channel(`jobs-changes:${orgId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "jobs",
-          filter: `organisation_id=eq.${orgId}`,
-        },
-        () => throttledRealtimeRefresh()
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "jobs",
-          filter: `organisation_id=eq.${orgId}`,
-        },
-        () => throttledRealtimeRefresh()
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "jobs",
-          filter: `organisation_id=eq.${orgId}`,
-        },
-        () => throttledRealtimeRefresh()
-      )
-      .subscribe((status, err) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || err) {
-          console.warn(
-            "[Realtime] Connection issue, fallback polling will continue"
-          );
-        }
-        // Fallback polling stops only when we receive an actual realtime event.
-      });
-
-    // Start fallback polling immediately — cleared when a real event arrives.
-    startFallbackPolling();
-    jobsChannel = channel;
-  } catch (err) {
-    console.error("[Realtime] Failed to subscribe to jobs:", err);
-    startFallbackPolling();
-  }
+  cleanupRealtimeSubscription();
+  jobsSubscriptionCleanup = HoverLib.jobs.subscribeToJobUpdates({
+    orgId,
+    onUpdate: () => {
+      void realtimeRefresh();
+    },
+    supabaseClient,
+    channelName: `jobs-changes:${orgId}`,
+    getFallbackInterval: () => FALLBACK_POLLING_INTERVAL_MS,
+    onSubscriptionIssue: (status, err) => {
+      if (
+        status === "CHANNEL_ERROR" ||
+        status === "TIMED_OUT" ||
+        status === "SUBSCRIBE_FAILED" ||
+        status === "MAX_RETRIES" ||
+        err
+      ) {
+        console.warn(
+          "[Realtime] Connection issue, fallback polling will continue",
+          status,
+          err
+        );
+      }
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -916,22 +803,23 @@ async function refreshCurrentJob(): Promise<void> {
 
   try {
     jobPollInFlight = true;
-    const response = (await HoverLib.api.get(
-      "/v1/jobs?limit=50&include=stats"
-    )) as JobListResponse;
-    const latest = pickLatestJobForCurrentSite(response.jobs);
+    const jobs = (await HoverLib.jobs.fetchJobs({
+      limit: 50,
+      include: "stats",
+    })) as JobItem[];
+    const latest = pickLatestJobForCurrentSite(jobs);
     state.currentJob = latest;
     renderJobState(state.currentJob);
 
-    const completedSignature = buildCompletedJobsSignature(response.jobs);
+    const completedSignature = buildCompletedJobsSignature(jobs);
     if (completedSignature !== lastCompletedJobsSignature) {
-      renderRecentResults(response.jobs);
+      renderRecentResults(jobs);
       lastCompletedJobsSignature = completedSignature;
     }
 
-    const chartSignature = buildChartJobsSignature(response.jobs);
+    const chartSignature = buildChartJobsSignature(jobs);
     if (chartSignature !== lastChartJobsSignature) {
-      renderMiniChart(response.jobs);
+      renderMiniChart(jobs);
       lastChartJobsSignature = chartSignature;
     }
 
@@ -1206,11 +1094,10 @@ function getIssueCounts(job: JobItem): {
 // ---------------------------------------------------------------------------
 
 function filterSiteJobs(jobs: JobItem[]): JobItem[] {
-  const candidates = getSiteDomainCandidates();
-  return jobs.filter((job) => {
-    const jobDomain = normalizeDomain(job.domains?.name || "");
-    return !candidates.length || candidates.includes(jobDomain);
-  });
+  return HoverLib.jobs.filterJobsByDomains(jobs, {
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  }) as JobItem[];
 }
 
 function renderRecentResults(jobs: JobItem[]): void {
@@ -1637,18 +1524,19 @@ async function loadLatestJob(): Promise<void> {
   }
 
   try {
-    const response = (await HoverLib.api.get(
-      "/v1/jobs?limit=50&include=stats"
-    )) as JobListResponse;
+    const jobs = (await HoverLib.jobs.fetchJobs({
+      limit: 50,
+      include: "stats",
+    })) as JobItem[];
 
-    const latest = pickLatestJobForCurrentSite(response.jobs);
+    const latest = pickLatestJobForCurrentSite(jobs);
 
     state.currentJob = latest;
     renderJobState(state.currentJob);
-    renderRecentResults(response.jobs);
-    renderMiniChart(response.jobs);
-    lastCompletedJobsSignature = buildCompletedJobsSignature(response.jobs);
-    lastChartJobsSignature = buildChartJobsSignature(response.jobs);
+    renderRecentResults(jobs);
+    renderMiniChart(jobs);
+    lastCompletedJobsSignature = buildCompletedJobsSignature(jobs);
+    lastChartJobsSignature = buildChartJobsSignature(jobs);
     startJobStatusPolling();
   } catch (error) {
     state.currentJob = null;

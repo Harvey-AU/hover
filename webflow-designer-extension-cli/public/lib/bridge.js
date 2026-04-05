@@ -11,12 +11,14 @@
 import * as apiClient from "/app/lib/api-client.js";
 import * as formatters from "/app/lib/formatters.js";
 import * as integrationHttp from "/app/lib/integration-http.js";
+import * as siteJobs from "/app/lib/site-jobs.js";
 
 // Expose shared modules for index.js consumption
 window.HoverLib = {
   api: apiClient,
   fmt: formatters,
   http: integrationHttp,
+  jobs: siteJobs,
 };
 
 // Signal that shared libs are ready
