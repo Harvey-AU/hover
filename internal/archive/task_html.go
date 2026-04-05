@@ -40,6 +40,8 @@ func (s *TaskHTMLSource) FindCandidates(ctx context.Context, batchSize int) ([]A
 			StoragePath:         r.StoragePath,
 			SHA256:              r.SHA256,
 			CompressedSizeBytes: r.CompressedSizeBytes,
+			ContentType:         r.ContentType,
+			ContentEncoding:     r.ContentEncoding,
 		}
 	}
 	return candidates, nil

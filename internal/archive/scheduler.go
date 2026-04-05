@@ -3,6 +3,7 @@ package archive
 import (
 	"bytes"
 	"context"
+	"io"
 	"sync"
 	"time"
 
@@ -107,18 +108,38 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		Str("source", src.Name()).
 		Logger()
 
-	// 1. Download from hot storage
+	// 1. Download from hot storage, falling back to cold storage if the hot
+	// copy is already gone (e.g. a previous run deleted it but OnArchived failed).
+	key := ColdKey(c.JobID, c.StoragePath, c.TaskID)
 	data, err := a.storage.Download(ctx, c.StorageBucket, c.StoragePath)
 	if err != nil {
-		lg.Error().Err(err).Msg("Failed to download from hot storage")
-		return
+		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
+		rc, coldErr := a.provider.Download(ctx, a.cfg.Bucket, key)
+		if coldErr != nil {
+			lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
+			return
+		}
+		data, err = io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			lg.Error().Err(err).Msg("Failed to read cold-storage fallback body")
+			return
+		}
+		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
 	}
 
 	// 2. Upload to cold storage
-	key := ColdKey(c.JobID, c.StoragePath, c.TaskID)
+	contentType := c.ContentType
+	if contentType == "" {
+		contentType = "text/html"
+	}
+	contentEncoding := c.ContentEncoding
+	if contentEncoding == "" {
+		contentEncoding = "gzip"
+	}
 	err = a.provider.Upload(ctx, a.cfg.Bucket, key, bytes.NewReader(data), UploadOptions{
-		ContentType:     "text/html",
-		ContentEncoding: "gzip",
+		ContentType:     contentType,
+		ContentEncoding: contentEncoding,
 		Metadata: map[string]string{
 			"task_id": c.TaskID,
 			"job_id":  c.JobID,
@@ -142,11 +163,9 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 	}
 
 	// 4. Delete from hot storage before clearing DB references.
-	// Ordering rationale: deleting first avoids permanent orphans in Supabase
-	// (if OnArchived succeeded but Delete failed, the DB reference is gone and
-	// the blob is unreachable). If Delete succeeds but OnArchived fails, the
-	// next sweep will re-download from cold storage — the cold copy is already
-	// verified above.
+	// Ordering rationale: deleting first avoids permanent orphans in Supabase.
+	// If Delete succeeds but OnArchived fails, the next sweep will fall back to
+	// downloading from cold storage (step 1 above) and complete the mark.
 	if err := a.storage.Delete(ctx, c.StorageBucket, c.StoragePath); err != nil {
 		lg.Error().Err(err).Msg("Failed to delete from hot storage — skipping DB mark to allow retry")
 		return

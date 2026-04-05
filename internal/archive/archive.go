@@ -28,6 +28,8 @@ type ArchiveCandidate struct {
 	StoragePath         string
 	SHA256              string
 	CompressedSizeBytes int64
+	ContentType         string
+	ContentEncoding     string
 }
 
 // ArchiveSource abstracts a category of data that can be archived.

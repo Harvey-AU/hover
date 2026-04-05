@@ -899,6 +899,8 @@ type ArchiveCandidate struct {
 	StoragePath         string
 	SHA256              string
 	CompressedSizeBytes int64
+	ContentType         string
+	ContentEncoding     string
 }
 
 // FindArchiveCandidates returns tasks whose HTML should be moved to cold storage.
@@ -920,7 +922,8 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 				WHERE j.status IN ('completed', 'failed', 'cancelled')
 			)
 			SELECT t.id, t.job_id, t.html_storage_bucket, t.html_storage_path,
-				   COALESCE(t.html_sha256, ''), COALESCE(t.html_compressed_size_bytes, 0)
+				   COALESCE(t.html_sha256, ''), COALESCE(t.html_compressed_size_bytes, 0),
+				   COALESCE(t.html_content_type, ''), COALESCE(t.html_content_encoding, '')
 			FROM tasks t
 			JOIN ranked r ON r.id = t.job_id
 			WHERE r.rn > $1
@@ -940,7 +943,7 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 		for rows.Next() {
 			var c ArchiveCandidate
 			if err := rows.Scan(&c.TaskID, &c.JobID, &c.StorageBucket, &c.StoragePath,
-				&c.SHA256, &c.CompressedSizeBytes); err != nil {
+				&c.SHA256, &c.CompressedSizeBytes, &c.ContentType, &c.ContentEncoding); err != nil {
 				return fmt.Errorf("scanning archive candidate: %w", err)
 			}
 			candidates = append(candidates, c)
