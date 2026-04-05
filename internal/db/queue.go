@@ -910,8 +910,8 @@ type ArchiveCandidate struct {
 func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]ArchiveCandidate, error) {
 	var candidates []ArchiveCandidate
 
-	err := q.Execute(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `
+	err := q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(txCtx, `
 			WITH ranked AS (
 				SELECT j.id,
 					   ROW_NUMBER() OVER (
@@ -957,8 +957,8 @@ func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limi
 // MarkTaskArchived records that a task's HTML has been moved to cold storage
 // and clears the hot-storage reference so it can be reclaimed.
 func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error {
-	return q.Execute(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		result, err := tx.ExecContext(txCtx, `
 			UPDATE tasks
 			SET html_archive_provider = $2,
 				html_archive_bucket   = $3,
@@ -979,7 +979,7 @@ func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket
 		if rowsAffected == 0 {
 			// Already archived or task doesn't exist — check which.
 			var exists bool
-			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
+			err = tx.QueryRowContext(txCtx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
 			if err != nil {
 				return fmt.Errorf("mark task %s archived: existence check: %w", taskID, err)
 			}

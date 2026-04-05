@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,7 +120,8 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 			lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
 			return
 		}
-		data, readErr := io.ReadAll(rc)
+		var readErr error
+		data, readErr = io.ReadAll(rc)
 		closeErr := rc.Close()
 		if readErr != nil {
 			lg.Error().Err(readErr).Msg("Failed to read cold-storage fallback body")
@@ -127,9 +129,6 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		}
 		if closeErr != nil {
 			lg.Warn().Err(closeErr).Msg("Failed to close cold-storage fallback body")
-			return
-		}
-		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
 			return
 		}
 		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
@@ -174,8 +173,16 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 	// If Delete succeeds but OnArchived fails, the next sweep will fall back to
 	// downloading from cold storage (step 1 above) and complete the mark.
 	if err := a.storage.Delete(ctx, c.StorageBucket, c.StoragePath); err != nil {
-		lg.Error().Err(err).Msg("Failed to delete from hot storage — skipping DB mark to allow retry")
-		return
+		// Treat "object not found" (404) as success — the file may have been
+		// manually deleted or removed by a previous run that failed at OnArchived.
+		// Check for HTTP 404 status code in the error message.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "status 404") || strings.Contains(errMsg, "not found") {
+			lg.Info().Err(err).Msg("Hot storage object already deleted (404) — proceeding to mark archived")
+		} else {
+			lg.Error().Err(err).Msg("Failed to delete from hot storage — skipping DB mark to allow retry")
+			return
+		}
 	}
 
 	// 5. Mark archived in DB (clears hot-storage columns)
