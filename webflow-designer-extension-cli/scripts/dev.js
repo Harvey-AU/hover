@@ -6,7 +6,7 @@ const { spawn, spawnSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const PUBLIC_DIR = path.join(ROOT, "public");
-const DEV_CONFIG_PATH = path.join(PUBLIC_DIR, "dev-config.js");
+const DEV_CONFIG_PATH = path.join(PUBLIC_DIR, "dev-runtime-config.js");
 const DEFAULT_DEV_CONFIG =
   "window.HOVER_EXTENSION_CONFIG = window.HOVER_EXTENSION_CONFIG || {};\n";
 const NPM_CMD = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -78,7 +78,9 @@ function restoreDevConfig() {
   }
   restored = true;
   try {
-    writeDevConfig("");
+    if (fs.existsSync(DEV_CONFIG_PATH)) {
+      fs.unlinkSync(DEV_CONFIG_PATH);
+    }
   } catch (_error) {
     // Best-effort cleanup only.
   }
