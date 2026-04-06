@@ -40,7 +40,7 @@ primary_region = 'syd'
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp"
   # Cold-storage archival (R2) — defaults in internal/archive/archive.go
   ARCHIVE_PROVIDER = "r2"
-  ARCHIVE_BUCKET = "hover-archive"
+  ARCHIVE_BUCKET = "native-hover-archive"
   ARCHIVE_RETENTION_JOBS = "3"   # completed jobs kept in Supabase per domain/org
   ARCHIVE_INTERVAL = "1h"       # sweep frequency
   ARCHIVE_BATCH_SIZE = "50"     # candidates per sweep

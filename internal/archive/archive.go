@@ -48,7 +48,7 @@ type ArchiveSource interface {
 func DefaultConfig() Config {
 	return Config{
 		Provider:      "r2",
-		Bucket:        "hover-archive",
+		Bucket:        "native-hover-archive",
 		RetentionJobs: 3,
 		Interval:      1 * time.Hour,
 		BatchSize:     50,
