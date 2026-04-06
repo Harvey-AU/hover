@@ -385,6 +385,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "http://127.0.0.1:8765")
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "http://localhost:8765")
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "https://lh3.googleusercontent.com")
 	assert.Equal(t, "max-age=63072000; includeSubDomains", rec.Header().Get("Strict-Transport-Security"))
 }
 

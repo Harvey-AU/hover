@@ -296,7 +296,7 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 			connect-src %s;
 			frame-src https://challenges.cloudflare.com;
 			frame-ancestors %s;
-			img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com https://ssl.gstatic.com https://www.gravatar.com;
+			img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com https://ssl.gstatic.com https://www.gravatar.com https://lh3.googleusercontent.com https://*.googleusercontent.com;
 			font-src 'self' data:;
 			object-src 'none';
 			base-uri 'self';
