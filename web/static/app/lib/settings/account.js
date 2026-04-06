@@ -165,6 +165,14 @@ function getAppOrigin() {
   return window.location.origin;
 }
 
+function getSupabaseClient() {
+  return window.HOVER_EXTENSION_SUPABASE_CLIENT?.auth
+    ? window.HOVER_EXTENSION_SUPABASE_CLIENT
+    : window.supabase?.auth
+      ? window.supabase
+      : null;
+}
+
 // ── Auth method actions ────────────────────────────────────────────────────────
 
 /**
@@ -172,7 +180,8 @@ function getAppOrigin() {
  * stores return path in sessionStorage, redirects via Supabase linkIdentity.
  */
 export async function connectAuthMethod(provider) {
-  if (!window.supabase?.auth) return;
+  const client = getSupabaseClient();
+  if (!client?.auth) return;
 
   try {
     if (provider === "email") {
@@ -203,8 +212,8 @@ export async function connectAuthMethod(provider) {
     const callbackUrl = callbackTarget.toString();
     const queryParams = getOAuthQueryParams(provider);
 
-    if (typeof window.supabase.auth.linkIdentity === "function") {
-      const { data, error } = await window.supabase.auth.linkIdentity({
+    if (typeof client.auth.linkIdentity === "function") {
+      const { data, error } = await client.auth.linkIdentity({
         provider,
         options: { redirectTo: callbackUrl, queryParams },
       });
@@ -214,7 +223,7 @@ export async function connectAuthMethod(provider) {
         return;
       }
     } else {
-      const { data, error } = await window.supabase.auth.signInWithOAuth({
+      const { data, error } = await client.auth.signInWithOAuth({
         provider,
         options: { redirectTo: callbackUrl, queryParams },
       });
@@ -265,6 +274,7 @@ async function unlinkIdentityViaApi(identityId) {
 }
 
 export async function removeAuthMethod(method, connectedCount) {
+  const client = getSupabaseClient();
   if (connectedCount <= 1) {
     toast("error", "You must keep at least one sign-in method.");
     return;
@@ -282,17 +292,15 @@ export async function removeAuthMethod(method, connectedCount) {
   }
 
   try {
-    if (typeof window.supabase.auth.unlinkIdentity === "function") {
-      const { error } = await window.supabase.auth.unlinkIdentity(
-        method.identity
-      );
+    if (typeof client?.auth?.unlinkIdentity === "function") {
+      const { error } = await client.auth.unlinkIdentity(method.identity);
       if (error) throw error;
     } else {
       await unlinkIdentityViaApi(method.identity.identity_id);
     }
 
     try {
-      await window.supabase.auth.refreshSession();
+      await client?.auth?.refreshSession?.();
     } catch (err) {
       console.warn("Failed to refresh session after unlink:", err);
     }
@@ -393,6 +401,7 @@ export function renderAuthMethods(container, methods, options = {}) {
  * @returns {Promise<void>}
  */
 export async function loadAccountDetails(container) {
+  const client = getSupabaseClient();
   const session = await getSession();
   if (!session?.user) return;
 
@@ -422,7 +431,7 @@ export async function loadAccountDetails(container) {
   try {
     // Use supabase.auth.getUser() directly for fresh identity data
     // (auth-session.getUser() returns session.user which may be stale).
-    const userResult = await window.supabase.auth.getUser();
+    const userResult = await client?.auth?.getUser();
     authUser = userResult?.data?.user || session.user;
     identities = Array.isArray(authUser?.identities) ? authUser.identities : [];
   } catch (err) {
@@ -524,6 +533,7 @@ export async function loadAccountDetails(container) {
  */
 export async function saveProfileName(container, options = {}) {
   const root = container || document;
+  const client = getSupabaseClient();
   const firstNameEl = root.querySelector("#settingsUserFirstNameInput");
   const lastNameEl = root.querySelector("#settingsUserLastNameInput");
   const saveBtn = root.querySelector("#settingsSaveName");
@@ -549,7 +559,7 @@ export async function saveProfileName(container, options = {}) {
   try {
     let metadataUpdateSucceeded = true;
     try {
-      await window.supabase.auth.updateUser({
+      await client?.auth?.updateUser({
         data: {
           first_name: firstName || "",
           last_name: lastName || "",
@@ -594,6 +604,7 @@ export async function saveProfileName(container, options = {}) {
  * Send password reset email for the current user.
  */
 export async function sendPasswordReset() {
+  const client = getSupabaseClient();
   const session = await getSession();
   const email = session?.user?.email;
   if (!email) {
@@ -602,7 +613,7 @@ export async function sendPasswordReset() {
   }
 
   try {
-    const { error } = await window.supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await client?.auth?.resetPasswordForEmail(email, {
       redirectTo: `${getAppOrigin()}/settings/account#security`,
     });
     if (error) throw error;

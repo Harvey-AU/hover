@@ -88,6 +88,7 @@ type ExtensionWindow = Window & {
   HOVER_EXTENSION_CONFIG?: {
     appOrigin?: string;
   };
+  HOVER_EXTENSION_SUPABASE_CLIENT?: SupabaseClient | null;
 };
 
 // Shared modules exposed by lib/bridge.js via window.HoverLib
@@ -713,6 +714,7 @@ async function initSupabaseClient(): Promise<SupabaseClient | null> {
     access_token: state.token,
     refresh_token: "",
   });
+  (window as ExtensionWindow).HOVER_EXTENSION_SUPABASE_CLIENT = supabaseClient;
 
   return supabaseClient;
 }
@@ -1632,6 +1634,7 @@ function handleAuthError(error: unknown): void {
       cleanupRealtimeSubscription();
       shellChrome?.setActiveOrganisation("");
       supabaseClient = null;
+      (window as ExtensionWindow).HOVER_EXTENSION_SUPABASE_CLIENT = null;
       renderAuthState(false);
       setStatus("Session expired. Sign in again.", "");
       return;
@@ -1674,6 +1677,7 @@ async function refreshDashboard(): Promise<void> {
       cleanupRealtimeSubscription();
       shellChrome?.setActiveOrganisation("");
       supabaseClient = null;
+      (window as ExtensionWindow).HOVER_EXTENSION_SUPABASE_CLIENT = null;
       renderJobState(null);
       renderRecentResults([]);
       renderMiniChart([]);
