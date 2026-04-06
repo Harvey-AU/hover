@@ -213,6 +213,13 @@ func (wp *WorkerPool) activeJobCount() int {
 	return len(wp.jobs)
 }
 
+// IdleWorkerCount returns the number of workers currently idle.
+func (wp *WorkerPool) IdleWorkerCount() int {
+	wp.idleWorkersMutex.RLock()
+	defer wp.idleWorkersMutex.RUnlock()
+	return len(wp.idleWorkers)
+}
+
 func (wp *WorkerPool) logScalingDecision(decision, reason string, currentWorkers, targetWorkers int, metadata map[string]int) {
 	event := log.Info().
 		Str("decision", decision).
@@ -604,7 +611,8 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 			log.Error().Err(err).Msg("Failed to create archive provider")
 		} else if provider != nil {
 			src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
-			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, src)
+			isBusy := func() bool { return wp.IdleWorkerCount() == 0 }
+			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, isBusy, src)
 			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("Archive scheduler initialised")
 		}
 	}

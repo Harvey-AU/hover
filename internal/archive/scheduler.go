@@ -17,22 +17,31 @@ type storageDownloader interface {
 	Delete(ctx context.Context, bucket, path string) error
 }
 
+// BusyFunc reports whether the system is under load. When true the archiver
+// throttles more aggressively to avoid competing with crawl workers.
+type BusyFunc func() bool
+
 // Archiver runs periodic sweeps to move data from hot to cold storage.
 type Archiver struct {
 	provider ColdStorageProvider
 	storage  storageDownloader
 	sources  []ArchiveSource
 	cfg      Config
+	isBusy   BusyFunc
 }
 
 // NewArchiver creates an archiver with the given provider, hot-storage client,
 // and one or more archive sources.
-func NewArchiver(provider ColdStorageProvider, storage storageDownloader, cfg Config, sources ...ArchiveSource) *Archiver {
+func NewArchiver(provider ColdStorageProvider, storage storageDownloader, cfg Config, isBusy BusyFunc, sources ...ArchiveSource) *Archiver {
+	if isBusy == nil {
+		isBusy = func() bool { return false }
+	}
 	return &Archiver{
 		provider: provider,
 		storage:  storage,
 		sources:  sources,
 		cfg:      cfg,
+		isBusy:   isBusy,
 	}
 }
 
@@ -58,7 +67,7 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			a.sweep(ctx)
+			a.sweep(ctx, stopCh)
 		case <-stopCh:
 			log.Info().Msg("Archive scheduler stopping (stop signal)")
 			return
@@ -69,7 +78,7 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 	}
 }
 
-func (a *Archiver) sweep(ctx context.Context) {
+func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 	for _, src := range a.sources {
 		candidates, err := src.FindCandidates(ctx, a.cfg.BatchSize)
 		if err != nil {
@@ -93,7 +102,22 @@ func (a *Archiver) sweep(ctx context.Context) {
 		sem := make(chan struct{}, concurrency)
 		var wg sync.WaitGroup
 
-		for _, c := range candidates {
+		for i, c := range candidates {
+			// Throttle between candidates: 5s under load, 1s when idle.
+			if i > 0 {
+				delay := 1 * time.Second
+				if a.isBusy() {
+					delay = 5 * time.Second
+				}
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				case <-stopCh:
+					return
+				}
+			}
+
 			sem <- struct{}{}
 			wg.Add(1)
 			go func(candidate ArchiveCandidate) {
