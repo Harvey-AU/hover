@@ -153,26 +153,27 @@ export async function renderUserAvatar(options = {}) {
   }
 
   const img = document.createElement("img");
-  img.src = resolvedAvatarUrl;
   img.alt = displayName || email || "User avatar";
   img.loading = "lazy";
   img.decoding = "async";
-  img.addEventListener(
-    "load",
-    () => {
-      element.textContent = "";
-      element.appendChild(img);
-    },
-    { once: true }
-  );
-  img.addEventListener(
-    "error",
-    () => {
-      if (img.parentNode) img.parentNode.removeChild(img);
-      element.textContent = initials;
-    },
-    { once: true }
-  );
+  const showImage = () => {
+    element.textContent = "";
+    element.appendChild(img);
+  };
+  const showInitials = () => {
+    if (img.parentNode) img.parentNode.removeChild(img);
+    element.textContent = initials;
+  };
+  img.addEventListener("load", showImage, { once: true });
+  img.addEventListener("error", showInitials, { once: true });
+  img.src = resolvedAvatarUrl;
+  if (img.complete) {
+    if (img.naturalWidth > 0) {
+      showImage();
+    } else {
+      showInitials();
+    }
+  }
 }
 
 export function renderUsage(options = {}) {
