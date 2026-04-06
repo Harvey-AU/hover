@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 		Provider:      "r2",
 		Bucket:        "native-hover-archive",
 		RetentionJobs: 3,
-		Interval:      1 * time.Hour,
+		Interval:      1 * time.Minute,
 		BatchSize:     50,
 		Concurrency:   5,
 	}

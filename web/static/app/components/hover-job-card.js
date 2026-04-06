@@ -179,6 +179,10 @@ class HoverJobCard extends HTMLElement {
         normStatus === "running" || normStatus === "initializing"
           ? "var(--status-colour--success)"
           : "var(--status-colour--warning)";
+    } else if (normStatus === "archived") {
+      outcomeDotClass = "dot--success";
+      outcomeLabel = statusLabelForJob(normStatus);
+      statusColour = "var(--status-colour--success)";
     } else if (normStatus !== "completed") {
       outcomeDotClass = "dot--danger";
       outcomeLabel = "Error";

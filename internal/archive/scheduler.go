@@ -112,35 +112,48 @@ func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 		sem := make(chan struct{}, concurrency)
 		var wg sync.WaitGroup
 
+		sweepCtx, sweepCancel := context.WithCancel(ctx)
+		stopped := false
 		for _, c := range candidates {
 			// Check for shutdown between dispatches.
 			select {
 			case <-ctx.Done():
-				return
+				sweepCancel()
+				stopped = true
 			case <-stopCh:
-				return
+				sweepCancel()
+				stopped = true
 			default:
+			}
+			if stopped {
+				break
 			}
 
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
-				return
+				sweepCancel()
+				stopped = true
 			case <-stopCh:
-				return
+				sweepCancel()
+				stopped = true
+			}
+			if stopped {
+				break
 			}
 
 			wg.Add(1)
 			go func(candidate ArchiveCandidate) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				candidateCtx, cancel := context.WithTimeout(ctx, archiveCandidateTimeout)
+				candidateCtx, cancel := context.WithTimeout(sweepCtx, archiveCandidateTimeout)
 				defer cancel()
 				a.archiveOne(candidateCtx, src, candidate)
 			}(c)
 		}
 
 		wg.Wait()
+		sweepCancel()
 	}
 }
 
