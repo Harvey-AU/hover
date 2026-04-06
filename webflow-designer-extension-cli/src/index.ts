@@ -33,7 +33,6 @@ const API_TOKEN_STORAGE_KEY = "gnh_extension_api_token_session";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
 const DEFAULT_GNH_APP_ORIGIN = "https://hover.app.goodnative.co";
-const LEGACY_EXTENSION_APP_ORIGINS = new Set(["https://hover-pr-255.fly.dev"]);
 const AUTH_POPUP_NAME = "bbbExtensionAuth";
 const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
@@ -80,6 +79,12 @@ declare const webflow: {
     }>;
   }>;
   setExtensionSize: (size: ExtensionPanelSize) => Promise<null>;
+};
+
+type ExtensionWindow = Window & {
+  HOVER_EXTENSION_CONFIG?: {
+    appOrigin?: string;
+  };
 };
 
 // Shared modules exposed by lib/bridge.js via window.HoverLib
@@ -560,12 +565,20 @@ let isRealtimeRefreshing = false;
 let jobsSubscriptionCleanup: (() => void) | null = null;
 
 function getStoredBaseUrl(): string {
+  const extensionWindow = window as ExtensionWindow;
+  const runtimeBaseUrl = String(
+    extensionWindow.HOVER_EXTENSION_CONFIG?.appOrigin || ""
+  ).trim();
+  if (runtimeBaseUrl) {
+    return runtimeBaseUrl.replace(/\/+$/, "");
+  }
+
   const storedBaseUrl = localStorage.getItem(API_BASE_STORAGE_KEY);
   if (!storedBaseUrl) {
     return DEFAULT_GNH_APP_ORIGIN;
   }
 
-  if (LEGACY_EXTENSION_APP_ORIGINS.has(storedBaseUrl)) {
+  if (/^https:\/\/hover-pr-\d+\.fly\.dev\/?$/i.test(storedBaseUrl)) {
     return DEFAULT_GNH_APP_ORIGIN;
   }
 
@@ -2097,7 +2110,9 @@ async function initialise(): Promise<void> {
     cleanupRealtimeSubscription();
   });
   try {
-    localStorage.setItem(API_BASE_STORAGE_KEY, state.apiBaseUrl);
+    if (!(window as ExtensionWindow).HOVER_EXTENSION_CONFIG?.appOrigin) {
+      localStorage.setItem(API_BASE_STORAGE_KEY, state.apiBaseUrl);
+    }
   } catch (_error) {
     // ignore
   }
