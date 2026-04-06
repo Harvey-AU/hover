@@ -27,6 +27,7 @@ type jobsConfig struct {
 	JobsPerBatch    int
 	Repeats         int
 	Concurrency     string // "random" or integer 1-50
+	MaxJobs         int    // cap total jobs created (0 = no cap)
 	Yes             bool   // skip interactive confirmation
 }
 
@@ -143,6 +144,17 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 				return nil, err
 			}
 			c.StatusInterval = d
+
+		case "--limit":
+			v, err := nextVal()
+			if err != nil {
+				return nil, err
+			}
+			n, err := parsePositiveInt("--limit", v)
+			if err != nil {
+				return nil, err
+			}
+			c.MaxJobs = n
 
 		case "--yes", "-y":
 			c.Yes = true
@@ -422,13 +434,14 @@ func runJobsGenerate(args []string) error {
 		LastJobID          string
 		LastJobStatus      string
 		CompletedRuns      int
-		CreateFailures     int // consecutive createJob failures for the current run slot
-		StatusRefreshFails int // consecutive fetchJobStatus failures for the active job
+		CreateFailures     int       // consecutive createJob failures for the current run slot
+		StatusRefreshFails int       // consecutive fetchJobStatus failures for the active job
+		BlockedUntil       time.Time // non-zero while waiting out a stall backoff
 	}
 
 	const (
 		maxCreateRetries    = 3 // skip a run slot after this many consecutive create failures
-		maxStatusRefreshErr = 3 // clear a stalled job after this many consecutive refresh failures
+		maxStatusRefreshErr = 3 // enter stall backoff after this many consecutive refresh failures
 	)
 
 	domainStates := make([]domainRunState, len(domains))
@@ -440,6 +453,9 @@ func runJobsGenerate(args []string) error {
 	}
 
 	totalRuns := len(domains) * cfg.Repeats
+	if cfg.MaxJobs > 0 {
+		totalRuns = min(totalRuns, cfg.MaxJobs)
+	}
 
 	printJobHeader(id, totalRuns, len(domains), cfg)
 
@@ -449,10 +465,11 @@ func runJobsGenerate(args []string) error {
 	}
 
 	startTime := time.Now()
-	jobsCreated := 0
+	jobsCreated := 0    // successful creates only
+	slotsCompleted := 0 // successful + skipped, drives loop exit
 	batch := 0
 
-	for jobsCreated < totalRuns {
+	for slotsCompleted < totalRuns {
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\nInterrupted.")
@@ -475,15 +492,28 @@ func runJobsGenerate(args []string) error {
 				continue
 			}
 
+			// If stall backoff is active, check whether it has expired.
+			if !state.BlockedUntil.IsZero() {
+				if time.Now().Before(state.BlockedUntil) {
+					continue // still in backoff
+				}
+				// Backoff expired — retire the stalled job and let the domain restart.
+				fmt.Fprintf(os.Stderr, "\033[33m! Retiring stalled job %s for %s after backoff\033[0m\n", state.LastJobID, state.Domain)
+				state.LastJobID = ""
+				state.LastJobStatus = ""
+				state.BlockedUntil = time.Time{}
+				state.StatusRefreshFails = 0
+				continue
+			}
+
 			status, err := fetchJobStatus(ctx, ac.APIURL, token, state.LastJobID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\033[31m! Failed to refresh status for %s (%s): %v\033[0m\n", state.Domain, state.LastJobID, err)
 				state.StatusRefreshFails++
 				if state.StatusRefreshFails >= maxStatusRefreshErr {
-					fmt.Fprintf(os.Stderr, "\033[33m! Clearing stalled job %s for %s after %d refresh failures\033[0m\n", state.LastJobID, state.Domain, state.StatusRefreshFails)
-					state.LastJobID = ""
-					state.LastJobStatus = ""
-					state.StatusRefreshFails = 0
+					backoff := 5 * cfg.StatusInterval
+					fmt.Fprintf(os.Stderr, "\033[33m! Stalling %s after %d refresh failures; retrying in %s\033[0m\n", state.Domain, state.StatusRefreshFails, formatDuration(backoff))
+					state.BlockedUntil = time.Now().Add(backoff)
 				}
 				continue
 			}
@@ -548,7 +578,8 @@ func runJobsGenerate(args []string) error {
 				if state.CreateFailures >= maxCreateRetries {
 					fmt.Fprintf(os.Stderr, "\033[31m✗ Skipping %s after %d failed attempts\033[0m\n", state.Domain, state.CreateFailures)
 					state.RemainingRuns--
-					jobsCreated++
+					state.CompletedRuns++
+					slotsCompleted++
 					state.CreateFailures = 0
 				}
 				continue
@@ -560,6 +591,7 @@ func runJobsGenerate(args []string) error {
 			state.RemainingRuns--
 			state.CompletedRuns++
 			jobsCreated++
+			slotsCompleted++
 
 			// Small delay between creates.
 			select {
@@ -570,7 +602,7 @@ func runJobsGenerate(args []string) error {
 			}
 		}
 
-		if jobsCreated < totalRuns {
+		if slotsCompleted < totalRuns {
 			fmt.Fprintf(os.Stderr, "\n\033[33mWaiting %s until next batch...\033[0m\n", formatDuration(cfg.Interval))
 			select {
 			case <-time.After(cfg.Interval):
@@ -588,7 +620,7 @@ func runJobsGenerate(args []string) error {
 
 func isTerminalJobStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "failed", "cancelled":
+	case "completed", "failed", "cancelled", "paused":
 		return true
 	default:
 		return false
@@ -658,7 +690,7 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "unknown", nil
+		return "", fmt.Errorf("parsing create job response: %w", err)
 	}
 	id := result.Data.ID
 	if id == "" {
@@ -668,7 +700,7 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 		id = result.ID
 	}
 	if id == "" {
-		id = "unknown"
+		return "", fmt.Errorf("no job ID in create response")
 	}
 	return id, nil
 }
