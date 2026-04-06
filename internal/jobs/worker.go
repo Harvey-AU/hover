@@ -605,7 +605,13 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	}
 
 	// Initialise cold-storage archiver (gated by ARCHIVE_PROVIDER env var).
-	if archiveCfg := archive.ConfigFromEnv(); archiveCfg != nil && wp.storageClient != nil {
+	archiveCfg := archive.ConfigFromEnv()
+	switch {
+	case archiveCfg == nil:
+		log.Info().Msg("ARCHIVE: ARCHIVE_PROVIDER not set — archiving DISABLED")
+	case wp.storageClient == nil:
+		log.Error().Msg("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
+	default:
 		provider, err := archive.ProviderFromEnv()
 		if err != nil {
 			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
@@ -622,8 +628,6 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, isBusy, wp.dbQueue.MarkFullyArchivedJobs, src)
 			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
 		}
-	} else if archive.ConfigFromEnv() == nil {
-		log.Info().Msg("ARCHIVE: ARCHIVE_PROVIDER not set — archiving DISABLED")
 	}
 
 	// Start the notification listener when we have connection details available.
