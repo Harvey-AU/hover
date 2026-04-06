@@ -14,6 +14,7 @@ import * as integrationHttp from "/app/lib/integration-http.js";
 import * as organisationApi from "/app/lib/organisation-api.js";
 import * as schedulerApi from "/app/lib/scheduler-api.js";
 import * as siteJobs from "/app/lib/site-jobs.js";
+import * as siteView from "/app/lib/site-view.js";
 import * as webflowSites from "/app/lib/webflow-sites.js";
 
 // Expose shared modules for index.js consumption
@@ -24,6 +25,7 @@ window.HoverLib = {
   organisations: organisationApi,
   schedulers: schedulerApi,
   jobs: siteJobs,
+  view: siteView,
   webflow: webflowSites,
 };
 

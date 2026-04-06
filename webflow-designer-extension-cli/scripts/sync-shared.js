@@ -28,6 +28,7 @@ const COMPONENTS = [
 // Lib modules required by bridge.js or other shared extension runtime paths.
 const REQUIRED_LIB_MODULES = [
   "lib/site-jobs.js",
+  "lib/site-view.js",
   "lib/webflow-sites.js",
   "lib/organisation-api.js",
   "lib/scheduler-api.js",

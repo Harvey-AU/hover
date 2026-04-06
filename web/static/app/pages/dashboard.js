@@ -8,13 +8,20 @@
 
 import { get, post } from "/app/lib/api-client.js";
 import { onAuthStateChange, getSession } from "/app/lib/auth-session.js";
-import { createJobCard } from "/app/components/hover-job-card.js";
 import { showToast } from "/app/components/hover-toast.js";
-import { formatDateTime, getInitials } from "/app/lib/formatters.js";
 import {
   loadOrganisationContext,
   switchOrganisation as switchOrganisationApi,
 } from "/app/lib/organisation-api.js";
+import {
+  renderJobState as renderSharedJobState,
+  renderMiniChart as renderSharedMiniChart,
+  renderOrganisations as renderSharedOrganisations,
+  renderRecentResults as renderSharedRecentResults,
+  renderScheduleState as renderSharedScheduleState,
+  renderUsage as renderSharedUsage,
+  renderUserAvatar,
+} from "/app/lib/site-view.js";
 import {
   findSchedulerByDomain,
   saveSchedulerForDomain,
@@ -25,7 +32,6 @@ import {
   buildChartJobsSignature,
   buildCompletedJobsSignature,
   fetchJobs,
-  filterJobsByDomains,
   normaliseDomain,
   pickLatestJobByDomains,
   subscribeToJobUpdates,
@@ -134,35 +140,6 @@ function isActiveJobStatus(status) {
   return ACTIVE_JOB_STATUSES.has(normaliseJobStatus(status));
 }
 
-function asCount(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.floor(value));
-}
-
-function getIssueCounts(job) {
-  const buckets = job.stats?.slow_page_buckets;
-  const statsBrokenLinks = asCount(job.stats?.total_broken_links);
-  const fallbackBrokenLinks = asCount(job.failed_tasks);
-
-  if (job.stats && buckets) {
-    const verySlow = asCount(buckets.over_10s) + asCount(buckets["5_to_10s"]);
-    const slow = asCount(buckets["3_to_5s"]);
-    return {
-      brokenLinks: Math.max(statsBrokenLinks, fallbackBrokenLinks),
-      verySlow,
-      slow,
-    };
-  }
-
-  return {
-    brokenLinks: fallbackBrokenLinks,
-    verySlow: 0,
-    slow: 0,
-  };
-}
-
 function buildAuthUrl(mode = "login") {
   const authUrl = new URL(APP_ROUTES.auth, window.location.origin);
   authUrl.searchParams.set("return_to", window.location.href);
@@ -210,291 +187,90 @@ function renderAuthState(isAuthed) {
   hide(ui.authState);
 }
 
-function updateAvatarFromState() {
-  if (!ui.profileAvatar) {
-    return;
-  }
-
-  ui.profileAvatar.innerHTML = "";
-  if (state.userAvatarUrl) {
-    const img = document.createElement("img");
-    img.src = state.userAvatarUrl;
-    img.alt = state.userEmail || "Account";
-    ui.profileAvatar.appendChild(img);
-    return;
-  }
-
-  ui.profileAvatar.textContent = getInitials(state.userEmail || "Hover");
+async function updateAvatarFromState() {
+  await renderUserAvatar({
+    element: ui.profileAvatar,
+    displayName: state.userEmail,
+    email: state.userEmail,
+    avatarUrl: state.userAvatarUrl,
+  });
 }
 
 function renderUsage() {
-  if (!state.usage) {
-    if (ui.planNameText) {
-      ui.planNameText.innerHTML = "<strong>Plan:</strong> \u2014";
-    }
-    setText(ui.planRemainingValue, "\u2014");
-    return;
-  }
-
-  const plan = state.usage.plan_display_name || state.usage.plan_name || "Plan";
-  const limit = Number(state.usage.daily_limit || 0).toLocaleString();
-  const remaining = Number(state.usage.daily_remaining || 0).toLocaleString();
-
-  if (ui.planNameText) {
-    ui.planNameText.innerHTML = `<strong>Plan:</strong> <strong>${plan}</strong> (${limit} / day)`;
-  }
-  setText(ui.planRemainingValue, `${remaining} remaining`);
+  renderSharedUsage({
+    usage: state.usage,
+    planNameText: ui.planNameText,
+    planRemainingValue: ui.planRemainingValue,
+  });
 }
 
 function renderOrganisations() {
-  const select = ui.orgSelect;
-  if (!(select instanceof HTMLSelectElement)) {
-    return;
-  }
-
-  select.innerHTML = "";
-
-  if (!state.organisations.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No organisations";
-    select.appendChild(option);
-    select.disabled = true;
-    return;
-  }
-
-  select.disabled = false;
-  state.organisations.forEach((organisation) => {
-    const option = document.createElement("option");
-    option.value = organisation.id;
-    option.textContent = organisation.name;
-    option.selected = organisation.id === state.activeOrganisationId;
-    select.appendChild(option);
+  renderSharedOrganisations({
+    select: ui.orgSelect,
+    organisations: state.organisations,
+    activeOrganisationId: state.activeOrganisationId,
   });
 }
 
 function renderScheduleState() {
-  const select = ui.scheduleSelect;
-  if (!(select instanceof HTMLSelectElement)) {
-    return;
-  }
-
-  if (!state.currentScheduler || !state.currentScheduler.is_enabled) {
-    select.value = SCHEDULE_PLACEHOLDER;
-    return;
-  }
-
-  const hours = String(state.currentScheduler.schedule_interval_hours);
-  select.value = SCHEDULE_OPTIONS.has(hours) ? hours : SCHEDULE_PLACEHOLDER;
-}
-
-function clearNode(node) {
-  if (!node) return;
-  while (node.firstChild) {
-    node.removeChild(node.firstChild);
-  }
-}
-
-function renderNoJobState(message, canRun = false) {
-  setText(ui.noJobText, message);
-  if (ui.runFirstCheckButton) {
-    ui.runFirstCheckButton.hidden = !canRun;
-  }
-  show(ui.noJobState);
-}
-
-function hideNoJobState() {
-  if (ui.runFirstCheckButton) {
-    ui.runFirstCheckButton.hidden = false;
-  }
-  hide(ui.noJobState);
+  renderSharedScheduleState({
+    select: ui.scheduleSelect,
+    currentScheduler: state.currentScheduler,
+    placeholder: SCHEDULE_PLACEHOLDER,
+    allowedValues: [...SCHEDULE_OPTIONS],
+  });
 }
 
 function renderJobState(job) {
-  const section = ui.jobSection;
-  if (!section) {
-    return;
-  }
-
-  clearNode(section);
-
-  if (!job || !isActiveJobStatus(job.status)) {
-    hide(section);
-    return;
-  }
-
-  const card = createJobCard(job, { context: "extension" });
-  card.addEventListener("hover-job-card:view", (event) => {
-    window.location.href = event.detail.path;
+  renderSharedJobState({
+    jobSection: ui.jobSection,
+    job,
+    isActiveJobStatus,
+    context: "extension",
+    onViewJob: (path) => {
+      window.location.href = path;
+    },
+    onExportJob: (jobId) => {
+      void exportJob(jobId);
+    },
   });
-  card.addEventListener("hover-job-card:export", (event) => {
-    void exportJob(event.detail.jobId);
-  });
-  section.appendChild(card);
-  show(section);
 }
 
 function renderRecentResults(jobs) {
-  const latestContainer = ui.latestResultsList;
-  const recentContainer = ui.recentResultsList;
-
-  if (!latestContainer || !recentContainer) {
-    return;
-  }
-
-  clearNode(latestContainer);
-  clearNode(recentContainer);
-
-  const siteJobs = filterJobsByDomains(jobs, {
+  renderSharedRecentResults({
+    latestResultsList: ui.latestResultsList,
+    recentResultsList: ui.recentResultsList,
+    noJobState: ui.noJobState,
+    noJobText: ui.noJobText,
+    noJobActionButton: ui.runFirstCheckButton,
+    jobs,
     siteDomain: state.selectedDomain,
     siteDomainCandidates: state.siteDomainCandidates,
-  });
-
-  if (!state.selectedDomain) {
-    renderNoJobState("Select a site to review its latest report.");
-    return;
-  }
-
-  if (siteJobs.length === 0) {
-    renderNoJobState(`No runs yet for ${state.selectedDomain}.`, true);
-    return;
-  }
-
-  hideNoJobState();
-
-  const completedJobs = siteJobs.filter(
-    (job) => !isActiveJobStatus(job.status)
-  );
-
-  if (completedJobs.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "detail";
-    empty.textContent = "No completed runs yet.";
-    latestContainer.appendChild(empty);
-    return;
-  }
-
-  const groupedJobs = completedJobs.slice(0, 6);
-  const latestJob = groupedJobs[0] || null;
-  const recentJobs = groupedJobs.slice(1, 6);
-
-  function makeCard(cardJob, compact) {
-    const card = createJobCard(cardJob, {
-      context: "extension",
-      compact,
-    });
-    card.addEventListener("hover-job-card:view", (event) => {
-      window.location.href = event.detail.path;
-    });
-    card.addEventListener("hover-job-card:export", (event) => {
-      void exportJob(event.detail.jobId);
-    });
-    return card;
-  }
-
-  latestContainer.appendChild(makeCard(latestJob, false));
-  recentJobs.forEach((job) => {
-    recentContainer.appendChild(makeCard(job, true));
+    isActiveJobStatus,
+    context: "extension",
+    onViewJob: (path) => {
+      window.location.href = path;
+    },
+    onExportJob: (jobId) => {
+      void exportJob(jobId);
+    },
+    emptySelectionMessage: "Select a site to review its latest report.",
+    emptySiteMessage: `No runs yet for ${state.selectedDomain}.`,
+    showEmptyAction: Boolean(state.selectedDomain),
   });
 }
 
 function renderMiniChart(jobs) {
-  const container = ui.miniChart;
-  if (!container) {
-    return;
-  }
-
-  clearNode(container);
-
-  const completedJobs = filterJobsByDomains(jobs, {
+  renderSharedMiniChart({
+    miniChart: ui.miniChart,
+    chartScaleLabels: ui.chartScaleLabels,
+    jobs,
     siteDomain: state.selectedDomain,
     siteDomainCandidates: state.siteDomainCandidates,
-  })
-    .filter((job) => normaliseJobStatus(job.status) === "completed")
-    .slice(0, 12);
-
-  if (completedJobs.length === 0) {
-    ui.chartScaleLabels.forEach((label) => {
-      label.textContent = "0";
-    });
-    return;
-  }
-
-  const chartRows = completedJobs
-    .filter((job) => Boolean(job.stats))
-    .map((job) => {
-      const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-      const errorCount = brokenLinks;
-      const okCount = verySlow + slow;
-      const totalPages = Math.max(0, Number(job.total_tasks || 0));
-      return {
-        job,
-        errorCount,
-        okCount,
-        issueTotal: errorCount + okCount,
-        totalPages,
-      };
-    })
-    .filter((row) => row.issueTotal > 0 && row.totalPages > 0)
-    .reverse();
-
-  if (!chartRows.length) {
-    ui.chartScaleLabels.forEach((label) => {
-      label.textContent = "0";
-    });
-    return;
-  }
-
-  const maxIssues = Math.max(...chartRows.map((row) => row.issueTotal), 1);
-  const ticks = [
-    maxIssues,
-    Math.round(maxIssues * 0.5),
-    Math.round(maxIssues * 0.25),
-    0,
-  ];
-
-  ui.chartScaleLabels.forEach((label, index) => {
-    label.textContent = String(ticks[index] ?? 0);
+    onViewJob: (path) => {
+      window.location.href = path;
+    },
   });
-
-  for (const row of chartRows) {
-    const bar = document.createElement("div");
-    bar.className = "chart-bar";
-    bar.role = "button";
-    bar.tabIndex = 0;
-    bar.title = `${formatDateTime(row.job.completed_at || row.job.created_at)}\nStatus: Completed\nOK: ${row.okCount}\nError: ${row.errorCount}\nTotal pages: ${Number(row.job.total_tasks || 0).toLocaleString()}`;
-
-    const detailPath = `${APP_ROUTES.viewJob}/${encodeURIComponent(row.job.id)}`;
-    const openDetail = () => {
-      window.location.href = detailPath;
-    };
-
-    bar.addEventListener("click", openDetail);
-    bar.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        openDetail();
-      }
-    });
-
-    if (row.okCount > 0) {
-      const okSegment = document.createElement("div");
-      okSegment.className = "chart-bar--warning";
-      okSegment.style.height = `${Math.max(2, Math.min((row.okCount / maxIssues) * 100, 100))}%`;
-      bar.appendChild(okSegment);
-    }
-
-    if (row.errorCount > 0) {
-      const errorSegment = document.createElement("div");
-      errorSegment.className = "chart-bar--danger";
-      errorSegment.style.height = `${Math.max(2, Math.min((row.errorCount / maxIssues) * 100, 100))}%`;
-      bar.appendChild(errorSegment);
-    }
-
-    if (bar.children.length > 0) {
-      container.appendChild(bar);
-    }
-  }
 }
 
 function setDisabledAll(disabled) {
@@ -691,7 +467,7 @@ async function refreshDashboard(options = {}) {
     await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
     renderUsage();
     renderOrganisations();
-    updateAvatarFromState();
+    void updateAvatarFromState();
     renderAuthState(true);
     startJobSubscription();
   } catch (error) {
@@ -952,7 +728,7 @@ async function syncAuthState(session) {
   state.session = session;
   state.userEmail = session?.user?.email || "";
   state.userAvatarUrl = session?.user?.user_metadata?.avatar_url || "";
-  updateAvatarFromState();
+  void updateAvatarFromState();
 
   if (!session) {
     cleanupJobSubscription();

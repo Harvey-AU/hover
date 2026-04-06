@@ -211,6 +211,65 @@ declare const HoverLib: {
       onSubscriptionIssue?: (status?: string, err?: Error) => void;
     }) => () => void;
   };
+  view: {
+    renderUserAvatar: (options?: {
+      element?: HTMLElement | null;
+      displayName?: string;
+      email?: string;
+      avatarUrl?: string;
+    }) => Promise<void>;
+    renderUsage: (options?: {
+      usage?: unknown | null;
+      planNameText?: Element | null;
+      planRemainingValue?: Element | null;
+    }) => void;
+    renderOrganisations: (options?: {
+      select?: HTMLSelectElement | null;
+      organisations?: unknown[];
+      activeOrganisationId?: string;
+      emptyLabel?: string;
+    }) => void;
+    renderScheduleState: (options?: {
+      select?: HTMLSelectElement | null;
+      currentScheduler?: unknown | null;
+      placeholder?: string;
+      allowedValues?: string[];
+    }) => void;
+    renderJobState: (options?: {
+      jobSection?: HTMLElement | null;
+      job?: unknown | null;
+      isActiveJobStatus?: (status: string) => boolean;
+      context?: string;
+      onViewJob?: (path: string, job?: unknown) => void;
+      onExportJob?: (jobId: string, job?: unknown) => void;
+    }) => void;
+    renderRecentResults: (options?: {
+      latestResultsList?: HTMLElement | null;
+      recentResultsList?: HTMLElement | null;
+      noJobState?: HTMLElement | null;
+      noJobText?: Element | null;
+      noJobActionButton?: HTMLElement | null;
+      jobs?: unknown[];
+      siteDomain?: string | null;
+      siteDomainCandidates?: string[];
+      isActiveJobStatus?: (status: string) => boolean;
+      context?: string;
+      onViewJob?: (path: string, job?: unknown) => void;
+      onExportJob?: (jobId: string, job?: unknown) => void;
+      emptySelectionMessage?: string;
+      emptySiteMessage?: string;
+      emptyCompletedMessage?: string;
+      showEmptyAction?: boolean;
+    }) => void;
+    renderMiniChart: (options?: {
+      miniChart?: HTMLElement | null;
+      chartScaleLabels?: Element[];
+      jobs?: unknown[];
+      siteDomain?: string | null;
+      siteDomainCandidates?: string[];
+      onViewJob?: (path: string, job?: unknown) => void;
+    }) => void;
+  };
   webflow: {
     startWebflowConnection: () => Promise<{ auth_url?: string }>;
     listWebflowConnections: () => Promise<unknown[]>;
@@ -364,103 +423,18 @@ function extractErrorMessage(rawBody?: string): string {
   return rawBody;
 }
 
-// ---------------------------------------------------------------------------
-// Avatar helpers
-// ---------------------------------------------------------------------------
-
-async function getGravatarUrl(email: string, size = 80): Promise<string> {
-  const normalised = (email || "").trim().toLowerCase();
-  if (!normalised || !globalThis.crypto?.subtle) return "";
-  try {
-    const data = new TextEncoder().encode(normalised);
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
-    const hash = [...new Uint8Array(digest)]
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    const params = new URLSearchParams({ s: String(size), d: "404" });
-    return `https://www.gravatar.com/avatar/${hash}?${params.toString()}`;
-  } catch {
-    return "";
-  }
-}
-
-async function renderAvatar(
-  target: HTMLElement,
-  email: string,
-  initials: string
-): Promise<void> {
-  const existingImg = target.querySelector("img");
-  if (existingImg) existingImg.remove();
-
-  target.textContent = initials;
-
-  const url = await getGravatarUrl(email, 80);
-  if (!url) return;
-
-  const img = document.createElement("img");
-  img.src = url;
-  img.alt = "User avatar";
-  img.loading = "lazy";
-  img.decoding = "async";
-  img.addEventListener(
-    "load",
-    () => {
-      target.textContent = "";
-      target.appendChild(img);
-    },
-    { once: true }
-  );
-  img.addEventListener(
-    "error",
-    () => {
-      if (img.parentNode) img.parentNode.removeChild(img);
-      target.textContent = initials;
-    },
-    { once: true }
-  );
-}
-
 async function updateAvatarFromState(): Promise<void> {
   const avatarEl = document.querySelector<HTMLElement>(
     ".topbar-profile-avatar"
   );
   if (!avatarEl) return;
 
-  const displayName = state.userDisplayName || state.userEmail || "";
-  const initials = displayName ? HoverLib.fmt.getInitials(displayName) : "?";
-
-  // Use the OAuth avatar_url from the auth postMessage if available,
-  // otherwise fall back to Gravatar via the shared renderAvatar helper.
-  if (state.userAvatarUrl) {
-    const existingImg = avatarEl.querySelector("img");
-    if (existingImg) existingImg.remove();
-    avatarEl.textContent = initials;
-
-    const img = document.createElement("img");
-    img.src = state.userAvatarUrl;
-    img.alt = "User avatar";
-    img.loading = "lazy";
-    img.decoding = "async";
-    img.addEventListener(
-      "load",
-      () => {
-        avatarEl.textContent = "";
-        avatarEl.appendChild(img);
-      },
-      { once: true }
-    );
-    img.addEventListener(
-      "error",
-      () => {
-        if (img.parentNode) img.parentNode.removeChild(img);
-        avatarEl.textContent = initials;
-      },
-      { once: true }
-    );
-    return;
-  }
-
-  await renderAvatar(avatarEl, state.userEmail ?? "", initials);
+  await HoverLib.view.renderUserAvatar({
+    element: avatarEl,
+    displayName: state.userDisplayName || state.userEmail || "",
+    email: state.userEmail || "",
+    avatarUrl: state.userAvatarUrl || "",
+  });
 }
 
 const ui = {
@@ -1091,152 +1065,39 @@ function renderJobState(job: JobItem | null): void {
   const section = asNode(ui.jobSection);
   if (!job || !isActiveJobStatus(job.status)) {
     stopJobStatusPolling();
-    hide(section);
-    return;
   }
-
-  const hoverJobCard = (window as any).HoverJobCard;
-  const card: HTMLElement = hoverJobCard
-    ? hoverJobCard.createJobCard(job, { context: "extension" })
-    : buildResultCardFallback(job, false);
-
-  if (section) {
-    section.replaceChildren(card);
-    card.addEventListener("hover-job-card:view", (e: Event) =>
-      openSettingsPage((e as CustomEvent).detail.path)
-    );
-    card.addEventListener("hover-job-card:export", (e: Event) => {
-      void exportJob((e as CustomEvent).detail.jobId);
-    });
-    show(section);
-  }
-}
-
-function asCount(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.floor(value));
-}
-
-function getIssueCounts(job: JobItem): {
-  brokenLinks: number;
-  verySlow: number;
-  slow: number;
-} {
-  const buckets = job.stats?.slow_page_buckets;
-  const statsBrokenLinks = asCount(job.stats?.total_broken_links);
-  const fallbackBrokenLinks = asCount(job.failed_tasks);
-
-  if (job.stats && buckets) {
-    const verySlow = asCount(buckets.over_10s) + asCount(buckets["5_to_10s"]);
-    const slow = asCount(buckets["3_to_5s"]);
-    return {
-      brokenLinks: Math.max(statsBrokenLinks, fallbackBrokenLinks),
-      verySlow,
-      slow,
-    };
-  }
-
-  return {
-    brokenLinks: fallbackBrokenLinks,
-    verySlow: 0,
-    slow: 0,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Recent results list (completed jobs only)
-// ---------------------------------------------------------------------------
-
-function filterSiteJobs(jobs: JobItem[]): JobItem[] {
-  return HoverLib.jobs.filterJobsByDomains(jobs, {
-    siteDomain: state.siteDomain,
-    siteDomainCandidates: state.siteDomainCandidates,
-  }) as JobItem[];
+  HoverLib.view.renderJobState({
+    jobSection: section,
+    job,
+    isActiveJobStatus,
+    context: "extension",
+    onViewJob: (path) => {
+      openSettingsPage(path);
+    },
+    onExportJob: (jobId) => {
+      void exportJob(jobId);
+    },
+  });
 }
 
 function renderRecentResults(jobs: JobItem[]): void {
-  const latestContainer = ui.latestResultsList;
-  const recentContainer = ui.recentResultsList;
-  if (!latestContainer || !recentContainer) {
-    return;
-  }
-
-  while (latestContainer.firstChild) {
-    latestContainer.removeChild(latestContainer.firstChild);
-  }
-
-  while (recentContainer.firstChild) {
-    recentContainer.removeChild(recentContainer.firstChild);
-  }
-
-  const siteJobs = filterSiteJobs(jobs);
-
-  // All completed / non-active jobs go here
-  const completedJobs = siteJobs.filter(
-    (job) => !isActiveJobStatus(job.status)
-  );
-
-  // Show/hide no-job state based on whether there are ANY jobs
-  if (siteJobs.length === 0) {
-    show(asNode(ui.noJobState));
-  } else {
-    hide(asNode(ui.noJobState));
-  }
-
-  if (completedJobs.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "detail";
-    empty.textContent = "No completed runs yet.";
-    latestContainer.appendChild(empty);
-    return;
-  }
-
-  const groupedJobs = completedJobs.slice(0, 6);
-  const latestJob = groupedJobs[0] || null;
-  const recentJobs = groupedJobs.slice(1, 6);
-
-  const hoverJobCard = (window as any).HoverJobCard;
-
-  function makeCard(cardJob: JobItem, compact: boolean): HTMLElement {
-    const card: HTMLElement = hoverJobCard
-      ? hoverJobCard.createJobCard(cardJob, { context: "extension", compact })
-      : buildResultCardFallback(cardJob, compact);
-    card.addEventListener("hover-job-card:view", (e: Event) =>
-      openSettingsPage((e as CustomEvent).detail.path)
-    );
-    card.addEventListener("hover-job-card:export", (e: Event) => {
-      void exportJob((e as CustomEvent).detail.jobId);
-    });
-    return card;
-  }
-
-  if (latestJob) {
-    latestContainer.appendChild(makeCard(latestJob, false));
-  }
-
-  if (recentJobs.length > 0) {
-    for (const job of recentJobs) {
-      recentContainer.appendChild(makeCard(job, true));
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Result card fallback (used only if hover-job-card.js fails to load)
-// ---------------------------------------------------------------------------
-
-function buildResultCardFallback(job: JobItem, compact = false): HTMLElement {
-  // Minimal fallback used only if hover-job-card.js fails to load.
-  const card = document.createElement("div");
-  card.className = compact
-    ? "result-card result-card--complete result-card--compact"
-    : "result-card result-card--complete";
-  const label = document.createElement("p");
-  label.textContent = String(job.status || "unknown");
-  card.appendChild(label);
-  return card;
+  HoverLib.view.renderRecentResults({
+    latestResultsList: asNode(ui.latestResultsList),
+    recentResultsList: asNode(ui.recentResultsList),
+    noJobState: asNode(ui.noJobState),
+    jobs,
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+    isActiveJobStatus,
+    context: "extension",
+    onViewJob: (path) => {
+      openSettingsPage(path);
+    },
+    onExportJob: (jobId) => {
+      void exportJob(jobId);
+    },
+    emptySiteMessage: "No runs yet for this site.",
+  });
 }
 // Job export
 // ---------------------------------------------------------------------------
@@ -1310,164 +1171,31 @@ const sanitizeForFilename = (value: string): string =>
 // ---------------------------------------------------------------------------
 
 function renderMiniChart(jobs: JobItem[]): void {
-  const container = ui.miniChart;
-  if (!container) {
-    return;
-  }
-
-  while (container.firstChild) {
-    container.removeChild(container.firstChild);
-  }
-
-  const completedJobs = filterSiteJobs(jobs)
-    .filter((job) => normalizeJobStatus(job.status) === "completed")
-    .slice(0, 12);
-
-  if (completedJobs.length === 0) {
-    for (const label of ui.chartScaleLabels || []) {
-      label.textContent = "0";
-    }
-    return;
-  }
-
-  const chartRows = completedJobs
-    .filter(
-      (job) =>
-        normalizeJobStatus(job.status) === "completed" && Boolean(job.stats)
-    )
-    .map((job) => {
-      const { brokenLinks, verySlow, slow } = getIssueCounts(job);
-      const errorCount = brokenLinks;
-      const okCount = verySlow + slow;
-      const totalPages = Math.max(0, job.total_tasks);
-      return {
-        job,
-        errorCount,
-        okCount,
-        issueTotal: errorCount + okCount,
-        totalPages,
-      };
-    })
-    .filter((row) => row.issueTotal > 0 && row.totalPages > 0)
-    .reverse();
-
-  if (chartRows.length === 0) {
-    for (const label of ui.chartScaleLabels || []) {
-      label.textContent = "0";
-    }
-    return;
-  }
-
-  const maxIssues = Math.max(...chartRows.map((row) => row.issueTotal), 1);
-
-  const tickTop = maxIssues;
-  const tickMid = Math.round(maxIssues * 0.5);
-  const tickQuarter = Math.round(maxIssues * 0.25);
-  const tickValues = [tickTop, tickMid, tickQuarter, 0];
-
-  (ui.chartScaleLabels || []).forEach((label, index) => {
-    const value = tickValues[index] ?? 0;
-    label.textContent = String(value);
+  HoverLib.view.renderMiniChart({
+    miniChart: asNode(ui.miniChart),
+    chartScaleLabels: ui.chartScaleLabels,
+    jobs,
+    siteDomain: state.siteDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+    onViewJob: (path) => {
+      openSettingsPage(path);
+    },
   });
-
-  const minSegmentHeightPercent = 2;
-
-  for (const row of chartRows) {
-    const job = row.job;
-    const bar = document.createElement("div");
-    bar.className = "chart-bar";
-    bar.role = "button";
-    bar.tabIndex = 0;
-    const dateStr = HoverLib.fmt.formatDateTime(
-      job.completed_at || job.created_at
-    );
-    bar.title = `${dateStr}\nStatus: Completed\nOK: ${row.okCount}\nError: ${row.errorCount}\nTotal pages: ${job.total_tasks.toLocaleString()}`;
-
-    const detailPath = `${APP_ROUTES.viewJob}/${encodeURIComponent(job.id)}`;
-    bar.addEventListener("click", () => {
-      openSettingsPage(detailPath);
-    });
-    bar.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        openSettingsPage(detailPath);
-      }
-    });
-
-    if (row.okCount > 0) {
-      const seg = document.createElement("div");
-      seg.className = "chart-bar--warning";
-      const okHeight = Math.max(
-        minSegmentHeightPercent,
-        Math.min((row.okCount / maxIssues) * 100, 100)
-      );
-      seg.style.height = `${okHeight}%`;
-      bar.appendChild(seg);
-    }
-
-    if (row.errorCount > 0) {
-      const seg = document.createElement("div");
-      seg.className = "chart-bar--danger";
-      const errorHeight = Math.max(
-        minSegmentHeightPercent,
-        Math.min((row.errorCount / maxIssues) * 100, 100)
-      );
-      seg.style.height = `${errorHeight}%`;
-      bar.appendChild(seg);
-    }
-
-    if (bar.children.length > 0) {
-      container.appendChild(bar);
-    }
-  }
 }
 
 function renderUsage(usage: UsageStats | null): void {
-  if (!usage) {
-    if (ui.planNameText) {
-      ui.planNameText.innerHTML = "<strong>Plan:</strong> \u2014";
-    }
-    setText(ui.planRemainingValue, "\u2014");
-    return;
-  }
-
-  const plan = usage.plan_display_name || usage.plan_name || "Plan";
-  const limit = usage.daily_limit.toLocaleString();
-
-  if (ui.planNameText) {
-    ui.planNameText.innerHTML = `<strong>Plan:</strong> <strong>${plan}</strong> (${limit} / day)`;
-  }
-
-  const remaining = usage.daily_remaining.toLocaleString();
-  setText(ui.planRemainingValue, `${remaining} remaining`);
+  HoverLib.view.renderUsage({
+    usage,
+    planNameText: ui.planNameText,
+    planRemainingValue: ui.planRemainingValue,
+  });
 }
 
 function renderOrganisations() {
-  const select = asSelect(ui.orgSelect);
-  if (!select) {
-    return;
-  }
-
-  while (select.firstChild) {
-    select.removeChild(select.firstChild);
-  }
-
-  if (state.organisations.length === 0) {
-    const placeholder = document.createElement("option");
-    placeholder.textContent = "No organisations";
-    placeholder.value = "";
-    select.appendChild(placeholder);
-    select.disabled = true;
-    return;
-  }
-
-  select.disabled = false;
-  state.organisations.forEach((org) => {
-    const option = document.createElement("option");
-    option.value = org.id;
-    option.textContent = org.name;
-    option.selected = org.id === state.activeOrganisationId;
-    select.appendChild(option);
+  HoverLib.view.renderOrganisations({
+    select: asSelect(ui.orgSelect),
+    organisations: state.organisations,
+    activeOrganisationId: state.activeOrganisationId,
   });
 }
 
@@ -1481,20 +1209,12 @@ function renderWebflowStatus(isConnected: boolean) {
 }
 
 function renderScheduleState(): void {
-  const scheduleSelect = asSelect(ui.scheduleSelect);
-  if (!scheduleSelect) {
-    return;
-  }
-
-  if (!state.currentScheduler || !state.currentScheduler.is_enabled) {
-    scheduleSelect.value = SCHEDULE_PLACEHOLDER;
-    return;
-  }
-
-  const hours = String(state.currentScheduler.schedule_interval_hours);
-  if (SCHEDULE_OPTIONS.includes(hours as any)) {
-    scheduleSelect.value = hours;
-  }
+  HoverLib.view.renderScheduleState({
+    select: asSelect(ui.scheduleSelect),
+    currentScheduler: state.currentScheduler,
+    placeholder: SCHEDULE_PLACEHOLDER,
+    allowedValues: [...SCHEDULE_OPTIONS],
+  });
 }
 
 function buildAppUrl(path: string): string {
