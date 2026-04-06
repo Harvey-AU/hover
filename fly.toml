@@ -42,8 +42,8 @@ primary_region = 'syd'
   ARCHIVE_PROVIDER = "r2"
   ARCHIVE_BUCKET = "native-hover-archive"
   ARCHIVE_RETENTION_JOBS = "3"   # completed jobs kept in Supabase per domain/org
-  ARCHIVE_INTERVAL = "1h"       # sweep frequency
-  ARCHIVE_BATCH_SIZE = "50"     # candidates per sweep
+  ARCHIVE_INTERVAL = "1m"       # sweep frequency
+  ARCHIVE_BATCH_SIZE = "100"    # candidates per sweep
   ARCHIVE_CONCURRENCY = "5"     # parallel uploads per sweep
 
 [deploy]

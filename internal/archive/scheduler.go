@@ -69,6 +69,9 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 		Int("concurrency", a.cfg.Concurrency).
 		Msg("Archive scheduler started")
 
+	// Run first sweep immediately rather than waiting for the first tick.
+	a.sweep(ctx, stopCh)
+
 	for {
 		select {
 		case <-ticker.C:
