@@ -39,12 +39,16 @@ const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
 const JOB_POLLING_INTERVAL_MS = 6000;
 const FALLBACK_POLLING_INTERVAL_MS = 1000;
-const ACCOUNT_SETTINGS_EXTENSION_SIZE = { width: 450, height: 620 } as const;
+const ACCOUNT_SETTINGS_EXTENSION_SIZE = { width: 620, height: 660 } as const;
 
 const APP_ROUTES = {
   dashboard: "/dashboard",
   viewJob: "/jobs",
   account: "/settings/account",
+  billing: "/settings/billing",
+  notifications: "/settings/notifications",
+  analytics: "/settings/analytics",
+  automatedJobs: "/settings/automated-jobs",
   changePlan: "/settings/plans",
   manageTeam: "/settings/team",
 } as const;
@@ -354,6 +358,10 @@ declare const HoverLib: {
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
 type ExtensionView = "dashboard" | "settings-account";
+type HoverTabsElement = HTMLElement & {
+  tabs: Array<{ key: string; label: string }>;
+  active: string;
+};
 
 type ApiError = {
   status: number;
@@ -554,6 +562,7 @@ const ui = {
   settingsAccountView: document.getElementById("settingsAccountView"),
   settingsBackButton: document.getElementById("settingsBackButton"),
   extensionAccountSection: document.getElementById("extensionAccountSection"),
+  settingsAccountTabs: document.getElementById("settingsAccountTabs"),
 };
 
 type ExtensionState = {
@@ -603,6 +612,7 @@ let shellChrome: ReturnType<typeof HoverLib.shell.initSurfaceShell> | null =
   null;
 let extensionView: ExtensionView = "dashboard";
 let accountSettingsBound = false;
+let accountSettingsLayoutBound = false;
 
 // Supabase realtime state
 let supabaseClient: SupabaseClient | null = null;
@@ -729,6 +739,10 @@ function asInput(element: Element | null): HTMLInputElement | null {
 
 function asSelect(element: Element | null): HTMLSelectElement | null {
   return element instanceof HTMLSelectElement ? element : null;
+}
+
+function asTabs(element: Element | null): HoverTabsElement | null {
+  return element instanceof HTMLElement ? (element as HoverTabsElement) : null;
 }
 
 function hide(el: HTMLElement | null): void {
@@ -1164,12 +1178,77 @@ function renderView(): void {
   }
 }
 
+function renderSettingsSidebar(path: string): void {
+  document
+    .querySelectorAll<HTMLElement>("[data-settings-path]")
+    .forEach((element) => {
+      const isActive = element.dataset.settingsPath === path;
+      element.classList.toggle("active", isActive);
+      if (isActive) {
+        element.setAttribute("aria-current", "page");
+      } else {
+        element.removeAttribute("aria-current");
+      }
+    });
+}
+
+function scrollSettingsSectionIntoView(targetId: string): void {
+  const section = document.getElementById(targetId);
+  if (!section) {
+    return;
+  }
+  section.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function bindAccountSettingsLayout(): void {
+  if (accountSettingsLayoutBound) {
+    return;
+  }
+
+  const tabs = asTabs(ui.settingsAccountTabs);
+  if (tabs) {
+    tabs.tabs = [
+      { key: "profile", label: "Profile" },
+      { key: "security", label: "Security" },
+    ];
+    tabs.active = "profile";
+    tabs.addEventListener("hover-tabs:change", (event: Event) => {
+      const detail = (event as CustomEvent<{ key: string }>).detail;
+      if (!detail?.key) {
+        return;
+      }
+      tabs.active = detail.key;
+      scrollSettingsSectionIntoView(detail.key);
+    });
+  }
+
+  document
+    .querySelectorAll<HTMLElement>("[data-settings-path]")
+    .forEach((element) => {
+      element.addEventListener("click", () => {
+        const path = element.dataset.settingsPath;
+        if (!path) {
+          return;
+        }
+        openSettingsPage(path);
+      });
+    });
+
+  accountSettingsLayoutBound = true;
+}
+
 async function openAccountSettingsView(): Promise<void> {
   if (!state.token || !ui.extensionAccountSection) {
     return;
   }
 
   extensionView = "settings-account";
+  renderSettingsSidebar(APP_ROUTES.account);
+  bindAccountSettingsLayout();
+  const tabs = asTabs(ui.settingsAccountTabs);
+  if (tabs) {
+    tabs.active = "profile";
+  }
   renderView();
 
   if (!accountSettingsBound) {
