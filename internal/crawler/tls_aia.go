@@ -85,7 +85,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 	// protection), and disable redirect following so we only inspect the target host.
 	inspectTransport := &http.Transport{
 		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional: reading cert only
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, //nolint:gosec // intentional: reading cert only
 		DialContext:         ssrfSafeDialContext(),
 	}
 	inspectClient := &http.Client{
