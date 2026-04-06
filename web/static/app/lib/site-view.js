@@ -157,11 +157,11 @@ export async function renderUserAvatar(options = {}) {
   img.loading = "eager";
   img.decoding = "async";
   const showImage = () => {
-    element.textContent = "";
     img.style.display = "block";
+    element.replaceChildren(img);
   };
   const showInitials = () => {
-    if (img.parentNode) img.parentNode.removeChild(img);
+    element.replaceChildren();
     element.textContent = initials;
   };
   img.addEventListener("load", showImage, { once: true });
