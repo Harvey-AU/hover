@@ -18,9 +18,6 @@ import { showToast } from "/app/components/hover-toast.js";
  * Passed as both ?state= and ?extension_state= in the URL.
  */
 const SEARCH_PARAMS = new URLSearchParams(window.location.search);
-const TARGET_ORIGIN = SEARCH_PARAMS.get("origin") || "";
-const EXTENSION_STATE =
-  SEARCH_PARAMS.get("extension_state") || SEARCH_PARAMS.get("state") || "";
 const AUTH_MODAL_PATH = "/auth-modal.html";
 const OAUTH_CALLBACK_QUERY_KEYS = [
   "error",
@@ -34,6 +31,8 @@ const OAUTH_CALLBACK_QUERY_KEYS = [
 const TURNSTILE_SCRIPT_SRC =
   "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 const MAX_TURNSTILE_RETRIES = 2;
+const POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY = "gnh_extension_auth_target_origin";
+const POPUP_AUTH_STATE_STORAGE_KEY = "gnh_extension_auth_state";
 
 /** @type {import("@supabase/supabase-js").SupabaseClient|null} */
 let supabaseClient = null;
@@ -45,6 +44,14 @@ let turnstileLoadPromise = null;
 let turnstileRetryCount = 0;
 let awaitingCaptchaRefresh = false;
 let pendingSignupSubmission = null;
+let targetOrigin = getPopupContextValue(
+  POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY,
+  SEARCH_PARAMS.get("origin") || ""
+);
+let extensionState = getPopupContextValue(
+  POPUP_AUTH_STATE_STORAGE_KEY,
+  SEARCH_PARAMS.get("extension_state") || SEARCH_PARAMS.get("state") || ""
+);
 
 // ── Element references ─────────────────────────────────────────────────────────
 
@@ -67,6 +74,7 @@ async function init() {
     return;
   }
 
+  persistPopupContext();
   setStatus("Preparing sign-in…");
 
   try {
@@ -125,8 +133,8 @@ async function handleAuthenticated(session) {
     window.opener.postMessage(
       {
         source: "gnh-extension-auth",
-        state: EXTENSION_STATE,
-        extensionState: EXTENSION_STATE,
+        state: extensionState,
+        extensionState,
         type: "success",
         accessToken: session.access_token,
         user: {
@@ -135,10 +143,11 @@ async function handleAuthenticated(session) {
           avatarUrl: session.user?.user_metadata?.avatar_url ?? "",
         },
       },
-      TARGET_ORIGIN
+      targetOrigin
     );
 
     setStatus("Signed in — you can close this window.", "success");
+    clearPopupContext();
     showToast("Signed in successfully.", { variant: "success", duration: 0 });
   } catch (err) {
     console.error("webflow-login: postMessage failed", err);
@@ -500,6 +509,11 @@ function showLogin() {
 }
 
 function validatePopupContract() {
+  if (!targetOrigin || !extensionState) {
+    setStatus("Missing extension context. Please reopen sign-in.", "error");
+    return false;
+  }
+
   if (!window.opener || window.opener.closed) {
     setStatus(
       "This login window must be opened from the Webflow extension.",
@@ -508,7 +522,7 @@ function validatePopupContract() {
     return false;
   }
 
-  if (TARGET_ORIGIN && !isValidExtensionTargetOrigin(TARGET_ORIGIN)) {
+  if (targetOrigin && !isValidExtensionTargetOrigin(targetOrigin)) {
     setStatus("Invalid extension origin. Please reopen sign-in.", "error");
     return false;
   }
@@ -517,7 +531,7 @@ function validatePopupContract() {
     const referrerOrigin = document.referrer
       ? new URL(document.referrer).origin
       : "";
-    if (referrerOrigin && TARGET_ORIGIN && referrerOrigin !== TARGET_ORIGIN) {
+    if (referrerOrigin && targetOrigin && referrerOrigin !== targetOrigin) {
       setStatus(
         "Origin mismatch. Please relaunch from the extension.",
         "error"
@@ -553,6 +567,43 @@ function isValidExtensionTargetOrigin(rawOrigin) {
     return host.endsWith(".fly.dev");
   } catch (_error) {
     return false;
+  }
+}
+
+function getPopupContextValue(storageKey, fallbackValue) {
+  if (fallbackValue) {
+    return fallbackValue;
+  }
+
+  try {
+    return window.sessionStorage.getItem(storageKey) || "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function persistPopupContext() {
+  if (!targetOrigin || !extensionState) {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(
+      POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY,
+      targetOrigin
+    );
+    window.sessionStorage.setItem(POPUP_AUTH_STATE_STORAGE_KEY, extensionState);
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+}
+
+function clearPopupContext() {
+  try {
+    window.sessionStorage.removeItem(POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY);
+    window.sessionStorage.removeItem(POPUP_AUTH_STATE_STORAGE_KEY);
+  } catch (_error) {
+    // Ignore storage failures.
   }
 }
 
@@ -790,14 +841,19 @@ async function handleSocialLogin(provider) {
   clearAuthError();
 
   try {
-    const { error } = await supabaseClient.auth.signInWithOAuth({
+    persistPopupContext();
+
+    const { data, error } = await supabaseClient.auth.signInWithOAuth({
       provider,
       options: {
-        redirectTo: window.location.href,
+        redirectTo: `${window.location.origin}/extension-auth.html`,
       },
     });
 
     if (error) throw error;
+    if (data?.url) {
+      window.location.assign(data.url);
+    }
   } catch (error) {
     console.error("webflow-login: social login failed", error);
     showAuthError(error?.message || `${provider} login failed.`);
