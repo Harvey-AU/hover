@@ -63,6 +63,17 @@ let requestedMode = getPopupContextValue(
   SEARCH_PARAMS.get("mode") || "login"
 );
 
+function getUserMetadataAvatarUrl(user) {
+  return (
+    user?.user_metadata?.avatar_url ||
+    user?.user_metadata?.picture ||
+    user?.user_metadata?.avatar ||
+    user?.identities?.find?.((identity) => identity?.identity_data?.avatar_url)
+      ?.identity_data?.avatar_url ||
+    ""
+  );
+}
+
 // ── Element references ─────────────────────────────────────────────────────────
 
 /** @returns {HTMLElement|null} */
@@ -157,7 +168,7 @@ async function handleAuthenticated(session) {
         user: {
           id: session.user?.id ?? "",
           email: session.user?.email ?? "",
-          avatarUrl: session.user?.user_metadata?.avatar_url ?? "",
+          avatarUrl: getUserMetadataAvatarUrl(session.user),
         },
       },
       targetOrigin

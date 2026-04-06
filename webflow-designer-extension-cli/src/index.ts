@@ -749,6 +749,35 @@ function pickUserDisplayName(
   return fullName || [firstName, lastName].filter(Boolean).join(" ").trim();
 }
 
+function pickUserAvatarUrl(
+  user:
+    | {
+        user_metadata?: Record<string, unknown> | null;
+        identities?: Array<{
+          identity_data?: Record<string, unknown> | null;
+        } | null> | null;
+      }
+    | null
+    | undefined
+): string {
+  const metadata =
+    (user?.user_metadata as Record<string, unknown> | null | undefined) || null;
+  const directAvatar = String(
+    metadata?.avatar_url || metadata?.picture || metadata?.avatar || ""
+  ).trim();
+  if (directAvatar) {
+    return directAvatar;
+  }
+
+  const identityAvatar = user?.identities
+    ?.map((identity) =>
+      String(identity?.identity_data?.avatar_url || "").trim()
+    )
+    .find(Boolean);
+
+  return identityAvatar || "";
+}
+
 async function loadCurrentUserIdentity(): Promise<void> {
   const client = await initSupabaseClient();
   if (client?.auth?.getUser) {
@@ -768,7 +797,7 @@ async function loadCurrentUserIdentity(): Promise<void> {
         state.userDisplayName = displayName;
       }
 
-      const avatarUrl = String(metadata?.avatar_url || "").trim();
+      const avatarUrl = pickUserAvatarUrl(user);
       if (avatarUrl) {
         state.userAvatarUrl = avatarUrl;
       }
