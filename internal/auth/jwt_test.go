@@ -155,7 +155,7 @@ func TestMissingAuthHeader(t *testing.T) {
 		expectedError bool
 		description   string
 	}{
-		{
+		{ //nolint:gosec // G101: fake JWT for test fixture
 			name:          "valid_bearer_token",
 			authHeader:    "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ",
 			expectedToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIn0.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ",

@@ -283,7 +283,7 @@ func (h *Handler) createJobFromRequest(ctx context.Context, user *db.User, req C
 	// Trigger GA4 data fetch in background if findLinks is enabled and organisation has GA4 connection
 	// GA4 data will be fetched and pages table updated, then tasks will be reprioritised
 	if findLinks && effectiveOrgID != "" && h.GoogleClientID != "" && h.GoogleClientSecret != "" {
-		go func() {
+		go func() { //nolint:gosec // G118: intentionally outlives request; background GA4 data fetch
 			logger.Info().
 				Str("organisation_id", effectiveOrgID).
 				Msg("Triggering GA4 data fetch in background")

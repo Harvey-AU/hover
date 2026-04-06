@@ -330,8 +330,8 @@ func startTestJWKSWithES256(tb testing.TB) (*ecdsa.PrivateKey, string, string, f
 	publicKey := &privateKey.PublicKey
 
 	// Encode EC public key coordinates
-	x := base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes())
-	y := base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes())
+	x := base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes()) //nolint:staticcheck // SA1019: no alternative for JWKS coordinate encoding
+	y := base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes()) //nolint:staticcheck // SA1019: no alternative for JWKS coordinate encoding
 
 	jwksPayload := struct {
 		Keys []map[string]string `json:"keys"`

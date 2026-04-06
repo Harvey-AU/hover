@@ -4,7 +4,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -81,7 +83,12 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		Transport: inspectTransport,
 	}
 
-	resp, err := inspectClient.Head("https://" + host)
+	if isPrivateHost(host) {
+		log.Debug().Str("host", host).Msg("AIA: rejecting private/internal host")
+		return false
+	}
+
+	resp, err := inspectClient.Head("https://" + host) //nolint:gosec // G704: host validated against private IPs above
 	if err != nil {
 		log.Debug().Err(err).Str("host", host).Msg("AIA: failed to connect for cert inspection")
 		return false
@@ -130,11 +137,21 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 }
 
 // fetchCertFromURL downloads a DER-encoded certificate from a URL.
-func fetchCertFromURL(url string) *x509.Certificate {
+func fetchCertFromURL(rawURL string) *x509.Certificate {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		log.Debug().Str("url", rawURL).Msg("AIA: rejecting non-HTTP(S) URL")
+		return nil
+	}
+	if isPrivateHost(parsed.Host) {
+		log.Debug().Str("url", rawURL).Msg("AIA: rejecting AIA URL targeting private host")
+		return nil
+	}
+
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(rawURL) //nolint:gosec // G704: URL validated against private IPs and scheme above
 	if err != nil {
-		log.Debug().Err(err).Str("url", url).Msg("AIA: failed to fetch intermediate")
+		log.Debug().Err(err).Str("url", rawURL).Msg("AIA: failed to fetch intermediate")
 		return nil
 	}
 	defer resp.Body.Close()
@@ -150,13 +167,41 @@ func fetchCertFromURL(url string) *x509.Certificate {
 		// Fallback: try parsing as multiple certs (PEM bundle)
 		certs, pemErr := x509.ParseCertificates(body)
 		if pemErr != nil || len(certs) == 0 {
-			log.Debug().Err(err).Str("url", url).Msg("AIA: failed to parse certificate")
+			log.Debug().Err(err).Str("url", rawURL).Msg("AIA: failed to parse certificate")
 			return nil
 		}
 		cert = certs[0]
 	}
 
 	return cert
+}
+
+// isPrivateHost resolves the host and returns true if any of its IPs are
+// private, loopback, link-local, or unspecified. This guards against SSRF
+// where an attacker-controlled hostname resolves to an internal address.
+func isPrivateHost(host string) bool {
+	// Strip port if present.
+	hostOnly := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostOnly = h
+	}
+
+	ips, err := net.LookupHost(hostOnly) //nolint:gosec // G704: this IS the SSRF validation — we check the resolved IPs below
+	if err != nil {
+		return true // fail-closed: treat unresolvable hosts as private
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return true
+		}
+	}
+	return false
 }
 
 // isUnknownAuthorityErr detects TLS errors caused by missing intermediates.

@@ -316,7 +316,7 @@ func (c *GA4Client) fetchSingleDateRange(ctx context.Context, propertyID, startD
 	}
 
 	url := fmt.Sprintf("https://analyticsdata.googleapis.com/v1beta/properties/%s:runReport", propertyID)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody)) //nolint:gosec // G704: url targets googleapis.com; propertyID from trusted config
 	if err != nil {
 		return nil, fmt.Errorf("failed to create runReport request: %w", err)
 	}
@@ -335,7 +335,7 @@ func (c *GA4Client) fetchSingleDateRange(ctx context.Context, propertyID, startD
 		Int("offset", offset).
 		Msg("Fetching GA4 report for date range")
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.httpClient.Do(httpReq) //nolint:gosec // G704: request targets googleapis.com
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute runReport request: %w", err)
 	}
@@ -582,7 +582,7 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 	}
 
 	// 7. Fetch remaining pages in background (loops until all fetched)
-	go func() {
+	go func() { //nolint:gosec // G118: intentionally outlives request; background GA4 page fetch
 		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		pf.fetchRemainingPagesBackground(bgCtx, organisationID, conn.GA4PropertyID, domainID, conn.ID, client, refreshToken, allowedHosts)
