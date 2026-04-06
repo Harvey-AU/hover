@@ -158,7 +158,7 @@ export async function renderUserAvatar(options = {}) {
   img.decoding = "async";
   const showImage = () => {
     element.textContent = "";
-    element.appendChild(img);
+    img.style.display = "block";
   };
   const showInitials = () => {
     if (img.parentNode) img.parentNode.removeChild(img);
@@ -166,6 +166,8 @@ export async function renderUserAvatar(options = {}) {
   };
   img.addEventListener("load", showImage, { once: true });
   img.addEventListener("error", showInitials, { once: true });
+  img.style.display = "none";
+  element.appendChild(img);
   img.src = resolvedAvatarUrl;
   if (img.complete) {
     if (img.naturalWidth > 0) {

@@ -751,32 +751,61 @@ function pickUserDisplayName(
 
 async function loadCurrentUserIdentity(): Promise<void> {
   const client = await initSupabaseClient();
-  if (!client?.auth?.getUser) {
+  if (client?.auth?.getUser) {
+    try {
+      const result = await client.auth.getUser();
+      const user = result?.data?.user;
+      const metadata =
+        (user?.user_metadata as Record<string, unknown> | null | undefined) ||
+        null;
+
+      if (user?.email) {
+        state.userEmail = user.email;
+      }
+
+      const displayName = pickUserDisplayName(metadata);
+      if (displayName) {
+        state.userDisplayName = displayName;
+      }
+
+      const avatarUrl = String(metadata?.avatar_url || "").trim();
+      if (avatarUrl) {
+        state.userAvatarUrl = avatarUrl;
+      }
+    } catch (error) {
+      console.warn("Unable to load current user identity", error);
+    }
+  }
+
+  if (state.userEmail && state.userDisplayName) {
     return;
   }
 
   try {
-    const result = await client.auth.getUser();
-    const user = result?.data?.user;
-    const metadata =
-      (user?.user_metadata as Record<string, unknown> | null | undefined) ||
-      null;
-
+    const profile = (await HoverLib.api.get("/v1/auth/profile")) as {
+      user?: {
+        email?: string | null;
+        first_name?: string | null;
+        last_name?: string | null;
+        full_name?: string | null;
+      };
+    };
+    const user = profile?.user;
     if (user?.email) {
       state.userEmail = user.email;
     }
-
-    const displayName = pickUserDisplayName(metadata);
+    const displayName =
+      String(user?.full_name || "").trim() ||
+      [user?.first_name || "", user?.last_name || ""]
+        .map((value) => String(value).trim())
+        .filter(Boolean)
+        .join(" ")
+        .trim();
     if (displayName) {
       state.userDisplayName = displayName;
     }
-
-    const avatarUrl = String(metadata?.avatar_url || "").trim();
-    if (avatarUrl) {
-      state.userAvatarUrl = avatarUrl;
-    }
   } catch (error) {
-    console.warn("Unable to load current user identity", error);
+    console.warn("Unable to load profile identity fallback", error);
   }
 }
 
