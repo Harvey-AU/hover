@@ -59,10 +59,10 @@ jobs:
             op://Good Native/hover-runtime/OTEL_EXPORTER_OTLP_HEADERS
           # Archive (R2 cold storage)
           ARCHIVE_ACCESS_KEY_ID:
-            op://Good Native/hover-runtime/ARCHIVE_ACCESS_KEY_ID
+            op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
           ARCHIVE_SECRET_ACCESS_KEY:
-            op://Good Native/hover-runtime/ARCHIVE_SECRET_ACCESS_KEY
-          ARCHIVE_ENDPOINT: op://Good Native/hover-runtime/ARCHIVE_ENDPOINT
+            op://Good Native/hover-archive/ARCHIVE_SECRET_ACCESS_KEY
+          ARCHIVE_ENDPOINT: op://Good Native/hover-archive/ARCHIVE_ENDPOINT
 
       - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
