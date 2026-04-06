@@ -405,93 +405,101 @@
         >
           <div class="extension-settings-layout">
             <aside class="extension-settings-sidebar">
-              <button
-                id="settingsBackButton"
-                type="button"
-                class="btn btn--ghost btn--text extension-settings-back"
-              >
-                ← Back
-              </button>
-
-              <div class="extension-settings-sidebar-copy">
-                <p class="extension-settings-eyebrow">Settings</p>
-                <h2 class="extension-settings-sidebar-title">Workspace</h2>
-                <p class="extension-settings-sidebar-subtitle">
-                  Manage your account and organisation settings without leaving
-                  the extension.
-                </p>
+              <div class="extension-settings-sidebar-topline">
+                <button
+                  id="settingsBackButton"
+                  type="button"
+                  class="btn btn--ghost btn--text extension-settings-back"
+                >
+                  ← Back
+                </button>
+                <span class="extension-settings-topline-label">Settings</span>
               </div>
 
-              <nav class="extension-settings-nav" aria-label="Settings">
-                <button
-                  type="button"
-                  class="extension-settings-nav-link active"
-                  data-settings-path="/settings/account"
+              <div class="extension-settings-nav-group">
+                <p class="extension-settings-group-title">
+                  Manage your profile
+                </p>
+                <nav
+                  class="extension-settings-nav"
+                  aria-label="Profile settings"
                 >
-                  Account
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/team"
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link active"
+                    data-settings-path="/settings/account"
+                  >
+                    Account
+                  </button>
+                </nav>
+              </div>
+
+              <div class="extension-settings-nav-divider"></div>
+
+              <div class="extension-settings-nav-group">
+                <p
+                  id="settingsOrgGroupTitle"
+                  class="extension-settings-group-title"
                 >
-                  Team
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/plans"
+                  Manage organisation
+                </p>
+                <nav
+                  class="extension-settings-nav"
+                  aria-label="Organisation settings"
                 >
-                  Plans
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/billing"
-                >
-                  Billing
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/notifications"
-                >
-                  Notifications
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/analytics"
-                >
-                  Analytics
-                </button>
-                <button
-                  type="button"
-                  class="extension-settings-nav-link"
-                  data-settings-path="/settings/automated-jobs"
-                >
-                  Automated jobs
-                </button>
-              </nav>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/team"
+                  >
+                    Team
+                  </button>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/plans"
+                  >
+                    Plans
+                  </button>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/billing"
+                  >
+                    Billing
+                  </button>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/notifications"
+                  >
+                    Notifications
+                  </button>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/analytics"
+                  >
+                    Analytics
+                  </button>
+                  <button
+                    type="button"
+                    class="extension-settings-nav-link"
+                    data-settings-path="/settings/automated-jobs"
+                  >
+                    Automated jobs
+                  </button>
+                </nav>
+              </div>
             </aside>
 
             <section class="extension-settings-main">
               <div class="extension-settings-header">
                 <div>
-                  <p class="extension-settings-eyebrow">Settings</p>
                   <h2 class="extension-settings-title">Account</h2>
-                  <p class="extension-settings-subtitle">
-                    Update your name and security settings without leaving the
-                    extension.
-                  </p>
+                  <div class="extension-settings-header-divider"></div>
                 </div>
               </div>
-
-              <hover-tabs
-                id="settingsAccountTabs"
-                class="extension-settings-tabs"
-                active="profile"
-              ></hover-tabs>
 
               <section
                 id="extensionAccountSection"

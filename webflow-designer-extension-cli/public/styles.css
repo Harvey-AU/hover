@@ -1083,7 +1083,21 @@ body {
   padding-right: 6px;
 }
 
-.extension-settings-sidebar-copy {
+.extension-settings-sidebar-topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.extension-settings-topline-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-colour--secondary);
+}
+
+.extension-settings-nav-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1094,17 +1108,18 @@ body {
   color: var(--colour--brand-primary);
 }
 
-.extension-settings-sidebar-title {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.15;
-  color: var(--text-colour--primary);
-}
-
-.extension-settings-sidebar-subtitle {
+.extension-settings-group-title {
   margin: 0;
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--text-colour--secondary);
+}
+
+.extension-settings-nav-divider {
+  height: 1px;
+  background: rgba(142, 218, 239, 0.18);
+  margin: 2px 0 0;
 }
 
 .extension-settings-nav {
@@ -1158,18 +1173,10 @@ body {
   gap: 10px;
 }
 
-.extension-settings-eyebrow,
-.extension-settings-subtitle,
 .settings-muted {
   margin: 0;
   font-size: 12px;
   color: var(--text-colour--secondary);
-}
-
-.extension-settings-eyebrow {
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .extension-settings-title {
@@ -1179,11 +1186,10 @@ body {
   color: var(--text-colour--primary);
 }
 
-.extension-settings-tabs {
-  padding: 8px;
-  border: 1px solid rgba(142, 218, 239, 0.2);
-  background: rgba(97, 208, 239, 0.04);
-  border-radius: 4px;
+.extension-settings-header-divider {
+  height: 1px;
+  margin-top: 10px;
+  background: rgba(142, 218, 239, 0.18);
 }
 
 .extension-settings-section {

@@ -358,10 +358,6 @@ declare const HoverLib: {
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
 type ExtensionView = "dashboard" | "settings-account";
-type HoverTabsElement = HTMLElement & {
-  tabs: Array<{ key: string; label: string }>;
-  active: string;
-};
 
 type ApiError = {
   status: number;
@@ -562,7 +558,7 @@ const ui = {
   settingsAccountView: document.getElementById("settingsAccountView"),
   settingsBackButton: document.getElementById("settingsBackButton"),
   extensionAccountSection: document.getElementById("extensionAccountSection"),
-  settingsAccountTabs: document.getElementById("settingsAccountTabs"),
+  settingsOrgGroupTitle: document.getElementById("settingsOrgGroupTitle"),
 };
 
 type ExtensionState = {
@@ -739,10 +735,6 @@ function asInput(element: Element | null): HTMLInputElement | null {
 
 function asSelect(element: Element | null): HTMLSelectElement | null {
   return element instanceof HTMLSelectElement ? element : null;
-}
-
-function asTabs(element: Element | null): HoverTabsElement | null {
-  return element instanceof HTMLElement ? (element as HoverTabsElement) : null;
 }
 
 function hide(el: HTMLElement | null): void {
@@ -1192,34 +1184,22 @@ function renderSettingsSidebar(path: string): void {
     });
 }
 
-function scrollSettingsSectionIntoView(targetId: string): void {
-  const section = document.getElementById(targetId);
-  if (!section) {
+function renderSettingsOrganisationGroupTitle(): void {
+  const heading = asNode(ui.settingsOrgGroupTitle);
+  if (!heading) {
     return;
   }
-  section.scrollIntoView({ behavior: "smooth", block: "start" });
+  const activeOrg = state.organisations.find(
+    (organisation) => organisation.id === state.activeOrganisationId
+  );
+  heading.textContent = activeOrg?.name
+    ? `Manage ${activeOrg.name}`
+    : "Manage organisation";
 }
 
 function bindAccountSettingsLayout(): void {
   if (accountSettingsLayoutBound) {
     return;
-  }
-
-  const tabs = asTabs(ui.settingsAccountTabs);
-  if (tabs) {
-    tabs.tabs = [
-      { key: "profile", label: "Profile" },
-      { key: "security", label: "Security" },
-    ];
-    tabs.active = "profile";
-    tabs.addEventListener("hover-tabs:change", (event: Event) => {
-      const detail = (event as CustomEvent<{ key: string }>).detail;
-      if (!detail?.key) {
-        return;
-      }
-      tabs.active = detail.key;
-      scrollSettingsSectionIntoView(detail.key);
-    });
   }
 
   document
@@ -1244,11 +1224,8 @@ async function openAccountSettingsView(): Promise<void> {
 
   extensionView = "settings-account";
   renderSettingsSidebar(APP_ROUTES.account);
+  renderSettingsOrganisationGroupTitle();
   bindAccountSettingsLayout();
-  const tabs = asTabs(ui.settingsAccountTabs);
-  if (tabs) {
-    tabs.active = "profile";
-  }
   renderView();
 
   if (!accountSettingsBound) {
@@ -1368,6 +1345,7 @@ function renderOrganisations() {
     organisations: state.organisations,
     activeOrganisationId: state.activeOrganisationId,
   });
+  renderSettingsOrganisationGroupTitle();
 }
 
 function renderWebflowStatus(isConnected: boolean) {
