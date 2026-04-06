@@ -1241,6 +1241,13 @@ function buildAppUrl(path: string): string {
   }
 }
 
+function buildSurfaceAppUrl(path: string): string {
+  const targetUrl = new URL(buildAppUrl(path));
+  targetUrl.searchParams.set("surface", "webflow-extension");
+  targetUrl.searchParams.set("return_to", window.location.href);
+  return targetUrl.toString();
+}
+
 function setLoading(element: Element | null, disabled: boolean): void {
   if (
     element instanceof HTMLButtonElement ||
@@ -1686,11 +1693,7 @@ async function switchOrganisation(): Promise<void> {
 }
 
 function openSettingsPage(path: string): void {
-  const targetUrl = buildAppUrl(path);
-  const popup = window.open(targetUrl, "_blank", "noopener,noreferrer");
-  if (!popup) {
-    setStatus("Popup blocked. Allow popups and try again.", "");
-  }
+  window.location.assign(buildSurfaceAppUrl(path));
 }
 
 async function subscribeToNotificationsChannel(

@@ -22,6 +22,16 @@
       crossorigin="anonymous"
     ></script>
     <script>
+      (function () {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("surface") === "webflow-extension") {
+          document.documentElement.setAttribute(
+            "data-surface-context",
+            "webflow-extension"
+          );
+        }
+      })();
+
       Sentry.init({
         dsn: "https://04f57d1dedc67f307cef525b1b1551a6@o4509113950928896.ingest.us.sentry.io/4509113952370688",
         environment:
@@ -68,6 +78,23 @@
   </head>
 
   <body class="page-dashboard">
+    <div id="surfaceContextBar" class="surface-context-bar" hidden>
+      <div class="surface-context-meta">
+        <a
+          id="surfaceContextBack"
+          class="surface-context-back"
+          href="/dashboard"
+        >
+          Back to extension
+        </a>
+        <div>
+          <p id="surfaceContextTitle" class="surface-context-title">
+            Dashboard
+          </p>
+          <p id="surfaceContextSubtitle" class="surface-context-subtitle"></p>
+        </div>
+      </div>
+    </div>
     <main class="app-shell dashboard-shell">
       <section class="panel" id="guestState">
         <div class="section auth-wrapper dashboard-auth-wrapper">

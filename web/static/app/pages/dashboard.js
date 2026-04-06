@@ -17,6 +17,7 @@ import {
   initSurfaceShell,
   renderProfileMenuSummary,
 } from "/app/lib/shell-nav.js";
+import { initSurfacePage } from "/app/lib/surface-context.js";
 import {
   loadOrganisationContext,
   switchOrganisation as switchOrganisationApi,
@@ -783,6 +784,10 @@ async function init() {
   }
   initialised = true;
 
+  initSurfacePage({
+    title: "Dashboard",
+    defaultReturnPath: "/dashboard",
+  });
   bindEvents();
   bindDomainSearch();
   await waitForSupabaseClient();
