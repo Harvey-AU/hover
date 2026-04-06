@@ -280,11 +280,11 @@ while true; do
     if flyctl logs --app "$APP" --no-tail 2>&1 | tail -n "$SAMPLES" > "$raw_file"; then
         if [[ -z "$PYTHON_CMD" ]]; then
             echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Captured raw logs only (Python unavailable)" | tee -a "$LOG_FILE"
-        elif ! env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]}" "$SCRIPT_DIR/process_logs.py" "$raw_file" "$summary_file" >> "$LOG_FILE" 2>&1; then
+        elif ! env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/process_logs.py" "$raw_file" "$summary_file" >> "$LOG_FILE" 2>&1; then
             echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Failed to process logs (see output above)" | tee -a "$LOG_FILE"
         else
             # Run aggregation after each successful batch
-            env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
+            env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
         fi
     else
         echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Failed to fetch logs from Fly; raw output stored in $raw_file" | tee -a "$LOG_FILE"
@@ -304,6 +304,6 @@ if [[ -z "$PYTHON_CMD" ]]; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Skipping aggregation (Python unavailable)" | tee -a "$LOG_FILE"
 else
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Running final aggregation..." | tee -a "$LOG_FILE"
-    env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
+    env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Aggregation complete" | tee -a "$LOG_FILE"
 fi

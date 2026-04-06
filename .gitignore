@@ -76,3 +76,4 @@ alloy.river
 
 # Worktrees
 .worktrees/
+.claude/worktrees/
