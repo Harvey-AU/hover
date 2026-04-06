@@ -32,8 +32,8 @@ On merge, CI will:
 
 - `hover jobs generate --repeats N` flag to run each test domain N times,
   cycling through domains as their previous jobs reach a terminal status
-- `hover jobs generate --limit N` flag to cap total jobs submitted regardless
-  of domain count × repeats
+- `hover jobs generate --limit N` flag to cap total jobs submitted regardless of
+  domain count × repeats
 - Per-domain stall backoff: after 3 consecutive status-refresh failures the job
   is placed in a timed backoff (5× `--status-interval`) before the domain is
   allowed to restart, preventing duplicate jobs while still recovering from
@@ -51,7 +51,8 @@ On merge, CI will:
   the raw response body; errors now report the HTTP status code and optional
   `X-Request-Id` header value only
 - Skipped run slots (create-retry cap reached) no longer increment
-  `jobsCreated`; the summary accurately reflects only successfully submitted jobs
+  `jobsCreated`; the summary accurately reflects only successfully submitted
+  jobs
 
 ## Full changelog history
 
