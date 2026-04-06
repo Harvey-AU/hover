@@ -449,6 +449,9 @@ func (db *DB) GetStripeCustomerID(ctx context.Context, organisationID string) (s
 		}
 		return "", fmt.Errorf("failed to fetch stripe customer id: %w", err)
 	}
+	if !id.Valid {
+		return "", nil
+	}
 	return id.String, nil
 }
 

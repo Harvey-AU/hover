@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	stripe "github.com/stripe/stripe-go/v82"
+	stripesubscription "github.com/stripe/stripe-go/v82/subscription"
 	"github.com/stripe/stripe-go/v82/webhook"
 )
 
@@ -24,6 +25,8 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
 		return
 	}
+
+	stripe.Key = h.StripeSecretKey
 
 	const maxBodyBytes = 65536
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -90,26 +93,37 @@ func (h *Handler) handleCheckoutSessionCompleted(r *http.Request, event stripe.E
 		}
 	}
 
-	// Persist subscription ID.
+	// Persist subscription ID and activate plan.
 	if sess.Subscription != nil {
-		if err := h.DB.SetStripeSubscriptionID(r.Context(), orgID, sess.Subscription.ID); err != nil {
+		subID := sess.Subscription.ID
+		if err := h.DB.SetStripeSubscriptionID(r.Context(), orgID, subID); err != nil {
 			logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe subscription ID")
 		}
 
-		// Resolve plan from the subscription's price.
-		if len(sess.Subscription.Items.Data) > 0 {
-			priceID := sess.Subscription.Items.Data[0].Price.ID
-			plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
-			if err != nil {
-				logger.Error().Err(err).Str("price_id", priceID).Msg("Cannot resolve plan from Stripe price")
-				return
-			}
-			if err := h.DB.SetOrganisationPlan(r.Context(), orgID, plan.ID); err != nil {
-				logger.Error().Err(err).Str("org_id", orgID).Str("plan_id", plan.ID).Msg("Failed to update organisation plan")
-				return
-			}
-			logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan activated via checkout")
+		// The subscription in checkout.session.completed is not expanded —
+		// fetch it directly to get the line items and price ID.
+		sub, err := stripesubscription.Get(subID, nil)
+		if err != nil {
+			logger.Error().Err(err).Str("subscription_id", subID).Msg("Failed to fetch subscription from Stripe")
+			return
 		}
+
+		if len(sub.Items.Data) == 0 {
+			logger.Error().Str("subscription_id", subID).Msg("Subscription has no line items — cannot activate plan")
+			return
+		}
+
+		priceID := sub.Items.Data[0].Price.ID
+		plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
+		if err != nil {
+			logger.Error().Err(err).Str("price_id", priceID).Msg("Cannot resolve plan from Stripe price")
+			return
+		}
+		if err := h.DB.SetOrganisationPlan(r.Context(), orgID, plan.ID); err != nil {
+			logger.Error().Err(err).Str("org_id", orgID).Str("plan_id", plan.ID).Msg("Failed to update organisation plan")
+			return
+		}
+		logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan activated via checkout")
 	}
 }
 
