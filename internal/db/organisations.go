@@ -424,6 +424,98 @@ func (db *DB) GetOrganisationPlanID(ctx context.Context, organisationID string) 
 	return planID, nil
 }
 
+// SetStripeCustomerID stores the Stripe customer ID on an organisation.
+func (db *DB) SetStripeCustomerID(ctx context.Context, organisationID, customerID string) error {
+	_, err := db.client.ExecContext(ctx,
+		`UPDATE organisations SET stripe_customer_id = $2, updated_at = NOW() WHERE id = $1`,
+		organisationID, customerID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set stripe customer id: %w", err)
+	}
+	return nil
+}
+
+// GetStripeCustomerID returns the Stripe customer ID for an organisation, or "" if unset.
+func (db *DB) GetStripeCustomerID(ctx context.Context, organisationID string) (string, error) {
+	var id sql.NullString
+	err := db.client.QueryRowContext(ctx,
+		`SELECT stripe_customer_id FROM organisations WHERE id = $1`,
+		organisationID,
+	).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("organisation not found")
+		}
+		return "", fmt.Errorf("failed to fetch stripe customer id: %w", err)
+	}
+	return id.String, nil
+}
+
+// GetOrganisationIDByStripeCustomerID returns the organisation ID for a Stripe customer.
+func (db *DB) GetOrganisationIDByStripeCustomerID(ctx context.Context, customerID string) (string, error) {
+	var orgID string
+	err := db.client.QueryRowContext(ctx,
+		`SELECT id FROM organisations WHERE stripe_customer_id = $1`,
+		customerID,
+	).Scan(&orgID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("no organisation found for stripe customer %s", customerID)
+		}
+		return "", fmt.Errorf("failed to lookup organisation by stripe customer: %w", err)
+	}
+	return orgID, nil
+}
+
+// SetStripeSubscriptionID stores the Stripe subscription ID on an organisation.
+func (db *DB) SetStripeSubscriptionID(ctx context.Context, organisationID, subscriptionID string) error {
+	_, err := db.client.ExecContext(ctx,
+		`UPDATE organisations SET stripe_subscription_id = $2, updated_at = NOW() WHERE id = $1`,
+		organisationID, subscriptionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set stripe subscription id: %w", err)
+	}
+	return nil
+}
+
+// GetPlanByStripePriceID returns the plan with the given Stripe Price ID.
+func (db *DB) GetPlanByStripePriceID(ctx context.Context, priceID string) (*Plan, error) {
+	var p Plan
+	err := db.client.QueryRowContext(ctx,
+		`SELECT id, name, display_name, daily_page_limit, monthly_price_cents,
+		        is_active, sort_order, created_at, COALESCE(stripe_price_id, '')
+		 FROM plans WHERE stripe_price_id = $1`,
+		priceID,
+	).Scan(
+		&p.ID, &p.Name, &p.DisplayName, &p.DailyPageLimit, &p.MonthlyPriceCents,
+		&p.IsActive, &p.SortOrder, &p.CreatedAt, &p.StripePriceID,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no plan found for stripe price %s", priceID)
+		}
+		return nil, fmt.Errorf("failed to lookup plan by stripe price id: %w", err)
+	}
+	return &p, nil
+}
+
+// GetFreePlanID returns the plan ID for the 'free' plan.
+func (db *DB) GetFreePlanID(ctx context.Context) (string, error) {
+	var id string
+	err := db.client.QueryRowContext(ctx,
+		`SELECT id FROM plans WHERE name = 'free' AND is_active = true LIMIT 1`,
+	).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("free plan not found")
+		}
+		return "", fmt.Errorf("failed to fetch free plan id: %w", err)
+	}
+	return id, nil
+}
+
 // ListDailyUsage returns daily usage rows for an organisation within a date range.
 func (db *DB) ListDailyUsage(ctx context.Context, organisationID string, startDate, endDate time.Time) ([]DailyUsageEntry, error) {
 	query := `

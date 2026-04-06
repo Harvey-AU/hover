@@ -88,6 +88,7 @@ require (
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
+	github.com/stripe/stripe-go/v82 v82.5.1 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

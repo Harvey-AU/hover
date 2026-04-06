@@ -346,6 +346,9 @@ type Config struct {
 	OTLPEndpoint          string
 	OTLPHeaders           string
 	OTLPInsecure          bool
+	StripeSecretKey       string
+	StripeWebhookSecret   string
+	StripePublishableKey  string
 }
 
 //nolint:gocyclo // main function setup is naturally complex but straightforward setup logic
@@ -373,6 +376,9 @@ func main() {
 		OTLPEndpoint:          os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		OTLPHeaders:           os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"),
 		OTLPInsecure:          getEnvWithDefault("OTEL_EXPORTER_OTLP_INSECURE", "false") == "true",
+		StripeSecretKey:       os.Getenv("STRIPE_SECRET_KEY"),
+		StripeWebhookSecret:   os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		StripePublishableKey:  os.Getenv("STRIPE_PUBLISHABLE_KEY"),
 	}
 
 	if config.FlightRecorderEnabled {
@@ -648,6 +654,10 @@ func main() {
 		brokerCleaner,
 		googleClientID,
 		googleClientSecret,
+		config.StripeSecretKey,
+		config.StripeWebhookSecret,
+		config.StripePublishableKey,
+		getEnvWithDefault("SETTINGS_URL", ""),
 	)
 
 	mux := http.NewServeMux()
