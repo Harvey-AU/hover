@@ -28,7 +28,53 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Added
+
+- Cold storage archival system — completed task HTML automatically moves from
+  Supabase hot storage to R2 (or S3/B2) via a background sweep, keeping storage
+  within quota without losing data
+- `archived` job status — jobs are marked archived once all their task HTML has
+  been moved to cold storage; the UI renders this as a success state, not an
+  error
+- Archive startup connectivity check — logs a clear error on boot if the cold
+  storage bucket is unreachable before the first sweep runs
+- `cmd/archive_key_migrate` one-shot tool to rekey existing archived objects
+  from the old path format to the canonical
+  `jobs/<id>/tasks/<id>/page-content.html.gz` layout
+
+### Security
+
+- Set TLS 1.2 minimum on AIA cert-inspection transport to prevent protocol
+  downgrade during handshake
+- Route all AIA HTTP requests through `ssrfSafeDialContext` — IP check at
+  connect time (not just URL-parse time) to prevent DNS rebinding
+- Add `CheckRedirect` to AIA and cert-inspection clients to re-validate redirect
+  targets against scheme and private-host checks, preventing SSRF via redirect
+- Bound `isPrivateHost` DNS lookup with a 2 s context; fail-closed on timeout
+- AIA intermediate certs stored in a separate slice — never injected into
+  `TLSClientConfig.RootCAs`; chain verified via `VerifyConnection` callback
+- Guard AIA intermediate acceptance: reject self-signed certs and certs without
+  `IsCA + BasicConstraintsValid`
+- Sanitise AIA log calls to record `host` only, not the full raw URL
+- Replace credential-like literals in DSN test fixtures with neutral
+  placeholders; remove associated `nolint:gosec` annotations
+
+### Fixed
+
+- Archive default interval corrected to 1 minute (was 1 hour in code default,
+  conflicting with fly.toml override)
+- Sweep shutdown now propagates a sweep-scoped cancel to all in-flight archive
+  goroutines — stop signal no longer leaves goroutines running detached
+- Job card renders `archived` status with success styling instead of falling
+  through to the error branch
+- Archive CAS update now checks `RowsAffected` before deleting the old object —
+  prevents orphan deletion if another process already migrated the key
+- R2 upload: use unsigned payload and explicit `Content-Length` header; disable
+  auto-checksum trailer to avoid SDK/R2 compatibility issues
+- Fix doubled path segment in cold storage object key
+- Fix archive bucket name mismatch between config and fly secrets
+- Fix content type fallback so archived HTML is always stored as
+  `text/html; charset=utf-8` + `gzip` encoding
 
 ## Full changelog history
 
