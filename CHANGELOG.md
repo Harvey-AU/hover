@@ -35,6 +35,30 @@ On merge, CI will:
   app layer and extension bridge runtime
 - aligned extension reuse docs with the current ES modules migration state and
   the remaining hybrid auth popup architecture
+## [0.31.4] – 2026-04-05
+
+### Fixed
+
+- Fix file descriptor exhaustion under load caused by per-request HTTP transport
+  leak in `CheckCacheStatus()` — each probe call created a new `http.Transport`
+  that held idle connections open indefinitely, exhausting 10240 fds during
+  sustained crawling
+- Add shared `probeClient` to `Crawler` struct, reused across all cache probe
+  requests with proper idle connection limits
+- Add global `MaxIdleConns` cap (150) to main crawler and `CreateHTTPClient`
+  transports to prevent unbounded idle socket accumulation across hosts
+- Reduce production DB pool from 70 → 45 open connections via env vars to match
+  actual queue semaphore usage (40 concurrent ops + 5 reserved)
+- Add file descriptor pressure detection in `ensurePoolCapacity` — rejects DB
+  operations early with `ErrPoolSaturated` (triggering existing retry/backoff)
+  when fd usage exceeds 90%, instead of failing with cryptic DNS errors
+- Raise container fd soft limit to hard limit ceiling in Dockerfile as safety
+  net
+
+### Added
+
+- File descriptor observability gauges (`bee.process.fd.current`,
+  `bee.process.fd.limit`, `bee.process.fd.pressure`) for Grafana monitoring
 
 ## [0.31.3] – 2026-04-04
 

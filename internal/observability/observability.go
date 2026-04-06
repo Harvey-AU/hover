@@ -81,6 +81,10 @@ var (
 	dbPoolMaxOpenGauge      metric.Int64Gauge
 	dbPoolReservedGauge     metric.Int64Gauge
 	dbPoolRejectCounter     metric.Int64Counter
+
+	fdCurrentGauge  metric.Int64Gauge
+	fdLimitGauge    metric.Int64Gauge
+	fdPressureGauge metric.Float64Gauge
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -440,6 +444,30 @@ func initDBPoolInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		"bee.db.pool.rejects_total",
 		metric.WithDescription("Number of pool rejections when context expires before acquiring connection"),
 	)
+	if err != nil {
+		return err
+	}
+
+	fdCurrentGauge, err = meter.Int64Gauge(
+		"bee.process.fd.current",
+		metric.WithDescription("Current number of open file descriptors"),
+	)
+	if err != nil {
+		return err
+	}
+
+	fdLimitGauge, err = meter.Int64Gauge(
+		"bee.process.fd.limit",
+		metric.WithDescription("File descriptor soft limit"),
+	)
+	if err != nil {
+		return err
+	}
+
+	fdPressureGauge, err = meter.Float64Gauge(
+		"bee.process.fd.pressure",
+		metric.WithDescription("File descriptor usage ratio (current / limit)"),
+	)
 	return err
 }
 
@@ -656,5 +684,18 @@ func RecordTaskWaiting(ctx context.Context, jobID string, reason string, count i
 func RecordDBPoolRejection(ctx context.Context) {
 	if dbPoolRejectCounter != nil {
 		dbPoolRejectCounter.Add(ctx, 1, metric.WithAttributes())
+	}
+}
+
+// RecordFDStats records file descriptor usage metrics.
+func RecordFDStats(ctx context.Context, current, limit int, pressure float64) {
+	if fdCurrentGauge != nil {
+		fdCurrentGauge.Record(ctx, int64(current), metric.WithAttributes())
+	}
+	if fdLimitGauge != nil {
+		fdLimitGauge.Record(ctx, int64(limit), metric.WithAttributes())
+	}
+	if fdPressureGauge != nil {
+		fdPressureGauge.Record(ctx, pressure, metric.WithAttributes())
 	}
 }
