@@ -417,12 +417,19 @@ func runJobsGenerate(args []string) error {
 	})
 
 	type domainRunState struct {
-		Domain        string
-		RemainingRuns int
-		LastJobID     string
-		LastJobStatus string
-		CompletedRuns int
+		Domain               string
+		RemainingRuns        int
+		LastJobID            string
+		LastJobStatus        string
+		CompletedRuns        int
+		CreateFailures       int // consecutive createJob failures for the current run slot
+		StatusRefreshFails   int // consecutive fetchJobStatus failures for the active job
 	}
+
+	const (
+		maxCreateRetries    = 3 // skip a run slot after this many consecutive create failures
+		maxStatusRefreshErr = 3 // clear a stalled job after this many consecutive refresh failures
+	)
 
 	domainStates := make([]domainRunState, len(domains))
 	for i, domain := range domains {
@@ -471,8 +478,16 @@ func runJobsGenerate(args []string) error {
 			status, err := fetchJobStatus(ctx, ac.APIURL, token, state.LastJobID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\033[31m! Failed to refresh status for %s (%s): %v\033[0m\n", state.Domain, state.LastJobID, err)
+				state.StatusRefreshFails++
+				if state.StatusRefreshFails >= maxStatusRefreshErr {
+					fmt.Fprintf(os.Stderr, "\033[33m! Clearing stalled job %s for %s after %d refresh failures\033[0m\n", state.LastJobID, state.Domain, state.StatusRefreshFails)
+					state.LastJobID = ""
+					state.LastJobStatus = ""
+					state.StatusRefreshFails = 0
+				}
 				continue
 			}
+			state.StatusRefreshFails = 0
 			state.LastJobStatus = status
 		}
 
@@ -529,8 +544,16 @@ func runJobsGenerate(args []string) error {
 				if strings.Contains(err.Error(), "401") {
 					return fmt.Errorf("authentication failed — check your token")
 				}
+				state.CreateFailures++
+				if state.CreateFailures >= maxCreateRetries {
+					fmt.Fprintf(os.Stderr, "\033[31m✗ Skipping %s after %d failed attempts\033[0m\n", state.Domain, state.CreateFailures)
+					state.RemainingRuns--
+					jobsCreated++
+					state.CreateFailures = 0
+				}
 				continue
 			}
+			state.CreateFailures = 0
 			fmt.Fprintf(os.Stderr, "\033[32m✓ Created job %s for %s\033[0m\n", id, state.Domain)
 			state.LastJobID = id
 			state.LastJobStatus = "pending"
@@ -613,11 +636,16 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 		return "", err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		if reqID := resp.Header.Get("X-Request-Id"); reqID != "" {
+			return "", fmt.Errorf("HTTP %d (request-id: %s)", resp.StatusCode, reqID)
+		}
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
+
+	respBody, _ := io.ReadAll(resp.Body)
 
 	// Extract job ID from response — the API may nest it differently.
 	var result struct {
@@ -658,10 +686,15 @@ func fetchJobStatus(ctx context.Context, apiURL, token, jobID string) (string, e
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		if reqID := resp.Header.Get("X-Request-Id"); reqID != "" {
+			return "", fmt.Errorf("HTTP %d (request-id: %s)", resp.StatusCode, reqID)
+		}
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
+
+	respBody, _ := io.ReadAll(resp.Body)
 
 	var result struct {
 		Data struct {
