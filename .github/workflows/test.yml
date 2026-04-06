@@ -42,7 +42,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
           cache: true
 
       - name: Determine Go cache paths
@@ -82,7 +82,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
           cache: true
 
       - name: Check Go formatting
@@ -103,16 +103,16 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Prettier
-        run: npm install --global prettier
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
 
       - name: Check Prettier formatting
         run: |
           echo "=== Checking Prettier formatting ==="
-          prettier --check "**/*.{md,yml,yaml,json,html,css,js}" || {
+          npm run format:check || {
             echo ""
             echo "❌ Some files are not formatted with Prettier"
-            echo "Run 'prettier --write \"**/*.{md,yml,yaml,json,html,css,js}\"' to fix formatting"
+            echo "Run 'npm run format:write' to fix formatting"
             exit 1
           }
           echo "✅ All files are properly formatted with Prettier"
@@ -127,7 +127,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
           cache: true
 
       - name: Run unit tests
@@ -170,7 +170,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
           cache: true
 
       - name: Skip database setup for dynamic preview branches
@@ -252,7 +252,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.1"
           cache: true
 
       - name: Download coverage files

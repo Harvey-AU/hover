@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Go 1.26** - We use Go 1.26 for advanced features and runtime improvements
+- **Go 1.26.1** - We use Go 1.26.1 for the latest runtime fixes and improvements
 - **Docker Desktop** - Required for local Supabase instance
   ([Download here](https://docs.docker.com/desktop/))
 - **Supabase CLI** - Database management (`npm install -g supabase` or
@@ -22,7 +22,8 @@
 git clone https://github.com/[your-username]/hover.git
 cd hover
 
-# Setup Git hooks for automatic formatting
+# Set up tracked Git hooks once per clone
+# Future worktrees inherit this shared hooks path automatically
 bash scripts/setup-hooks.sh
 ```
 
@@ -31,6 +32,7 @@ The Git hooks will automatically format your code before each commit:
 - ✅ Go files formatted with `gofmt`
 - ✅ Markdown, YAML, JSON formatted with Prettier
 - ✅ No manual formatting needed!
+- ✅ Future worktrees reuse the same tracked hooks path
 
 ### 2. Start Development Environment
 
@@ -440,14 +442,14 @@ go test -v -coverprofile=coverage.out ./...
 
 #### Running golangci-lint Locally
 
-If your local golangci-lint doesn't support Go 1.26, use Docker:
+If your local golangci-lint doesn't support Go 1.26.1, use Docker:
 
 ```bash
 # Run linting via Docker (recommended)
 docker run --rm -v "$(pwd)":/workspace -w /workspace \
   golangci/golangci-lint:v2.9.0 golangci-lint run
 
-# Or install Go 1.26-compatible version
+# Or install a Go 1.26.1-compatible version
 brew upgrade golangci-lint  # macOS
 # Then run: golangci-lint run
 ```

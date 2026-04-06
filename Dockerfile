@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26.0-alpine AS builder
+FROM golang:1.26.1-alpine AS builder
 
 WORKDIR /app
 
@@ -55,4 +55,4 @@ EXPOSE 8080
 USER appuser
 
 # Run the binary
-CMD ["./main"]
+CMD ["sh", "-c", "ulimit -n 65536 2>/dev/null || ulimit -n $(ulimit -Hn) 2>/dev/null; echo \"fd soft limit: $(ulimit -n)\"; exec ./main"]
