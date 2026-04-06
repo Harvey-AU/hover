@@ -911,6 +911,141 @@ type TaskHTMLMetadata struct {
 	CapturedAt          time.Time
 }
 
+// ArchiveCandidate represents a task whose HTML is eligible for cold-storage archival.
+type ArchiveCandidate struct {
+	TaskID              string
+	JobID               string
+	StorageBucket       string
+	StoragePath         string
+	SHA256              string
+	CompressedSizeBytes int64
+	ContentType         string
+	ContentEncoding     string
+}
+
+// FindArchiveCandidates returns tasks whose HTML should be moved to cold storage.
+// retentionJobs controls how many recent completed/failed/cancelled jobs per
+// (domain_id, organisation_id) are kept hot. Tasks beyond that threshold are
+// candidates.
+func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]ArchiveCandidate, error) {
+	var candidates []ArchiveCandidate
+
+	err := q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(txCtx, `
+			WITH ranked AS (
+				SELECT j.id,
+					   ROW_NUMBER() OVER (
+						   PARTITION BY j.domain_id, j.organisation_id
+						   ORDER BY COALESCE(j.completed_at, j.created_at) DESC
+					   ) AS rn
+				FROM jobs j
+				WHERE j.status IN ('completed', 'failed', 'cancelled')
+			)
+			SELECT t.id, t.job_id, t.html_storage_bucket, t.html_storage_path,
+				   COALESCE(t.html_sha256, ''), COALESCE(t.html_compressed_size_bytes, 0),
+				   COALESCE(t.html_content_type, ''), COALESCE(t.html_content_encoding, '')
+			FROM tasks t
+			JOIN ranked r ON r.id = t.job_id
+			WHERE r.rn > $1
+			  AND t.html_storage_bucket IS NOT NULL
+			  AND t.html_storage_path IS NOT NULL
+			  AND t.html_archived_at IS NULL
+			LIMIT $2
+		`, retentionJobs, limit)
+		if err != nil {
+			return fmt.Errorf("archive candidate query failed: %w", err)
+		}
+		defer rows.Close()
+
+		// Reset slice so retried Execute callbacks don't accumulate duplicates.
+		candidates = candidates[:0]
+
+		for rows.Next() {
+			var c ArchiveCandidate
+			if err := rows.Scan(&c.TaskID, &c.JobID, &c.StorageBucket, &c.StoragePath,
+				&c.SHA256, &c.CompressedSizeBytes, &c.ContentType, &c.ContentEncoding); err != nil {
+				return fmt.Errorf("scanning archive candidate: %w", err)
+			}
+			candidates = append(candidates, c)
+		}
+		return rows.Err()
+	})
+
+	return candidates, err
+}
+
+// MarkTaskArchived records that a task's HTML has been moved to cold storage
+// and clears the hot-storage reference so it can be reclaimed.
+func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error {
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		result, err := tx.ExecContext(txCtx, `
+			UPDATE tasks
+			SET html_archive_provider = $2,
+				html_archive_bucket   = $3,
+				html_archive_key      = $4,
+				html_archived_at      = NOW(),
+				html_storage_bucket   = NULL,
+				html_storage_path     = NULL
+			WHERE id = $1
+			  AND html_archived_at IS NULL
+		`, taskID, provider, bucket, key)
+		if err != nil {
+			return fmt.Errorf("mark task %s archived: %w", taskID, err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark task %s archived: reading rows affected: %w", taskID, err)
+		}
+		if rowsAffected == 0 {
+			// Already archived or task doesn't exist — check which.
+			var exists bool
+			err = tx.QueryRowContext(txCtx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
+			if err != nil {
+				return fmt.Errorf("mark task %s archived: existence check: %w", taskID, err)
+			}
+			if exists {
+				return nil // already archived — idempotent success
+			}
+			return fmt.Errorf("mark task %s archived: task not found", taskID)
+		}
+		return nil
+	})
+}
+
+// MarkFullyArchivedJobs transitions terminal jobs to 'archived' when all their
+// HTML has been moved to cold storage. Returns the number of jobs marked.
+func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
+	var rowsAffected int64
+
+	err := q.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			SET status = 'archived'
+			WHERE status IN ('completed', 'failed', 'cancelled')
+			  AND NOT EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_storage_path IS NOT NULL
+			  )
+			  AND EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_archived_at IS NOT NULL
+			  )
+		`)
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: %w", err)
+		}
+		rowsAffected, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: reading rows affected: %w", err)
+		}
+		return nil
+	})
+
+	return rowsAffected, err
+}
+
 // GetNextTask gets a pending task using row-level locking
 // Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers
 // Combines SELECT and UPDATE in a CTE for atomic claiming

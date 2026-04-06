@@ -37,6 +37,14 @@ SLACK_CLIENT_ID = "475806237719.8953791603746"
 WEBFLOW_CLIENT_ID = "b0a05758d95823fcef73f57e836e55232bf7c5730794222786040800230ea329"
 GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleusercontent.com"
 
+# Cold-storage archival (R2) — credentials via flyctl secrets
+ARCHIVE_PROVIDER = "r2"
+ARCHIVE_BUCKET = "native-hover-archive"
+ARCHIVE_RETENTION_JOBS = "3"
+ARCHIVE_INTERVAL = "1m"
+ARCHIVE_BATCH_SIZE = "100"
+ARCHIVE_CONCURRENCY = "5"
+
 # Performance settings (preview has own DB now, can align closer to prod)
 WORKER_CONCURRENCY = "5"                    # Half of prod (respects 512mb VM)
 DB_QUEUE_MAX_CONCURRENCY = "20"             # Half of prod

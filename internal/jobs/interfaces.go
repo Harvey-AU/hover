@@ -29,4 +29,7 @@ type DbQueueInterface interface {
 	SetConcurrencyOverride(fn db.ConcurrencyOverrideFunc)
 	UpdateDomainTechnologies(ctx context.Context, domainID int, technologies, headers []byte, htmlPath string) error
 	UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
+	FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]db.ArchiveCandidate, error)
+	MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error
+	MarkFullyArchivedJobs(ctx context.Context) (int64, error)
 }

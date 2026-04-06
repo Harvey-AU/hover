@@ -71,6 +71,12 @@ jobs:
             op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
           SUPABASE_SERVICE_ROLE_KEY:
             op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
+          # Archive (R2 cold storage)
+          ARCHIVE_ACCESS_KEY_ID:
+            op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
+          ARCHIVE_SECRET_ACCESS_KEY:
+            op://Good Native/hover-archive/ARCHIVE_SECRET_ACCESS_KEY
+          ARCHIVE_ENDPOINT: op://Good Native/hover-archive/ARCHIVE_ENDPOINT
 
       - name: Get Supabase Preview Branch URL
         id: supabase
@@ -236,6 +242,9 @@ jobs:
               SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
               WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
               GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+              ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+              ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+              ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
@@ -251,6 +260,9 @@ jobs:
               SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
               WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
               GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+              ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+              ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+              ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \

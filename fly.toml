@@ -38,6 +38,13 @@ primary_region = 'syd'
   WEBFLOW_CLIENT_ID = "b0a05758d95823fcef73f57e836e55232bf7c5730794222786040800230ea329"
   GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleusercontent.com"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp"
+  # Cold-storage archival (R2) — defaults in internal/archive/archive.go
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
+  ARCHIVE_RETENTION_JOBS = "3"   # completed jobs kept in Supabase per domain/org
+  ARCHIVE_INTERVAL = "1m"       # sweep frequency
+  ARCHIVE_BATCH_SIZE = "100"    # candidates per sweep
+  ARCHIVE_CONCURRENCY = "5"     # parallel uploads per sweep
 
 [deploy]
   strategy = "immediate"

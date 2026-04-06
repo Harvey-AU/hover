@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/observability"
@@ -75,12 +76,14 @@ const (
 	taskHTMLDrainTimeout     = 15 * time.Second
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
+	archivePingTimeout       = 10 * time.Second
 )
 
 type storageUploader interface {
 	Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error)
 	UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
 	Delete(ctx context.Context, bucket, path string) error
+	Download(ctx context.Context, bucket, path string) ([]byte, error)
 }
 
 type taskHTMLUpload struct {
@@ -192,6 +195,9 @@ type WorkerPool struct {
 	storageClient       storageUploader // For uploading HTML samples
 	taskHTMLPersistCh   chan *taskHTMLPersistRequest
 	taskHTMLPending     atomic.Int64
+
+	// Cold-storage archiver (nil when ARCHIVE_PROVIDER is unset)
+	archiver *archive.Archiver
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -206,6 +212,13 @@ func (wp *WorkerPool) activeJobCount() int {
 	wp.jobsMutex.RLock()
 	defer wp.jobsMutex.RUnlock()
 	return len(wp.jobs)
+}
+
+// IdleWorkerCount returns the number of workers currently idle.
+func (wp *WorkerPool) IdleWorkerCount() int {
+	wp.idleWorkersMutex.RLock()
+	defer wp.idleWorkersMutex.RUnlock()
+	return len(wp.idleWorkers)
 }
 
 func (wp *WorkerPool) logScalingDecision(decision, reason string, currentWorkers, targetWorkers int, metadata map[string]int) {
@@ -592,6 +605,36 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
 	}
 
+	// Initialise cold-storage archiver (gated by ARCHIVE_PROVIDER env var).
+	archiveCfg := archive.ConfigFromEnv()
+	switch {
+	case archiveCfg == nil:
+		log.Info().Msg("ARCHIVE: incomplete config or ARCHIVE_PROVIDER not set — archiving DISABLED")
+	case wp.storageClient == nil:
+		log.Error().Msg("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
+	default:
+		provider, err := archive.ProviderFromEnv()
+		if err != nil {
+			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
+		} else if provider == nil {
+			log.Warn().Msg("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
+		} else {
+			pingCtx, cancel := context.WithTimeout(context.Background(), archivePingTimeout)
+			err := provider.Ping(pingCtx, archiveCfg.Bucket)
+			cancel()
+			if err != nil {
+				log.Error().Err(err).
+					Str("provider", archiveCfg.Provider).
+					Str("bucket", archiveCfg.Bucket).
+					Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
+			} else {
+				src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
+				wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, wp.dbQueue.MarkFullyArchivedJobs, src)
+				log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
+			}
+		}
+	}
+
 	// Start the notification listener when we have connection details available.
 	if hasNotificationConfig(dbConfig) {
 		wp.wg.Go(func() {
@@ -647,6 +690,13 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.StartQuotaPromotionMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
 	wp.startTaskHTMLPersistenceLoop(ctx)
+
+	// Start cold-storage archiver if configured.
+	if wp.archiver != nil {
+		wp.wg.Go(func() {
+			wp.archiver.Run(ctx, wp.stopCh)
+		})
+	}
 
 	// Start orphaned task cleanup loop
 	wp.wg.Go(func() {
@@ -3688,7 +3738,7 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 
 	return &taskHTMLUpload{
 		Bucket:              taskHTMLStorageBucket,
-		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
+		Path:                archive.TaskHTMLObjectPath(task.JobID, task.ID),
 		ContentType:         contentType,
 		UploadContentType:   uploadContentType,
 		ContentEncoding:     taskHTMLContentEncoding,

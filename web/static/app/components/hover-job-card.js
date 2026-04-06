@@ -179,6 +179,10 @@ class HoverJobCard extends HTMLElement {
         normStatus === "running" || normStatus === "initializing"
           ? "var(--status-colour--success)"
           : "var(--status-colour--warning)";
+    } else if (normStatus === "archived") {
+      outcomeDotClass = "dot--success";
+      outcomeLabel = statusLabelForJob(normStatus);
+      statusColour = "var(--status-colour--success)";
     } else if (normStatus !== "completed") {
       outcomeDotClass = "dot--danger";
       outcomeLabel = "Error";
@@ -622,6 +626,7 @@ function statusLabelForJob(status) {
   if (status === "running" || status === "initializing") return "In progress";
   if (status === "pending") return "Starting up";
   if (status === "cancelled") return "Cancelled";
+  if (status === "archived") return "Archived";
   return "Error";
 }
 
@@ -632,6 +637,7 @@ function iconClassForJob(status) {
     return `${base} ${base}--running`;
   if (status === "pending" || status === "queued")
     return `${base} ${base}--pending`;
+  if (status === "archived") return `${base} ${base}--completed`;
   return `${base} ${base}--error`;
 }
 
