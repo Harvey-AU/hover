@@ -28,6 +28,10 @@ On merge, CI will:
 
 ## [Unreleased]
 
+_Add unreleased changes here._
+
+## Full changelog history
+
 ## [0.31.4] – 2026-04-05
 
 ### Fixed

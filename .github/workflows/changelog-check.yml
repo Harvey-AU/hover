@@ -46,6 +46,14 @@ jobs:
             exit 1
           fi
 
+          if ! grep -q "^## Full changelog history$" CHANGELOG.md; then
+            echo "❌ ERROR: No permanent history marker found in CHANGELOG.md"
+            echo ""
+            echo "Expected this heading between the unreleased section and version history:"
+            echo "  ## Full changelog history"
+            exit 1
+          fi
+
           # Use shared script for changelog parsing and version calculation
           bash scripts/changelog-version.sh
 
