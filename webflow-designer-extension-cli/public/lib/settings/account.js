@@ -402,23 +402,23 @@ export function renderAuthMethods(container, methods, options = {}) {
  */
 export async function loadAccountDetails(container) {
   const client = getSupabaseClient();
-  const session = await getSession();
-  if (!session?.user) return;
+  const session = await getSession().catch(() => null);
+  const sessionUser = session?.user || null;
 
-  const fallbackEmail = session.user.email || "";
+  const fallbackEmail = sessionUser?.email || "";
   const fallbackFirstName =
-    session.user.user_metadata?.given_name ||
-    session.user.user_metadata?.first_name ||
+    sessionUser?.user_metadata?.given_name ||
+    sessionUser?.user_metadata?.first_name ||
     "";
   const fallbackLastName =
-    session.user.user_metadata?.family_name ||
-    session.user.user_metadata?.last_name ||
+    sessionUser?.user_metadata?.family_name ||
+    sessionUser?.user_metadata?.last_name ||
     "";
   const fallbackFullName =
-    session.user.user_metadata?.full_name ||
-    session.user.user_metadata?.name ||
+    sessionUser?.user_metadata?.full_name ||
+    sessionUser?.user_metadata?.name ||
     "";
-  const fallbackMethods = session.user.app_metadata?.providers || [];
+  const fallbackMethods = sessionUser?.app_metadata?.providers || [];
 
   let email = fallbackEmail;
   let firstName = fallbackFirstName;
@@ -426,13 +426,13 @@ export async function loadAccountDetails(container) {
   let fullName = fallbackFullName;
   let methods = fallbackMethods;
   let identities = [];
-  let authUser = session.user;
+  let authUser = sessionUser;
 
   try {
     // Use supabase.auth.getUser() directly for fresh identity data
     // (auth-session.getUser() returns session.user which may be stale).
     const userResult = await client?.auth?.getUser();
-    authUser = userResult?.data?.user || session.user;
+    authUser = userResult?.data?.user || sessionUser;
     identities = Array.isArray(authUser?.identities) ? authUser.identities : [];
   } catch (err) {
     console.warn("Failed to load auth identities:", err);
@@ -605,8 +605,16 @@ export async function saveProfileName(container, options = {}) {
  */
 export async function sendPasswordReset() {
   const client = getSupabaseClient();
-  const session = await getSession();
-  const email = session?.user?.email;
+  const session = await getSession().catch(() => null);
+  let email = session?.user?.email || "";
+  if (!email) {
+    try {
+      const response = await get("/v1/auth/profile");
+      email = response?.user?.email || "";
+    } catch {
+      // Fall back to the session email only.
+    }
+  }
   if (!email) {
     toast("error", "Email address not available");
     return;
