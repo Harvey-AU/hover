@@ -21,33 +21,33 @@ func TestAugmentDSNWithTimeout(t *testing.T) {
 		},
 		{
 			name:      "URL format without params",
-			dsn:       "postgresql://user:pass@localhost/db",
+			dsn:       "postgresql://localhost/testdb",
 			timeoutMs: 60000,
-			expected:  "postgresql://user:pass@localhost/db?statement_timeout=60000",
+			expected:  "postgresql://localhost/testdb?statement_timeout=60000",
 		},
 		{
 			name:      "URL format with existing params",
-			dsn:       "postgresql://user:pass@localhost/db?sslmode=require",
+			dsn:       "postgresql://localhost/testdb?sslmode=require",
 			timeoutMs: 60000,
-			expected:  "postgresql://user:pass@localhost/db?sslmode=require&statement_timeout=60000",
+			expected:  "postgresql://localhost/testdb?sslmode=require&statement_timeout=60000",
 		},
 		{
 			name:      "postgres URL format",
-			dsn:       "postgres://user:pass@localhost/db",
+			dsn:       "postgres://localhost/testdb",
 			timeoutMs: 30000,
-			expected:  "postgres://user:pass@localhost/db?statement_timeout=30000",
+			expected:  "postgres://localhost/testdb?statement_timeout=30000",
 		},
 		{
 			name:      "key=value format",
-			dsn:       "host=localhost user=user password=pass dbname=db",
+			dsn:       "host=localhost user=testuser dbname=testdb",
 			timeoutMs: 45000,
-			expected:  "host=localhost user=user password=pass dbname=db statement_timeout=45000",
+			expected:  "host=localhost user=testuser dbname=testdb statement_timeout=45000",
 		},
 		{
 			name:      "already has statement_timeout",
-			dsn:       "postgresql://user:pass@localhost/db?statement_timeout=30000",
+			dsn:       "postgresql://localhost/testdb?statement_timeout=30000",
 			timeoutMs: 60000,
-			expected:  "postgresql://user:pass@localhost/db?statement_timeout=30000",
+			expected:  "postgresql://localhost/testdb?statement_timeout=30000",
 		},
 		{
 			name:      "key=value with existing timeout",
@@ -57,15 +57,15 @@ func TestAugmentDSNWithTimeout(t *testing.T) {
 		},
 		{
 			name:      "zero timeout uses default",
-			dsn:       "postgresql://user:pass@localhost/db",
+			dsn:       "postgresql://localhost/testdb",
 			timeoutMs: 0,
-			expected:  "postgresql://user:pass@localhost/db?statement_timeout=60000",
+			expected:  "postgresql://localhost/testdb?statement_timeout=60000",
 		},
 		{
 			name:      "negative timeout uses default",
-			dsn:       "postgresql://user:pass@localhost/db",
+			dsn:       "postgresql://localhost/testdb",
 			timeoutMs: -1000,
-			expected:  "postgresql://user:pass@localhost/db?statement_timeout=60000",
+			expected:  "postgresql://localhost/testdb?statement_timeout=60000",
 		},
 	}
 

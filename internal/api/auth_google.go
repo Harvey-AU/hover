@@ -864,13 +864,13 @@ func (h *Handler) fetchPropertiesForAccount(ctx context.Context, logger zerolog.
 
 	logger.Debug().Str("account_id", accountName).Msg("Fetching GA4 properties from API")
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil) //nolint:gosec // G704: apiURL targets googleapis.com; user input only in query param
 	if err != nil {
 		return nil, fmt.Errorf("failed to create properties request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: request targets googleapis.com
 	if err != nil {
 		return nil, fmt.Errorf("failed to list properties: %w", err)
 	}
