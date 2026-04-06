@@ -335,6 +335,60 @@ func confirmOrSwitchOrg(ctx context.Context, cfg *authConfig, token string, id *
 	}
 }
 
+const (
+	maxCreateRetries    = 3 // skip a run slot after this many consecutive create failures
+	maxStatusRefreshErr = 3 // enter stall backoff after this many consecutive refresh failures
+)
+
+type domainRunState struct {
+	Domain             string
+	RemainingRuns      int
+	LastJobID          string
+	LastJobStatus      string
+	CompletedRuns      int
+	CreateFailures     int       // consecutive createJob failures for the current run slot
+	StatusRefreshFails int       // consecutive fetchJobStatus failures for the active job
+	BlockedUntil       time.Time // non-zero while waiting out a stall backoff
+}
+
+// refreshDomainStatuses polls each in-flight job and updates its status.
+// Domains that exceed the refresh failure threshold enter a timed backoff;
+// once the backoff expires the stalled job is retired so the domain can restart.
+func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL, token string, statusInterval time.Duration) {
+	for i := range states {
+		state := &states[i]
+		if state.LastJobID == "" || isTerminalJobStatus(state.LastJobStatus) {
+			continue
+		}
+
+		if !state.BlockedUntil.IsZero() {
+			if time.Now().Before(state.BlockedUntil) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "\033[33m! Retiring stalled job %s for %s after backoff\033[0m\n", state.LastJobID, state.Domain)
+			state.LastJobID = ""
+			state.LastJobStatus = ""
+			state.BlockedUntil = time.Time{}
+			state.StatusRefreshFails = 0
+			continue
+		}
+
+		status, err := fetchJobStatus(ctx, apiURL, token, state.LastJobID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31m! Failed to refresh status for %s (%s): %v\033[0m\n", state.Domain, state.LastJobID, err)
+			state.StatusRefreshFails++
+			if state.StatusRefreshFails >= maxStatusRefreshErr {
+				backoff := 5 * statusInterval
+				fmt.Fprintf(os.Stderr, "\033[33m! Stalling %s after %d refresh failures; retrying in %s\033[0m\n", state.Domain, state.StatusRefreshFails, formatDuration(backoff))
+				state.BlockedUntil = time.Now().Add(backoff)
+			}
+			continue
+		}
+		state.StatusRefreshFails = 0
+		state.LastJobStatus = status
+	}
+}
+
 // Test domains — same 115 diverse real-world sites from the shell script.
 var testDomains = []string{
 	// Australian businesses (6)
@@ -428,22 +482,6 @@ func runJobsGenerate(args []string) error {
 		domains[i], domains[j] = domains[j], domains[i]
 	})
 
-	type domainRunState struct {
-		Domain             string
-		RemainingRuns      int
-		LastJobID          string
-		LastJobStatus      string
-		CompletedRuns      int
-		CreateFailures     int       // consecutive createJob failures for the current run slot
-		StatusRefreshFails int       // consecutive fetchJobStatus failures for the active job
-		BlockedUntil       time.Time // non-zero while waiting out a stall backoff
-	}
-
-	const (
-		maxCreateRetries    = 3 // skip a run slot after this many consecutive create failures
-		maxStatusRefreshErr = 3 // enter stall backoff after this many consecutive refresh failures
-	)
-
 	domainStates := make([]domainRunState, len(domains))
 	for i, domain := range domains {
 		domainStates[i] = domainRunState{
@@ -486,40 +524,7 @@ func runJobsGenerate(args []string) error {
 			token = freshToken
 		}
 
-		for i := range domainStates {
-			state := &domainStates[i]
-			if state.LastJobID == "" || isTerminalJobStatus(state.LastJobStatus) {
-				continue
-			}
-
-			// If stall backoff is active, check whether it has expired.
-			if !state.BlockedUntil.IsZero() {
-				if time.Now().Before(state.BlockedUntil) {
-					continue // still in backoff
-				}
-				// Backoff expired — retire the stalled job and let the domain restart.
-				fmt.Fprintf(os.Stderr, "\033[33m! Retiring stalled job %s for %s after backoff\033[0m\n", state.LastJobID, state.Domain)
-				state.LastJobID = ""
-				state.LastJobStatus = ""
-				state.BlockedUntil = time.Time{}
-				state.StatusRefreshFails = 0
-				continue
-			}
-
-			status, err := fetchJobStatus(ctx, ac.APIURL, token, state.LastJobID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "\033[31m! Failed to refresh status for %s (%s): %v\033[0m\n", state.Domain, state.LastJobID, err)
-				state.StatusRefreshFails++
-				if state.StatusRefreshFails >= maxStatusRefreshErr {
-					backoff := 5 * cfg.StatusInterval
-					fmt.Fprintf(os.Stderr, "\033[33m! Stalling %s after %d refresh failures; retrying in %s\033[0m\n", state.Domain, state.StatusRefreshFails, formatDuration(backoff))
-					state.BlockedUntil = time.Now().Add(backoff)
-				}
-				continue
-			}
-			state.StatusRefreshFails = 0
-			state.LastJobStatus = status
-		}
+		refreshDomainStatuses(ctx, domainStates, ac.APIURL, token, cfg.StatusInterval)
 
 		readyIndices := make([]int, 0, cfg.JobsPerBatch)
 		for i := range domainStates {
