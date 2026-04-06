@@ -1,266 +1,783 @@
 /**
- * pages/dashboard.js — dashboard page orchestrator
+ * pages/dashboard.js — module-native dashboard shell
  *
- * Owns all dashboard rendering and interaction: stats cards, job list
- * (hover-job-card), job creation form, org creation modal, admin
- * actions, and realtime subscriptions.
- *
- * No remaining legacy script dependencies.
+ * Uses the same site-focused shell model as the Webflow extension:
+ * org switcher, quota badge, per-site scheduler, run-now action, and
+ * latest/past report surfaces.
  */
 
-import { get, post, put } from "/app/lib/api-client.js";
-import { fetchJobs, subscribeToJobUpdates } from "/app/pages/webflow-jobs.js";
+import { get, post } from "/app/lib/api-client.js";
+import { onAuthStateChange, getSession } from "/app/lib/auth-session.js";
 import { createJobCard } from "/app/components/hover-job-card.js";
 import { showToast } from "/app/components/hover-toast.js";
-import { formatCount } from "/app/lib/formatters.js";
-import { initCreateOrgModal } from "/app/lib/settings/organisations.js";
-import { initAdminResetButton } from "/app/lib/admin.js";
+import { formatDateTime, getInitials } from "/app/lib/formatters.js";
 import {
-  deleteScheduler,
+  loadOrganisationContext,
+  switchOrganisation as switchOrganisationApi,
+} from "/app/lib/organisation-api.js";
+import {
+  findSchedulerByDomain,
   saveSchedulerForDomain,
+  disableScheduler,
 } from "/app/lib/scheduler-api.js";
+import { ensureSupabaseClient } from "/app/lib/supabase-client.js";
+import {
+  buildChartJobsSignature,
+  buildCompletedJobsSignature,
+  fetchJobs,
+  filterJobsByDomains,
+  normaliseDomain,
+  pickLatestJobByDomains,
+  subscribeToJobUpdates,
+} from "/app/lib/site-jobs.js";
 import {
   ensureDomainByName,
+  getDomains,
+  loadOrganisationDomains,
   setupDomainSearchInput,
 } from "/app/lib/domain-search.js";
 
-// ── State ──────────────────────────────────────────────────────────────────────
+const ACTIVE_ORG_STORAGE_KEY = "gnh_active_org_id";
+const SELECTED_DOMAIN_STORAGE_KEY = "gnh_dashboard_selected_domain";
+const ACTIVE_JOB_STATUSES = new Set([
+  "pending",
+  "queued",
+  "initializing",
+  "running",
+  "in_progress",
+  "processing",
+]);
+const SCHEDULE_PLACEHOLDER = "off";
+const SCHEDULE_OPTIONS = new Set(["off", "6", "12", "24", "48"]);
+const APP_ROUTES = {
+  auth: "/extension-auth.html",
+  settings: "/settings/plans",
+  viewJob: "/jobs",
+  help: "/dashboard",
+  feedback: "/dashboard",
+};
 
-let currentRange = "today";
+let authSubscriptionCleanup = null;
+let jobsSubscriptionCleanup = null;
+let statusToastTimer = null;
+let initialised = false;
 
-// ── Bootstrap ──────────────────────────────────────────────────────────────────
+const state = {
+  session: null,
+  activeOrganisationId: "",
+  organisations: [],
+  usage: null,
+  selectedDomain: normaliseDomain(
+    window.localStorage.getItem(SELECTED_DOMAIN_STORAGE_KEY) || ""
+  ),
+  siteDomainCandidates: [],
+  currentScheduler: null,
+  currentJob: null,
+  userAvatarUrl: "",
+  userEmail: "",
+  lastCompletedJobsSignature: "",
+  lastChartJobsSignature: "",
+  refreshing: false,
+};
 
-/**
- * Initialise the dashboard module layer.
- * Called once auth and org state are confirmed ready.
- */
-let _initialised = false;
-async function init() {
-  if (_initialised) return;
-  _initialised = true;
-  // Wire date range selector
-  const dateRange = document.getElementById("dateRange");
-  if (dateRange) {
-    dateRange.addEventListener("change", (e) => {
-      currentRange = e.target.value;
-      refresh();
-    });
-  }
+const ui = {
+  guestState: document.getElementById("guestState"),
+  authState: document.getElementById("authState"),
+  loginButton: document.getElementById("dashboardLoginButton"),
+  signupButton: document.getElementById("dashboardSignupButton"),
+  settingsButton: document.getElementById("settingsButton"),
+  profileAvatar: document.getElementById("profileAvatar"),
+  orgSelect: document.getElementById("orgSelect"),
+  planNameText: document.getElementById("planNameText"),
+  planRemainingValue: document.getElementById("planRemainingValue"),
+  domainInput: document.getElementById("domainInput"),
+  scheduleSelect: document.getElementById("scheduleSelect"),
+  runNowButton: document.getElementById("runNowButton"),
+  runFirstCheckButton: document.getElementById("runFirstCheckButton"),
+  statusBlock: document.getElementById("statusBlock"),
+  statusText: document.getElementById("statusText"),
+  detailText: document.getElementById("detailText"),
+  noJobState: document.getElementById("noJobState"),
+  noJobText: document.getElementById("noJobText"),
+  jobSection: document.getElementById("jobSection"),
+  latestResultsList: document.getElementById("latestResultsList"),
+  recentResultsList: document.getElementById("recentResultsList"),
+  miniChart: document.getElementById("miniChart"),
+  chartScaleLabels: Array.from(
+    document.querySelectorAll(".chart-y-scale span")
+  ),
+  feedbackButton: document.getElementById("feedbackButton"),
+  helpButton: document.getElementById("helpButton"),
+};
 
-  // Wire action buttons — refresh, create-job modal, close-create-job-modal
-  document.addEventListener("click", (e) => {
-    const el = e.target.closest("[gnh-action]");
-    if (!el) return;
-    const action = el.getAttribute("gnh-action");
-    if (action === "refresh-dashboard") {
-      e.preventDefault();
-      refresh();
-    } else if (action === "create-job") {
-      e.preventDefault();
-      openCreateJobModal();
-    } else if (action === "close-create-job-modal") {
-      e.preventDefault();
-      closeCreateJobModal();
-    }
-  });
-
-  // Job creation forms (inline "Start Crawl" + modal "Create Job")
-  for (const formId of ["dashboardJobForm", "createJobForm"]) {
-    const form = document.getElementById(formId);
-    if (form) form.addEventListener("submit", handleJobCreation);
-  }
-
-  // Domain search autocomplete
-  const domainInput = document.getElementById("jobDomain");
-  if (domainInput) {
-    const container = domainInput.closest(".gnh-domain-search");
-    setupDomainSearchInput({
-      input: domainInput,
-      container: container || domainInput.parentElement,
-      clearOnSelect: false,
-      onSelectDomain: (domain) => {
-        domainInput.value = domain.name;
-      },
-      onCreateDomain: (domain) => {
-        domainInput.value = domain.name;
-      },
-      onError: (message) => {
-        showToast(message || "Failed to create domain.", { variant: "error" });
-      },
-    });
-  }
-
-  // Org creation modal
-  initCreateOrgModal({ onCreated: () => refresh() });
-
-  // Network monitoring
-  setupNetworkMonitoring();
-
-  // Initial render (waitForSession inside refresh handles Supabase timing)
-  await refresh();
-
-  // Admin section (must run after refresh so Supabase session is available)
-  await initAdminResetButton("resetDbBtn", {
-    containerSelector: "#adminGroup",
-  });
-
-  // Subscribe to realtime job updates (falls back to 10 s polling when
-  // Supabase realtime is unavailable, e.g. on preview branches).
-  let unsubscribe = null;
-  function startSubscription() {
-    if (unsubscribe) unsubscribe();
-    const orgId = window.GNH_ACTIVE_ORG?.id;
-    unsubscribe = subscribeToJobUpdates(orgId, () => refresh());
-  }
-  startSubscription();
-
-  // Re-subscribe and refresh when the active org changes.
-  document.addEventListener("gnh:org-switched", () => {
-    refresh();
-    startSubscription();
-  });
+function show(node) {
+  node?.classList.remove("hidden");
 }
 
-// ── Refresh ────────────────────────────────────────────────────────────────────
-
-async function refresh() {
-  await Promise.all([refreshStats(), refreshJobs()]);
+function hide(node) {
+  node?.classList.add("hidden");
 }
 
-// ── Stats ──────────────────────────────────────────────────────────────────────
-
-async function refreshStats() {
-  // Gate behind session — avoids a 401 when the module runs before core.js
-  // has signed in.
-  const token = await waitForSession();
-  if (!token) return;
-  try {
-    const tzOffset = new Date().getTimezoneOffset();
-    // api-client auto-unwraps the { status, data } envelope
-    const data = await get(
-      `/v1/dashboard/stats?range=${currentRange}&tzOffset=${tzOffset}`
-    );
-    const stats = data?.stats;
-    if (!stats) return;
-
-    setStatCard("stats.total_jobs", formatCount(stats.total_jobs));
-    setStatCard("stats.running_jobs", formatCount(stats.running_jobs));
-    setStatCard("stats.completed_jobs", formatCount(stats.completed_jobs));
-    setStatCard("stats.failed_jobs", formatCount(stats.failed_jobs));
-  } catch {
-    // Non-fatal — stats cards stay at previous values
+function setText(node, value) {
+  if (node) {
+    node.textContent = value;
   }
 }
 
-/**
- * Update a stat card value by its gnh-text attribute selector.
- * Falls back gracefully when the element doesn't exist.
- */
-function setStatCard(key, value) {
-  const el = document.querySelector(`[gnh-text="${key}"]`);
-  if (el) el.textContent = value;
+function normaliseJobStatus(status) {
+  return String(status || "")
+    .trim()
+    .toLowerCase();
 }
 
-// ── Jobs list ──────────────────────────────────────────────────────────────────
+function isActiveJobStatus(status) {
+  return ACTIVE_JOB_STATUSES.has(normaliseJobStatus(status));
+}
 
-/** @type {Map<string, HoverJobCard>} jobId → card element, for in-place updates */
-const _jobCards = new Map();
-
-async function refreshJobs() {
-  const container = document.querySelector(".gnh-jobs-list");
-  if (!container) return;
-
-  const token = await waitForSession();
-  if (!token) return;
-
-  try {
-    const jobs = await fetchJobs({
-      limit: 10,
-      range: currentRange,
-      include: "stats",
-    });
-    renderJobCards(container, jobs);
-  } catch {
-    // Non-fatal — existing cards stay visible
+function asCount(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
   }
+  return Math.max(0, Math.floor(value));
 }
 
-function renderJobCards(container, jobs) {
-  // Empty state
-  if (jobs.length === 0) {
-    _jobCards.forEach((card) => card.remove());
-    _jobCards.clear();
+function getIssueCounts(job) {
+  const buckets = job.stats?.slow_page_buckets;
+  const statsBrokenLinks = asCount(job.stats?.total_broken_links);
+  const fallbackBrokenLinks = asCount(job.failed_tasks);
 
-    let empty = container.querySelector(".jobs-empty-state");
-    if (!empty) {
-      empty = document.createElement("p");
-      empty.className = "jobs-empty-state detail";
-      empty.textContent = "No jobs yet.";
-      container.appendChild(empty);
-    }
+  if (job.stats && buckets) {
+    const verySlow = asCount(buckets.over_10s) + asCount(buckets["5_to_10s"]);
+    const slow = asCount(buckets["3_to_5s"]);
+    return {
+      brokenLinks: Math.max(statsBrokenLinks, fallbackBrokenLinks),
+      verySlow,
+      slow,
+    };
+  }
+
+  return {
+    brokenLinks: fallbackBrokenLinks,
+    verySlow: 0,
+    slow: 0,
+  };
+}
+
+function buildAuthUrl(mode = "login") {
+  const authUrl = new URL(APP_ROUTES.auth, window.location.origin);
+  authUrl.searchParams.set("return_to", window.location.href);
+  authUrl.searchParams.set("mode", mode);
+  return authUrl.toString();
+}
+
+function openAuth(mode = "login") {
+  window.location.assign(buildAuthUrl(mode));
+}
+
+function setStatus(message, detail = "") {
+  if (statusToastTimer !== null) {
+    clearTimeout(statusToastTimer);
+    statusToastTimer = null;
+  }
+
+  ui.statusBlock?.classList.remove("status-block--fading");
+  setText(ui.statusText, message);
+  setText(ui.detailText, detail);
+
+  if (!message && !detail) {
     return;
   }
 
-  // Remove empty state if present
-  container.querySelector(".jobs-empty-state")?.remove();
+  statusToastTimer = window.setTimeout(() => {
+    ui.statusBlock?.classList.add("status-block--fading");
+    statusToastTimer = window.setTimeout(() => {
+      ui.statusBlock?.classList.remove("status-block--fading");
+      setText(ui.statusText, "");
+      setText(ui.detailText, "");
+      statusToastTimer = null;
+    }, 500);
+  }, 3000);
+}
 
-  // Track which job IDs are in the new response
-  const incoming = new Set(jobs.map((j) => j.id));
+function renderAuthState(isAuthed) {
+  if (isAuthed) {
+    hide(ui.guestState);
+    show(ui.authState);
+    return;
+  }
 
-  // Remove cards no longer in the list
-  _jobCards.forEach((card, id) => {
-    if (!incoming.has(id)) {
-      card.remove();
-      _jobCards.delete(id);
+  show(ui.guestState);
+  hide(ui.authState);
+}
+
+function updateAvatarFromState() {
+  if (!ui.profileAvatar) {
+    return;
+  }
+
+  ui.profileAvatar.innerHTML = "";
+  if (state.userAvatarUrl) {
+    const img = document.createElement("img");
+    img.src = state.userAvatarUrl;
+    img.alt = state.userEmail || "Account";
+    ui.profileAvatar.appendChild(img);
+    return;
+  }
+
+  ui.profileAvatar.textContent = getInitials(state.userEmail || "Hover");
+}
+
+function renderUsage() {
+  if (!state.usage) {
+    if (ui.planNameText) {
+      ui.planNameText.innerHTML = "<strong>Plan:</strong> \u2014";
     }
+    setText(ui.planRemainingValue, "\u2014");
+    return;
+  }
+
+  const plan = state.usage.plan_display_name || state.usage.plan_name || "Plan";
+  const limit = Number(state.usage.daily_limit || 0).toLocaleString();
+  const remaining = Number(state.usage.daily_remaining || 0).toLocaleString();
+
+  if (ui.planNameText) {
+    ui.planNameText.innerHTML = `<strong>Plan:</strong> <strong>${plan}</strong> (${limit} / day)`;
+  }
+  setText(ui.planRemainingValue, `${remaining} remaining`);
+}
+
+function renderOrganisations() {
+  const select = ui.orgSelect;
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  select.innerHTML = "";
+
+  if (!state.organisations.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No organisations";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+
+  select.disabled = false;
+  state.organisations.forEach((organisation) => {
+    const option = document.createElement("option");
+    option.value = organisation.id;
+    option.textContent = organisation.name;
+    option.selected = organisation.id === state.activeOrganisationId;
+    select.appendChild(option);
+  });
+}
+
+function renderScheduleState() {
+  const select = ui.scheduleSelect;
+  if (!(select instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  if (!state.currentScheduler || !state.currentScheduler.is_enabled) {
+    select.value = SCHEDULE_PLACEHOLDER;
+    return;
+  }
+
+  const hours = String(state.currentScheduler.schedule_interval_hours);
+  select.value = SCHEDULE_OPTIONS.has(hours) ? hours : SCHEDULE_PLACEHOLDER;
+}
+
+function clearNode(node) {
+  if (!node) return;
+  while (node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+function renderNoJobState(message, canRun = false) {
+  setText(ui.noJobText, message);
+  if (ui.runFirstCheckButton) {
+    ui.runFirstCheckButton.hidden = !canRun;
+  }
+  show(ui.noJobState);
+}
+
+function hideNoJobState() {
+  if (ui.runFirstCheckButton) {
+    ui.runFirstCheckButton.hidden = false;
+  }
+  hide(ui.noJobState);
+}
+
+function renderJobState(job) {
+  const section = ui.jobSection;
+  if (!section) {
+    return;
+  }
+
+  clearNode(section);
+
+  if (!job || !isActiveJobStatus(job.status)) {
+    hide(section);
+    return;
+  }
+
+  const card = createJobCard(job, { context: "extension" });
+  card.addEventListener("hover-job-card:view", (event) => {
+    window.location.href = event.detail.path;
+  });
+  card.addEventListener("hover-job-card:export", (event) => {
+    void exportJob(event.detail.jobId);
+  });
+  section.appendChild(card);
+  show(section);
+}
+
+function renderRecentResults(jobs) {
+  const latestContainer = ui.latestResultsList;
+  const recentContainer = ui.recentResultsList;
+
+  if (!latestContainer || !recentContainer) {
+    return;
+  }
+
+  clearNode(latestContainer);
+  clearNode(recentContainer);
+
+  const siteJobs = filterJobsByDomains(jobs, {
+    siteDomain: state.selectedDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
   });
 
-  // Update existing cards in-place, append new ones in order
-  jobs.forEach((job, index) => {
-    const existing = _jobCards.get(job.id);
-    if (existing) {
-      // In-place update — no DOM removal, no flicker
-      existing.job = job;
-      // Ensure correct order
-      const cards = Array.from(container.querySelectorAll("hover-job-card"));
-      if (cards[index] !== existing)
-        container.insertBefore(existing, cards[index] ?? null);
-    } else {
-      const card = createJobCard(job, { context: "dashboard" });
-      card.dataset.jobId = job.id;
+  if (!state.selectedDomain) {
+    renderNoJobState("Select a site to review its latest report.");
+    return;
+  }
 
-      // Navigation — "All" button and "View all X" in issue tables
-      card.addEventListener("hover-job-card:view", (e) => {
-        window.location.href = e.detail.path;
-      });
+  if (siteJobs.length === 0) {
+    renderNoJobState(`No runs yet for ${state.selectedDomain}.`, true);
+    return;
+  }
 
-      // Export
-      card.addEventListener("hover-job-card:export", (e) => {
-        exportJob(e.detail.jobId).catch((err) =>
-          showToast(`Export failed: ${err.message}`, { variant: "error" })
-        );
-      });
+  hideNoJobState();
 
-      // Restart
-      card.addEventListener("hover-job-card:restart", (e) => {
-        restartJob(e.detail.job).catch((err) =>
-          showToast(`Restart failed: ${err.message}`, { variant: "error" })
-        );
-      });
+  const completedJobs = siteJobs.filter(
+    (job) => !isActiveJobStatus(job.status)
+  );
 
-      // Cancel
-      card.addEventListener("hover-job-card:cancel", (e) => {
-        cancelJob(e.detail.jobId).catch((err) =>
-          showToast(`Cancel failed: ${err.message}`, { variant: "error" })
-        );
-      });
+  if (completedJobs.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "detail";
+    empty.textContent = "No completed runs yet.";
+    latestContainer.appendChild(empty);
+    return;
+  }
 
-      // Insert at correct position
-      const cards = Array.from(container.querySelectorAll("hover-job-card"));
-      container.insertBefore(card, cards[index] ?? null);
-      _jobCards.set(job.id, card);
+  const groupedJobs = completedJobs.slice(0, 6);
+  const latestJob = groupedJobs[0] || null;
+  const recentJobs = groupedJobs.slice(1, 6);
+
+  function makeCard(cardJob, compact) {
+    const card = createJobCard(cardJob, {
+      context: "extension",
+      compact,
+    });
+    card.addEventListener("hover-job-card:view", (event) => {
+      window.location.href = event.detail.path;
+    });
+    card.addEventListener("hover-job-card:export", (event) => {
+      void exportJob(event.detail.jobId);
+    });
+    return card;
+  }
+
+  latestContainer.appendChild(makeCard(latestJob, false));
+  recentJobs.forEach((job) => {
+    recentContainer.appendChild(makeCard(job, true));
+  });
+}
+
+function renderMiniChart(jobs) {
+  const container = ui.miniChart;
+  if (!container) {
+    return;
+  }
+
+  clearNode(container);
+
+  const completedJobs = filterJobsByDomains(jobs, {
+    siteDomain: state.selectedDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  })
+    .filter((job) => normaliseJobStatus(job.status) === "completed")
+    .slice(0, 12);
+
+  if (completedJobs.length === 0) {
+    ui.chartScaleLabels.forEach((label) => {
+      label.textContent = "0";
+    });
+    return;
+  }
+
+  const chartRows = completedJobs
+    .filter((job) => Boolean(job.stats))
+    .map((job) => {
+      const { brokenLinks, verySlow, slow } = getIssueCounts(job);
+      const errorCount = brokenLinks;
+      const okCount = verySlow + slow;
+      const totalPages = Math.max(0, Number(job.total_tasks || 0));
+      return {
+        job,
+        errorCount,
+        okCount,
+        issueTotal: errorCount + okCount,
+        totalPages,
+      };
+    })
+    .filter((row) => row.issueTotal > 0 && row.totalPages > 0)
+    .reverse();
+
+  if (!chartRows.length) {
+    ui.chartScaleLabels.forEach((label) => {
+      label.textContent = "0";
+    });
+    return;
+  }
+
+  const maxIssues = Math.max(...chartRows.map((row) => row.issueTotal), 1);
+  const ticks = [
+    maxIssues,
+    Math.round(maxIssues * 0.5),
+    Math.round(maxIssues * 0.25),
+    0,
+  ];
+
+  ui.chartScaleLabels.forEach((label, index) => {
+    label.textContent = String(ticks[index] ?? 0);
+  });
+
+  for (const row of chartRows) {
+    const bar = document.createElement("div");
+    bar.className = "chart-bar";
+    bar.role = "button";
+    bar.tabIndex = 0;
+    bar.title = `${formatDateTime(row.job.completed_at || row.job.created_at)}\nStatus: Completed\nOK: ${row.okCount}\nError: ${row.errorCount}\nTotal pages: ${Number(row.job.total_tasks || 0).toLocaleString()}`;
+
+    const detailPath = `${APP_ROUTES.viewJob}/${encodeURIComponent(row.job.id)}`;
+    const openDetail = () => {
+      window.location.href = detailPath;
+    };
+
+    bar.addEventListener("click", openDetail);
+    bar.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openDetail();
+      }
+    });
+
+    if (row.okCount > 0) {
+      const okSegment = document.createElement("div");
+      okSegment.className = "chart-bar--warning";
+      okSegment.style.height = `${Math.max(2, Math.min((row.okCount / maxIssues) * 100, 100))}%`;
+      bar.appendChild(okSegment);
+    }
+
+    if (row.errorCount > 0) {
+      const errorSegment = document.createElement("div");
+      errorSegment.className = "chart-bar--danger";
+      errorSegment.style.height = `${Math.max(2, Math.min((row.errorCount / maxIssues) * 100, 100))}%`;
+      bar.appendChild(errorSegment);
+    }
+
+    if (bar.children.length > 0) {
+      container.appendChild(bar);
+    }
+  }
+}
+
+function setDisabledAll(disabled) {
+  [
+    ui.settingsButton,
+    ui.orgSelect,
+    ui.domainInput,
+    ui.scheduleSelect,
+    ui.runNowButton,
+    ui.runFirstCheckButton,
+  ].forEach((control) => {
+    if (
+      control instanceof HTMLButtonElement ||
+      control instanceof HTMLInputElement ||
+      control instanceof HTMLSelectElement
+    ) {
+      control.disabled = disabled;
     }
   });
+}
+
+function updateDomainInput() {
+  if (ui.domainInput instanceof HTMLInputElement) {
+    ui.domainInput.value = state.selectedDomain || "";
+  }
+}
+
+function persistSelectedDomain() {
+  if (state.selectedDomain) {
+    window.localStorage.setItem(
+      SELECTED_DOMAIN_STORAGE_KEY,
+      state.selectedDomain
+    );
+    return;
+  }
+  window.localStorage.removeItem(SELECTED_DOMAIN_STORAGE_KEY);
+}
+
+function applySelectedDomain(domain) {
+  const nextDomain = normaliseDomain(domain);
+  if (nextDomain !== state.selectedDomain) {
+    state.lastCompletedJobsSignature = "";
+    state.lastChartJobsSignature = "";
+  }
+
+  state.selectedDomain = nextDomain;
+  state.siteDomainCandidates = state.selectedDomain
+    ? [state.selectedDomain]
+    : [];
+  persistSelectedDomain();
+  updateDomainInput();
+}
+
+async function waitForSupabaseClient(timeoutMs = 5000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      return ensureSupabaseClient();
+    } catch (_error) {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 50);
+      });
+    }
+  }
+
+  throw new Error("Supabase client did not initialise in time.");
+}
+
+async function ensureSelectedDomain() {
+  const availableDomains = getDomains();
+  if (state.selectedDomain) {
+    return;
+  }
+
+  const stored = normaliseDomain(
+    window.localStorage.getItem(SELECTED_DOMAIN_STORAGE_KEY) || ""
+  );
+  if (stored) {
+    applySelectedDomain(stored);
+    return;
+  }
+
+  if (availableDomains.length > 0) {
+    applySelectedDomain(availableDomains[0].name);
+  }
+}
+
+async function loadOrganisationState() {
+  const context = await loadOrganisationContext();
+  state.organisations = Array.isArray(context.organisations)
+    ? context.organisations
+    : [];
+  state.activeOrganisationId = context.activeOrganisationId || "";
+  state.usage = context.usage || null;
+  if (state.activeOrganisationId) {
+    window.localStorage.setItem(
+      ACTIVE_ORG_STORAGE_KEY,
+      state.activeOrganisationId
+    );
+  }
+}
+
+async function loadCurrentSchedule() {
+  if (!state.selectedDomain) {
+    state.currentScheduler = null;
+    renderScheduleState();
+    return;
+  }
+
+  state.currentScheduler = await findSchedulerByDomain(state.selectedDomain);
+  renderScheduleState();
+}
+
+async function refreshSiteResults() {
+  const jobs = await fetchJobs({ limit: 50, include: "stats" });
+
+  if (!state.selectedDomain) {
+    const firstJobDomain = normaliseDomain(
+      jobs[0]?.domains?.name || jobs[0]?.domain || ""
+    );
+    if (firstJobDomain) {
+      applySelectedDomain(firstJobDomain);
+    }
+  }
+
+  state.currentJob = pickLatestJobByDomains(jobs, {
+    siteDomain: state.selectedDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  });
+
+  renderJobState(state.currentJob);
+
+  const completedSignature = buildCompletedJobsSignature(
+    jobs,
+    {
+      siteDomain: state.selectedDomain,
+      siteDomainCandidates: state.siteDomainCandidates,
+    },
+    isActiveJobStatus
+  );
+
+  if (completedSignature !== state.lastCompletedJobsSignature) {
+    renderRecentResults(jobs);
+    state.lastCompletedJobsSignature = completedSignature;
+  }
+
+  const chartSignature = buildChartJobsSignature(jobs, {
+    siteDomain: state.selectedDomain,
+    siteDomainCandidates: state.siteDomainCandidates,
+  });
+
+  if (chartSignature !== state.lastChartJobsSignature) {
+    renderMiniChart(jobs);
+    state.lastChartJobsSignature = chartSignature;
+  }
+}
+
+function cleanupJobSubscription() {
+  if (jobsSubscriptionCleanup) {
+    jobsSubscriptionCleanup();
+    jobsSubscriptionCleanup = null;
+  }
+}
+
+function startJobSubscription() {
+  cleanupJobSubscription();
+  if (!state.activeOrganisationId) {
+    return;
+  }
+
+  jobsSubscriptionCleanup = subscribeToJobUpdates({
+    orgId: state.activeOrganisationId,
+    onUpdate: () => {
+      void refreshDashboard({ silent: true });
+    },
+  });
+}
+
+async function refreshDashboard(options = {}) {
+  if (state.refreshing) {
+    return;
+  }
+
+  state.refreshing = true;
+  if (!options.silent) {
+    setDisabledAll(true);
+  }
+
+  try {
+    await loadOrganisationState();
+    await loadOrganisationDomains();
+    await ensureSelectedDomain();
+    await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
+    renderUsage();
+    renderOrganisations();
+    updateAvatarFromState();
+    renderAuthState(true);
+    startJobSubscription();
+  } catch (error) {
+    console.error("dashboard: failed to refresh", error);
+    showToast(error.message || "Failed to refresh the dashboard.", {
+      variant: "error",
+    });
+  } finally {
+    if (!options.silent) {
+      setDisabledAll(false);
+    }
+    state.refreshing = false;
+  }
+}
+
+async function resolveSelectedDomain({ allowCreate = false } = {}) {
+  const rawValue =
+    ui.domainInput instanceof HTMLInputElement ? ui.domainInput.value : "";
+  const nextValue = normaliseDomain(rawValue || state.selectedDomain || "");
+  if (!nextValue) {
+    applySelectedDomain("");
+    await loadCurrentSchedule();
+    renderJobState(null);
+    renderRecentResults([]);
+    renderMiniChart([]);
+    return "";
+  }
+
+  if (allowCreate) {
+    const ensured = await ensureDomainByName(nextValue, { allowCreate: true });
+    applySelectedDomain(ensured?.name || nextValue);
+  } else {
+    applySelectedDomain(nextValue);
+  }
+
+  return state.selectedDomain;
+}
+
+async function handleDomainCommit({ allowCreate = false } = {}) {
+  await resolveSelectedDomain({ allowCreate });
+  await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
+}
+
+async function switchOrganisation() {
+  if (!(ui.orgSelect instanceof HTMLSelectElement) || !ui.orgSelect.value) {
+    return;
+  }
+
+  setDisabledAll(true);
+  try {
+    await switchOrganisationApi(ui.orgSelect.value);
+    state.activeOrganisationId = ui.orgSelect.value;
+    window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, ui.orgSelect.value);
+    applySelectedDomain("");
+    await refreshDashboard();
+  } finally {
+    setDisabledAll(false);
+  }
+}
+
+async function runNow() {
+  const domain = await resolveSelectedDomain({ allowCreate: true });
+  if (!domain) {
+    showToast("Enter a site domain first.", { variant: "error" });
+    return;
+  }
+
+  setDisabledAll(true);
+  try {
+    await post("/v1/jobs", {
+      domain,
+      max_pages: 0,
+      use_sitemap: true,
+      find_links: true,
+    });
+    setStatus("Run started.", `Checking ${domain}.`);
+    showToast(`Run started for ${domain}`, { variant: "success" });
+    await refreshDashboard({ silent: true });
+  } catch (error) {
+    console.error("dashboard: failed to run job", error);
+    showToast(error.message || "Failed to start the run.", {
+      variant: "error",
+    });
+  } finally {
+    setDisabledAll(false);
+  }
 }
 
 async function exportJob(jobId) {
@@ -277,279 +794,210 @@ async function exportJob(jobId) {
     const keys = Object.keys(tasks[0]);
     const csv = [
       keys.join(","),
-      ...tasks.map((t) => keys.map((k) => csvEscape(t[k])).join(",")),
+      ...tasks.map((task) => keys.map((key) => csvEscape(task[key])).join(",")),
     ].join("\n");
+
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `job-${jobId}.csv`;
-    a.click();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `job-${jobId}.csv`;
+    link.click();
     URL.revokeObjectURL(url);
     showToast("Export downloaded.", { variant: "success" });
-  } catch (err) {
-    throw err;
+  } catch (error) {
+    showToast(`Export failed: ${error.message}`, { variant: "error" });
   }
 }
 
-function csvEscape(val) {
-  if (val == null) return "";
-  const str = String(val);
-  return str.includes(",") || str.includes('"') || str.includes("\n")
-    ? `"${str.replace(/"/g, '""')}"`
-    : str;
+function csvEscape(value) {
+  if (value == null) return "";
+  const text = String(value);
+  return text.includes(",") || text.includes('"') || text.includes("\n")
+    ? `"${text.replace(/"/g, '""')}"`
+    : text;
 }
 
-// ── Create job modal ───────────────────────────────────────────────────────────
-
-function openCreateJobModal() {
-  const modal = document.getElementById("createJobModal");
-  if (modal) modal.style.display = "flex";
-}
-
-function closeCreateJobModal() {
-  const modal = document.getElementById("createJobModal");
-  if (modal) modal.style.display = "none";
-  const form = document.getElementById("createJobForm");
-  if (form) {
-    form.reset();
-    const maxPages = document.getElementById("maxPages");
-    if (maxPages) maxPages.value = "0";
+async function setJobSchedule() {
+  if (!(ui.scheduleSelect instanceof HTMLSelectElement)) {
+    return;
   }
-}
 
-// ── Job creation ────────────────────────────────────────────────────────────────
+  const requested = ui.scheduleSelect.value;
+  if (!SCHEDULE_OPTIONS.has(requested)) {
+    ui.scheduleSelect.value = SCHEDULE_PLACEHOLDER;
+    return;
+  }
 
-async function handleJobCreation(event) {
-  event.preventDefault();
-  const formData = new FormData(event.target);
-
-  let domain = formData.get("domain");
-  const maxPages = parseInt(formData.get("max_pages"));
-  const concurrencyValue = formData.get("concurrency");
-  const scheduleInterval = formData.get("schedule_interval_hours");
+  const domain = await resolveSelectedDomain({
+    allowCreate: requested !== SCHEDULE_PLACEHOLDER,
+  });
 
   if (!domain) {
-    showToast("Domain is required", { variant: "error" });
-    return;
-  }
-
-  // Ensure domain exists (creates if needed)
-  try {
-    const ensuredDomain = await ensureDomainByName(domain, {
-      allowCreate: true,
-    });
-    if (ensuredDomain?.name) domain = ensuredDomain.name;
-  } catch (error) {
-    showToast(error.message || "Failed to create domain.", {
+    showToast("Enter a site domain before changing the schedule.", {
       variant: "error",
     });
+    renderScheduleState();
     return;
   }
 
-  const domainField = document.getElementById("jobDomain");
-  if (domainField) domainField.value = domain;
-
-  if (maxPages < 0 || maxPages > 10000) {
-    showToast("Maximum pages must be between 0 and 10,000", {
-      variant: "error",
-    });
-    return;
-  }
-
-  const requestBody = {
-    domain,
-    max_pages: maxPages,
-    use_sitemap: true,
-    find_links: true,
-  };
-  if (
-    concurrencyValue &&
-    concurrencyValue !== "" &&
-    concurrencyValue !== "default"
-  ) {
-    requestBody.concurrency = parseInt(concurrencyValue);
-  }
-
+  setDisabledAll(true);
   try {
-    if (scheduleInterval && scheduleInterval !== "") {
-      const hours = parseInt(scheduleInterval);
-      if (isNaN(hours) || ![6, 12, 24, 48].includes(hours)) {
-        showToast(
-          "Invalid schedule interval. Must be 6, 12, 24, or 48 hours.",
-          {
-            variant: "error",
-          }
-        );
-        return;
+    if (requested === SCHEDULE_PLACEHOLDER) {
+      if (state.currentScheduler?.id) {
+        await disableScheduler(state.currentScheduler.id, {
+          expectedIsEnabled: state.currentScheduler.is_enabled,
+        });
       }
-
-      const scheduler = await saveSchedulerForDomain(domain, hours, {
-        extra: {
-          max_pages: maxPages,
-          find_links: true,
-          concurrency: requestBody.concurrency || 20,
-        },
-      });
-
-      try {
-        await post("/v1/jobs", { ...requestBody, scheduler_id: scheduler.id });
-      } catch (jobError) {
-        console.error(
-          "Failed to create initial job, cleaning up scheduler:",
-          jobError
-        );
-        try {
-          await deleteScheduler(scheduler.id);
-        } catch (cleanupError) {
-          console.error("Failed to clean up scheduler:", cleanupError);
-        }
-        throw jobError;
-      }
-
-      closeCreateJobModal();
-      showToast(`Scheduled job created for ${domain} (every ${hours} hours)`, {
-        variant: "success",
-      });
-    } else {
-      await post("/v1/jobs", requestBody);
-
-      const df = document.getElementById("jobDomain");
-      const mp = document.getElementById("maxPages");
-      const si = document.getElementById("scheduleInterval");
-      if (df) df.value = "";
-      if (mp) mp.value = "0";
-      if (si) si.value = "";
-
-      closeCreateJobModal();
-      showToast(`Job created for ${domain}`, { variant: "success" });
+      state.currentScheduler = null;
+      renderScheduleState();
+      setStatus("Scheduler disabled.", `No recurring run for ${domain}.`);
+      return;
     }
 
-    await refresh();
+    const scheduler = await saveSchedulerForDomain(domain, Number(requested), {
+      currentScheduler: state.currentScheduler,
+      extra: {
+        max_pages: 0,
+        find_links: true,
+        concurrency: 20,
+      },
+    });
+    state.currentScheduler = scheduler;
+    renderScheduleState();
+    setStatus("Scheduler updated.", `Running every ${requested} hours.`);
   } catch (error) {
-    console.error("Failed to create job:", error);
-    showToast(error.message || "Failed to create job. Please try again.", {
+    console.error("dashboard: failed to save schedule", error);
+    renderScheduleState();
+    showToast(error.message || "Failed to save the schedule.", {
       variant: "error",
     });
+  } finally {
+    setDisabledAll(false);
   }
 }
 
-// ── Job actions ────────────────────────────────────────────────────────────────
-
-async function restartJob(job) {
-  try {
-    await post("/v1/jobs", {
-      domain: job.domains?.name || job.domain,
-      max_pages: job.max_pages ?? 0,
-      use_sitemap: true,
-      find_links: job.find_links ?? true,
-      concurrency: job.concurrency,
-    });
-    showToast("Job restarted.", { variant: "success" });
-    await refresh();
-  } catch (err) {
-    showToast(`Failed to restart job: ${err.message}`, { variant: "error" });
+function bindDomainSearch() {
+  if (!(ui.domainInput instanceof HTMLInputElement)) {
+    return;
   }
-}
 
-async function cancelJob(jobId) {
-  try {
-    await put(`/v1/jobs/${encodeURIComponent(jobId)}`, { action: "cancel" });
-    showToast("Job cancelled.", { variant: "warning" });
-    await refresh();
-  } catch (err) {
-    showToast(`Failed to cancel job: ${err.message}`, { variant: "error" });
-  }
-}
-
-// ── Network monitoring ──────────────────────────────────────────────────────────
-
-function updateNetworkStatus() {
-  const indicator = document.querySelector(".status-indicator");
-  if (!indicator) return;
-  if (navigator.onLine) {
-    indicator.textContent = "";
-    const dot = document.createElement("span");
-    dot.className = "status-dot";
-    const label = document.createElement("span");
-    label.textContent = "Live";
-    indicator.appendChild(dot);
-    indicator.appendChild(label);
-  } else {
-    indicator.textContent = "";
-    const dot = document.createElement("span");
-    dot.className = "status-dot";
-    dot.style.background = "#ef4444";
-    const label = document.createElement("span");
-    label.textContent = "Offline";
-    indicator.appendChild(dot);
-    indicator.appendChild(label);
-  }
-}
-
-function setupNetworkMonitoring() {
-  updateNetworkStatus();
-
-  window.addEventListener("online", () => {
-    updateNetworkStatus();
-    showToast("Connection restored. Refreshing data...", {
-      variant: "success",
-    });
-    setTimeout(() => refresh(), 500);
+  setupDomainSearchInput({
+    input: ui.domainInput,
+    container: ui.domainInput.parentElement,
+    clearOnSelect: false,
+    onSelectDomain: async (domain) => {
+      applySelectedDomain(domain.name);
+      await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
+    },
+    onCreateDomain: async (domain) => {
+      applySelectedDomain(domain.name);
+      await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
+    },
+    onError: (message) => {
+      showToast(message || "Failed to create domain.", { variant: "error" });
+    },
   });
 
-  window.addEventListener("offline", () => {
-    updateNetworkStatus();
-    showToast("Connection lost. Some features may not work.", {
-      variant: "error",
-    });
+  ui.domainInput.addEventListener("change", () => {
+    void handleDomainCommit();
+  });
+  ui.domainInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void handleDomainCommit();
+    }
   });
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+function bindEvents() {
+  ui.loginButton?.addEventListener("click", () => openAuth("login"));
+  ui.signupButton?.addEventListener("click", () => openAuth("signup"));
+  ui.settingsButton?.addEventListener("click", () => {
+    window.location.assign(APP_ROUTES.settings);
+  });
+  ui.orgSelect?.addEventListener("change", () => {
+    void switchOrganisation();
+  });
+  ui.scheduleSelect?.addEventListener("change", () => {
+    void setJobSchedule();
+  });
+  ui.runNowButton?.addEventListener("click", () => {
+    void runNow();
+  });
+  ui.runFirstCheckButton?.addEventListener("click", () => {
+    void runNow();
+  });
+  ui.feedbackButton?.addEventListener("click", () => {
+    window.location.assign(APP_ROUTES.feedback);
+  });
+  ui.helpButton?.addEventListener("click", () => {
+    window.location.assign(APP_ROUTES.help);
+  });
 
-/**
- * Wait for window.supabase to be initialised and have an active session.
- * Returns the access token, or null if no session within the timeout.
- * @param {number} [timeoutMs=8000]
- * @returns {Promise<string|null>}
- */
-function waitForSession(timeoutMs = 8000) {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const check = async () => {
-      try {
-        const { data } = await window.supabase?.auth?.getSession();
-        const token = data?.session?.access_token;
-        if (token) {
-          resolve(token);
-          return;
-        }
-      } catch {
-        /* not ready yet */
-      }
-      if (Date.now() - start > timeoutMs) {
-        resolve(null);
-        return;
-      }
-      setTimeout(check, 200);
-    };
-    check();
+  window.addEventListener("storage", (event) => {
+    if (
+      event.key === ACTIVE_ORG_STORAGE_KEY &&
+      event.newValue &&
+      event.newValue !== state.activeOrganisationId
+    ) {
+      state.activeOrganisationId = event.newValue;
+      applySelectedDomain("");
+      void refreshDashboard({ silent: true });
+    }
   });
 }
 
-// ── Entry point ────────────────────────────────────────────────────────────────
+async function syncAuthState(session) {
+  state.session = session;
+  state.userEmail = session?.user?.email || "";
+  state.userAvatarUrl = session?.user?.user_metadata?.avatar_url || "";
+  updateAvatarFromState();
 
-// Initialise after DOM is ready. waitForSession() inside refresh() handles
-// the Supabase timing — no dependency on gnh-bootstrap.js or GNH_APP.whenReady.
+  if (!session) {
+    cleanupJobSubscription();
+    renderAuthState(false);
+    return;
+  }
+
+  renderAuthState(true);
+  await refreshDashboard();
+}
+
+async function init() {
+  if (initialised) {
+    return;
+  }
+  initialised = true;
+
+  bindEvents();
+  bindDomainSearch();
+  await waitForSupabaseClient();
+
+  const initialSession = await getSession().catch(() => null);
+  await syncAuthState(initialSession);
+
+  authSubscriptionCleanup = onAuthStateChange((event, nextSession) => {
+    if (event === "SIGNED_OUT") {
+      state.selectedDomain = "";
+      persistSelectedDomain();
+    }
+    void syncAuthState(nextSession);
+  });
+}
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () =>
-    init().catch(console.error)
-  );
+  document.addEventListener("DOMContentLoaded", () => {
+    void init();
+  });
 } else {
-  init().catch(console.error);
+  void init();
 }
 
-// ── Legacy bridges ─────────────────────────────────────────────────────────────
-// Expose refresh for external callers (e.g. global-nav org-switch).
-window.HoverDashboard = { refresh };
+window.HoverDashboard = {
+  refresh: () => refreshDashboard(),
+  destroy: () => {
+    authSubscriptionCleanup?.();
+    cleanupJobSubscription();
+  },
+};

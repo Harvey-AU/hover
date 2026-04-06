@@ -292,9 +292,6 @@ export function subscribeToJobUpdates(options) {
             startFallback();
           }
         });
-
-      // Start fallback immediately; clearFallback() stops it on the first real event.
-      startFallback();
     } catch (err) {
       onSubscriptionIssue?.("SUBSCRIBE_FAILED", err);
       startFallback();

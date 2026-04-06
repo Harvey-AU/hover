@@ -33,6 +33,8 @@ const TURNSTILE_SCRIPT_SRC =
 const MAX_TURNSTILE_RETRIES = 2;
 const POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY = "gnh_extension_auth_target_origin";
 const POPUP_AUTH_STATE_STORAGE_KEY = "gnh_extension_auth_state";
+const AUTH_RETURN_TO_STORAGE_KEY = "gnh_auth_return_to";
+const REQUESTED_MODE_STORAGE_KEY = "gnh_auth_requested_mode";
 
 /** @type {import("@supabase/supabase-js").SupabaseClient|null} */
 let supabaseClient = null;
@@ -51,6 +53,14 @@ let targetOrigin = getPopupContextValue(
 let extensionState = getPopupContextValue(
   POPUP_AUTH_STATE_STORAGE_KEY,
   SEARCH_PARAMS.get("extension_state") || SEARCH_PARAMS.get("state") || ""
+);
+let returnTo = getPopupContextValue(
+  AUTH_RETURN_TO_STORAGE_KEY,
+  SEARCH_PARAMS.get("return_to") || ""
+);
+let requestedMode = getPopupContextValue(
+  REQUESTED_MODE_STORAGE_KEY,
+  SEARCH_PARAMS.get("mode") || "login"
 );
 
 // ── Element references ─────────────────────────────────────────────────────────
@@ -74,7 +84,7 @@ async function init() {
     return;
   }
 
-  persistPopupContext();
+  persistAuthContext();
   setStatus("Preparing sign-in…");
 
   try {
@@ -94,7 +104,7 @@ async function init() {
     return;
   }
 
-  showLogin();
+  showInitialAuthForm();
 
   const reopenBtn = el("reopenModalBtn");
   if (reopenBtn) {
@@ -125,6 +135,13 @@ async function handleAuthenticated(session) {
   }
 
   if (!window.opener) {
+    clearAuthContext();
+    const destination = resolveReturnDestination();
+    if (destination) {
+      window.location.replace(destination);
+      return;
+    }
+
     setStatus("Signed in — you can close this window.", "success");
     showToast("Signed in successfully.", { variant: "success", duration: 0 });
     return;
@@ -147,7 +164,7 @@ async function handleAuthenticated(session) {
     );
 
     setStatus("Signed in — you can close this window.", "success");
-    clearPopupContext();
+    clearAuthContext();
     showToast("Signed in successfully.", { variant: "success", duration: 0 });
   } catch (err) {
     console.error("webflow-login: postMessage failed", err);
@@ -582,28 +599,84 @@ function getPopupContextValue(storageKey, fallbackValue) {
   }
 }
 
-function persistPopupContext() {
-  if (!targetOrigin || !extensionState) {
-    return;
-  }
-
+function persistAuthContext() {
   try {
-    window.sessionStorage.setItem(
-      POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY,
-      targetOrigin
-    );
-    window.sessionStorage.setItem(POPUP_AUTH_STATE_STORAGE_KEY, extensionState);
+    if (targetOrigin) {
+      window.sessionStorage.setItem(
+        POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY,
+        targetOrigin
+      );
+    }
+    if (extensionState) {
+      window.sessionStorage.setItem(
+        POPUP_AUTH_STATE_STORAGE_KEY,
+        extensionState
+      );
+    }
+    if (returnTo) {
+      window.sessionStorage.setItem(AUTH_RETURN_TO_STORAGE_KEY, returnTo);
+    }
+    if (requestedMode) {
+      window.sessionStorage.setItem(REQUESTED_MODE_STORAGE_KEY, requestedMode);
+    }
   } catch (_error) {
     // Ignore storage failures.
   }
 }
 
-function clearPopupContext() {
+function clearAuthContext() {
   try {
     window.sessionStorage.removeItem(POPUP_AUTH_TARGET_ORIGIN_STORAGE_KEY);
     window.sessionStorage.removeItem(POPUP_AUTH_STATE_STORAGE_KEY);
+    window.sessionStorage.removeItem(AUTH_RETURN_TO_STORAGE_KEY);
+    window.sessionStorage.removeItem(REQUESTED_MODE_STORAGE_KEY);
   } catch (_error) {
     // Ignore storage failures.
+  }
+}
+
+function resolveRequestedMode() {
+  const mode = String(requestedMode || "login")
+    .trim()
+    .toLowerCase();
+  if (mode === "signup" || mode === "reset") {
+    return mode;
+  }
+  return "login";
+}
+
+function showInitialAuthForm() {
+  const mode = resolveRequestedMode();
+  if (mode === "signup") {
+    setStatus("Create your account to continue.");
+    showForm("signup");
+    return;
+  }
+
+  if (mode === "reset") {
+    setStatus("Reset your password to continue.");
+    showForm("reset");
+    return;
+  }
+
+  showLogin();
+}
+
+function resolveReturnDestination() {
+  if (!returnTo) {
+    return "";
+  }
+
+  try {
+    const destination = new URL(returnTo, window.location.origin);
+    if (destination.origin !== window.location.origin) {
+      console.warn("webflow-login: ignoring cross-origin return_to", returnTo);
+      return "";
+    }
+    return destination.toString();
+  } catch (error) {
+    console.warn("webflow-login: invalid return_to", error);
+    return "";
   }
 }
 
@@ -841,7 +914,7 @@ async function handleSocialLogin(provider) {
   clearAuthError();
 
   try {
-    persistPopupContext();
+    persistAuthContext();
 
     const { data, error } = await supabaseClient.auth.signInWithOAuth({
       provider,
