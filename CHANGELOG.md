@@ -26,7 +26,26 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:minor]
+
+### Added
+
+- Stripe billing integration — Checkout Sessions, Billing Portal, and webhook
+  event handling (`checkout.session.completed`, `subscription.updated`,
+  `subscription.deleted`, `invoice.payment_failed`)
+- New plan tiers: Starter ($19/200 pages), Plus ($49/1000), Pro ($149/10000),
+  Ultra ($399/100000), Max ($849/500000); deactivated old business/enterprise
+  tiers
+- `POST /v1/billing/checkout` — creates a Stripe Checkout Session for plan
+  upgrades; requires org admin role
+- `POST /v1/billing/portal` — creates a Stripe Billing Portal session for
+  managing subscriptions and invoices; requires org admin role
+- Settings → Plans: Upgrade buttons per paid tier, Manage Billing portal link
+- Stripe secrets managed via 1Password for both review apps (test keys) and
+  production (live keys)
+- `dev.sh` now auto-injects external secrets (Stripe, Slack, Webflow, Google,
+  Loops) from 1Password via `op inject` when `op` CLI is available
+- `.env.op` — committed `op://` template for local dev secrets
 
 ### Changed
 
