@@ -75,22 +75,28 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		host += ":443"
 	}
 
-	// Connect with InsecureSkipVerify just to read the leaf certificate.
-	inspectTransport := &http.Transport{
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional: reading cert only
-	}
-	inspectClient := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: inspectTransport,
-	}
-
 	if isPrivateHost(host) {
 		log.Debug().Str("host", host).Msg("AIA: rejecting private/internal host")
 		return false
 	}
 
-	resp, err := inspectClient.Head("https://" + host) //nolint:gosec // G704: host validated against private IPs above
+	// Connect with InsecureSkipVerify just to read the leaf certificate.
+	// Use ssrfSafeDialContext so IP checks happen at connect time (DNS rebinding
+	// protection), and disable redirect following so we only inspect the target host.
+	inspectTransport := &http.Transport{
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional: reading cert only
+		DialContext:         ssrfSafeDialContext(),
+	}
+	inspectClient := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: inspectTransport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := inspectClient.Head("https://" + host) //nolint:gosec // G107: host validated by isPrivateHost and ssrfSafeDialContext
 	if err != nil {
 		log.Debug().Err(err).Str("host", host).Msg("AIA: failed to connect for cert inspection")
 		return false
@@ -218,9 +224,7 @@ func isPrivateHost(host string) bool {
 	}
 
 	for _, addr := range addrs {
-		ip := addr.IP
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if isPrivateOrLocalIP(addr.IP) {
 			return true
 		}
 	}
