@@ -254,10 +254,6 @@ type UsageStats = {
   plan_display_name: string;
 };
 
-type UsageResponse = {
-  usage: UsageStats;
-};
-
 type JobItem = {
   id: string;
   status: string;
@@ -782,23 +778,31 @@ async function realtimeRefresh(): Promise<void> {
   isRealtimeRefreshing = true;
 
   try {
-    // Refresh both job state and usage stats, matching the dashboard pattern.
-    await Promise.all([refreshCurrentJob(), refreshUsage()]);
+    // Refresh both job state and organisation context so cross-surface org
+    // switches update quota, selected org, and the realtime subscription.
+    await Promise.all([refreshCurrentJob(), refreshOrganisationContext()]);
   } finally {
     isRealtimeRefreshing = false;
   }
 }
 
-async function refreshUsage(): Promise<void> {
+async function refreshOrganisationContext(): Promise<void> {
   if (!state.token) return;
 
   try {
-    const usageData = (await HoverLib.api.get("/v1/usage")) as UsageResponse;
-    state.usage = usageData.usage || null;
+    const previousOrganisationId = state.activeOrganisationId;
+    await loadUsageAndOrgs();
     renderUsage(state.usage);
+
+    if (state.activeOrganisationId !== previousOrganisationId) {
+      renderOrganisations();
+      if (supabaseClient) {
+        subscribeToJobUpdates();
+      }
+    }
   } catch (error) {
-    // Non-critical — keep existing usage displayed.
-    console.warn("Failed to refresh usage stats:", error);
+    // Non-critical — keep existing org/quota state displayed.
+    console.warn("Failed to refresh organisation context:", error);
   }
 }
 
