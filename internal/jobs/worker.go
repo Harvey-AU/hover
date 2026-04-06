@@ -66,6 +66,11 @@ const (
 	// recently concurrency-blocked for the purposes of suppressing scale ups.
 	concurrencyBlockCooldown = 30 * time.Second
 
+	// maxWorkersProduction caps dynamic scaling below the DB pool budget.
+	maxWorkersProduction = 40
+	// maxWorkersStaging keeps preview/staging environments conservative.
+	maxWorkersStaging = 10
+
 	pendingRebalanceInterval = 5 * time.Minute
 	pendingRebalanceJobLimit = 25
 	pendingUnlimitedCap      = 100
@@ -498,9 +503,9 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	}
 
 	// Determine max workers based on environment to prevent resource exhaustion
-	maxWorkers := 40 // Production: capped below DB pool budget (50 conns)
+	maxWorkers := maxWorkersProduction
 	if env := os.Getenv("APP_ENV"); env == "staging" {
-		maxWorkers = 10 // Preview/staging: match conservative limits
+		maxWorkers = maxWorkersStaging
 	}
 
 	// Create batch manager before WorkerPool construction (db package reference must happen here)

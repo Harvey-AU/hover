@@ -65,6 +65,7 @@ const (
 	minRejectWaitDelta         = 5
 	poolLogCooldown            = 5 * time.Second
 	defaultQueueConcurrency    = 12
+	defaultExecuteTimeout      = 30 * time.Second
 	defaultTxRetries           = 3
 	defaultRetryBaseDelay      = 200 * time.Millisecond
 	defaultRetryMaxDelay       = 1500 * time.Millisecond
@@ -188,7 +189,7 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 	// Add timeout to context if none exists
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
 		defer cancel()
 	}
 
@@ -315,7 +316,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 	// Add timeout to context if none exists
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
 		defer cancel()
 	}
 
