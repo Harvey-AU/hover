@@ -68,6 +68,16 @@ func ProviderFromEnv() (ColdStorageProvider, error) {
 	)
 }
 
+func (p *S3Provider) Ping(ctx context.Context, bucket string) error {
+	_, err := p.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("archive: cannot reach bucket %q: %w", bucket, err)
+	}
+	return nil
+}
+
 func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Reader, opts UploadOptions) error {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(bucket),

@@ -14,6 +14,9 @@ type UploadOptions struct {
 
 // ColdStorageProvider abstracts an S3-compatible object store.
 type ColdStorageProvider interface {
+	// Ping verifies that the provider can reach the given bucket.
+	// Call once at startup to catch bad credentials/endpoints early.
+	Ping(ctx context.Context, bucket string) error
 	// Upload writes data to the given bucket/key.
 	Upload(ctx context.Context, bucket, key string, data io.Reader, opts UploadOptions) error
 	// Download retrieves an object by bucket/key.

@@ -608,13 +608,22 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	if archiveCfg := archive.ConfigFromEnv(); archiveCfg != nil && wp.storageClient != nil {
 		provider, err := archive.ProviderFromEnv()
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to create archive provider")
-		} else if provider != nil {
+			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
+		} else if provider == nil {
+			log.Warn().Msg("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
+		} else if err := provider.Ping(context.Background(), archiveCfg.Bucket); err != nil {
+			log.Error().Err(err).
+				Str("provider", archiveCfg.Provider).
+				Str("bucket", archiveCfg.Bucket).
+				Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
+		} else {
 			src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
 			isBusy := func() bool { return wp.IdleWorkerCount() == 0 }
 			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, isBusy, wp.dbQueue.MarkFullyArchivedJobs, src)
-			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("Archive scheduler initialised")
+			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
 		}
+	} else if archive.ConfigFromEnv() == nil {
+		log.Info().Msg("ARCHIVE: ARCHIVE_PROVIDER not set — archiving DISABLED")
 	}
 
 	// Start the notification listener when we have connection details available.
