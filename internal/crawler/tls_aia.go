@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -28,48 +29,74 @@ import (
 type aiaTransport struct {
 	base *http.Transport
 
-	mu    sync.RWMutex
-	pool  *x509.CertPool  // custom pool = system roots + fetched intermediates
-	cache map[string]bool // tracks AIA URLs we've already fetched
+	mu            sync.RWMutex
+	intermediates []*x509.Certificate // fetched intermediate CAs; never added to a root trust store
+	cache         map[string]bool     // tracks AIA URLs we've already fetched
 }
 
 func newAIATransport(base *http.Transport) *aiaTransport {
-	pool, err := x509.SystemCertPool()
-	if err != nil {
-		pool = x509.NewCertPool()
-	}
 	return &aiaTransport{
 		base:  base,
-		pool:  pool,
 		cache: make(map[string]bool),
 	}
 }
 
 func (t *aiaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Ensure the base transport uses our augmented cert pool.
-	t.mu.RLock()
-	if t.base.TLSClientConfig == nil {
-		t.base.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-	}
-	t.base.TLSClientConfig.RootCAs = t.pool
-	t.mu.RUnlock()
-
 	resp, err := t.base.RoundTrip(req)
 	if err == nil || !isUnknownAuthorityErr(err) {
 		return resp, err
 	}
 
 	// TLS verification failed — attempt AIA fetch and retry once.
-	if t.fetchIntermediates(req.URL.Host) {
-		return t.base.RoundTrip(req)
+	if !t.fetchIntermediates(req.URL.Host) {
+		return resp, err
 	}
 
-	return resp, err
+	// Build a one-shot transport that verifies the chain using system roots +
+	// our fetched intermediates via VerifyConnection, so the intermediates are
+	// never injected into any root trust store.
+	hostname := req.URL.Hostname()
+	t.mu.RLock()
+	fetched := append([]*x509.Certificate(nil), t.intermediates...)
+	t.mu.RUnlock()
+
+	retryTransport := t.base.Clone()
+	retryTransport.TLSClientConfig = &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, //nolint:gosec // chain + hostname verified in VerifyConnection below
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("no peer certificates in TLS handshake")
+			}
+			leaf := cs.PeerCertificates[0]
+
+			systemRoots, sysErr := x509.SystemCertPool()
+			if sysErr != nil {
+				systemRoots = x509.NewCertPool()
+			}
+
+			intermediates := x509.NewCertPool()
+			for _, c := range cs.PeerCertificates[1:] {
+				intermediates.AddCert(c)
+			}
+			for _, c := range fetched {
+				intermediates.AddCert(c)
+			}
+
+			_, verifyErr := leaf.Verify(x509.VerifyOptions{
+				Roots:         systemRoots,
+				Intermediates: intermediates,
+				DNSName:       hostname,
+			})
+			return verifyErr
+		},
+	}
+	return retryTransport.RoundTrip(req)
 }
 
 // fetchIntermediates connects to the host with verification disabled,
 // reads the leaf cert's AIA URLs, fetches the intermediates, and adds
-// them to our custom cert pool. Returns true if any were installed.
+// them to our intermediates slice. Returns true if any are available.
 func (t *aiaTransport) fetchIntermediates(host string) bool {
 	if !strings.Contains(host, ":") {
 		host += ":443"
@@ -119,7 +146,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		seen := t.cache[aiaURL]
 		t.mu.RUnlock()
 		if seen {
-			installed = true // already fetched and added
+			installed = true // already fetched and stored
 			continue
 		}
 
@@ -128,16 +155,30 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 			continue
 		}
 
+		// Accept only intermediate CAs — skip non-CA certs and self-signed
+		// (root) certs so we never treat a fetched cert as a trust anchor.
+		if !cert.IsCA || !cert.BasicConstraintsValid {
+			log.Debug().
+				Str("subject", cert.Subject.CommonName).
+				Msg("AIA: skipping non-CA certificate")
+			continue
+		}
+		if cert.Subject.String() == cert.Issuer.String() {
+			log.Debug().
+				Str("subject", cert.Subject.CommonName).
+				Msg("AIA: skipping self-signed certificate")
+			continue
+		}
+
 		t.mu.Lock()
-		t.pool.AddCert(cert)
+		t.intermediates = append(t.intermediates, cert)
 		t.cache[aiaURL] = true
 		t.mu.Unlock()
 
 		log.Info().
-			Str("url", aiaURL).
 			Str("subject", cert.Subject.CommonName).
 			Str("issuer", cert.Issuer.CommonName).
-			Msg("AIA: installed missing intermediate certificate")
+			Msg("AIA: fetched missing intermediate certificate")
 		installed = true
 	}
 
@@ -148,11 +189,11 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 func fetchCertFromURL(rawURL string) *x509.Certificate {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		log.Debug().Str("url", rawURL).Msg("AIA: rejecting non-HTTP(S) URL")
+		log.Debug().Str("host", parsed.Host).Msg("AIA: rejecting non-HTTP(S) URL")
 		return nil
 	}
 	if isPrivateHost(parsed.Host) {
-		log.Debug().Str("url", rawURL).Msg("AIA: rejecting AIA URL targeting private host")
+		log.Debug().Str("host", parsed.Host).Msg("AIA: rejecting AIA URL targeting private host")
 		return nil
 	}
 
@@ -178,7 +219,7 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 	}
 	resp, err := client.Get(rawURL) //nolint:gosec // G107: URL validated by ssrfSafeDialContext at connect time
 	if err != nil {
-		log.Debug().Err(err).Str("url", rawURL).Msg("AIA: failed to fetch intermediate")
+		log.Debug().Err(err).Str("host", parsed.Host).Msg("AIA: failed to fetch intermediate")
 		return nil
 	}
 	defer resp.Body.Close()
@@ -194,7 +235,7 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 		// Fallback: try parsing as multiple certs (PEM bundle)
 		certs, pemErr := x509.ParseCertificates(body)
 		if pemErr != nil || len(certs) == 0 {
-			log.Debug().Err(err).Str("url", rawURL).Msg("AIA: failed to parse certificate")
+			log.Debug().Err(err).Str("host", parsed.Host).Msg("AIA: failed to parse certificate")
 			return nil
 		}
 		cert = certs[0]
