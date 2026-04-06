@@ -47,6 +47,8 @@ const OPTIONAL_LIB_MODULES = [
   "lib/invite-flow.js",
 ];
 
+const REQUIRED_STYLE_FILES = ["styles/shell.css"];
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -94,6 +96,17 @@ for (const file of OPTIONAL_LIB_MODULES) {
     syncFile(src, dest);
   } else {
     console.warn(`  WARN: optional shared module missing: ${file}, skipping`);
+  }
+}
+
+for (const file of REQUIRED_STYLE_FILES) {
+  const src = path.join(APP_ROOT, file);
+  const dest = path.join(PUBLIC, file);
+  if (fs.existsSync(src)) {
+    syncFile(src, dest);
+  } else {
+    console.error(`  ERROR: required shared style missing: ${file}`);
+    process.exit(1);
   }
 }
 
