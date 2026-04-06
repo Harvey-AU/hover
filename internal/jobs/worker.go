@@ -4032,7 +4032,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 	// Run technology detection for this domain (once per session, async)
 	// Use bounded context to ensure detection doesn't hang during shutdown
 	if result.StatusCode >= 200 && result.StatusCode < 300 && len(result.BodySample) > 0 {
-		go func() {
+		go func() { //nolint:gosec // G118: intentionally outlives request; async tech detection
 			detectCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			wp.detectTechnologies(detectCtx, task, result)

@@ -726,14 +726,14 @@ func (h *Handler) fetchWebflowSites(ctx context.Context, token string) ([]Webflo
 func (h *Handler) fetchWebflowSiteByID(ctx context.Context, token, siteID string) (*WebflowSite, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	reqURL := fmt.Sprintf("https://api.webflow.com/v2/sites/%s", siteID)
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil) //nolint:gosec // G704: reqURL targets api.webflow.com
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: request targets api.webflow.com
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Webflow API: %w", err)
 	}
@@ -771,7 +771,7 @@ func (h *Handler) registerWebflowWebhook(ctx context.Context, token, siteID, web
 	}
 
 	reqURL := fmt.Sprintf("https://api.webflow.com/v2/sites/%s/webhooks", siteID)
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(body)) //nolint:gosec // G704: reqURL targets api.webflow.com
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -779,7 +779,7 @@ func (h *Handler) registerWebflowWebhook(ctx context.Context, token, siteID, web
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: request targets api.webflow.com
 	if err != nil {
 		return "", fmt.Errorf("failed to call Webflow API: %w", err)
 	}
@@ -814,7 +814,7 @@ func (h *Handler) registerWebflowWebhook(ctx context.Context, token, siteID, web
 // findExistingWebhook finds an existing webhook for a site
 func (h *Handler) findExistingWebhook(ctx context.Context, token, siteID, webhookURL string) (string, error) {
 	reqURL := fmt.Sprintf("https://api.webflow.com/v2/sites/%s/webhooks", siteID)
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil) //nolint:gosec // G704: reqURL targets api.webflow.com
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -822,7 +822,7 @@ func (h *Handler) findExistingWebhook(ctx context.Context, token, siteID, webhoo
 	req.Header.Set("accept", "application/json")
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: request targets api.webflow.com
 	if err != nil {
 		return "", fmt.Errorf("failed to call Webflow API: %w", err)
 	}
@@ -855,14 +855,14 @@ func (h *Handler) findExistingWebhook(ctx context.Context, token, siteID, webhoo
 // deleteWebflowWebhook deletes a webhook from Webflow
 func (h *Handler) deleteWebflowWebhook(ctx context.Context, token, webhookID string) error {
 	reqURL := fmt.Sprintf("https://api.webflow.com/v2/webhooks/%s", webhookID)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil) //nolint:gosec // G704: reqURL targets api.webflow.com
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: request targets api.webflow.com
 	if err != nil {
 		return fmt.Errorf("failed to call Webflow API: %w", err)
 	}

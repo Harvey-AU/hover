@@ -44,7 +44,7 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 		"email":    "dev@example.com",
 		"password": "devpassword",
 	})
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, //nolint:gosec // G704: authURL is from Supabase config, not user input
 		authURL+"/auth/v1/token?grant_type=password", bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "failed to build auth request", http.StatusInternalServerError)
@@ -53,7 +53,7 @@ func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("apikey", anonKey)
 
-	resp, err := devClient.Do(req)
+	resp, err := devClient.Do(req) //nolint:gosec // G704: request targets local Supabase auth endpoint
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Supabase unreachable: %v\n\nRun: supabase start", err), http.StatusBadGateway)
 		return
