@@ -302,10 +302,12 @@ body.page-dashboard .btn--sm {
 }
 
 body.page-dashboard .btn--icon-square {
-  width: 36px;
-  height: 36px;
+  width: 29px;
+  height: 29px;
   padding: 0;
   flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
 }
 
 body.page-dashboard .btn--border-thin {
@@ -344,10 +346,12 @@ body.page-dashboard .corners--right {
   border-top-right-radius: var(--radius--notch);
   border-bottom-right-radius: var(--radius--notch);
   border-bottom-left-radius: 0;
+  corner-shape: square notch notch square;
 }
 
 body.page-dashboard .corners--top-left {
   border-radius: var(--radius--notch) 0 0 0;
+  corner-shape: notch square square square;
 }
 
 body.page-dashboard .topbar {
@@ -404,17 +408,21 @@ body.page-dashboard .topbar-profile-avatar {
   width: 100%;
   height: 100%;
   background: var(--colour--brand-primary);
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   color: #fff;
   overflow: hidden;
+  border-radius: inherit;
+  user-select: none;
 }
 
 body.page-dashboard .topbar-profile-avatar img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 
 body.page-dashboard .topbar-org-select {
