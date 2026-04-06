@@ -15,6 +15,7 @@ import * as jobExport from "/app/lib/job-export.js";
 import * as organisationApi from "/app/lib/organisation-api.js";
 import * as schedulerApi from "/app/lib/scheduler-api.js";
 import * as shellNav from "/app/lib/shell-nav.js";
+import * as settingsAccount from "/app/lib/settings/account.js";
 import * as siteJobs from "/app/lib/site-jobs.js";
 import * as siteView from "/app/lib/site-view.js";
 import * as webflowSites from "/app/lib/webflow-sites.js";
@@ -28,6 +29,9 @@ window.HoverLib = {
   organisations: organisationApi,
   schedulers: schedulerApi,
   shell: shellNav,
+  settings: {
+    account: settingsAccount,
+  },
   jobs: siteJobs,
   view: siteView,
   webflow: webflowSites,

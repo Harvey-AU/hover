@@ -39,10 +39,12 @@ const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = ["off", "6", "12", "24", "48"] as const;
 const JOB_POLLING_INTERVAL_MS = 6000;
 const FALLBACK_POLLING_INTERVAL_MS = 1000;
+const ACCOUNT_SETTINGS_EXTENSION_SIZE = { width: 450, height: 620 } as const;
 
 const APP_ROUTES = {
   dashboard: "/dashboard",
   viewJob: "/jobs",
+  account: "/settings/account",
   changePlan: "/settings/plans",
   manageTeam: "/settings/team",
 } as const;
@@ -258,6 +260,15 @@ declare const HoverLib: {
       usage?: unknown | null;
     }) => void;
   };
+  settings: {
+    account: {
+      loadAccountDetails: (container: HTMLElement | null) => Promise<void>;
+      setupAccountActions: (
+        container: HTMLElement | null,
+        options?: { onNameSaved?: () => void }
+      ) => void;
+    };
+  };
   view: {
     renderUserAvatar: (options?: {
       element?: HTMLElement | null;
@@ -341,6 +352,7 @@ declare const HoverLib: {
 };
 
 type ScheduleOption = (typeof SCHEDULE_OPTIONS)[number] | "";
+type ExtensionView = "dashboard" | "settings-account";
 
 type ApiError = {
   status: number;
@@ -509,6 +521,7 @@ const ui = {
   orgSelect: document.getElementById("orgSelect") as HTMLSelectElement | null,
 
   // Action bar
+  actionBar: document.querySelector(".action-bar"),
   runNowButton: document.getElementById("runNowButton"),
   scheduleSelect: document.getElementById(
     "scheduleSelect"
@@ -535,6 +548,11 @@ const ui = {
   // Footer
   feedbackButton: document.getElementById("feedbackButton"),
   helpButton: document.getElementById("helpButton"),
+  panelFooter: document.querySelector(".panel-footer"),
+  contentScroll: document.querySelector(".content-scroll"),
+  settingsAccountView: document.getElementById("settingsAccountView"),
+  settingsBackButton: document.getElementById("settingsBackButton"),
+  extensionAccountSection: document.getElementById("extensionAccountSection"),
 };
 
 type ExtensionState = {
@@ -582,6 +600,8 @@ let lastChartJobsSignature = "";
 let crossSurfaceOrgRefreshInFlight = false;
 let shellChrome: ReturnType<typeof HoverLib.shell.initSurfaceShell> | null =
   null;
+let extensionView: ExtensionView = "dashboard";
+let accountSettingsBound = false;
 
 // Supabase realtime state
 let supabaseClient: SupabaseClient | null = null;
@@ -1095,17 +1115,74 @@ async function setExtensionSizeForAuthState(isAuthed: boolean): Promise<void> {
   }
 }
 
+async function setExtensionSizeForView(view: ExtensionView): Promise<void> {
+  try {
+    await webflow.setExtensionSize(
+      view === "settings-account"
+        ? ACCOUNT_SETTINGS_EXTENSION_SIZE
+        : AUTHENTICATED_EXTENSION_SIZE
+    );
+  } catch (error) {
+    console.warn("Unable to set extension size", error);
+  }
+}
+
 function renderAuthState(isAuthed: boolean): void {
   if (isAuthed) {
     hide(asNode(ui.unauthState));
     show(asNode(ui.authState));
-    void setExtensionSizeForAuthState(true);
+    void setExtensionSizeForView(extensionView);
     return;
   }
 
   show(asNode(ui.unauthState));
   hide(asNode(ui.authState));
   void setExtensionSizeForAuthState(false);
+}
+
+function renderView(): void {
+  const showSettingsAccount = extensionView === "settings-account";
+
+  if (showSettingsAccount) {
+    hide(asNode(ui.actionBar));
+    hide(asNode(ui.statusBlock));
+    hide(asNode(ui.contentScroll));
+    hide(asNode(ui.panelFooter));
+    show(asNode(ui.settingsAccountView));
+  } else {
+    show(asNode(ui.actionBar));
+    show(asNode(ui.statusBlock));
+    show(asNode(ui.contentScroll));
+    show(asNode(ui.panelFooter));
+    hide(asNode(ui.settingsAccountView));
+  }
+
+  if (state.token) {
+    void setExtensionSizeForView(extensionView);
+  }
+}
+
+async function openAccountSettingsView(): Promise<void> {
+  if (!state.token || !ui.extensionAccountSection) {
+    return;
+  }
+
+  extensionView = "settings-account";
+  renderView();
+
+  if (!accountSettingsBound) {
+    HoverLib.settings.account.setupAccountActions(ui.extensionAccountSection);
+    accountSettingsBound = true;
+  }
+
+  await HoverLib.settings.account.loadAccountDetails(
+    ui.extensionAccountSection
+  );
+}
+
+function openDashboardView(): void {
+  extensionView = "dashboard";
+  renderView();
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,13 +1316,6 @@ function buildAppUrl(path: string): string {
     console.error("Failed to build app URL", error);
     return `${state.apiBaseUrl.replace(/\/+$/, "")}/${path}`;
   }
-}
-
-function buildSurfaceAppUrl(path: string): string {
-  const targetUrl = new URL(buildAppUrl(path));
-  targetUrl.searchParams.set("surface", "webflow-extension");
-  targetUrl.searchParams.set("return_to", window.location.href);
-  return targetUrl.toString();
 }
 
 function setLoading(element: Element | null, disabled: boolean): void {
@@ -1613,6 +1683,7 @@ async function refreshDashboard(): Promise<void> {
       renderOrganisations();
       renderScheduleState();
       renderWebflowStatus(false);
+      openDashboardView();
       return;
     }
 
@@ -1693,7 +1764,16 @@ async function switchOrganisation(): Promise<void> {
 }
 
 function openSettingsPage(path: string): void {
-  window.location.assign(buildSurfaceAppUrl(path));
+  if (path === APP_ROUTES.account) {
+    void openAccountSettingsView();
+    return;
+  }
+
+  const targetUrl = buildAppUrl(path);
+  const popup = window.open(targetUrl, "_blank", "noopener,noreferrer");
+  if (!popup) {
+    setStatus("Popup blocked. Allow popups and try again.", "");
+  }
 }
 
 async function subscribeToNotificationsChannel(
@@ -1852,7 +1932,10 @@ function initEventHandlers(): void {
   });
 
   ui.homeButton?.addEventListener("click", () => {
-    openSettingsPage(APP_ROUTES.dashboard);
+    openDashboardView();
+  });
+  ui.settingsBackButton?.addEventListener("click", () => {
+    openDashboardView();
   });
 
   // Auth: org switcher
@@ -1962,6 +2045,7 @@ async function initialise(): Promise<void> {
     subscribeToNotifications: (orgId, onEvent) =>
       subscribeToNotificationsChannel(orgId, onEvent),
   });
+  renderView();
   await refreshDashboard();
   renderAuthState(Boolean(state.token));
 

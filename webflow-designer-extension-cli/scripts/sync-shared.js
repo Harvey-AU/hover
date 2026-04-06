@@ -30,6 +30,7 @@ const REQUIRED_LIB_MODULES = [
   "lib/site-jobs.js",
   "lib/site-view.js",
   "lib/shell-nav.js",
+  "lib/settings/account.js",
   "lib/job-export.js",
   "lib/webflow-sites.js",
   "lib/organisation-api.js",

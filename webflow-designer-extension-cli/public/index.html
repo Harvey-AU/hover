@@ -398,6 +398,94 @@
             Help
           </button>
         </footer>
+
+        <section
+          id="settingsAccountView"
+          class="section extension-settings-view hidden"
+        >
+          <div class="extension-settings-header">
+            <button
+              id="settingsBackButton"
+              type="button"
+              class="btn btn--ghost btn--text extension-settings-back"
+            >
+              ← Back
+            </button>
+            <div>
+              <p class="extension-settings-eyebrow">Settings</p>
+              <h2 class="extension-settings-title">Account</h2>
+              <p class="extension-settings-subtitle">
+                Update your name and security settings without leaving the
+                extension.
+              </p>
+            </div>
+          </div>
+
+          <section
+            id="extensionAccountSection"
+            class="extension-settings-section"
+          >
+            <div class="settings-card" id="profile">
+              <div class="settings-row">
+                <div>
+                  <label for="settingsUserFirstNameInput"
+                    ><strong>Name</strong></label
+                  >
+                  <div class="settings-profile-edit">
+                    <input
+                      class="settings-input"
+                      id="settingsUserFirstNameInput"
+                      type="text"
+                      maxlength="80"
+                      placeholder="First name"
+                    />
+                    <input
+                      class="settings-input"
+                      id="settingsUserLastNameInput"
+                      type="text"
+                      maxlength="80"
+                      placeholder="Last name"
+                      aria-label="Last name"
+                    />
+                    <button
+                      class="btn btn--secondary btn--sm extension-settings-save"
+                      id="settingsSaveName"
+                      type="button"
+                    >
+                      Save name
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-row">
+                <div>
+                  <strong>Email</strong>
+                  <div class="settings-muted" id="settingsUserEmail">
+                    Loading...
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card" id="security">
+              <div class="settings-row">
+                <div>
+                  <strong>Password</strong>
+                  <div class="settings-muted" id="settingsPasswordMethodStatus">
+                    Email/password sign-in status: loading...
+                  </div>
+                </div>
+                <button
+                  class="btn btn--secondary btn--sm"
+                  id="settingsResetPassword"
+                  type="button"
+                >
+                  Send reset email
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
       </section>
     </main>
 

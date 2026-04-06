@@ -1063,6 +1063,97 @@ body {
   padding-right: calc(var(--size--scrollbar));
 }
 
+.extension-settings-view {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: calc(var(--size--scrollbar));
+}
+
+.extension-settings-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.extension-settings-back {
+  align-self: flex-start;
+  color: var(--colour--brand-primary);
+}
+
+.extension-settings-eyebrow,
+.extension-settings-subtitle,
+.settings-muted {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-colour--secondary);
+}
+
+.extension-settings-eyebrow {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.extension-settings-title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--text-colour--primary);
+}
+
+.extension-settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-card {
+  border: 1px solid rgba(142, 218, 239, 0.24);
+  background: rgba(97, 208, 239, 0.05);
+  padding: 14px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.settings-row + .settings-row {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+.settings-profile-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.settings-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid rgba(142, 218, 239, 0.35);
+  background: rgba(3, 4, 35, 0.72);
+  color: var(--text-colour--primary);
+  font: inherit;
+}
+
+.settings-input::placeholder {
+  color: rgba(223, 239, 255, 0.42);
+}
+
+.extension-settings-save {
+  align-self: end;
+}
+
 /* ─── Objects: Status Dots ──────────────────────────────────────────────── */
 
 .dot {
