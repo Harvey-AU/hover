@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	hover jobs generate --pr <N> --anon-key <key> [--interval 30s] [--jobs 10] [--concurrency random]
+//	hover jobs generate --pr <N> --anon-key <key> [--interval 30s] [--jobs 10] [--repeats 4] [--concurrency random]
 package main
 
 import (
@@ -125,6 +125,8 @@ Options:
   --interval <dur>     Batch interval (e.g. 30s, 2m) [default: 3m]
   --jobs <N>           Jobs per batch [default: 3]
   --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
+  --repeats <N>        How many times to run each domain [default: 1]
+  --status-interval    Poll interval when waiting to rerun a domain [default: 30s]
   --auth-url <url>     Override Supabase auth base URL
   --api-url <url>      Override API base URL
   --yes, -y            Skip confirmation prompt`

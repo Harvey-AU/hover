@@ -23,16 +23,20 @@ type jobsConfig struct {
 	AuthURLOverride string
 	APIURLOverride  string
 	Interval        time.Duration
+	StatusInterval  time.Duration
 	JobsPerBatch    int
+	Repeats         int
 	Concurrency     string // "random" or integer 1-50
 	Yes             bool   // skip interactive confirmation
 }
 
 func parseJobsFlags(args []string) (*jobsConfig, error) {
 	c := &jobsConfig{
-		Interval:     3 * time.Minute,
-		JobsPerBatch: 3,
-		Concurrency:  "random",
+		Interval:       3 * time.Minute,
+		StatusInterval: 30 * time.Second,
+		JobsPerBatch:   3,
+		Repeats:        1,
+		Concurrency:    "random",
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -108,6 +112,17 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			}
 			c.JobsPerBatch = n
 
+		case "--repeats":
+			v, err := nextVal()
+			if err != nil {
+				return nil, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("invalid --repeats value: %s", v)
+			}
+			c.Repeats = n
+
 		case "--concurrency":
 			v, err := nextVal()
 			if err != nil {
@@ -120,6 +135,20 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 				}
 			}
 			c.Concurrency = v
+
+		case "--status-interval":
+			v, err := nextVal()
+			if err != nil {
+				return nil, err
+			}
+			d, err := parseInterval(v)
+			if err != nil {
+				return nil, fmt.Errorf("invalid --status-interval: %w", err)
+			}
+			if d <= 0 {
+				return nil, fmt.Errorf("--status-interval must be positive")
+			}
+			c.StatusInterval = d
 
 		case "--yes", "-y":
 			c.Yes = true
@@ -356,7 +385,23 @@ func runJobsGenerate(args []string) error {
 		domains[i], domains[j] = domains[j], domains[i]
 	})
 
-	totalBatches := (len(domains) + cfg.JobsPerBatch - 1) / cfg.JobsPerBatch
+	type domainRunState struct {
+		Domain        string
+		RemainingRuns int
+		LastJobID     string
+		LastJobStatus string
+		CompletedRuns int
+	}
+
+	domainStates := make([]domainRunState, len(domains))
+	for i, domain := range domains {
+		domainStates[i] = domainRunState{
+			Domain:        domain,
+			RemainingRuns: cfg.Repeats,
+		}
+	}
+
+	totalRuns := len(domains) * cfg.Repeats
 
 	// Identity line.
 	fmt.Fprintln(os.Stderr)
@@ -371,7 +416,11 @@ func runJobsGenerate(args []string) error {
 	}
 
 	// Job settings summary.
-	fmt.Fprintf(os.Stderr, "Generating: %d jobs, %d per batch, %s interval\n", len(domains), cfg.JobsPerBatch, formatDuration(cfg.Interval))
+	fmt.Fprintf(os.Stderr, "Generating: %d total jobs across %d domains, %d per batch, %s interval", totalRuns, len(domains), cfg.JobsPerBatch, formatDuration(cfg.Interval))
+	if cfg.Repeats > 1 {
+		fmt.Fprintf(os.Stderr, ", %dx repeats, %s status polling", cfg.Repeats, formatDuration(cfg.StatusInterval))
+	}
+	fmt.Fprintln(os.Stderr)
 
 	// Confirmation prompt — allow org switch if multiple orgs available.
 	if err := confirmOrSwitchOrg(ctx, ac, token, id, cfg.Yes); err != nil {
@@ -380,9 +429,9 @@ func runJobsGenerate(args []string) error {
 
 	startTime := time.Now()
 	jobsCreated := 0
-	domainIdx := 0
+	batch := 0
 
-	for batch := 1; batch <= totalBatches; batch++ {
+	for jobsCreated < totalRuns {
 		select {
 		case <-ctx.Done():
 			fmt.Fprintln(os.Stderr, "\nInterrupted.")
@@ -399,32 +448,80 @@ func runJobsGenerate(args []string) error {
 			token = freshToken
 		}
 
-		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d/%d ===\033[0m\n", batch, totalBatches)
-
-		end := domainIdx + cfg.JobsPerBatch
-		if end > len(domains) {
-			end = len(domains)
-		}
-		batchDomains := domains[domainIdx:end]
-		domainIdx = end
-
-		for _, domain := range batchDomains {
-			concurrency := resolveConcurrency(cfg.Concurrency)
-			if cfg.Concurrency == "random" {
-				fmt.Fprintf(os.Stderr, "\033[33mCreating job for %s (batch %d, concurrency: %d)\033[0m\n", domain, batch, concurrency)
-			} else {
-				fmt.Fprintf(os.Stderr, "\033[33mCreating job for %s (batch %d)\033[0m\n", domain, batch)
+		for i := range domainStates {
+			state := &domainStates[i]
+			if state.LastJobID == "" || isTerminalJobStatus(state.LastJobStatus) {
+				continue
 			}
 
-			id, err := createJob(ctx, ac.APIURL, token, domain, concurrency)
+			status, err := fetchJobStatus(ctx, ac.APIURL, token, state.LastJobID)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "\033[31m✗ Failed: %s — %v\033[0m\n", domain, err)
+				fmt.Fprintf(os.Stderr, "\033[31m! Failed to refresh status for %s (%s): %v\033[0m\n", state.Domain, state.LastJobID, err)
+				continue
+			}
+			state.LastJobStatus = status
+		}
+
+		readyIndices := make([]int, 0, cfg.JobsPerBatch)
+		for i := range domainStates {
+			state := &domainStates[i]
+			if state.RemainingRuns == 0 {
+				continue
+			}
+			if state.LastJobID != "" && !isTerminalJobStatus(state.LastJobStatus) {
+				continue
+			}
+			readyIndices = append(readyIndices, i)
+			if len(readyIndices) >= cfg.JobsPerBatch {
+				break
+			}
+		}
+
+		if len(readyIndices) == 0 {
+			activeDomains := 0
+			for i := range domainStates {
+				if domainStates[i].RemainingRuns > 0 {
+					activeDomains++
+				}
+			}
+
+			fmt.Fprintf(os.Stderr, "\n\033[33mNo domains ready for the next repeat yet; polling again in %s (%d domains still queued)\033[0m\n", formatDuration(cfg.StatusInterval), activeDomains)
+			select {
+			case <-time.After(cfg.StatusInterval):
+			case <-ctx.Done():
+				fmt.Fprintln(os.Stderr, "\nInterrupted.")
+				printSummary(startTime, jobsCreated, ac.APIURL)
+				return nil
+			}
+			continue
+		}
+
+		batch++
+		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d (%d/%d jobs created) ===\033[0m\n", batch, jobsCreated, totalRuns)
+
+		for _, idx := range readyIndices {
+			state := &domainStates[idx]
+			runNumber := state.CompletedRuns + 1
+			concurrency := resolveConcurrency(cfg.Concurrency)
+			if cfg.Concurrency == "random" {
+				fmt.Fprintf(os.Stderr, "\033[33mCreating job for %s (run %d/%d, batch %d, concurrency: %d)\033[0m\n", state.Domain, runNumber, cfg.Repeats, batch, concurrency)
+			} else {
+				fmt.Fprintf(os.Stderr, "\033[33mCreating job for %s (run %d/%d, batch %d)\033[0m\n", state.Domain, runNumber, cfg.Repeats, batch)
+			}
+
+			id, err := createJob(ctx, ac.APIURL, token, state.Domain, concurrency)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "\033[31m✗ Failed: %s — %v\033[0m\n", state.Domain, err)
 				if strings.Contains(err.Error(), "401") {
 					return fmt.Errorf("authentication failed — check your token")
 				}
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "\033[32m✓ Created job %s for %s\033[0m\n", id, domain)
+			fmt.Fprintf(os.Stderr, "\033[32m✓ Created job %s for %s\033[0m\n", id, state.Domain)
+			state.LastJobID = id
+			state.LastJobStatus = "pending"
+			state.RemainingRuns--
+			state.CompletedRuns++
 			jobsCreated++
 
 			// Small delay between creates.
@@ -436,7 +533,7 @@ func runJobsGenerate(args []string) error {
 			}
 		}
 
-		if batch < totalBatches {
+		if jobsCreated < totalRuns {
 			fmt.Fprintf(os.Stderr, "\n\033[33mWaiting %s until next batch...\033[0m\n", formatDuration(cfg.Interval))
 			select {
 			case <-time.After(cfg.Interval):
@@ -450,6 +547,15 @@ func runJobsGenerate(args []string) error {
 
 	printSummary(startTime, jobsCreated, ac.APIURL)
 	return nil
+}
+
+func isTerminalJobStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveConcurrency(setting string) int {
@@ -523,6 +629,51 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 		id = "unknown"
 	}
 	return id, nil
+}
+
+func fetchJobStatus(ctx context.Context, apiURL, token, jobID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL+"/v1/jobs/"+jobID, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, respBody)
+	}
+
+	var result struct {
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
+		Job struct {
+			Status string `json:"status"`
+		} `json:"job"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parsing job status response: %w", err)
+	}
+
+	status := result.Data.Status
+	if status == "" {
+		status = result.Job.Status
+	}
+	if status == "" {
+		status = result.Status
+	}
+	if status == "" {
+		return "", fmt.Errorf("job status missing in response")
+	}
+
+	return status, nil
 }
 
 func formatDuration(d time.Duration) string {
