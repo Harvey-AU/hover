@@ -28,7 +28,23 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Security
+
+- Fix P-256 JWKS coordinate encoding in tests — replaced `big.Int.Bytes()`
+  (drops leading zeros) with `ecdh.PublicKey.Bytes()` to produce RFC 7518
+  §6.2.1.2-compliant fixed-length coordinates
+- Harden AIA fetching in `tls_aia.go` against DNS rebinding by routing all AIA
+  HTTP requests through `ssrfSafeDialContext()` (IP check at connect time, not
+  just URL-parse time)
+- Add `CheckRedirect` to AIA and cert-inspection clients to re-validate redirect
+  targets against scheme and `isPrivateHost` checks, preventing SSRF via
+  redirect
+- Replace unbounded `net.LookupHost` in `isPrivateHost` with a 2 s
+  context-bounded `net.DefaultResolver.LookupIPAddr`; fail-closed on timeout
+- Deduplicate private-IP predicate in `isPrivateHost` — now delegates to shared
+  `isPrivateOrLocalIP` from `crawler.go`
+- Set `MinVersion: tls.VersionTLS12` on AIA cert-inspection transport to prevent
+  protocol downgrade during handshake
 
 ## Full changelog history
 
