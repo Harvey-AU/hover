@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -104,7 +105,10 @@ func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Rea
 		input.Metadata = opts.Metadata
 	}
 
-	_, err = p.client.PutObject(ctx, input)
+	// Use UNSIGNED-PAYLOAD to avoid R2's chunked signature validation issues.
+	_, err = p.client.PutObject(ctx, input, s3.WithAPIOptions(
+		v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware,
+	))
 	if err != nil {
 		return fmt.Errorf("archive: upload %s/%s failed: %w", bucket, key, err)
 	}
