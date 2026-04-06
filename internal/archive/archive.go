@@ -4,7 +4,6 @@ package archive
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -94,7 +93,8 @@ func ConfigFromEnv() *Config {
 	return &cfg
 }
 
-// ColdKey builds the canonical object key for a task HTML blob.
-func ColdKey(jobID, storagePath, taskID string) string {
-	return fmt.Sprintf("jobs/%s/tasks/%s/%s.html.gz", jobID, storagePath, taskID)
+// ColdKey returns the cold-storage object key for a task HTML blob.
+// storagePath is the full path as stored in the DB (e.g. "jobs/{jobID}/tasks/page-path/{taskID}.html.gz").
+func ColdKey(storagePath string) string {
+	return storagePath
 }

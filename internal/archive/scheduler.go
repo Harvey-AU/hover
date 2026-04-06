@@ -142,7 +142,7 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 
 	// 1. Download from hot storage, falling back to cold storage if the hot
 	// copy is already gone (e.g. a previous run deleted it but OnArchived failed).
-	key := ColdKey(c.JobID, c.StoragePath, c.TaskID)
+	key := ColdKey(c.StoragePath)
 	data, err := a.storage.Download(ctx, c.StorageBucket, c.StoragePath)
 	if err != nil {
 		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
