@@ -39,7 +39,7 @@ GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleuse
 
 # Cold-storage archival (R2) — credentials via flyctl secrets
 ARCHIVE_PROVIDER = "r2"
-ARCHIVE_BUCKET = "native-hover-archive"
+ARCHIVE_BUCKET = "native-hover-archive-staging"
 ARCHIVE_RETENTION_JOBS = "3"
 ARCHIVE_INTERVAL = "1m"
 ARCHIVE_BATCH_SIZE = "100"

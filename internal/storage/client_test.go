@@ -37,14 +37,14 @@ func TestUploadWithOptionsSetsContentEncoding(t *testing.T) {
 	defer server.Close()
 
 	client := New(server.URL, "sb_publishable_test", "sb_secret_test")
-	path, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/page-path/task.html.gz", []byte("payload"), UploadOptions{
+	path, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/task/page-content.html.gz", []byte("payload"), UploadOptions{
 		ContentType:     "text/html",
 		ContentEncoding: "gzip",
 	})
 
 	require.NoError(t, err)
 	require.NoError(t, receivedBodyErr)
-	assert.Equal(t, "task-html/jobs/job/tasks/page-path/task.html.gz", path)
+	assert.Equal(t, "task-html/jobs/job/tasks/task/page-content.html.gz", path)
 	assert.Equal(t, "text/html", receivedContentType)
 	assert.Equal(t, "gzip", receivedContentEncoding)
 	assert.Equal(t, "sb_publishable_test", receivedAPIKey)
@@ -67,7 +67,7 @@ func TestUploadWithOptionsFallsBackToSecretKeyForApikey(t *testing.T) {
 
 	// Empty publishable key falls back to using secret key for both headers
 	client := New(server.URL, "", "sb_secret_fallback")
-	_, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/page-path/task.html.gz", []byte("payload"), UploadOptions{
+	_, err := client.UploadWithOptions(t.Context(), "task-html", "jobs/job/tasks/task/page-content.html.gz", []byte("payload"), UploadOptions{
 		ContentType: "text/html",
 	})
 

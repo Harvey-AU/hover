@@ -87,19 +87,41 @@ func (p *S3Provider) Ping(ctx context.Context, bucket string) error {
 }
 
 func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Reader, opts UploadOptions) error {
-	// Read all data upfront so we can set ContentLength explicitly.
-	// R2 rejects chunked/unsigned-payload signatures that the SDK uses
-	// when content length is unknown.
-	body, err := io.ReadAll(data)
-	if err != nil {
-		return fmt.Errorf("archive: read upload body for %s/%s: %w", bucket, key, err)
+	var (
+		bodyReader    io.Reader
+		contentLength int64
+	)
+
+	if seeker, ok := data.(io.ReadSeeker); ok {
+		start, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("archive: determine upload offset for %s/%s: %w", bucket, key, err)
+		}
+		end, err := seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("archive: determine upload length for %s/%s: %w", bucket, key, err)
+		}
+		if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+			return fmt.Errorf("archive: rewind upload reader for %s/%s: %w", bucket, key, err)
+		}
+		bodyReader = seeker
+		contentLength = end - start
+	} else {
+		// Read non-seekable readers upfront so we can set ContentLength explicitly.
+		// R2 rejects chunked/unsigned-payload signatures when content length is unknown.
+		body, err := io.ReadAll(data)
+		if err != nil {
+			return fmt.Errorf("archive: read upload body for %s/%s: %w", bucket, key, err)
+		}
+		bodyReader = bytes.NewReader(body)
+		contentLength = int64(len(body))
 	}
 
 	input := &s3.PutObjectInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
-		Body:          bytes.NewReader(body),
-		ContentLength: aws.Int64(int64(len(body))),
+		Body:          bodyReader,
+		ContentLength: aws.Int64(contentLength),
 	}
 	if opts.ContentType != "" {
 		input.ContentType = aws.String(opts.ContentType)
@@ -112,7 +134,7 @@ func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Rea
 	}
 
 	// Use UNSIGNED-PAYLOAD to avoid R2's chunked signature validation issues.
-	_, err = p.client.PutObject(ctx, input, s3.WithAPIOptions(
+	_, err := p.client.PutObject(ctx, input, s3.WithAPIOptions(
 		v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware,
 	))
 	if err != nil {
@@ -150,6 +172,17 @@ func (p *S3Provider) Exists(ctx context.Context, bucket, key string) (bool, erro
 		return false, fmt.Errorf("archive: head %s/%s failed: %w", bucket, key, err)
 	}
 	return true, nil
+}
+
+func (p *S3Provider) Delete(ctx context.Context, bucket, key string) error {
+	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("archive: delete %s/%s failed: %w", bucket, key, err)
+	}
+	return nil
 }
 
 func (p *S3Provider) Provider() string {

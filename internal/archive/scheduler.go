@@ -11,6 +11,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const archiveCandidateTimeout = 2 * time.Minute
+
 // storageDownloader abstracts downloading from hot storage (Supabase).
 type storageDownloader interface {
 	Download(ctx context.Context, bucket, path string) ([]byte, error)
@@ -55,7 +57,7 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 	log.Info().
 		Str("provider", a.cfg.Provider).
 		Str("bucket", a.cfg.Bucket).
-		Dur("interval", a.cfg.Interval).
+		Dur("interval", interval).
 		Int("batch_size", a.cfg.BatchSize).
 		Int("concurrency", a.cfg.Concurrency).
 		Msg("Archive scheduler started")
@@ -120,12 +122,21 @@ func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 			default:
 			}
 
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			}
+
 			wg.Add(1)
 			go func(candidate ArchiveCandidate) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				a.archiveOne(ctx, src, candidate)
+				candidateCtx, cancel := context.WithTimeout(ctx, archiveCandidateTimeout)
+				defer cancel()
+				a.archiveOne(candidateCtx, src, candidate)
 			}(c)
 		}
 
@@ -142,7 +153,8 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 
 	// 1. Download from hot storage, falling back to cold storage if the hot
 	// copy is already gone (e.g. a previous run deleted it but OnArchived failed).
-	key := ColdKey(c.StoragePath)
+	key := ColdKey(c.JobID, c.TaskID)
+	recoveredFromCold := false
 	data, err := a.storage.Download(ctx, c.StorageBucket, c.StoragePath)
 	if err != nil {
 		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
@@ -162,10 +174,11 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 			lg.Warn().Err(closeErr).Msg("Failed to close cold-storage fallback body")
 			return
 		}
-		lg.Info().Msg("Recovered data from cold storage — proceeding to mark archived")
+		recoveredFromCold = true
+		lg.Info().Msg("Recovered data from cold storage — skipping re-upload")
 	}
 
-	// 2. Upload to cold storage
+	// 2. Upload to cold storage when we only have the hot copy.
 	contentType := c.ContentType
 	if contentType == "" {
 		contentType = "text/html"
@@ -174,29 +187,31 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 	if contentEncoding == "" {
 		contentEncoding = "gzip"
 	}
-	err = a.provider.Upload(ctx, a.cfg.Bucket, key, bytes.NewReader(data), UploadOptions{
-		ContentType:     contentType,
-		ContentEncoding: contentEncoding,
-		Metadata: map[string]string{
-			"task_id": c.TaskID,
-			"job_id":  c.JobID,
-			"sha256":  c.SHA256,
-		},
-	})
-	if err != nil {
-		lg.Error().Err(err).Msg("Failed to upload to cold storage")
-		return
-	}
+	if !recoveredFromCold {
+		err = a.provider.Upload(ctx, a.cfg.Bucket, key, bytes.NewReader(data), UploadOptions{
+			ContentType:     contentType,
+			ContentEncoding: contentEncoding,
+			Metadata: map[string]string{
+				"task_id": c.TaskID,
+				"job_id":  c.JobID,
+				"sha256":  c.SHA256,
+			},
+		})
+		if err != nil {
+			lg.Error().Err(err).Msg("Failed to upload to cold storage")
+			return
+		}
 
-	// 3. Verify existence in cold storage
-	exists, err := a.provider.Exists(ctx, a.cfg.Bucket, key)
-	if err != nil {
-		lg.Error().Err(err).Msg("Failed to verify cold storage upload")
-		return
-	}
-	if !exists {
-		lg.Error().Msg("Object not found in cold storage after upload")
-		return
+		// 3. Verify existence in cold storage
+		exists, err := a.provider.Exists(ctx, a.cfg.Bucket, key)
+		if err != nil {
+			lg.Error().Err(err).Msg("Failed to verify cold storage upload")
+			return
+		}
+		if !exists {
+			lg.Error().Msg("Object not found in cold storage after upload")
+			return
+		}
 	}
 
 	// 4. Delete from hot storage before clearing DB references.

@@ -4,6 +4,7 @@ package archive
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -62,13 +63,14 @@ func ConfigFromEnv() *Config {
 	if provider == "" {
 		return nil
 	}
+	bucket := os.Getenv("ARCHIVE_BUCKET")
+	if bucket == "" {
+		return nil
+	}
 
 	cfg := DefaultConfig()
 	cfg.Provider = provider
-
-	if v := os.Getenv("ARCHIVE_BUCKET"); v != "" {
-		cfg.Bucket = v
-	}
+	cfg.Bucket = bucket
 	if v := os.Getenv("ARCHIVE_RETENTION_JOBS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.RetentionJobs = n
@@ -93,8 +95,13 @@ func ConfigFromEnv() *Config {
 	return &cfg
 }
 
-// ColdKey returns the cold-storage object key for a task HTML blob.
-// storagePath is the full path as stored in the DB (e.g. "jobs/{jobID}/tasks/page-path/{taskID}.html.gz").
-func ColdKey(storagePath string) string {
-	return storagePath
+// TaskHTMLObjectPath returns the canonical object path for a task HTML blob in
+// both hot storage and cold storage.
+func TaskHTMLObjectPath(jobID, taskID string) string {
+	return fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
+}
+
+// ColdKey returns the canonical cold-storage object key for a task HTML blob.
+func ColdKey(jobID, taskID string) string {
+	return TaskHTMLObjectPath(jobID, taskID)
 }

@@ -70,7 +70,7 @@ func TestBuildTaskHTMLUpload(t *testing.T) {
 	require.NotNil(t, upload)
 
 	assert.Equal(t, taskHTMLStorageBucket, upload.Bucket)
-	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", upload.Path)
+	assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", upload.Path)
 	assert.Equal(t, "text/html; charset=utf-8", upload.ContentType)
 	assert.Equal(t, "text/html", upload.UploadContentType)
 	assert.Equal(t, taskHTMLContentEncoding, upload.ContentEncoding)
@@ -134,7 +134,7 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 			capturedOptions = options
 			capturedPayload = append([]byte(nil), data...)
 			assert.Equal(t, taskHTMLStorageBucket, bucket)
-			assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", path)
+			assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", path)
 			return bucket + "/" + path, nil
 		}},
 	}
@@ -143,7 +143,7 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 
 	assert.Equal(t, "task-123", persistedTaskID)
 	assert.Equal(t, taskHTMLStorageBucket, persistedMetadata.StorageBucket)
-	assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", persistedMetadata.StoragePath)
+	assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", persistedMetadata.StoragePath)
 	assert.Equal(t, "text/html; charset=utf-8", persistedMetadata.ContentType)
 	assert.Equal(t, taskHTMLContentEncoding, persistedMetadata.ContentEncoding)
 	assert.Equal(t, int64(len(request.Body)), persistedMetadata.SizeBytes)
@@ -191,7 +191,7 @@ func TestProcessTaskHTMLPersistenceDeletesUploadWhenMetadataPersistenceFails(t *
 			deleteFunc: func(ctx context.Context, bucket, path string) error {
 				deleted = true
 				assert.Equal(t, taskHTMLStorageBucket, bucket)
-				assert.Equal(t, "jobs/job-456/tasks/page-path/task-123.html.gz", path)
+				assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", path)
 				return nil
 			},
 		},

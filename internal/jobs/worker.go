@@ -76,6 +76,7 @@ const (
 	taskHTMLDrainTimeout     = 15 * time.Second
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
+	archivePingTimeout       = 10 * time.Second
 )
 
 type storageUploader interface {
@@ -608,7 +609,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	archiveCfg := archive.ConfigFromEnv()
 	switch {
 	case archiveCfg == nil:
-		log.Info().Msg("ARCHIVE: ARCHIVE_PROVIDER not set — archiving DISABLED")
+		log.Info().Msg("ARCHIVE: incomplete config or ARCHIVE_PROVIDER not set — archiving DISABLED")
 	case wp.storageClient == nil:
 		log.Error().Msg("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
 	default:
@@ -617,15 +618,20 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
 		} else if provider == nil {
 			log.Warn().Msg("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
-		} else if err := provider.Ping(context.Background(), archiveCfg.Bucket); err != nil {
-			log.Error().Err(err).
-				Str("provider", archiveCfg.Provider).
-				Str("bucket", archiveCfg.Bucket).
-				Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
 		} else {
-			src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
-			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, wp.dbQueue.MarkFullyArchivedJobs, src)
-			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
+			pingCtx, cancel := context.WithTimeout(context.Background(), archivePingTimeout)
+			err := provider.Ping(pingCtx, archiveCfg.Bucket)
+			cancel()
+			if err != nil {
+				log.Error().Err(err).
+					Str("provider", archiveCfg.Provider).
+					Str("bucket", archiveCfg.Bucket).
+					Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
+			} else {
+				src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
+				wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, wp.dbQueue.MarkFullyArchivedJobs, src)
+				log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
+			}
 		}
 	}
 
@@ -3732,7 +3738,7 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 
 	return &taskHTMLUpload{
 		Bucket:              taskHTMLStorageBucket,
-		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
+		Path:                archive.TaskHTMLObjectPath(task.JobID, task.ID),
 		ContentType:         contentType,
 		UploadContentType:   uploadContentType,
 		ContentEncoding:     taskHTMLContentEncoding,
