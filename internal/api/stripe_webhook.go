@@ -26,8 +26,6 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stripe.Key = h.StripeSecretKey
-
 	const maxBodyBytes = 65536
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	body, err := io.ReadAll(r.Body)
@@ -134,6 +132,11 @@ func (h *Handler) handleSubscriptionUpdated(r *http.Request, event stripe.Event,
 		return
 	}
 
+	if sub.Customer == nil {
+		logger.Error().Msg("subscription.updated: missing customer — skipping")
+		return
+	}
+
 	orgID, err := h.DB.GetOrganisationIDByStripeCustomerID(r.Context(), sub.Customer.ID)
 	if err != nil {
 		logger.Error().Err(err).Str("customer_id", sub.Customer.ID).Msg("Cannot resolve organisation")
@@ -163,6 +166,11 @@ func (h *Handler) handleSubscriptionDeleted(r *http.Request, event stripe.Event,
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		logger.Error().Err(err).Msg("Failed to unmarshal customer.subscription.deleted")
+		return
+	}
+
+	if sub.Customer == nil {
+		logger.Error().Msg("subscription.deleted: missing customer — skipping")
 		return
 	}
 

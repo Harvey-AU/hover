@@ -99,7 +99,9 @@ export async function loadPlansAndUsage(container, options = {}) {
           } else if (plan.monthly_price_cents > 0) {
             actionBtn.textContent = "Upgrade";
             actionBtn.disabled = false;
-            actionBtn.addEventListener("click", () => startCheckout(plan.id));
+            actionBtn.addEventListener("click", () =>
+              startCheckout(plan.id, actionBtn)
+            );
           } else {
             // Downgrading to free — direct plan update (no payment needed).
             actionBtn.textContent = "Switch to Free";
@@ -134,9 +136,13 @@ async function switchPlan(planId, container, options = {}) {
   }
 }
 
-async function startCheckout(planId) {
+async function startCheckout(planId, btn) {
   if (!planId) return;
 
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+  }
   try {
     const response = await post("/v1/billing/checkout", { plan_id: planId });
     if (response.url) {
@@ -145,6 +151,10 @@ async function startCheckout(planId) {
   } catch (err) {
     console.error("Failed to start checkout:", err);
     toast("error", "Failed to open checkout — please try again");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Upgrade";
+    }
   }
 }
 

@@ -66,8 +66,6 @@ func (h *Handler) BillingCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stripe.Key = h.StripeSecretKey
-
 	// Get or create Stripe Customer for this organisation.
 	customerID, err := h.DB.GetStripeCustomerID(r.Context(), orgID)
 	if err != nil {
@@ -100,14 +98,9 @@ func (h *Handler) BillingCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	successURL := h.SettingsURL
-	if successURL == "" {
-		successURL = "/settings"
-	}
-	cancelURL := h.SettingsURL
-	if cancelURL == "" {
-		cancelURL = "/settings"
-	}
+	baseURL := h.absoluteBaseURL(r)
+	successURL := baseURL + "/settings"
+	cancelURL := baseURL + "/settings"
 
 	sess, err := checkoutsession.New(&stripe.CheckoutSessionParams{
 		Customer: stripe.String(customerID),
@@ -168,16 +161,9 @@ func (h *Handler) BillingPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stripe.Key = h.StripeSecretKey
-
-	returnURL := h.SettingsURL
-	if returnURL == "" {
-		returnURL = "/settings"
-	}
-
 	sess, err := portalsession.New(&stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(customerID),
-		ReturnURL: stripe.String(returnURL),
+		ReturnURL: stripe.String(h.absoluteBaseURL(r) + "/settings"),
 	})
 	if err != nil {
 		log.Error().Err(err).Str("org_id", orgID).Msg("Failed to create Stripe Portal Session")
@@ -186,4 +172,24 @@ func (h *Handler) BillingPortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteSuccess(w, r, map[string]string{"url": sess.URL}, "Portal session created")
+}
+
+// absoluteBaseURL returns the scheme+host base URL for this request.
+// Uses X-Forwarded-Proto when behind a proxy, falls back to https.
+func (h *Handler) absoluteBaseURL(r *http.Request) string {
+	if h.SettingsURL != "" {
+		// Strip trailing /settings if the caller stored the full page URL.
+		base := h.SettingsURL
+		if len(base) > 9 && base[len(base)-9:] == "/settings" {
+			base = base[:len(base)-9]
+		}
+		return base
+	}
+	scheme := "https"
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	} else if r.TLS == nil {
+		scheme = "http"
+	}
+	return scheme + "://" + r.Host
 }

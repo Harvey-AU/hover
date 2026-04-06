@@ -21,6 +21,8 @@ import (
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/loops"
+	"github.com/rs/zerolog/log"
+	stripe "github.com/stripe/stripe-go/v82"
 )
 
 // Set via ldflags at build time.
@@ -227,6 +229,8 @@ type Handler struct {
 
 // broker may be nil when Redis is not configured — admin reset endpoints skip the Redis clear in that case.
 func NewHandler(pgDB DBClient, jobsManager jobs.JobManagerInterface, loopsClient *loops.Client, broker BrokerCleaner, googleClientID, googleClientSecret, stripeSecretKey, stripeWebhookSecret, stripePublishableKey, settingsURL string) *Handler {
+	// Set the Stripe API key once at startup to avoid concurrent global writes.
+	stripe.Key = stripeSecretKey
 	return &Handler{
 		DB:                   pgDB,
 		JobsManager:          jobsManager,
