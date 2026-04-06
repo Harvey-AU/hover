@@ -558,6 +558,9 @@ const ui = {
   settingsAccountView: document.getElementById("settingsAccountView"),
   settingsBackButton: document.getElementById("settingsBackButton"),
   extensionAccountSection: document.getElementById("extensionAccountSection"),
+  settingsProfileGroupTitle: document.getElementById(
+    "settingsProfileGroupTitle"
+  ),
   settingsOrgGroupTitle: document.getElementById("settingsOrgGroupTitle"),
 };
 
@@ -1197,6 +1200,26 @@ function renderSettingsOrganisationGroupTitle(): void {
     : "Manage organisation";
 }
 
+function renderSettingsProfileGroupTitle(): void {
+  const heading = asNode(ui.settingsProfileGroupTitle);
+  if (!heading) {
+    return;
+  }
+
+  const firstName = asInput(
+    document.getElementById("settingsUserFirstNameInput")
+  )?.value.trim();
+  const lastName = asInput(
+    document.getElementById("settingsUserLastNameInput")
+  )?.value.trim();
+  const displayNameFromFields = [firstName, lastName].filter(Boolean).join(" ");
+  heading.textContent =
+    displayNameFromFields ||
+    state.userDisplayName ||
+    state.userEmail ||
+    "Profile";
+}
+
 function bindAccountSettingsLayout(): void {
   if (accountSettingsLayoutBound) {
     return;
@@ -1229,13 +1252,32 @@ async function openAccountSettingsView(): Promise<void> {
   renderView();
 
   if (!accountSettingsBound) {
-    HoverLib.settings.account.setupAccountActions(ui.extensionAccountSection);
+    HoverLib.settings.account.setupAccountActions(ui.extensionAccountSection, {
+      onNameSaved: () => {
+        const firstName = asInput(
+          document.getElementById("settingsUserFirstNameInput")
+        )?.value.trim();
+        const lastName = asInput(
+          document.getElementById("settingsUserLastNameInput")
+        )?.value.trim();
+        const nextDisplayName = [firstName, lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim();
+        if (nextDisplayName) {
+          state.userDisplayName = nextDisplayName;
+          void updateAvatarFromState();
+        }
+        renderSettingsProfileGroupTitle();
+      },
+    });
     accountSettingsBound = true;
   }
 
   await HoverLib.settings.account.loadAccountDetails(
     ui.extensionAccountSection
   );
+  renderSettingsProfileGroupTitle();
 }
 
 function openDashboardView(): void {

@@ -1110,10 +1110,11 @@ body {
 
 .extension-settings-group-title {
   margin: 0;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--text-colour--secondary);
+  line-height: 1.2;
+  color: var(--text-colour--primary);
 }
 
 .extension-settings-nav-divider {
@@ -1145,6 +1146,94 @@ body {
     color var(--motion-duration--fast) var(--motion-easing--standard),
     background var(--motion-duration--fast) var(--motion-easing--standard),
     border-color var(--motion-duration--fast) var(--motion-easing--standard);
+}
+
+.settings-auth-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-auth-method-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(142, 218, 239, 0.24);
+  background: rgba(3, 4, 35, 0.52);
+}
+
+.settings-auth-method-details {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-auth-method-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-auth-provider-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid rgba(142, 218, 239, 0.18);
+  background: rgba(97, 208, 239, 0.06);
+  overflow: hidden;
+}
+
+.settings-auth-provider-icon img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.settings-auth-provider-azure img {
+  width: 19px;
+  height: 19px;
+}
+
+.settings-auth-fallback-icon {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-colour--secondary);
+}
+
+.gnh-button {
+  appearance: none;
+  border-radius: 4px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color var(--motion-duration--fast) var(--motion-easing--standard),
+    background var(--motion-duration--fast) var(--motion-easing--standard),
+    border-color var(--motion-duration--fast) var(--motion-easing--standard);
+}
+
+.gnh-button-outline {
+  border: 1px solid rgba(142, 218, 239, 0.34);
+  background: transparent;
+  color: var(--colour--brand-primary);
+}
+
+.gnh-button-outline:hover {
+  border-color: var(--border-colour--active);
+  color: var(--text-colour--primary);
+}
+
+.settings-btn-sm {
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .extension-settings-nav-link:hover {
