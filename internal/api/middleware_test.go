@@ -297,7 +297,7 @@ func TestCORSMiddleware(t *testing.T) {
 
 			// Check CORS headers are set
 			assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
-			assert.Equal(t, "GET, POST, PUT, DELETE, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
+			assert.Equal(t, "GET, POST, PUT, PATCH, DELETE, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
 			assert.Equal(t, "Content-Type, Authorization, X-Request-ID", rec.Header().Get("Access-Control-Allow-Headers"))
 			assert.Equal(t, "X-Request-ID", rec.Header().Get("Access-Control-Expose-Headers"))
 
