@@ -111,6 +111,11 @@ func (h *Handler) handleCheckoutSessionCompleted(r *http.Request, event stripe.E
 			return
 		}
 
+		if sub.Items.Data[0].Price == nil {
+			logger.Error().Str("subscription_id", subID).Msg("Subscription line item has no price — cannot activate plan")
+			return
+		}
+
 		priceID := sub.Items.Data[0].Price.ID
 		plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
 		if err != nil {
@@ -145,6 +150,11 @@ func (h *Handler) handleSubscriptionUpdated(r *http.Request, event stripe.Event,
 
 	if len(sub.Items.Data) == 0 {
 		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no line items — skipping plan update")
+		return
+	}
+
+	if sub.Items.Data[0].Price == nil {
+		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no price on line item — skipping plan update")
 		return
 	}
 

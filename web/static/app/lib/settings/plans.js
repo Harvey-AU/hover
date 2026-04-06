@@ -12,6 +12,23 @@ function toast(variant, message) {
   _showToast(message, { variant });
 }
 
+// ── Usage cache ────────────────────────────────────────────────────────────────
+
+let _cachedUsage = null;
+let _cachedUsageTs = 0;
+const USAGE_CACHE_TTL = 30_000;
+
+async function getUsage() {
+  const now = Date.now();
+  if (_cachedUsage && now - _cachedUsageTs < USAGE_CACHE_TTL) {
+    return _cachedUsage;
+  }
+  const response = await get("/v1/usage");
+  _cachedUsage = response;
+  _cachedUsageTs = now;
+  return response;
+}
+
 // ── Plans & Usage ──────────────────────────────────────────────────────────────
 
 /**
@@ -32,7 +49,7 @@ export async function loadPlansAndUsage(container, options = {}) {
 
   try {
     const [usageResponse, plansResponse] = await Promise.all([
-      get("/v1/usage"),
+      getUsage(),
       get("/v1/plans"),
     ]);
 
@@ -169,7 +186,7 @@ export async function loadBillingSection() {
 
   let hasStripeCustomer = false;
   try {
-    const usageResponse = await get("/v1/usage");
+    const usageResponse = await getUsage();
     hasStripeCustomer = !!usageResponse?.usage?.has_stripe_customer;
   } catch (err) {
     console.error("Failed to fetch billing status:", err);

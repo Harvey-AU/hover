@@ -91,6 +91,7 @@ func (h *Handler) BillingCheckout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		customerID = cust.ID
+		log.Info().Str("customer_id", customerID).Str("org_id", orgID).Str("email", user.Email).Str("org_name", org.Name).Msg("Created Stripe customer")
 		if err := h.DB.SetStripeCustomerID(r.Context(), orgID, customerID); err != nil {
 			log.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe customer ID")
 			InternalError(w, r, fmt.Errorf("failed to store billing customer"))
