@@ -108,7 +108,7 @@ func saveSession(s *session, path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
+	data, err := json.MarshalIndent(s, "", "  ") //nolint:gosec // G117: session file written with 0600 perms to user config dir
 	if err != nil {
 		return err
 	}
@@ -300,15 +300,21 @@ func browserLogin(ctx context.Context, cfg *authConfig) (*session, error) {
 }
 
 // openBrowser tries to open a URL in the default browser.
-func openBrowser(url string) {
+// Only HTTP(S) URLs are allowed to prevent command injection via crafted schemes.
+func openBrowser(rawURL string) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return
+	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", parsed.String()) //nolint:gosec // G204: scheme validated as http(s) above
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", parsed.String()) //nolint:gosec // G204: scheme validated as http(s) above
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", parsed.String()) //nolint:gosec // G204: scheme validated as http(s) above
 	default:
 		return
 	}

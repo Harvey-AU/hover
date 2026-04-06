@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -430,7 +431,7 @@ func TestWebhookRateLimit(t *testing.T) {
 				}
 
 				w.Header().Set("X-RateLimit-Limit", "3")
-				w.Header().Set("X-RateLimit-Remaining", string(rune(maxRequests-requestCount+'0')))
+				w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(maxRequests-requestCount))
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"status": "processed",
