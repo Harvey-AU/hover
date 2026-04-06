@@ -159,7 +159,7 @@ func (c *Client) setHeaders(req *http.Request) {
 
 // do executes the request and handles the response.
 func (c *Client) do(req *http.Request) error {
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: all requests target hardcoded baseURL (app.loops.so)
 	if err != nil {
 		return fmt.Errorf("loops: request failed: %w", err)
 	}
