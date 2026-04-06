@@ -14,6 +14,7 @@ import * as integrationHttp from "/app/lib/integration-http.js";
 import * as jobExport from "/app/lib/job-export.js";
 import * as organisationApi from "/app/lib/organisation-api.js";
 import * as schedulerApi from "/app/lib/scheduler-api.js";
+import * as shellNav from "/app/lib/shell-nav.js";
 import * as siteJobs from "/app/lib/site-jobs.js";
 import * as siteView from "/app/lib/site-view.js";
 import * as webflowSites from "/app/lib/webflow-sites.js";
@@ -26,6 +27,7 @@ window.HoverLib = {
   http: integrationHttp,
   organisations: organisationApi,
   schedulers: schedulerApi,
+  shell: shellNav,
   jobs: siteJobs,
   view: siteView,
   webflow: webflowSites,

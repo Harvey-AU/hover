@@ -104,31 +104,141 @@
 
       <!-- ═══ AUTH STATE ═══ -->
       <section class="panel hidden" id="authState">
-        <!-- ─── Top bar: org + plan + settings ─── -->
         <header class="topbar section">
           <button
-            id="settingsButton"
+            id="homeButton"
             type="button"
-            class="btn btn--primary btn--icon-square corners--top-left topbar-profile"
-            title="Settings"
-            aria-label="Settings"
+            class="topbar-brand-link"
+            aria-label="Open Hover dashboard"
           >
-            <span class="topbar-profile-avatar" aria-hidden="true"></span>
+            <img
+              class="brand-logo brand-logo--topbar"
+              src="./Hover Logo Bright Transparent.png"
+              alt="Hover"
+            />
           </button>
-          <div class="topbar-content">
+
+          <div class="topbar-actions">
+            <div class="shell-notifications" id="notificationsContainer">
+              <button
+                id="notificationsBtn"
+                type="button"
+                class="btn btn--tertiary btn--sm btn--border-thin btn--icon-square shell-notifications-button"
+                aria-label="View notifications"
+                aria-haspopup="true"
+                aria-expanded="false"
+              >
+                <svg
+                  class="shell-notifications-icon"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V10a6 6 0 10-12 0v4.2a2 2 0 01-.6 1.4L4 17h5"
+                  />
+                  <path d="M9.5 17a2.5 2.5 0 005 0" />
+                </svg>
+                <span
+                  id="notificationsBadge"
+                  class="shell-notifications-badge"
+                  hidden
+                  >0</span
+                >
+              </button>
+              <div
+                id="notificationsDropdown"
+                class="shell-dropdown shell-notifications-dropdown"
+              >
+                <div class="shell-dropdown-header">
+                  <span class="shell-dropdown-title">Notifications</span>
+                  <button
+                    id="markAllReadBtn"
+                    type="button"
+                    class="shell-dropdown-action"
+                  >
+                    Mark all read
+                  </button>
+                </div>
+                <div
+                  id="notificationsList"
+                  class="shell-notifications-list"
+                ></div>
+                <div class="shell-dropdown-footer">
+                  <button
+                    type="button"
+                    class="shell-dropdown-link"
+                    data-path="/settings/notifications"
+                  >
+                    Notification settings
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <select
               id="orgSelect"
               class="btn btn--tertiary btn--sm btn--border-thin btn--square btn--select topbar-org-select"
             ></select>
-            <div class="topbar-plan">
-              <div class="plan-badge">
-                <p class="plan-badge-title" id="planNameText">
-                  <strong>Plan:</strong> —
-                </p>
-                <p class="plan-badge-remaining" id="planRemainingText">
-                  <span class="dot dot--success"></span>
-                  <span id="planRemainingValue">—</span>
-                </p>
+
+            <div class="shell-profile-menu">
+              <button
+                id="profileMenuButton"
+                type="button"
+                class="btn btn--primary btn--icon-square corners--top-left topbar-profile"
+                aria-label="Open account menu"
+                aria-haspopup="true"
+                aria-expanded="false"
+              >
+                <span
+                  class="topbar-profile-avatar"
+                  id="profileAvatar"
+                  aria-hidden="true"
+                ></span>
+              </button>
+              <div
+                id="profileMenuDropdown"
+                class="shell-dropdown shell-profile-dropdown"
+              >
+                <div class="shell-profile-summary">
+                  <p id="profileEmail" class="shell-profile-email">Signed in</p>
+                  <p id="profileOrgName" class="shell-profile-org">
+                    Organisation
+                  </p>
+                  <p id="profilePlanText" class="shell-profile-plan">Plan</p>
+                  <p id="profileUsageText" class="shell-profile-usage">
+                    Usage unavailable
+                  </p>
+                </div>
+                <div class="shell-dropdown-links">
+                  <button
+                    type="button"
+                    class="shell-dropdown-link"
+                    data-path="/settings/account"
+                  >
+                    Account
+                  </button>
+                  <button
+                    type="button"
+                    class="shell-dropdown-link"
+                    data-path="/settings/team"
+                  >
+                    Team
+                  </button>
+                  <button
+                    type="button"
+                    class="shell-dropdown-link"
+                    data-path="/settings/plans"
+                  >
+                    Plans
+                  </button>
+                  <button
+                    type="button"
+                    class="shell-dropdown-link"
+                    data-path="/settings/notifications"
+                  >
+                    Notifications
+                  </button>
+                </div>
               </div>
             </div>
           </div>

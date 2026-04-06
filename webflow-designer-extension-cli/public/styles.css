@@ -391,26 +391,32 @@ body {
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--spacing--2xl);
+  justify-content: space-between;
+  gap: var(--spacing--xl);
   flex-shrink: 0;
   background: var(--background-colour--panel);
 }
 
-.topbar-content {
-  display: flex;
+.topbar-brand-link {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing--2xl);
-  flex: 1;
-  min-width: 0;
+  justify-content: flex-start;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
-.topbar-plan {
+.brand-logo--topbar {
+  width: 88px;
+}
+
+.topbar-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--spacing--md);
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing--lg);
+  margin-left: auto;
   min-width: 0;
 }
 
@@ -454,40 +460,177 @@ body {
 }
 
 .topbar-org-select {
-  width: 110px;
+  width: 150px;
   min-width: 0;
 }
 
-.plan-badge {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  min-width: 0;
-  align-items: flex-end;
+.shell-profile-menu,
+.shell-notifications {
+  position: relative;
+  flex-shrink: 0;
 }
 
-.plan-badge-title {
-  margin: 0;
-  font-size: var(--font-size--caption);
-  color: var(--text-colour--primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: right;
+.shell-notifications-button {
+  position: relative;
 }
 
-.plan-badge-title strong {
-  font-weight: 700;
+.shell-notifications-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.plan-badge-remaining {
-  margin: 0;
-  font-size: var(--font-size--caption);
-  color: var(--text-colour--primary);
+.shell-notifications-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   display: flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--status-colour--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.shell-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  display: none;
+  min-width: 240px;
+  padding: 12px;
+  border: 1px solid rgba(142, 218, 239, 0.35);
+  background: rgba(10, 16, 54, 0.98);
+  box-shadow: var(--shadow--overlay);
+}
+
+.shell-dropdown.show,
+.shell-notifications.open .shell-notifications-dropdown {
+  display: block;
+}
+
+.shell-dropdown-header,
+.shell-dropdown-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--spacing--md);
-  justify-content: flex-end;
+}
+
+.shell-dropdown-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+.shell-dropdown-footer {
+  padding-top: 10px;
+  border-top: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+.shell-dropdown-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-colour--secondary);
+}
+
+.shell-dropdown-action,
+.shell-dropdown-link {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--colour--brand-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-dropdown-links {
+  display: grid;
+  gap: 8px;
+}
+
+.shell-profile-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+.shell-profile-email,
+.shell-profile-org,
+.shell-profile-plan,
+.shell-profile-usage {
+  margin: 0;
+  min-width: 0;
+}
+
+.shell-profile-email {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-colour--primary);
+  word-break: break-word;
+}
+
+.shell-profile-org,
+.shell-profile-plan,
+.shell-profile-usage {
+  font-size: 12px;
+  color: var(--text-colour--secondary);
+}
+
+.shell-notifications-dropdown {
+  width: min(320px, calc(100vw - 40px));
+}
+
+.shell-notifications-list {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  margin: 12px 0;
+  overflow-y: auto;
+}
+
+.shell-notification-item {
+  appearance: none;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(142, 218, 239, 0.2);
+  background: rgba(142, 218, 239, 0.06);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-notification-item.unread {
+  border-color: rgba(142, 218, 239, 0.45);
+  background: rgba(142, 218, 239, 0.12);
+}
+
+.shell-notification-item-subject {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-colour--primary);
+}
+
+.shell-notification-item-preview,
+.shell-notifications-empty {
+  font-size: 12px;
+  color: var(--text-colour--secondary);
 }
 
 /* ─── Objects: Buttons ───────────────────────────────────────────────────── */

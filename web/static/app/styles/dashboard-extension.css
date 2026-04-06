@@ -353,26 +353,33 @@ body.page-dashboard .corners--top-left {
 body.page-dashboard .topbar {
   display: flex;
   align-items: center;
-  gap: var(--spacing--2xl);
+  justify-content: space-between;
+  gap: var(--spacing--xl);
   flex-shrink: 0;
   background: var(--background-colour--panel);
 }
 
-body.page-dashboard .topbar-content {
-  display: flex;
+body.page-dashboard .topbar-brand-link {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing--2xl);
-  flex: 1;
-  min-width: 0;
+  justify-content: flex-start;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
-body.page-dashboard .topbar-plan {
+body.page-dashboard .brand-logo--topbar {
+  width: 88px;
+}
+
+body.page-dashboard .topbar-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--spacing--md);
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--spacing--lg);
+  margin-left: auto;
+  min-width: 0;
 }
 
 body.page-dashboard .topbar-profile {
@@ -382,6 +389,12 @@ body.page-dashboard .topbar-profile {
   box-shadow: none;
   padding: 0;
   overflow: hidden;
+}
+
+body.page-dashboard .topbar-profile:not(:disabled):hover {
+  background: transparent;
+  border-color: var(--border-colour--default);
+  opacity: 0.85;
 }
 
 body.page-dashboard .topbar-profile-avatar {
@@ -405,27 +418,177 @@ body.page-dashboard .topbar-profile-avatar img {
 }
 
 body.page-dashboard .topbar-org-select {
-  width: 240px;
-  max-width: 100%;
+  width: 220px;
+  min-width: 0;
 }
 
-body.page-dashboard .plan-badge {
+body.page-dashboard .shell-profile-menu,
+body.page-dashboard .shell-notifications {
+  position: relative;
+  flex-shrink: 0;
+}
+
+body.page-dashboard .shell-notifications-button {
+  position: relative;
+}
+
+body.page-dashboard .shell-notifications-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.page-dashboard .shell-notifications-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--status-colour--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
-body.page-dashboard .plan-badge-title,
-body.page-dashboard .plan-badge-remaining {
+body.page-dashboard .shell-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 30;
+  display: none;
+  min-width: 260px;
+  padding: 12px;
+  border: 1px solid rgba(142, 218, 239, 0.35);
+  background: rgba(10, 16, 54, 0.98);
+  box-shadow: var(--shadow--overlay);
+}
+
+body.page-dashboard .shell-dropdown.show,
+body.page-dashboard .shell-notifications.open .shell-notifications-dropdown {
+  display: block;
+}
+
+body.page-dashboard .shell-dropdown-header,
+body.page-dashboard .shell-dropdown-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing--md);
+}
+
+body.page-dashboard .shell-dropdown-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+body.page-dashboard .shell-dropdown-footer {
+  padding-top: 10px;
+  border-top: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+body.page-dashboard .shell-dropdown-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-colour--secondary);
+}
+
+body.page-dashboard .shell-dropdown-action,
+body.page-dashboard .shell-dropdown-link {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--colour--brand-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.page-dashboard .shell-dropdown-links {
+  display: grid;
+  gap: 8px;
+}
+
+body.page-dashboard .shell-profile-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(142, 218, 239, 0.18);
+}
+
+body.page-dashboard .shell-profile-email,
+body.page-dashboard .shell-profile-org,
+body.page-dashboard .shell-profile-plan,
+body.page-dashboard .shell-profile-usage {
   margin: 0;
-  font-size: var(--font-size--caption);
+  min-width: 0;
+}
+
+body.page-dashboard .shell-profile-email {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-colour--primary);
+  word-break: break-word;
+}
+
+body.page-dashboard .shell-profile-org,
+body.page-dashboard .shell-profile-plan,
+body.page-dashboard .shell-profile-usage {
+  font-size: 12px;
+  color: var(--text-colour--secondary);
+}
+
+body.page-dashboard .shell-notifications-dropdown {
+  width: min(360px, calc(100vw - 64px));
+}
+
+body.page-dashboard .shell-notifications-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  margin: 12px 0;
+  overflow-y: auto;
+}
+
+body.page-dashboard .shell-notification-item {
+  appearance: none;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(142, 218, 239, 0.2);
+  background: rgba(142, 218, 239, 0.06);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.page-dashboard .shell-notification-item.unread {
+  border-color: rgba(142, 218, 239, 0.45);
+  background: rgba(142, 218, 239, 0.12);
+}
+
+body.page-dashboard .shell-notification-item-subject {
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text-colour--primary);
 }
 
-body.page-dashboard .plan-badge-remaining {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing--md);
+body.page-dashboard .shell-notification-item-preview,
+body.page-dashboard .shell-notifications-empty {
+  font-size: 12px;
+  color: var(--text-colour--secondary);
 }
 
 body.page-dashboard .action-bar {
@@ -674,12 +837,8 @@ body.page-dashboard hover-job-card {
 
   body.page-dashboard .topbar,
   body.page-dashboard .action-bar,
-  body.page-dashboard .action-bar-controls {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  body.page-dashboard .topbar-content {
+  body.page-dashboard .action-bar-controls,
+  body.page-dashboard .topbar-actions {
     flex-direction: column;
     align-items: stretch;
   }
@@ -692,8 +851,10 @@ body.page-dashboard hover-job-card {
     max-width: 100%;
   }
 
-  body.page-dashboard .plan-badge {
-    align-items: flex-start;
+  body.page-dashboard .shell-dropdown,
+  body.page-dashboard .shell-notifications-dropdown {
+    width: 100%;
+    min-width: 0;
   }
 
   body.page-dashboard .panel-footer {

@@ -149,12 +149,20 @@ export async function renderUserAvatar(options = {}) {
 }
 
 export function renderUsage(options = {}) {
-  const { usage, planNameText, planRemainingValue } = options;
+  const {
+    usage,
+    planNameText,
+    planRemainingValue,
+    profilePlanText,
+    profileUsageText,
+  } = options;
   if (!usage) {
     if (planNameText) {
       planNameText.innerHTML = "<strong>Plan:</strong> \u2014";
     }
     setText(planRemainingValue, "\u2014");
+    setText(profilePlanText, "Plan");
+    setText(profileUsageText, "Usage unavailable");
     return;
   }
 
@@ -166,6 +174,8 @@ export function renderUsage(options = {}) {
     planNameText.innerHTML = `<strong>Plan:</strong> <strong>${plan}</strong> (${limit} / day)`;
   }
   setText(planRemainingValue, `${remaining} remaining`);
+  setText(profilePlanText, `${plan} (${limit} / day)`);
+  setText(profileUsageText, `${remaining} remaining today`);
 }
 
 export function renderOrganisations(options = {}) {
@@ -267,7 +277,9 @@ export function renderRecentResults(options = {}) {
     emptySelectionMessage = "Select a site to review its latest report.",
     emptySiteMessage = "No runs yet for this site.",
     emptyCompletedMessage = "No completed runs yet.",
+    emptyAllSitesMessage = "No recent runs yet.",
     showEmptyAction = false,
+    showAllWhenUnselected = false,
   } = options;
 
   if (!latestResultsList || !recentResultsList) {
@@ -277,16 +289,18 @@ export function renderRecentResults(options = {}) {
   clearNode(latestResultsList);
   clearNode(recentResultsList);
 
-  const siteJobs = filterJobsByDomains(jobs, {
-    siteDomain,
-    siteDomainCandidates,
-  });
+  const hasSiteSelection =
+    Boolean(siteDomain) || siteDomainCandidates.length > 0;
+  const siteJobs =
+    !hasSiteSelection && showAllWhenUnselected
+      ? jobs
+      : filterJobsByDomains(jobs, {
+          siteDomain,
+          siteDomainCandidates,
+        });
   const noJobTextTarget = getNoJobTextTarget(noJobState, noJobText);
 
-  if (
-    !siteDomain &&
-    (!siteDomainCandidates || siteDomainCandidates.length === 0)
-  ) {
+  if (!hasSiteSelection && !showAllWhenUnselected) {
     setText(noJobTextTarget, emptySelectionMessage);
     if (noJobActionButton) {
       noJobActionButton.hidden = true;
@@ -296,9 +310,15 @@ export function renderRecentResults(options = {}) {
   }
 
   if (siteJobs.length === 0) {
-    setText(noJobTextTarget, emptySiteMessage);
+    setText(
+      noJobTextTarget,
+      !hasSiteSelection && showAllWhenUnselected
+        ? emptyAllSitesMessage
+        : emptySiteMessage
+    );
     if (noJobActionButton) {
-      noJobActionButton.hidden = !showEmptyAction;
+      noJobActionButton.hidden =
+        !showEmptyAction || (!hasSiteSelection && showAllWhenUnselected);
     }
     show(noJobState);
     return;

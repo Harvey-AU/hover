@@ -223,6 +223,41 @@ declare const HoverLib: {
       onSubscriptionIssue?: (status?: string, err?: Error) => void;
     }) => () => void;
   };
+  shell: {
+    initSurfaceShell: (options?: {
+      profileButton?: HTMLElement | null;
+      profileDropdown?: HTMLElement | null;
+      notificationsContainer?: HTMLElement | null;
+      notificationsButton?: HTMLElement | null;
+      notificationsDropdown?: HTMLElement | null;
+      notificationsList?: HTMLElement | null;
+      notificationsBadge?: HTMLElement | null;
+      markAllReadButton?: HTMLElement | null;
+      onNavigate?: (path: string) => void;
+      onSignOut?: () => Promise<void> | void;
+      fetchNotifications?: (limit: number) => Promise<unknown>;
+      markNotificationRead?: (id: string) => Promise<void>;
+      markAllNotificationsRead?: () => Promise<void>;
+      subscribeToNotifications?: (
+        orgId: string,
+        onEvent: () => void
+      ) => Promise<() => void> | (() => void);
+    }) => {
+      refreshNotifications: (limit?: number) => Promise<unknown>;
+      renderNotificationsList: (limit?: number) => Promise<void>;
+      setActiveOrganisation: (nextOrganisationId: string) => void;
+      destroy: () => void;
+    };
+    renderProfileMenuSummary: (options?: {
+      emailNode?: Element | null;
+      organisationNode?: Element | null;
+      planNode?: Element | null;
+      usageNode?: Element | null;
+      email?: string;
+      organisationName?: string;
+      usage?: unknown | null;
+    }) => void;
+  };
   view: {
     renderUserAvatar: (options?: {
       element?: HTMLElement | null;
@@ -234,6 +269,8 @@ declare const HoverLib: {
       usage?: unknown | null;
       planNameText?: Element | null;
       planRemainingValue?: Element | null;
+      profilePlanText?: Element | null;
+      profileUsageText?: Element | null;
     }) => void;
     renderOrganisations: (options?: {
       select?: HTMLSelectElement | null;
@@ -421,9 +458,7 @@ function extractErrorMessage(rawBody?: string): string {
 }
 
 async function updateAvatarFromState(): Promise<void> {
-  const avatarEl = document.querySelector<HTMLElement>(
-    ".topbar-profile-avatar"
-  );
+  const avatarEl = ui.profileAvatar as HTMLElement | null;
   if (!avatarEl) return;
 
   await HoverLib.view.renderUserAvatar({
@@ -432,6 +467,14 @@ async function updateAvatarFromState(): Promise<void> {
     email: state.userEmail || "",
     avatarUrl: state.userAvatarUrl || "",
   });
+}
+
+function getActiveOrganisationName(): string {
+  return (
+    state.organisations.find(
+      (organisation) => organisation.id === state.activeOrganisationId
+    )?.name || "Organisation"
+  );
 }
 
 const ui = {
@@ -449,11 +492,21 @@ const ui = {
   signInButton: document.getElementById("signInButton"),
 
   // Top bar
+  homeButton: document.getElementById("homeButton"),
+  profileMenuButton: document.getElementById("profileMenuButton"),
+  profileMenuDropdown: document.getElementById("profileMenuDropdown"),
+  profileAvatar: document.getElementById("profileAvatar"),
+  profileEmail: document.getElementById("profileEmail"),
+  profileOrgName: document.getElementById("profileOrgName"),
+  profilePlanText: document.getElementById("profilePlanText"),
+  profileUsageText: document.getElementById("profileUsageText"),
+  notificationsContainer: document.getElementById("notificationsContainer"),
+  notificationsButton: document.getElementById("notificationsBtn"),
+  notificationsDropdown: document.getElementById("notificationsDropdown"),
+  notificationsList: document.getElementById("notificationsList"),
+  notificationsBadge: document.getElementById("notificationsBadge"),
+  markAllReadButton: document.getElementById("markAllReadBtn"),
   orgSelect: document.getElementById("orgSelect") as HTMLSelectElement | null,
-  planNameText: document.getElementById("planNameText"),
-  planRemainingText: document.getElementById("planRemainingText"),
-  planRemainingValue: document.getElementById("planRemainingValue"),
-  settingsButton: document.getElementById("settingsButton"),
 
   // Action bar
   runNowButton: document.getElementById("runNowButton"),
@@ -527,6 +580,8 @@ let jobPollInFlight = false;
 let lastCompletedJobsSignature = "";
 let lastChartJobsSignature = "";
 let crossSurfaceOrgRefreshInFlight = false;
+let shellChrome: ReturnType<typeof HoverLib.shell.initSurfaceShell> | null =
+  null;
 
 // Supabase realtime state
 let supabaseClient: SupabaseClient | null = null;
@@ -1135,8 +1190,17 @@ function renderMiniChart(jobs: JobItem[]): void {
 function renderUsage(usage: UsageStats | null): void {
   HoverLib.view.renderUsage({
     usage,
-    planNameText: ui.planNameText,
-    planRemainingValue: ui.planRemainingValue,
+    profilePlanText: ui.profilePlanText,
+    profileUsageText: ui.profileUsageText,
+  });
+  HoverLib.shell.renderProfileMenuSummary({
+    emailNode: ui.profileEmail,
+    organisationNode: ui.profileOrgName,
+    planNode: ui.profilePlanText,
+    usageNode: ui.profileUsageText,
+    email: state.userEmail || "",
+    organisationName: getActiveOrganisationName(),
+    usage,
   });
 }
 
@@ -1195,7 +1259,6 @@ function setDisabledAll(disabled: boolean): void {
     ui.scheduleSelect,
     ui.orgSelect,
     ui.webflowPublishToggle,
-    ui.settingsButton,
   ];
 
   for (const control of controls) {
@@ -1295,6 +1358,7 @@ async function loadUsageAndOrgs(): Promise<void> {
   state.activeOrganisationId =
     context.activeOrganisationId || state.activeOrganisationId;
   state.usage = context.usage || null;
+  shellChrome?.setActiveOrganisation(state.activeOrganisationId);
 }
 
 async function loadCurrentSchedule(): Promise<void> {
@@ -1489,6 +1553,7 @@ function handleAuthError(error: unknown): void {
     if (apiError.status === 401) {
       setStoredToken(null);
       cleanupRealtimeSubscription();
+      shellChrome?.setActiveOrganisation("");
       supabaseClient = null;
       renderAuthState(false);
       setStatus("Session expired. Sign in again.", "");
@@ -1530,6 +1595,7 @@ async function refreshDashboard(): Promise<void> {
       state.currentScheduler = null;
       stopJobStatusPolling();
       cleanupRealtimeSubscription();
+      shellChrome?.setActiveOrganisation("");
       supabaseClient = null;
       renderJobState(null);
       renderRecentResults([]);
@@ -1553,6 +1619,15 @@ async function refreshDashboard(): Promise<void> {
       renderUsage(state.usage);
       renderOrganisations();
       void updateAvatarFromState();
+      HoverLib.shell.renderProfileMenuSummary({
+        emailNode: ui.profileEmail,
+        organisationNode: ui.profileOrgName,
+        planNode: ui.profilePlanText,
+        usageNode: ui.profileUsageText,
+        email: state.userEmail || "",
+        organisationName: getActiveOrganisationName(),
+        usage: state.usage,
+      });
 
       // Initialise Supabase realtime; fall back to legacy polling on failure.
       const client = await initSupabaseClient();
@@ -1616,6 +1691,36 @@ function openSettingsPage(path: string): void {
   if (!popup) {
     setStatus("Popup blocked. Allow popups and try again.", "");
   }
+}
+
+async function subscribeToNotificationsChannel(
+  organisationId: string,
+  onEvent: () => void
+): Promise<() => void> {
+  const client = await initSupabaseClient();
+  if (!organisationId || !client) {
+    return () => {};
+  }
+
+  const channel = client
+    .channel(`hover-notifications:${organisationId}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "INSERT",
+        schema: "public",
+        table: "notifications",
+        filter: `organisation_id=eq.${organisationId}`,
+      },
+      () => {
+        onEvent();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    client.removeChannel(channel).catch(() => {});
+  };
 }
 
 async function connectWebflow(): Promise<void> {
@@ -1743,9 +1848,8 @@ function initEventHandlers(): void {
     }
   });
 
-  // Auth: settings gear
-  ui.settingsButton?.addEventListener("click", () => {
-    openSettingsPage(APP_ROUTES.changePlan);
+  ui.homeButton?.addEventListener("click", () => {
+    openSettingsPage(APP_ROUTES.dashboard);
   });
 
   // Auth: org switcher
@@ -1806,6 +1910,7 @@ async function initialise(): Promise<void> {
   window.addEventListener("beforeunload", () => {
     stopJobStatusPolling();
     cleanupRealtimeSubscription();
+    shellChrome?.destroy();
   });
   window.addEventListener("storage", (event) => {
     if (event.key !== ACTIVE_ORG_STORAGE_KEY) {
@@ -1831,6 +1936,29 @@ async function initialise(): Promise<void> {
 
   initHoverJobCard();
   initEventHandlers();
+  shellChrome = HoverLib.shell.initSurfaceShell({
+    profileButton: ui.profileMenuButton as HTMLElement | null,
+    profileDropdown: ui.profileMenuDropdown as HTMLElement | null,
+    notificationsContainer: ui.notificationsContainer as HTMLElement | null,
+    notificationsButton: ui.notificationsButton as HTMLElement | null,
+    notificationsDropdown: ui.notificationsDropdown as HTMLElement | null,
+    notificationsList: ui.notificationsList as HTMLElement | null,
+    notificationsBadge: ui.notificationsBadge as HTMLElement | null,
+    markAllReadButton: ui.markAllReadButton as HTMLElement | null,
+    onNavigate: (path) => {
+      openSettingsPage(path);
+    },
+    fetchNotifications: (limit) =>
+      HoverLib.api.get(`/v1/notifications?limit=${limit}`),
+    markNotificationRead: async (id) => {
+      await HoverLib.api.post(`/v1/notifications/${id}/read`);
+    },
+    markAllNotificationsRead: async () => {
+      await HoverLib.api.post("/v1/notifications/read-all");
+    },
+    subscribeToNotifications: (orgId, onEvent) =>
+      subscribeToNotificationsChannel(orgId, onEvent),
+  });
   await refreshDashboard();
   renderAuthState(Boolean(state.token));
 

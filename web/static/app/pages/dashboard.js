@@ -6,9 +6,17 @@
  * latest/past report surfaces.
  */
 
-import { post } from "/app/lib/api-client.js";
-import { onAuthStateChange, getSession } from "/app/lib/auth-session.js";
+import { get, post } from "/app/lib/api-client.js";
+import {
+  onAuthStateChange,
+  getSession,
+  signOut,
+} from "/app/lib/auth-session.js";
 import { showToast } from "/app/components/hover-toast.js";
+import {
+  initSurfaceShell,
+  renderProfileMenuSummary,
+} from "/app/lib/shell-nav.js";
 import {
   loadOrganisationContext,
   switchOrganisation as switchOrganisationApi,
@@ -58,8 +66,9 @@ const SCHEDULE_PLACEHOLDER = "off";
 const SCHEDULE_OPTIONS = new Set(["off", "6", "12", "24", "48"]);
 const APP_ROUTES = {
   auth: "/extension-auth.html",
-  settings: "/settings/plans",
+  settings: "/settings/account",
   viewJob: "/jobs",
+  home: "/dashboard",
   help: "/dashboard",
   feedback: "/dashboard",
 };
@@ -68,6 +77,7 @@ let authSubscriptionCleanup = null;
 let jobsSubscriptionCleanup = null;
 let statusToastTimer = null;
 let initialised = false;
+let shellChrome = null;
 
 const state = {
   session: null,
@@ -82,6 +92,7 @@ const state = {
   currentJob: null,
   userAvatarUrl: "",
   userEmail: "",
+  userDisplayName: "",
   lastCompletedJobsSignature: "",
   lastChartJobsSignature: "",
   refreshing: false,
@@ -92,11 +103,21 @@ const ui = {
   authState: document.getElementById("authState"),
   loginButton: document.getElementById("dashboardLoginButton"),
   signupButton: document.getElementById("dashboardSignupButton"),
-  settingsButton: document.getElementById("settingsButton"),
+  homeButton: document.getElementById("homeButton"),
+  profileMenuButton: document.getElementById("profileMenuButton"),
+  profileMenuDropdown: document.getElementById("profileMenuDropdown"),
   profileAvatar: document.getElementById("profileAvatar"),
+  profileEmail: document.getElementById("profileEmail"),
+  profileOrgName: document.getElementById("profileOrgName"),
+  profilePlanText: document.getElementById("profilePlanText"),
+  profileUsageText: document.getElementById("profileUsageText"),
+  notificationsContainer: document.getElementById("notificationsContainer"),
+  notificationsButton: document.getElementById("notificationsBtn"),
+  notificationsDropdown: document.getElementById("notificationsDropdown"),
+  notificationsList: document.getElementById("notificationsList"),
+  notificationsBadge: document.getElementById("notificationsBadge"),
+  markAllReadButton: document.getElementById("markAllReadBtn"),
   orgSelect: document.getElementById("orgSelect"),
-  planNameText: document.getElementById("planNameText"),
-  planRemainingValue: document.getElementById("planRemainingValue"),
   domainInput: document.getElementById("domainInput"),
   scheduleSelect: document.getElementById("scheduleSelect"),
   runNowButton: document.getElementById("runNowButton"),
@@ -116,6 +137,34 @@ const ui = {
   feedbackButton: document.getElementById("feedbackButton"),
   helpButton: document.getElementById("helpButton"),
 };
+
+function getActiveOrganisationName() {
+  return (
+    state.organisations.find(
+      (organisation) => organisation.id === state.activeOrganisationId
+    )?.name || "Organisation"
+  );
+}
+
+function getUserMetadataAvatarUrl(user) {
+  return (
+    user?.user_metadata?.avatar_url ||
+    user?.user_metadata?.picture ||
+    user?.user_metadata?.avatar ||
+    user?.identities?.find?.((identity) => identity?.identity_data?.avatar_url)
+      ?.identity_data?.avatar_url ||
+    ""
+  );
+}
+
+function getUserDisplayName(user) {
+  return (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    ""
+  );
+}
 
 function show(node) {
   node?.classList.remove("hidden");
@@ -191,7 +240,7 @@ function renderAuthState(isAuthed) {
 async function updateAvatarFromState() {
   await renderUserAvatar({
     element: ui.profileAvatar,
-    displayName: state.userEmail,
+    displayName: state.userDisplayName || state.userEmail,
     email: state.userEmail,
     avatarUrl: state.userAvatarUrl,
   });
@@ -200,8 +249,8 @@ async function updateAvatarFromState() {
 function renderUsage() {
   renderSharedUsage({
     usage: state.usage,
-    planNameText: ui.planNameText,
-    planRemainingValue: ui.planRemainingValue,
+    profilePlanText: ui.profilePlanText,
+    profileUsageText: ui.profileUsageText,
   });
 }
 
@@ -257,7 +306,9 @@ function renderRecentResults(jobs) {
     },
     emptySelectionMessage: "Select a site to review its latest report.",
     emptySiteMessage: `No runs yet for ${state.selectedDomain}.`,
+    emptyAllSitesMessage: "No recent runs yet.",
     showEmptyAction: Boolean(state.selectedDomain),
+    showAllWhenUnselected: true,
   });
 }
 
@@ -276,7 +327,6 @@ function renderMiniChart(jobs) {
 
 function setDisabledAll(disabled) {
   [
-    ui.settingsButton,
     ui.orgSelect,
     ui.domainInput,
     ui.scheduleSelect,
@@ -342,7 +392,6 @@ async function waitForSupabaseClient(timeoutMs = 5000) {
 }
 
 async function ensureSelectedDomain() {
-  const availableDomains = getDomains();
   if (state.selectedDomain) {
     return;
   }
@@ -352,11 +401,6 @@ async function ensureSelectedDomain() {
   );
   if (stored) {
     applySelectedDomain(stored);
-    return;
-  }
-
-  if (availableDomains.length > 0) {
-    applySelectedDomain(availableDomains[0].name);
   }
 }
 
@@ -437,6 +481,10 @@ function cleanupJobSubscription() {
   }
 }
 
+function cleanupNotificationsSubscription() {
+  shellChrome?.setActiveOrganisation("");
+}
+
 function startJobSubscription() {
   cleanupJobSubscription();
   if (!state.activeOrganisationId) {
@@ -468,9 +516,19 @@ async function refreshDashboard(options = {}) {
     await Promise.all([loadCurrentSchedule(), refreshSiteResults()]);
     renderUsage();
     renderOrganisations();
+    renderProfileMenuSummary({
+      emailNode: ui.profileEmail,
+      organisationNode: ui.profileOrgName,
+      planNode: ui.profilePlanText,
+      usageNode: ui.profileUsageText,
+      email: state.userEmail,
+      organisationName: getActiveOrganisationName(),
+      usage: state.usage,
+    });
     void updateAvatarFromState();
     renderAuthState(true);
     startJobSubscription();
+    shellChrome?.setActiveOrganisation(state.activeOrganisationId);
   } catch (error) {
     console.error("dashboard: failed to refresh", error);
     showToast(error.message || "Failed to refresh the dashboard.", {
@@ -665,8 +723,9 @@ function bindDomainSearch() {
 function bindEvents() {
   ui.loginButton?.addEventListener("click", () => openAuth("login"));
   ui.signupButton?.addEventListener("click", () => openAuth("signup"));
-  ui.settingsButton?.addEventListener("click", () => {
-    window.location.assign(APP_ROUTES.settings);
+  ui.homeButton?.addEventListener("click", () => {
+    applySelectedDomain("");
+    void refreshDashboard({ silent: true });
   });
   ui.orgSelect?.addEventListener("change", () => {
     void switchOrganisation();
@@ -703,11 +762,13 @@ function bindEvents() {
 async function syncAuthState(session) {
   state.session = session;
   state.userEmail = session?.user?.email || "";
-  state.userAvatarUrl = session?.user?.user_metadata?.avatar_url || "";
+  state.userDisplayName = getUserDisplayName(session?.user);
+  state.userAvatarUrl = getUserMetadataAvatarUrl(session?.user);
   void updateAvatarFromState();
 
   if (!session) {
     cleanupJobSubscription();
+    cleanupNotificationsSubscription();
     renderAuthState(false);
     return;
   }
@@ -725,6 +786,49 @@ async function init() {
   bindEvents();
   bindDomainSearch();
   await waitForSupabaseClient();
+  shellChrome = initSurfaceShell({
+    profileButton: ui.profileMenuButton,
+    profileDropdown: ui.profileMenuDropdown,
+    notificationsContainer: ui.notificationsContainer,
+    notificationsButton: ui.notificationsButton,
+    notificationsDropdown: ui.notificationsDropdown,
+    notificationsList: ui.notificationsList,
+    notificationsBadge: ui.notificationsBadge,
+    markAllReadButton: ui.markAllReadButton,
+    onNavigate: (path) => {
+      window.location.assign(path);
+    },
+    onSignOut: async () => {
+      await signOut();
+      showToast("Signed out.", { variant: "success" });
+      window.location.assign(APP_ROUTES.home);
+    },
+    fetchNotifications: (limit) => get(`/v1/notifications?limit=${limit}`),
+    markNotificationRead: (id) => post(`/v1/notifications/${id}/read`),
+    markAllNotificationsRead: () => post("/v1/notifications/read-all"),
+    subscribeToNotifications: async (orgId, onEvent) => {
+      const client = ensureSupabaseClient();
+      const channel = client
+        .channel(`dashboard-notifications:${orgId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "notifications",
+            filter: `organisation_id=eq.${orgId}`,
+          },
+          () => {
+            onEvent();
+          }
+        )
+        .subscribe();
+
+      return () => {
+        client.removeChannel(channel).catch(() => {});
+      };
+    },
+  });
 
   const initialSession = await getSession().catch(() => null);
   await syncAuthState(initialSession);
@@ -751,5 +855,6 @@ window.HoverDashboard = {
   destroy: () => {
     authSubscriptionCleanup?.();
     cleanupJobSubscription();
+    shellChrome?.destroy?.();
   },
 };
