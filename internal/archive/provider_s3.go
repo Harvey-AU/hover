@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,10 +80,19 @@ func (p *S3Provider) Ping(ctx context.Context, bucket string) error {
 }
 
 func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Reader, opts UploadOptions) error {
+	// Read all data upfront so we can set ContentLength explicitly.
+	// R2 rejects chunked/unsigned-payload signatures that the SDK uses
+	// when content length is unknown.
+	body, err := io.ReadAll(data)
+	if err != nil {
+		return fmt.Errorf("archive: read upload body for %s/%s: %w", bucket, key, err)
+	}
+
 	input := &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   data,
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(body),
+		ContentLength: aws.Int64(int64(len(body))),
 	}
 	if opts.ContentType != "" {
 		input.ContentType = aws.String(opts.ContentType)
@@ -94,7 +104,7 @@ func (p *S3Provider) Upload(ctx context.Context, bucket, key string, data io.Rea
 		input.Metadata = opts.Metadata
 	}
 
-	_, err := p.client.PutObject(ctx, input)
+	_, err = p.client.PutObject(ctx, input)
 	if err != nil {
 		return fmt.Errorf("archive: upload %s/%s failed: %w", bucket, key, err)
 	}
