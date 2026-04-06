@@ -98,11 +98,21 @@ function formatAuthMethod(method) {
   return getAuthMethodDef(value).label;
 }
 
+function resolveAssetUrl(path) {
+  if (!path) {
+    return "";
+  }
+  if (/^(?:[a-z]+:)?\/\//i.test(path) || path.startsWith("data:")) {
+    return path;
+  }
+  return new URL(path, `${getAppOrigin()}/`).toString();
+}
+
 function providerIconHtml(provider) {
   const def = getAuthMethodDef(provider);
   if (def.icon_url) {
     const img = document.createElement("img");
-    img.src = def.icon_url;
+    img.src = resolveAssetUrl(def.icon_url);
     img.alt = "";
     img.loading = "lazy";
     img.decoding = "async";

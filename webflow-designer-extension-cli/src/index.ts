@@ -12,6 +12,14 @@ type SupabaseClient = {
       access_token: string;
       refresh_token: string;
     }) => Promise<unknown>;
+    getUser?: () => Promise<{
+      data?: {
+        user?: {
+          email?: string | null;
+          user_metadata?: Record<string, unknown> | null;
+        } | null;
+      };
+    }>;
   };
   channel: (name: string) => RealtimeChannel;
   removeChannel: (channel: RealtimeChannel) => Promise<unknown>;
@@ -726,6 +734,50 @@ async function initSupabaseClient(): Promise<SupabaseClient | null> {
   (window as ExtensionWindow).HOVER_EXTENSION_SUPABASE_CLIENT = supabaseClient;
 
   return supabaseClient;
+}
+
+function pickUserDisplayName(
+  metadata: Record<string, unknown> | null | undefined
+): string {
+  const firstName = String(
+    metadata?.given_name || metadata?.first_name || ""
+  ).trim();
+  const lastName = String(
+    metadata?.family_name || metadata?.last_name || ""
+  ).trim();
+  const fullName = String(metadata?.full_name || metadata?.name || "").trim();
+  return fullName || [firstName, lastName].filter(Boolean).join(" ").trim();
+}
+
+async function loadCurrentUserIdentity(): Promise<void> {
+  const client = await initSupabaseClient();
+  if (!client?.auth?.getUser) {
+    return;
+  }
+
+  try {
+    const result = await client.auth.getUser();
+    const user = result?.data?.user;
+    const metadata =
+      (user?.user_metadata as Record<string, unknown> | null | undefined) ||
+      null;
+
+    if (user?.email) {
+      state.userEmail = user.email;
+    }
+
+    const displayName = pickUserDisplayName(metadata);
+    if (displayName) {
+      state.userDisplayName = displayName;
+    }
+
+    const avatarUrl = String(metadata?.avatar_url || "").trim();
+    if (avatarUrl) {
+      state.userAvatarUrl = avatarUrl;
+    }
+  } catch (error) {
+    console.warn("Unable to load current user identity", error);
+  }
 }
 
 function asNode(element: Element | null): HTMLElement | null {
@@ -1793,6 +1845,7 @@ async function refreshDashboard(): Promise<void> {
     try {
       await Promise.all([
         loadUsageAndOrgs(),
+        loadCurrentUserIdentity(),
         loadLatestJob(),
         loadCurrentSchedule(),
         findConnectedWebflowSite(),

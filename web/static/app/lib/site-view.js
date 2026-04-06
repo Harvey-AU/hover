@@ -46,6 +46,31 @@ function setText(node, value) {
   }
 }
 
+function getAppOrigin() {
+  const fromExtension =
+    window.HOVER_EXTENSION_CONFIG?.appOrigin ||
+    window.GNH_APP?.apiBaseUrl ||
+    "";
+  if (fromExtension) {
+    try {
+      return new URL(fromExtension).origin;
+    } catch {
+      // Fall through to current origin.
+    }
+  }
+  return window.location.origin;
+}
+
+function resolveAssetUrl(path) {
+  if (!path) {
+    return "";
+  }
+  if (/^(?:[a-z]+:)?\/\//i.test(path) || path.startsWith("data:")) {
+    return path;
+  }
+  return new URL(path, `${getAppOrigin()}/`).toString();
+}
+
 function getIssueCounts(job) {
   const buckets = job.stats?.slow_page_buckets;
   const statsBrokenLinks = asCount(job.stats?.total_broken_links);
@@ -120,7 +145,9 @@ export async function renderUserAvatar(options = {}) {
 
   element.textContent = initials;
 
-  const resolvedAvatarUrl = avatarUrl || (await getGravatarUrl(email, 80));
+  const resolvedAvatarUrl = resolveAssetUrl(
+    avatarUrl || (await getGravatarUrl(email, 80))
+  );
   if (!resolvedAvatarUrl) {
     return;
   }
