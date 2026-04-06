@@ -3,7 +3,7 @@ set -e
 
 # Thin wrapper around the native hover CLI.
 #
-# Usage: ./scripts/generate-test-jobs.sh [interval:VALUE] [jobs:N] [concurrency:N|random] [pr:N] [anon-key:VALUE]
+# Usage: ./scripts/generate-test-jobs.sh [interval:VALUE] [jobs:N] [repeats:N] [status-interval:VALUE] [concurrency:N|random] [pr:N] [anon-key:VALUE]
 #
 # This script translates the legacy key:value argument style into hover CLI
 # flags and delegates to `hover jobs generate`. Build the CLI first:
@@ -27,6 +27,8 @@ for arg in "$@"; do
     interval:*)  CLI_ARGS+=(--interval "${arg#*:}") ;;
     batch:*)     CLI_ARGS+=(--interval "${arg#*:}m") ;;
     jobs:*)      CLI_ARGS+=(--jobs "${arg#*:}") ;;
+    repeats:*)   CLI_ARGS+=(--repeats "${arg#*:}") ;;
+    status-interval:*) CLI_ARGS+=(--status-interval "${arg#*:}") ;;
     concurrency:*) CLI_ARGS+=(--concurrency "${arg#*:}") ;;
     pr:*)        CLI_ARGS+=(--pr "${arg#*:}") ;;
     anon-key:*)  CLI_ARGS+=(--anon-key "${arg#*:}") ;;
