@@ -417,13 +417,13 @@ func runJobsGenerate(args []string) error {
 	})
 
 	type domainRunState struct {
-		Domain               string
-		RemainingRuns        int
-		LastJobID            string
-		LastJobStatus        string
-		CompletedRuns        int
-		CreateFailures       int // consecutive createJob failures for the current run slot
-		StatusRefreshFails   int // consecutive fetchJobStatus failures for the active job
+		Domain             string
+		RemainingRuns      int
+		LastJobID          string
+		LastJobStatus      string
+		CompletedRuns      int
+		CreateFailures     int // consecutive createJob failures for the current run slot
+		StatusRefreshFails int // consecutive fetchJobStatus failures for the active job
 	}
 
 	const (
