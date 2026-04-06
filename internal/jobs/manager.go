@@ -924,9 +924,9 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	validTransitions := map[JobStatus][]JobStatus{
 		JobStatusPending:   {JobStatusRunning, JobStatusCancelled},
 		JobStatusRunning:   {JobStatusCompleted, JobStatusFailed, JobStatusCancelled},
-		JobStatusCompleted: {JobStatusRunning}, // Restart
-		JobStatusFailed:    {JobStatusRunning}, // Retry
-		JobStatusCancelled: {JobStatusRunning}, // Restart
+		JobStatusCompleted: {JobStatusRunning, JobStatusArchived}, // Restart or archive
+		JobStatusFailed:    {JobStatusRunning, JobStatusArchived}, // Retry or archive
+		JobStatusCancelled: {JobStatusRunning, JobStatusArchived}, // Restart or archive
 	}
 
 	allowed, exists := validTransitions[from]

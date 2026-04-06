@@ -15,6 +15,7 @@ const (
 	JobStatusCompleted    JobStatus = "completed"
 	JobStatusFailed       JobStatus = "failed"
 	JobStatusCancelled    JobStatus = "cancelled"
+	JobStatusArchived     JobStatus = "archived"
 )
 
 // TaskStatus represents the current status of a task

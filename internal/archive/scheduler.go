@@ -21,27 +21,32 @@ type storageDownloader interface {
 // throttles more aggressively to avoid competing with crawl workers.
 type BusyFunc func() bool
 
+// JobMarkerFunc marks fully-archived jobs. Called at the start of each sweep.
+type JobMarkerFunc func(ctx context.Context) (int64, error)
+
 // Archiver runs periodic sweeps to move data from hot to cold storage.
 type Archiver struct {
-	provider ColdStorageProvider
-	storage  storageDownloader
-	sources  []ArchiveSource
-	cfg      Config
-	isBusy   BusyFunc
+	provider     ColdStorageProvider
+	storage      storageDownloader
+	sources      []ArchiveSource
+	cfg          Config
+	isBusy       BusyFunc
+	markJobsDone JobMarkerFunc
 }
 
 // NewArchiver creates an archiver with the given provider, hot-storage client,
 // and one or more archive sources.
-func NewArchiver(provider ColdStorageProvider, storage storageDownloader, cfg Config, isBusy BusyFunc, sources ...ArchiveSource) *Archiver {
+func NewArchiver(provider ColdStorageProvider, storage storageDownloader, cfg Config, isBusy BusyFunc, markJobsDone JobMarkerFunc, sources ...ArchiveSource) *Archiver {
 	if isBusy == nil {
 		isBusy = func() bool { return false }
 	}
 	return &Archiver{
-		provider: provider,
-		storage:  storage,
-		sources:  sources,
-		cfg:      cfg,
-		isBusy:   isBusy,
+		provider:     provider,
+		storage:      storage,
+		sources:      sources,
+		cfg:          cfg,
+		isBusy:       isBusy,
+		markJobsDone: markJobsDone,
 	}
 }
 
@@ -79,6 +84,15 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 }
 
 func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
+	// Mark jobs as 'archived' when all their HTML has been moved to cold storage.
+	if a.markJobsDone != nil {
+		if n, err := a.markJobsDone(ctx); err != nil {
+			log.Error().Err(err).Msg("Failed to mark fully archived jobs")
+		} else if n > 0 {
+			log.Info().Int64("jobs_marked", n).Msg("Jobs marked as archived")
+		}
+	}
+
 	for _, src := range a.sources {
 		candidates, err := src.FindCandidates(ctx, a.cfg.BatchSize)
 		if err != nil {

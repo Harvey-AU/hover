@@ -1012,6 +1012,40 @@ func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket
 	})
 }
 
+// MarkFullyArchivedJobs transitions terminal jobs to 'archived' when all their
+// HTML has been moved to cold storage. Returns the number of jobs marked.
+func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
+	var rowsAffected int64
+
+	err := q.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			SET status = 'archived'
+			WHERE status IN ('completed', 'failed', 'cancelled')
+			  AND NOT EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_storage_path IS NOT NULL
+			  )
+			  AND EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_archived_at IS NOT NULL
+			  )
+		`)
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: %w", err)
+		}
+		rowsAffected, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: reading rows affected: %w", err)
+		}
+		return nil
+	})
+
+	return rowsAffected, err
+}
+
 // GetNextTask gets a pending task using row-level locking
 // Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers
 // Combines SELECT and UPDATE in a CTE for atomic claiming

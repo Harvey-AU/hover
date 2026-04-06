@@ -31,4 +31,5 @@ type DbQueueInterface interface {
 	UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
 	FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]db.ArchiveCandidate, error)
 	MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error
+	MarkFullyArchivedJobs(ctx context.Context) (int64, error)
 }

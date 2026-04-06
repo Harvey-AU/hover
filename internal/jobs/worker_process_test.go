@@ -172,6 +172,10 @@ func (m *MockDbQueue) MarkTaskArchived(_ context.Context, _, _, _, _ string) err
 	return nil
 }
 
+func (m *MockDbQueue) MarkFullyArchivedJobs(_ context.Context) (int64, error) {
+	return 0, nil
+}
+
 // TestWorkerPoolProcessTask demonstrates the test structure for processTask
 // NOTE: This test cannot actually execute processTask due to concrete type dependencies.
 // It documents the test cases we would run if WorkerPool used interfaces instead of concrete types.

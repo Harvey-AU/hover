@@ -12,7 +12,7 @@
  *
  * Attributes:
  *   status   — "pending" | "running" | "completed" | "failed" |
- *              "cancelled" | "skipped" | "queued" | "initializing"
+ *              "cancelled" | "skipped" | "queued" | "initializing" | "archived"
  *   label    — override the display label (optional; defaults to status map)
  *   variant  — "icon" (default, animated spinner/dot) | "dot" (plain dot only)
  *              | "label" (text only)
@@ -39,6 +39,7 @@ const STATUS_LABELS = {
   cancelled: "Cancelled",
   cancelling: "Cancelling",
   skipped: "Skipped",
+  archived: "Archived",
 };
 
 /** @type {Record<string, string>} Maps status → CSS modifier for the icon */
@@ -55,6 +56,7 @@ const STATUS_ICON_MOD = {
   cancelled: "neutral",
   cancelling: "neutral",
   skipped: "neutral",
+  archived: "neutral",
 };
 
 /** @type {Record<string, string>} Maps status → CSS modifier for the colour */
@@ -71,6 +73,7 @@ const STATUS_COLOUR_MOD = {
   cancelled: "neutral",
   cancelling: "neutral",
   skipped: "neutral",
+  archived: "neutral",
 };
 
 const VALID_VARIANTS = new Set(["icon", "dot", "label"]);

@@ -612,7 +612,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		} else if provider != nil {
 			src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
 			isBusy := func() bool { return wp.IdleWorkerCount() == 0 }
-			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, isBusy, src)
+			wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, isBusy, wp.dbQueue.MarkFullyArchivedJobs, src)
 			log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("Archive scheduler initialised")
 		}
 	}
