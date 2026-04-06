@@ -30,6 +30,7 @@ type RealtimeChannel = {
 
 const API_BASE_STORAGE_KEY = "gnh_extension_api_base";
 const API_TOKEN_STORAGE_KEY = "gnh_extension_api_token_session";
+const ACTIVE_ORG_STORAGE_KEY = "gnh_active_org_id";
 const AUTH_POPUP_WIDTH = 520;
 const AUTH_POPUP_HEIGHT = 760;
 const DEFAULT_GNH_APP_ORIGIN = "https://hover.app.goodnative.co";
@@ -558,6 +559,7 @@ let jobStatusPoller: number | null = null;
 let jobPollInFlight = false;
 let lastCompletedJobsSignature = "";
 let lastChartJobsSignature = "";
+let crossSurfaceOrgRefreshInFlight = false;
 
 // Supabase realtime state
 let supabaseClient: SupabaseClient | null = null;
@@ -1894,6 +1896,29 @@ async function refreshDashboard(): Promise<void> {
   }
 }
 
+async function syncActiveOrganisationFromStorage(
+  nextOrganisationId: string | null
+): Promise<void> {
+  if (!state.token || !nextOrganisationId) {
+    return;
+  }
+
+  if (
+    crossSurfaceOrgRefreshInFlight ||
+    nextOrganisationId === state.activeOrganisationId
+  ) {
+    return;
+  }
+
+  crossSurfaceOrgRefreshInFlight = true;
+  try {
+    state.activeOrganisationId = nextOrganisationId;
+    await refreshDashboard();
+  } finally {
+    crossSurfaceOrgRefreshInFlight = false;
+  }
+}
+
 async function switchOrganisation(): Promise<void> {
   const select = asSelect(ui.orgSelect);
   if (!select || !select.value) {
@@ -2108,6 +2133,12 @@ async function initialise(): Promise<void> {
   window.addEventListener("beforeunload", () => {
     stopJobStatusPolling();
     cleanupRealtimeSubscription();
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key !== ACTIVE_ORG_STORAGE_KEY) {
+      return;
+    }
+    void syncActiveOrganisationFromStorage(event.newValue);
   });
   try {
     if (!(window as ExtensionWindow).HOVER_EXTENSION_CONFIG?.appOrigin) {
