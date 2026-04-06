@@ -40,6 +40,12 @@ func NewS3Provider(endpoint, accessKeyID, secretAccessKey, region, providerName 
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			accessKeyID, secretAccessKey, "",
 		)),
+		// R2 supports PutObject, but the AWS SDK's default "when supported"
+		// checksum mode adds extra checksum headers on uploads. Those headers are
+		// not universally implemented across S3-compatible providers and can
+		// cause signature mismatches even when HeadBucket succeeds.
+		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+		config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("archive: failed to load AWS config: %w", err)
