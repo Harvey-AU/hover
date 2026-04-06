@@ -8,7 +8,8 @@
  * Loading contract (extension-auth.html):
  *   1. <script src="/config.js">          — sets window.GNH_CONFIG
  *   2. <script src="supabase.js">         — sets window.supabase (CDN UMD)
- *   3. <script type="module" src="/app/pages/webflow-login.js">
+ *   3. <script src="/js/auth.js">         — sets window.GNHAuth helpers
+ *   4. <script type="module" src="/app/pages/webflow-login.js">
  *
  * No gnh-bootstrap.js. No GNH_APP.whenReady().
  * The popup still reuses the legacy GNHAuth bundle for modal loading,
@@ -24,7 +25,7 @@
  *   - This module sets that flag before any auth action.
  */
 
-import { isConfigured, supabaseUrl, supabaseAnonKey } from "/app/lib/config.js";
+import { isConfigured } from "/app/lib/config.js";
 import { getSession, onAuthStateChange } from "/app/lib/auth-session.js";
 import { showToast } from "/app/components/hover-toast.js";
 
@@ -63,14 +64,13 @@ async function init() {
     return;
   }
 
-  // Initialise the Supabase client if auth.js hasn't done it yet.
-  // auth.js.initialiseSupabase() is still the canonical initialiser;
-  // we call it here as a safety net in case core.js is not present.
-  if (window.supabase?.createClient && !window.supabase?.auth) {
-    window.supabase = window.supabase.createClient(
-      supabaseUrl,
-      supabaseAnonKey
+  const authReady = await ensureLegacyAuthReady();
+  if (!authReady) {
+    setStatus(
+      "Sign-in is still loading — please refresh and try again.",
+      "error"
     );
+    return;
   }
 
   setStatus("Preparing sign-in…");
@@ -291,6 +291,37 @@ function validatePopupContract() {
   }
 
   return true;
+}
+
+async function ensureLegacyAuthReady() {
+  const pollIntervalMs = 50;
+  const timeoutMs = 5000;
+  const maxAttempts = Math.ceil(timeoutMs / pollIntervalMs);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const auth = window.GNHAuth;
+    const supabaseGlobal = window.supabase;
+
+    if (
+      auth?.initialiseSupabase &&
+      (supabaseGlobal?.auth || supabaseGlobal?.createClient)
+    ) {
+      if (supabaseGlobal?.auth) {
+        return true;
+      }
+
+      if (auth.initialiseSupabase()) {
+        return Boolean(window.supabase?.auth);
+      }
+    }
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, pollIntervalMs);
+    });
+  }
+
+  console.error("webflow-login: legacy auth bundle did not initialise in time");
+  return false;
 }
 
 // ── Bootstrap ──────────────────────────────────────────────────────────────────

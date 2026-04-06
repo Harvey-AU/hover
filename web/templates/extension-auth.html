@@ -9,9 +9,9 @@
     <!--
       Phase 1 loading pattern:
       1. /config.js       — sets window.GNH_CONFIG (server-rendered)
-      2. /js/auth.js      — GNHAuth helpers; still loaded as legacy script
+      2. Supabase SDK     — CDN UMD, sets window.supabase
+      3. /js/auth.js      — GNHAuth helpers; still loaded as legacy script
                             while the auth modal component is pre-module
-      3. Supabase SDK     — CDN UMD, sets window.supabase
       4. module entry     — /app/pages/webflow-login.js (ES module)
 
       No gnh-bootstrap.js. No core.js. No GNH_APP.whenReady().
@@ -19,13 +19,13 @@
       auth action, preserving the auth redirect contract from AGENTS.md.
     -->
     <script src="/config.js"></script>
-    <script src="/js/auth.js" defer></script>
     <script
       src="https://unpkg.com/@supabase/supabase-js@2.95.3/dist/umd/supabase.js"
       integrity="sha384-g8TQpKstPpyDTjwOLNQvGR++9KAGGvtxWv+P5XmDd3QZQx1jie8r1hx0gVpD+cdb"
       crossorigin="anonymous"
       defer
     ></script>
+    <script src="/js/auth.js" defer></script>
 
     <link rel="stylesheet" href="/app/styles/tokens.css" />
     <link rel="stylesheet" href="/app/styles/base.css" />
