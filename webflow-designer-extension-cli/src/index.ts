@@ -110,6 +110,18 @@ declare const HoverLib: {
     del: (path: string, init?: RequestInit) => Promise<unknown>;
     request: (path: string, init?: RequestInit) => Promise<unknown>;
   };
+  exports: {
+    downloadJobExport: (
+      jobId: string,
+      options?: {
+        api?: typeof HoverLib.api;
+      }
+    ) => Promise<{
+      empty: boolean;
+      filename: string;
+      taskCount: number;
+    }>;
+  };
   fmt: {
     formatDate: (value: string | null | undefined) => string;
     formatDateTime: (value: string | null | undefined) => string;
@@ -342,21 +354,6 @@ type JobItem = {
   domains?: {
     name: string;
   };
-};
-
-type ExportColumn = {
-  key: string;
-  label: string;
-};
-
-type JobExportPayload = {
-  job_id: string;
-  domain?: string;
-  export_time?: string;
-  completed_at?: string | null;
-  export_type?: string;
-  columns?: ExportColumn[];
-  tasks?: Record<string, unknown>[];
 };
 
 type Scheduler = {
@@ -1104,23 +1101,12 @@ function renderRecentResults(jobs: JobItem[]): void {
 
 async function exportJob(jobId: string): Promise<void> {
   try {
-    const payload = (await HoverLib.api.get(
-      `/v1/jobs/${jobId}/export`
-    )) as JobExportPayload;
-
-    const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
-    const { keys, headers } = prepareExportColumns(payload.columns, tasks);
-
-    const csvRows = [headers.join(",")];
-    for (const task of tasks) {
-      const values = keys.map((key) => escapeCSVValue(task[key]));
-      csvRows.push(values.join(","));
+    const result = await HoverLib.exports.downloadJobExport(jobId, {
+      api: HoverLib.api,
+    });
+    if (result.empty) {
+      setStatus("Export unavailable", "No tasks to export.");
     }
-
-    const csvContent = csvRows.join("\n");
-    const filenameBase = sanitizeForFilename(payload.domain || `job-${jobId}`);
-    const filename = `${filenameBase}-hover-export.csv`;
-    triggerFileDownload(csvContent, "text/csv", filename);
   } catch (error) {
     setStatus(
       "Export failed",
@@ -1128,43 +1114,6 @@ async function exportJob(jobId: string): Promise<void> {
     );
   }
 }
-
-function prepareExportColumns(
-  columns: ExportColumn[] | undefined,
-  tasks: Record<string, unknown>[]
-): { keys: string[]; headers: string[] } {
-  if (Array.isArray(columns) && columns.length > 0) {
-    return {
-      keys: columns.map((column) => column.key),
-      headers: columns.map((column) => column.label || column.key),
-    };
-  }
-
-  const keySet = new Set<string>();
-  for (const task of tasks) {
-    Object.keys(task || {}).forEach((key) => keySet.add(key));
-  }
-
-  const keys = [...keySet];
-  return { keys, headers: keys };
-}
-
-// CSV/file utilities — delegated to shared formatters via HoverLib bridge
-const escapeCSVValue = (value: unknown): string =>
-  HoverLib?.fmt?.escapeCSVValue?.(value) ?? String(value ?? "");
-
-function triggerFileDownload(
-  content: string,
-  mimeType: string,
-  filename: string
-): void {
-  if (HoverLib?.fmt?.triggerFileDownload) {
-    HoverLib.fmt.triggerFileDownload(content, mimeType, filename);
-  }
-}
-
-const sanitizeForFilename = (value: string): string =>
-  HoverLib?.fmt?.sanitiseForFilename?.(value) ?? value;
 
 // ---------------------------------------------------------------------------
 // Mini chart

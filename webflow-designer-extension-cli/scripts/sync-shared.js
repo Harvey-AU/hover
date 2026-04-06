@@ -29,6 +29,7 @@ const COMPONENTS = [
 const REQUIRED_LIB_MODULES = [
   "lib/site-jobs.js",
   "lib/site-view.js",
+  "lib/job-export.js",
   "lib/webflow-sites.js",
   "lib/organisation-api.js",
   "lib/scheduler-api.js",

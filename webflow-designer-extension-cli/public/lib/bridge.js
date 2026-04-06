@@ -11,6 +11,7 @@
 import * as apiClient from "/app/lib/api-client.js";
 import * as formatters from "/app/lib/formatters.js";
 import * as integrationHttp from "/app/lib/integration-http.js";
+import * as jobExport from "/app/lib/job-export.js";
 import * as organisationApi from "/app/lib/organisation-api.js";
 import * as schedulerApi from "/app/lib/scheduler-api.js";
 import * as siteJobs from "/app/lib/site-jobs.js";
@@ -20,6 +21,7 @@ import * as webflowSites from "/app/lib/webflow-sites.js";
 // Expose shared modules for index.js consumption
 window.HoverLib = {
   api: apiClient,
+  exports: jobExport,
   fmt: formatters,
   http: integrationHttp,
   organisations: organisationApi,

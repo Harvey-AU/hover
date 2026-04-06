@@ -6,13 +6,14 @@
  * latest/past report surfaces.
  */
 
-import { get, post } from "/app/lib/api-client.js";
+import { post } from "/app/lib/api-client.js";
 import { onAuthStateChange, getSession } from "/app/lib/auth-session.js";
 import { showToast } from "/app/components/hover-toast.js";
 import {
   loadOrganisationContext,
   switchOrganisation as switchOrganisationApi,
 } from "/app/lib/organisation-api.js";
+import { downloadJobExport } from "/app/lib/job-export.js";
 import {
   renderJobState as renderSharedJobState,
   renderMiniChart as renderSharedMiniChart,
@@ -558,40 +559,15 @@ async function runNow() {
 
 async function exportJob(jobId) {
   try {
-    const data = await get(`/v1/jobs/${encodeURIComponent(jobId)}/export`, {
-      headers: { Accept: "application/json" },
-    });
-    const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
-    if (!tasks.length) {
+    const result = await downloadJobExport(jobId);
+    if (result.empty) {
       showToast("No tasks to export.", { variant: "warning" });
       return;
     }
-
-    const keys = Object.keys(tasks[0]);
-    const csv = [
-      keys.join(","),
-      ...tasks.map((task) => keys.map((key) => csvEscape(task[key])).join(",")),
-    ].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `job-${jobId}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
     showToast("Export downloaded.", { variant: "success" });
   } catch (error) {
     showToast(`Export failed: ${error.message}`, { variant: "error" });
   }
-}
-
-function csvEscape(value) {
-  if (value == null) return "";
-  const text = String(value);
-  return text.includes(",") || text.includes('"') || text.includes("\n")
-    ? `"${text.replace(/"/g, '""')}"`
-    : text;
 }
 
 async function setJobSchedule() {
