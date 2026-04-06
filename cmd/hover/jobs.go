@@ -60,9 +60,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			if err != nil {
 				return nil, err
 			}
-			n, err := strconv.Atoi(v)
-			if err != nil || n <= 0 {
-				return nil, fmt.Errorf("invalid --pr value: %s", v)
+			n, err := parsePositiveInt("--pr", v)
+			if err != nil {
+				return nil, err
 			}
 			c.PR = n
 
@@ -92,12 +92,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			if err != nil {
 				return nil, err
 			}
-			d, err := parseInterval(v)
+			d, err := parsePositiveDuration("--interval", v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid --interval: %w", err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("--interval must be positive")
+				return nil, err
 			}
 			c.Interval = d
 
@@ -106,9 +103,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			if err != nil {
 				return nil, err
 			}
-			n, err := strconv.Atoi(v)
-			if err != nil || n <= 0 {
-				return nil, fmt.Errorf("invalid --jobs value: %s", v)
+			n, err := parsePositiveInt("--jobs", v)
+			if err != nil {
+				return nil, err
 			}
 			c.JobsPerBatch = n
 
@@ -117,9 +114,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			if err != nil {
 				return nil, err
 			}
-			n, err := strconv.Atoi(v)
-			if err != nil || n <= 0 {
-				return nil, fmt.Errorf("invalid --repeats value: %s", v)
+			n, err := parsePositiveInt("--repeats", v)
+			if err != nil {
+				return nil, err
 			}
 			c.Repeats = n
 
@@ -141,12 +138,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 			if err != nil {
 				return nil, err
 			}
-			d, err := parseInterval(v)
+			d, err := parsePositiveDuration("--status-interval", v)
 			if err != nil {
-				return nil, fmt.Errorf("invalid --status-interval: %w", err)
-			}
-			if d <= 0 {
-				return nil, fmt.Errorf("--status-interval must be positive")
+				return nil, err
 			}
 			c.StatusInterval = d
 
@@ -159,6 +153,25 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 	}
 
 	return c, nil
+}
+
+func parsePositiveInt(flag, v string) (int, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid %s value: %s", flag, v)
+	}
+	return n, nil
+}
+
+func parsePositiveDuration(flag, v string) (time.Duration, error) {
+	d, err := parseInterval(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", flag, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive", flag)
+	}
+	return d, nil
 }
 
 // parseInterval handles "30s", "2m", "90" (seconds), and combined forms.
@@ -359,6 +372,24 @@ var testDomains = []string{
 	"pirsch.io", "clarityflow.com", "swapcard.com",
 }
 
+func printJobHeader(id *identity, totalRuns, domainCount int, cfg *jobsConfig) {
+	fmt.Fprintln(os.Stderr)
+	if id.UserName != "" && id.ActiveOrgName() != "" {
+		if len(id.Orgs) > 1 {
+			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m [press \033[1mc\033[0m to change org]\n", id.UserName, id.ActiveOrgName())
+		} else {
+			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m\n", id.UserName, id.ActiveOrgName())
+		}
+	} else if id.UserName != "" {
+		fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m\n", id.UserName)
+	}
+	fmt.Fprintf(os.Stderr, "Generating: %d total jobs across %d domains, %d per batch, %s interval", totalRuns, domainCount, cfg.JobsPerBatch, formatDuration(cfg.Interval))
+	if cfg.Repeats > 1 {
+		fmt.Fprintf(os.Stderr, ", %dx repeats, %s status polling", cfg.Repeats, formatDuration(cfg.StatusInterval))
+	}
+	fmt.Fprintln(os.Stderr)
+}
+
 func runJobsGenerate(args []string) error {
 	cfg, err := parseJobsFlags(args)
 	if err != nil {
@@ -403,24 +434,7 @@ func runJobsGenerate(args []string) error {
 
 	totalRuns := len(domains) * cfg.Repeats
 
-	// Identity line.
-	fmt.Fprintln(os.Stderr)
-	if id.UserName != "" && id.ActiveOrgName() != "" {
-		if len(id.Orgs) > 1 {
-			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m [press \033[1mc\033[0m to change org]\n", id.UserName, id.ActiveOrgName())
-		} else {
-			fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m in \033[1m%s\033[0m\n", id.UserName, id.ActiveOrgName())
-		}
-	} else if id.UserName != "" {
-		fmt.Fprintf(os.Stderr, "Logged in as \033[1m%s\033[0m\n", id.UserName)
-	}
-
-	// Job settings summary.
-	fmt.Fprintf(os.Stderr, "Generating: %d total jobs across %d domains, %d per batch, %s interval", totalRuns, len(domains), cfg.JobsPerBatch, formatDuration(cfg.Interval))
-	if cfg.Repeats > 1 {
-		fmt.Fprintf(os.Stderr, ", %dx repeats, %s status polling", cfg.Repeats, formatDuration(cfg.StatusInterval))
-	}
-	fmt.Fprintln(os.Stderr)
+	printJobHeader(id, totalRuns, len(domains), cfg)
 
 	// Confirmation prompt — allow org switch if multiple orgs available.
 	if err := confirmOrSwitchOrg(ctx, ac, token, id, cfg.Yes); err != nil {
