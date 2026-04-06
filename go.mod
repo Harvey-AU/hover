@@ -25,6 +25,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/slack-go/slack v0.17.3
 	github.com/stretchr/testify v1.11.1
+	github.com/stripe/stripe-go/v82 v82.5.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.43.0
@@ -88,7 +89,6 @@ require (
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/stripe/stripe-go/v82 v82.5.1 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
