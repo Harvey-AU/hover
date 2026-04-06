@@ -37,7 +37,13 @@ else
 fi
 
 # --- Extract unreleased content ---
-UNRELEASED_CONTENT=$(awk '/^## \[Unreleased/ {flag=1; next} /^## \[[0-9]/ {flag=0} flag' CHANGELOG.md)
+UNRELEASED_CONTENT=$(awk '
+/^## \[Unreleased/ {flag=1; next}
+/^## Full changelog history$/ {flag=0}
+/^## \[[0-9]/ {flag=0}
+flag
+' CHANGELOG.md)
+UNRELEASED_CONTENT=$(printf "%s\n" "$UNRELEASED_CONTENT" | sed '/^_Add unreleased changes here\._$/d')
 
 if [ -z "$(echo "$UNRELEASED_CONTENT" | grep -v '^[[:space:]]*$')" ]; then
   SHOULD_RELEASE="false"

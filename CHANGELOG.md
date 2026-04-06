@@ -36,6 +36,8 @@ On merge, CI will:
 - aligned extension reuse docs with the current ES modules migration state and
   the remaining hybrid auth popup architecture
 
+## Full changelog history
+
 ## [0.31.4] – 2026-04-05
 
 ### Fixed
