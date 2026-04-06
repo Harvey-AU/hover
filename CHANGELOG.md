@@ -45,6 +45,19 @@ On merge, CI will:
   `isPrivateOrLocalIP` from `crawler.go`
 - Set `MinVersion: tls.VersionTLS12` on AIA cert-inspection transport to prevent
   protocol downgrade during handshake
+- Add `ssrfSafeDialContext` and `CheckRedirect` guard to cert-inspection client
+  (`inspectClient`) so the HEAD request used to read the leaf cert is also
+  protected against DNS rebinding and open redirects
+- Replace credential-like literals (`user:pass`, `password=pass`) in DSN test
+  fixtures with neutral placeholders; remove `nolint:gosec` annotations
+- Refactor AIA intermediate handling: fetched certs are now stored in a separate
+  `intermediates []*x509.Certificate` slice and never injected into
+  `TLSClientConfig.RootCAs`; the retry uses a `VerifyConnection` callback that
+  verifies the chain against system roots + fetched intermediates via
+  `x509.VerifyOptions`
+- Guard AIA intermediate acceptance with `IsCA + BasicConstraintsValid` and
+  self-signed checks so root CAs served from AIA URLs are rejected
+- Sanitise AIA log calls to log `host` only, not the full raw URL
 
 ## Full changelog history
 
