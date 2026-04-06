@@ -62,13 +62,25 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 		Int("concurrency", a.cfg.Concurrency).
 		Msg("Archive scheduler started")
 
+	// Derive a context that is cancelled when stopCh closes, so sweep
+	// internals (markJobsDone, FindCandidates, goroutines) all respect shutdown.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		case <-runCtx.Done():
+		}
+	}()
+
 	// Run first sweep immediately rather than waiting for the first tick.
-	a.sweep(ctx, stopCh)
+	a.sweep(runCtx, stopCh)
 
 	for {
 		select {
 		case <-ticker.C:
-			a.sweep(ctx, stopCh)
+			a.sweep(runCtx, stopCh)
 		case <-stopCh:
 			log.Info().Msg("Archive scheduler stopping (stop signal)")
 			return
