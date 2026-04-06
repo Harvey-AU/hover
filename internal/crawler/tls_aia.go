@@ -1,8 +1,10 @@
 package crawler
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -148,8 +150,27 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 		return nil
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(rawURL) //nolint:gosec // G704: URL validated against private IPs and scheme above
+	// Use ssrfSafeDialContext so IP validation happens at connect time, not just
+	// at URL-parse time — this prevents DNS rebinding between the isPrivateHost
+	// check above and the actual TCP dial.
+	aiaTransport := &http.Transport{
+		DialContext: ssrfSafeDialContext(),
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: aiaTransport,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			u := req.URL
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("AIA redirect to non-HTTP(S) scheme %q rejected", u.Scheme)
+			}
+			if isPrivateHost(u.Host) {
+				return fmt.Errorf("AIA redirect to private host %q rejected", u.Host)
+			}
+			return nil
+		},
+	}
+	resp, err := client.Get(rawURL) //nolint:gosec // G107: URL validated by ssrfSafeDialContext at connect time
 	if err != nil {
 		log.Debug().Err(err).Str("url", rawURL).Msg("AIA: failed to fetch intermediate")
 		return nil
@@ -186,16 +207,18 @@ func isPrivateHost(host string) bool {
 		hostOnly = h
 	}
 
-	ips, err := net.LookupHost(hostOnly) //nolint:gosec // G704: this IS the SSRF validation — we check the resolved IPs below
+	// Bounded DNS resolution — 2 s timeout. On error (including timeout) we
+	// fail closed and treat the host as private to prevent SSRF.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, hostOnly)
 	if err != nil {
-		return true // fail-closed: treat unresolvable hosts as private
+		return true // fail-closed: treat unresolvable/timed-out hosts as private
 	}
 
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
+	for _, addr := range addrs {
+		ip := addr.IP
 		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
 			ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 			return true

@@ -329,9 +329,14 @@ func startTestJWKSWithES256(tb testing.TB) (*ecdsa.PrivateKey, string, string, f
 	kid := "test-key-es256"
 	publicKey := &privateKey.PublicKey
 
-	// Encode EC public key coordinates
-	x := base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes()) //nolint:staticcheck // SA1019: no alternative for JWKS coordinate encoding
-	y := base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes()) //nolint:staticcheck // SA1019: no alternative for JWKS coordinate encoding
+	// Encode EC public key coordinates as fixed-length 32-byte big-endian (RFC 7518 §6.2.1.2).
+	// Use ecdh to extract uncompressed bytes (04 || X || Y) so we avoid the
+	// deprecated ecdsa.PublicKey.X/Y fields and always get full-length coordinates.
+	ecdhPub, err := publicKey.ECDH()
+	require.NoError(tb, err)
+	raw := ecdhPub.Bytes() // 04 || X (32 bytes) || Y (32 bytes)
+	x := base64.RawURLEncoding.EncodeToString(raw[1:33])
+	y := base64.RawURLEncoding.EncodeToString(raw[33:])
 
 	jwksPayload := struct {
 		Keys []map[string]string `json:"keys"`

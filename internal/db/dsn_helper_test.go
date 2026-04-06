@@ -37,7 +37,7 @@ func TestAugmentDSNWithTimeout(t *testing.T) {
 			timeoutMs: 30000,
 			expected:  "postgres://user:pass@localhost/db?statement_timeout=30000",
 		},
-		{
+		{ //nolint:gosec // G101: fake DSN in test fixture
 			name:      "key=value format",
 			dsn:       "host=localhost user=user password=pass dbname=db",
 			timeoutMs: 45000,
