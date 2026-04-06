@@ -498,7 +498,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	}
 
 	// Determine max workers based on environment to prevent resource exhaustion
-	maxWorkers := 50 // Production: high throughput
+	maxWorkers := 40 // Production: capped below DB pool budget (50 conns)
 	if env := os.Getenv("APP_ENV"); env == "staging" {
 		maxWorkers = 10 // Preview/staging: match conservative limits
 	}

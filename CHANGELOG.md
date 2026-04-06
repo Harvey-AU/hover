@@ -28,7 +28,14 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Changed
+
+- Cap dynamic worker max scale from 50 to 40 to stay within DB pool budget
+- Raise `DB_MAX_OPEN_CONNS` from 45 to 50 (pgBouncer ceiling is 90)
+- Lower `DB_QUEUE_MAX_CONCURRENCY` from 40 to 30, leaving 16 connections for
+  non-queue direct calls
+- Add `GNH_BATCH_CHANNEL_SIZE=5000` to absorb peak batch write bursts (was 2,000
+  default)
 
 ## Full changelog history
 

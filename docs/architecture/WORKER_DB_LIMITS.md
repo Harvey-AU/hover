@@ -10,17 +10,16 @@ writer, and worker pool. Values reflect production unless noted.
 ## Key relationships
 
 ```
-DB_MAX_OPEN_CONNS (45)
-  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 41
-        └── DB_QUEUE_MAX_CONCURRENCY (12)  →  semaphore = min(12, 41) = 12
+DB_MAX_OPEN_CONNS (50)
+  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 46
+        └── DB_QUEUE_MAX_CONCURRENCY (30)  →  semaphore = min(30, 46) = 30
               └── base workers (30) × WORKER_CONCURRENCY (1) = 30 task slots
-                    └── max workers (50) — can scale to 50, exceeding the 45-conn pool
+                    └── max workers (40) — capped below the 50-conn pool budget
 ```
 
 Direct DB calls (page writes, domain lookups, etc.) bypass the queue semaphore
-and draw from the shared pool. Under full worker scale (50 workers),
-non-semaphored calls can exhaust the 45-connection pool regardless of the
-semaphore setting.
+and draw from the shared pool. With 30 semaphore slots out of 46 available, 16
+connections remain for non-semaphored direct calls.
 
 ---
 
@@ -30,7 +29,7 @@ semaphore setting.
 
 | Env var             | Production value    | Code default | What it controls                             |
 | ------------------- | ------------------- | ------------ | -------------------------------------------- |
-| `DB_MAX_OPEN_CONNS` | **45** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer    |
+| `DB_MAX_OPEN_CONNS` | **50** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer    |
 | `DB_MAX_IDLE_CONNS` | **15** (`fly.toml`) | 20           | Idle connections kept warm                   |
 | —                   | hardcoded           | 5 min        | Max connection lifetime (`MaxLifetime`)      |
 | —                   | hardcoded           | 2 min        | Idle connection eviction (`ConnMaxIdleTime`) |
@@ -51,15 +50,15 @@ Wraps a semaphore around all task-claim and batch-update DB operations. Direct
 DB calls (page writes, domain lookups, etc.) bypass this gate and draw directly
 from the pool.
 
-| Env var                        | Production value   | Default | What it controls                                                            |
-| ------------------------------ | ------------------ | ------- | --------------------------------------------------------------------------- |
-| `DB_QUEUE_MAX_CONCURRENCY`     | **12** (unset)     | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
-| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)      | 4       | Connections held back from the semaphore budget                             |
-| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)   | 0.90    | Log warn at 90% pool usage (≥40/45 open)                                    |
-| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)   | 0.95    | Fire Sentry "DB pool saturated" at 95% (≥43/45)                             |
-| `DB_TX_MAX_RETRIES`            | **3** (unset)      | 3       | Transaction retry attempts on retryable errors                              |
-| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)  | 200ms   | Initial TX retry backoff                                                    |
-| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset) | 1500ms  | Max TX retry backoff                                                        |
+| Env var                        | Production value    | Default | What it controls                                                            |
+| ------------------------------ | ------------------- | ------- | --------------------------------------------------------------------------- |
+| `DB_QUEUE_MAX_CONCURRENCY`     | **30** (`fly.toml`) | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
+| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)       | 4       | Connections held back from the semaphore budget                             |
+| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)    | 0.90    | Log warn at 90% pool usage (≥45/50 open)                                    |
+| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)    | 0.95    | Fire Sentry "DB pool saturated" at 95% (≥48/50)                             |
+| `DB_TX_MAX_RETRIES`            | **3** (unset)       | 3       | Transaction retry attempts on retryable errors                              |
+| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)   | 200ms   | Initial TX retry backoff                                                    |
+| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)  | 1500ms  | Max TX retry backoff                                                        |
 
 ---
 
@@ -70,12 +69,12 @@ from the pool.
 Buffers task status updates to avoid a DB write on every individual task
 completion.
 
-| Env var                     | Production value   | Default | What it controls                                               |
-| --------------------------- | ------------------ | ------- | -------------------------------------------------------------- |
-| `GNH_BATCH_CHANNEL_SIZE`    | **2000** (unset)   | 2000    | Channel buffer depth (range 500–20,000)                        |
-| `GNH_BATCH_MAX_INTERVAL_MS` | **2000ms** (unset) | 2000ms  | Max time before forcing a flush (range 100–10,000ms)           |
-| —                           | hardcoded          | 100     | Max tasks per batch write                                      |
-| —                           | hardcoded          | 3       | Consecutive failures before falling back to individual updates |
+| Env var                     | Production value      | Default | What it controls                                               |
+| --------------------------- | --------------------- | ------- | -------------------------------------------------------------- |
+| `GNH_BATCH_CHANNEL_SIZE`    | **5000** (`fly.toml`) | 2000    | Channel buffer depth (range 500–20,000)                        |
+| `GNH_BATCH_MAX_INTERVAL_MS` | **2000ms** (unset)    | 2000ms  | Max time before forcing a flush (range 100–10,000ms)           |
+| —                           | hardcoded             | 100     | Max tasks per batch write                                      |
+| —                           | hardcoded             | 3       | Consecutive failures before falling back to individual updates |
 
 ---
 
@@ -102,7 +101,7 @@ concurrency. Scale decisions are governed by the settings below.
 
 | Env var                             | Production value              | Default             | What it controls                                                    |
 | ----------------------------------- | ----------------------------- | ------------------- | ------------------------------------------------------------------- |
-| —                                   | **50** hardcoded by `APP_ENV` | prod=50, staging=10 | Max workers ceiling — no env var; requires code change              |
+| —                                   | **40** hardcoded by `APP_ENV` | prod=40, staging=10 | Max workers ceiling — no env var; requires code change              |
 | `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **15s** (unset)               | 15s                 | Minimum time between scale decisions                                |
 | `GNH_WORKER_IDLE_THRESHOLD`         | **0 / disabled** (unset)      | 0                   | Idle worker count before scale-down; 0 = disabled                   |
 | `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **0 / disabled** (unset)      | 0                   | Health probe interval (min 10s); 0 = disabled                       |
