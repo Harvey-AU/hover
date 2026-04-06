@@ -365,11 +365,20 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 			if time.Now().Before(state.BlockedUntil) {
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "\033[33m! Retiring stalled job %s for %s after backoff\033[0m\n", state.LastJobID, state.Domain)
-			state.LastJobID = ""
-			state.LastJobStatus = ""
-			state.BlockedUntil = time.Time{}
-			state.StatusRefreshFails = 0
+			// Backoff expired — do one final fetch before retiring to avoid
+			// starting a new repeat while the original job is still running.
+			finalStatus, err := fetchJobStatus(ctx, apiURL, token, state.LastJobID)
+			if err != nil || isTerminalJobStatus(finalStatus) {
+				fmt.Fprintf(os.Stderr, "\033[33m! Retiring stalled job %s for %s\033[0m\n", state.LastJobID, state.Domain)
+				state.LastJobID = ""
+				state.LastJobStatus = ""
+				state.BlockedUntil = time.Time{}
+				state.StatusRefreshFails = 0
+			} else {
+				// Job is still running — extend the backoff to avoid overlap.
+				state.LastJobStatus = finalStatus
+				state.BlockedUntil = time.Now().Add(statusInterval)
+			}
 			continue
 		}
 
@@ -676,7 +685,7 @@ func createJob(ctx context.Context, apiURL, token, domain string, concurrency in
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		if reqID := resp.Header.Get("X-Request-Id"); reqID != "" {
+		if reqID := resp.Header.Get("X-Request-ID"); reqID != "" {
 			return "", fmt.Errorf("HTTP %d (request-id: %s)", resp.StatusCode, reqID)
 		}
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -725,7 +734,7 @@ func fetchJobStatus(ctx context.Context, apiURL, token, jobID string) (string, e
 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		if reqID := resp.Header.Get("X-Request-Id"); reqID != "" {
+		if reqID := resp.Header.Get("X-Request-ID"); reqID != "" {
 			return "", fmt.Errorf("HTTP %d (request-id: %s)", resp.StatusCode, reqID)
 		}
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
