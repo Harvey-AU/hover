@@ -154,7 +154,7 @@ export async function renderUserAvatar(options = {}) {
 
   const img = document.createElement("img");
   img.alt = displayName || email || "User avatar";
-  img.loading = "lazy";
+  img.loading = "eager";
   img.decoding = "async";
   const showImage = () => {
     element.textContent = "";
