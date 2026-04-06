@@ -382,9 +382,35 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "default-src 'self'")
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "connect-src")
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "http://127.0.0.1:8765")
 	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "http://localhost:8765")
 	assert.Equal(t, "max-age=63072000; includeSubDomains", rec.Header().Get("Strict-Transport-Security"))
+}
+
+func TestSecurityHeadersMiddlewareAllowsWebflowExtensionSurfacePages(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middlewareHandler := SecurityHeadersMiddleware(handler)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/settings/account?surface=webflow-extension",
+		nil,
+	)
+	rec := httptest.NewRecorder()
+
+	middlewareHandler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "", rec.Header().Get("X-Frame-Options"))
+	assert.Contains(
+		t,
+		rec.Header().Get("Content-Security-Policy"),
+		"frame-ancestors 'self' https://webflow.com https://*.webflow.com http://localhost:1337 http://127.0.0.1:1337",
+	)
 }
 
 func TestMiddlewareChaining(t *testing.T) {

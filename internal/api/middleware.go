@@ -251,13 +251,42 @@ func buildConnectSrcValues() string {
 	return strings.Join(values, " ")
 }
 
+func isWebflowExtensionSurfacePage(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	if r.URL.Query().Get("surface") != "webflow-extension" {
+		return false
+	}
+
+	path := strings.TrimRight(r.URL.Path, "/")
+	switch {
+	case path == "/dashboard":
+		return true
+	case path == "/settings":
+		return true
+	case strings.HasPrefix(path, "/settings/"):
+		return true
+	case strings.HasPrefix(path, "/jobs/"):
+		return true
+	default:
+		return false
+	}
+}
+
 // SecurityHeadersMiddleware adds security-related headers
 func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	connectSrcValues := buildConnectSrcValues()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
+
+		frameAncestors := "'none'"
+		if isWebflowExtensionSurfacePage(r) {
+			frameAncestors = "'self' https://webflow.com https://*.webflow.com http://localhost:1337 http://127.0.0.1:1337"
+		} else {
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 
 		// Content Security Policy
 		csp := fmt.Sprintf(`
@@ -266,12 +295,13 @@ func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 			style-src 'self' 'unsafe-inline';
 			connect-src %s;
 			frame-src https://challenges.cloudflare.com;
+			frame-ancestors %s;
 			img-src 'self' data: https://www.google-analytics.com https://www.googletagmanager.com https://ssl.gstatic.com https://www.gravatar.com;
 			font-src 'self' data:;
 			object-src 'none';
 			base-uri 'self';
 			form-action 'self';
-		`, connectSrcValues)
+		`, connectSrcValues, frameAncestors)
 		w.Header().Set("Content-Security-Policy", strings.ReplaceAll(csp, "\n", " "))
 
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
