@@ -1586,34 +1586,55 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			}
 		}
 
-		// Go-side concurrency gate: check in-memory counter before hitting DB.
-		// This replaces the per-claim jobs row lock that caused hot-row contention.
+		// Go-side concurrency gate: atomically reserve a slot before hitting DB.
+		// Uses FetchAdd to avoid TOCTOU: two goroutines both reading counter < limit
+		// then both proceeding to GetNextTask, over-claiming by 1.
+		var reservedInMem bool
 		if jobInfo, exists := jobInfoSnapshot[jobID]; exists && jobInfo.Concurrency > 0 {
 			wp.runningTasksInMemMu.RLock()
 			counter, counterExists := wp.runningTasksInMem[jobID]
 			wp.runningTasksInMemMu.RUnlock()
-			if counterExists && counter.Load() >= int64(jobInfo.Concurrency) {
-				sawConcurrencyBlocked = true
-				wp.recordConcurrencyBlock(jobID)
-				continue
+			if counterExists {
+				prev := counter.Add(1) - 1
+				if prev >= int64(jobInfo.Concurrency) {
+					counter.Add(-1) // rollback: over concurrency limit
+					sawConcurrencyBlocked = true
+					wp.recordConcurrencyBlock(jobID)
+					continue
+				}
+				reservedInMem = true
 			}
 		}
 
 		task, err := wp.dbQueue.GetNextTask(ctx, jobID)
 		if err == sql.ErrNoRows {
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			continue // Try next job
 		}
 		if errors.Is(err, db.ErrPoolSaturated) {
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			// Pool saturated - treat like no tasks available and back off
 			return nil, sql.ErrNoRows
 		}
 		if err != nil {
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			log.Error().Err(err).Str("job_id", jobID).Msg("Error getting next pending task")
 			return nil, err // Return actual errors
 		}
 		if task != nil {
-			// Update in-memory counter immediately; DB flush is async.
-			wp.incrementRunningTaskInMem(task.JobID)
+			if reservedInMem {
+				// Slot already reserved atomically; just queue the async DB flush.
+				wp.queueRunningTaskIncrDB(task.JobID)
+			} else {
+				// Counter didn't exist yet (first task for this job) — full increment.
+				wp.incrementRunningTaskInMem(task.JobID)
+			}
 			log.Info().
 				Str("task_id", task.ID).
 				Str("job_id", task.JobID).
@@ -3457,6 +3478,26 @@ func (wp *WorkerPool) incrementRunningTaskInMem(jobID string) {
 	}
 }
 
+// queueRunningTaskIncrDB queues a DB flush for a job whose in-memory counter was
+// already bumped atomically by the concurrency gate. Only queues the DB side.
+func (wp *WorkerPool) queueRunningTaskIncrDB(jobID string) {
+	if wp.runningTasksIncrPending == nil {
+		return
+	}
+
+	wp.runningTasksIncrMu.Lock()
+	wp.runningTasksIncrPending[jobID]++
+	count := wp.runningTasksIncrPending[jobID]
+	wp.runningTasksIncrMu.Unlock()
+
+	if count >= wp.runningTaskReleaseBatchSize && wp.runningTasksIncrCh != nil {
+		select {
+		case wp.runningTasksIncrCh <- jobID:
+		default:
+		}
+	}
+}
+
 // decrementRunningTaskInMem decrements the in-memory counter by 1.
 func (wp *WorkerPool) decrementRunningTaskInMem(jobID string) {
 	wp.runningTasksInMemMu.RLock()
@@ -3588,6 +3629,16 @@ func (wp *WorkerPool) seedRunningTasksInMemFromDB(ctx context.Context) error {
 func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID cannot be empty")
+	}
+
+	// Flush any pending increment for this job before queuing the decrement.
+	// Without this, a decrement can reach the DB before its matching increment,
+	// causing the WHERE running_tasks > 0 guard to skip the decrement entirely —
+	// leaving running_tasks permanently inflated.
+	if wp.runningTasksIncrCh != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		wp.flushRunningTaskIncrementForJob(flushCtx, jobID)
+		flushCancel()
 	}
 
 	select {
