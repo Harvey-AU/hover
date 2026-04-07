@@ -76,8 +76,8 @@ const (
 	pendingUnlimitedCap      = 100
 	taskHTMLStorageBucket    = "task-html"
 	taskHTMLContentEncoding  = "gzip"
-	taskHTMLPersistQueueSize = 128
-	taskHTMLPersistWorkers   = 2
+	taskHTMLPersistQueueSize = 64
+	taskHTMLPersistWorkers   = 8
 	taskHTMLDrainTimeout     = 15 * time.Second
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
@@ -197,9 +197,10 @@ type WorkerPool struct {
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
-	storageClient       storageUploader // For uploading HTML samples
-	taskHTMLPersistCh   chan *taskHTMLPersistRequest
-	taskHTMLPending     atomic.Int64
+	storageClient          storageUploader // For uploading HTML samples
+	taskHTMLPersistCh      chan *taskHTMLPersistRequest
+	taskHTMLWorkerCount    int
+	taskHTMLPending        atomic.Int64
 
 	// Cold-storage archiver (nil when ARCHIVE_PROVIDER is unset)
 	archiver *archive.Archiver
@@ -472,6 +473,24 @@ func runningTaskBatchSizeFromEnv() int {
 	return defaultRunningTaskBatch
 }
 
+func htmlPersistWorkersFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_WORKERS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return taskHTMLPersistWorkers
+}
+
+func htmlPersistQueueSizeFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_QUEUE_SIZE")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return taskHTMLPersistQueueSize
+}
+
 func runningTaskFlushIntervalFromEnv() time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -604,8 +623,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	supabaseSecretKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseSecretKey != "" {
 		wp.storageClient = storage.New(supabaseURL, supabasePublishableKey, supabaseSecretKey)
-		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, taskHTMLPersistQueueSize)
-		log.Info().Msg("Storage client initialised for HTML uploads")
+		htmlQueueSize := htmlPersistQueueSizeFromEnv()
+		wp.taskHTMLWorkerCount = htmlPersistWorkersFromEnv()
+		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, htmlQueueSize)
+		log.Info().Int("queue_size", htmlQueueSize).Int("workers", wp.taskHTMLWorkerCount).Msg("Storage client initialised for HTML uploads")
 	} else {
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
 	}
@@ -3775,11 +3796,36 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 		return
 	}
 
-	for range taskHTMLPersistWorkers {
+	workerCount := wp.taskHTMLWorkerCount
+	pressureThreshold := cap(wp.taskHTMLPersistCh) / 2
+	log.Info().Int("workers", workerCount).Int("pressure_threshold", pressureThreshold).Msg("Starting HTML persistence workers")
+	for range workerCount {
 		wp.wg.Go(func() {
 			wp.taskHTMLPersistenceWorker(ctx)
 		})
 	}
+
+	// Periodic queue-depth monitor: logs at warn when depth exceeds half capacity.
+	wp.wg.Go(func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				depth := len(wp.taskHTMLPersistCh)
+				if depth > pressureThreshold {
+					log.Warn().
+						Int("queue_depth", depth).
+						Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+						Int("workers", workerCount).
+						Int("pending", int(wp.taskHTMLPending.Load())).
+						Msg("HTML persistence queue pressure")
+				}
+			case <-wp.stopCh:
+				return
+			}
+		}
+	})
 }
 
 func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
@@ -3837,7 +3883,12 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 	case wp.taskHTMLPersistCh <- request:
 	default:
 		wp.taskHTMLPending.Add(-1)
-		log.Warn().Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Task HTML persistence queue is full, skipping HTML upload")
+		log.Warn().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+			Int("workers", wp.taskHTMLWorkerCount).
+			Msg("HTML persistence queue full, skipping upload")
 	}
 }
 
