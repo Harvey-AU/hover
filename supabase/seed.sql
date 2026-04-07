@@ -60,6 +60,8 @@ VALUES
     ('96f7546c-47ea-41f8-a3a3-46b4deb84105', 'Personal Organisation', (SELECT id FROM plans WHERE name = 'enterprise'), '2025-11-02 00:11:21.520651+00', '2025-11-02 00:11:21.520651+00'),
     ('2cfb393e-03e3-4acc-b19a-0958e6332060', 'Harvey', (SELECT id FROM plans WHERE name = 'enterprise'), '2026-01-02 09:38:36.934168+00', '2026-01-02 09:38:36.934168+00'),
     ('da324afb-ce97-4814-975e-b6203cb51b0a', 'Merry People', (SELECT id FROM plans WHERE name = 'enterprise'), '2026-01-02 09:38:43.358225+00', '2026-01-02 09:38:43.358225+00')
+-- DO UPDATE (not DO NOTHING) intentionally enforces the enterprise plan on reseed,
+-- so existing DBs that already have these orgs also get corrected.
 ON CONFLICT (id) DO UPDATE SET plan_id = EXCLUDED.plan_id;
 
 -- =============================================================================
