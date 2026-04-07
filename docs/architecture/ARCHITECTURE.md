@@ -426,6 +426,9 @@ performance, cost, and accessibility.
 
 ### Configuration
 
+For all configurable dials (env vars, constants, and their relationships), see
+[CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
+
 - **Environment Variables**: Centralised configuration
 - **Database Migrations**: Schema versioning and updates
 - **Health Checks**: Application and database monitoring

@@ -82,7 +82,8 @@ SUPABASE_SERVICE_ROLE_KEY=sb_secret_<project-specific>
 ```
 
 If `.env.local` already exists, `dev.sh` leaves it untouched. Do not commit it —
-it is gitignored.
+it is gitignored. For the complete list of runtime configuration options, see
+[CONFIG_REFERENCE.md](../architecture/CONFIG_REFERENCE.md).
 
 To regenerate (e.g. after a Supabase CLI upgrade changes the keys):
 

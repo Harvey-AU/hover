@@ -110,6 +110,7 @@ For detailed, authoritative rules and onboarding:
 - `CHANGELOG.md`
 - `SECURITY.md`
 - `docs/architecture/ARCHITECTURE.md`
+- `docs/architecture/CONFIG_REFERENCE.md`
 - `docs/architecture/DATABASE.md`
 - `docs/architecture/API.md`
 - `docs/development/DEVELOPMENT.md`
