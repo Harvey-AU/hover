@@ -47,8 +47,8 @@ ARCHIVE_CONCURRENCY = "5"
 
 # Performance settings (preview has own DB now, can align closer to prod)
 WORKER_CONCURRENCY = "5"                    # Quarter of prod (respects 512mb VM)
-DB_MAX_OPEN_CONNS = "20"                   # Scaled from prod 70 (quarter of prod)
-DB_MAX_IDLE_CONNS = "5"                    # Scaled from prod 20
+DB_MAX_OPEN_CONNS = "35"                   # Slightly under Supabase preview pool size (40)
+DB_MAX_IDLE_CONNS = "8"                    # Scaled from prod 20
 DB_QUEUE_MAX_CONCURRENCY = "20"             # Half of prod
 DB_TX_MAX_RETRIES = "5"                     # Same as prod
 GNH_RUNNING_TASK_BATCH_SIZE = "32"          # Same as prod (reduces DB trips)
