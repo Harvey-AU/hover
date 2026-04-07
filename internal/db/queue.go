@@ -1047,9 +1047,11 @@ func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
 	return rowsAffected, err
 }
 
-// GetNextTask gets a pending task using row-level locking
-// Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers
-// Combines SELECT and UPDATE in a CTE for atomic claiming
+// GetNextTask gets a pending task using row-level locking.
+// Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers.
+// Combines SELECT and UPDATE in a CTE for atomic claiming.
+// Concurrency enforcement is handled by the Go-side in-memory counter in WorkerPool;
+// the jobs row is no longer locked or updated during claim to eliminate hot-row contention.
 func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) {
 	var task Task
 	now := time.Now().UTC()
@@ -1062,21 +1064,17 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 		attemptCount++
 		queryStart := time.Now()
 
-		// Use CTE to select and update in a single atomic query
-		// This reduces transaction time and minimises lock holding
-		// Also enforces per-job concurrency limits by checking running_tasks < concurrency
-		// Only locks the specific job row for the task we claim (not all eligible jobs)
+		// Two-CTE query: select a pending task then mark it running atomically.
+		// We no longer touch the jobs row here — running_tasks is incremented
+		// asynchronously by WorkerPool.incrementRunningTaskInMem / flushRunningTaskIncrements.
 		query := `
 			WITH next_task AS (
-				-- Claim a task and check job concurrency in one step
 				SELECT t.id, t.job_id, t.page_id, t.host, t.path, t.created_at, t.retry_count,
 				       t.source_type, t.source_url, t.priority_score
 				FROM tasks t
 				INNER JOIN jobs j ON t.job_id = j.id
 				WHERE t.status = 'pending'
 				AND j.status = 'running'
-				-- Support legacy jobs with NULL or 0 concurrency (unlimited)
-				AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks < j.concurrency)
 				-- Quota enforcement: don't claim if org has exceeded daily quota (completed pages only)
 				AND (j.organisation_id IS NULL OR NOT is_org_over_daily_quota(j.organisation_id))
 		`
@@ -1093,39 +1091,26 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 				LIMIT 1
 				FOR UPDATE OF t SKIP LOCKED
 			),
-			job_update AS (
-				UPDATE jobs j
-				SET running_tasks = running_tasks + 1
-				FROM next_task nt
-				WHERE j.id = nt.job_id
-				  AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks < j.concurrency)
-				RETURNING j.id, j.running_tasks, j.concurrency
-			),
 			task_update AS (
 				UPDATE tasks
 				SET status = 'running', started_at = $1
 				FROM next_task nt
-				JOIN job_update ju ON ju.id = nt.job_id
 				WHERE tasks.id = nt.id
 				RETURNING tasks.id, tasks.job_id, tasks.page_id, tasks.host, tasks.path,
 				          tasks.created_at, tasks.retry_count, tasks.source_type,
-				          tasks.source_url, tasks.priority_score,
-				          ju.running_tasks, ju.concurrency
+				          tasks.source_url, tasks.priority_score
 			)
-			SELECT id, job_id, page_id, host, path, created_at, retry_count, source_type, source_url, priority_score,
-			       running_tasks, concurrency
+			SELECT id, job_id, page_id, host, path, created_at, retry_count, source_type, source_url, priority_score
 			FROM task_update
 		`
 
 		// Execute the combined query
 		row := tx.QueryRowContext(ctx, query, args...)
 
-		var jobRunningTasks sql.NullInt64
-		var jobConcurrency sql.NullInt64
 		err := row.Scan(
 			&task.ID, &task.JobID, &task.PageID, &task.Host, &task.Path,
 			&task.CreatedAt, &task.RetryCount, &task.SourceType, &task.SourceURL,
-			&task.PriorityScore, &jobRunningTasks, &jobConcurrency,
+			&task.PriorityScore,
 		)
 		elapsed := time.Since(queryStart)
 
@@ -1134,27 +1119,6 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 			metricsJobID := jobID
 			if metricsJobID == "" {
 				metricsJobID = "__all__"
-			}
-
-			if jobID == "" {
-				hasBlocked := q.hasAnyConcurrencyBlockedTasks(ctx, tx)
-				if hasBlocked {
-					log.Debug().
-						Str("job_id", jobID).
-						Dur("query_duration", elapsed).
-						Int("attempt", attemptCount).
-						Msg("Tasks available but blocked by job concurrency limit")
-					observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "concurrency_blocked")
-					return ErrConcurrencyBlocked
-				}
-			} else if q.jobHasConcurrencyBlockedTasks(ctx, tx, jobID) {
-				log.Debug().
-					Str("job_id", jobID).
-					Dur("query_duration", elapsed).
-					Int("attempt", attemptCount).
-					Msg("Tasks available but blocked by job concurrency limit")
-				observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "concurrency_blocked")
-				return ErrConcurrencyBlocked
 			}
 
 			log.Debug().
@@ -1184,30 +1148,14 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 		task.Status = "running"
 		task.StartedAt = now
 
-		runningValue := int64(0)
-		if jobRunningTasks.Valid {
-			runningValue = jobRunningTasks.Int64
-		}
-
-		concurrencyValue := int64(0)
-		unlimited := true
-		if jobConcurrency.Valid && jobConcurrency.Int64 > 0 {
-			concurrencyValue = jobConcurrency.Int64
-			unlimited = false
-		}
-
 		log.Debug().
 			Str("job_id", task.JobID).
 			Str("task_id", task.ID).
 			Dur("query_duration", elapsed).
 			Int("attempt", attemptCount).
-			Int64("job_running_tasks", runningValue).
-			Int64("job_concurrency_limit", concurrencyValue).
-			Bool("job_concurrency_unlimited", unlimited).
 			Msg("Claimed next task")
 
 		observability.RecordTaskClaimAttempt(ctx, task.JobID, elapsed, "claimed")
-		observability.RecordJobConcurrencySnapshot(ctx, task.JobID, runningValue, concurrencyValue, unlimited)
 
 		return nil
 	})
@@ -1229,10 +1177,6 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 
 	if err == sql.ErrNoRows {
 		return nil, nil // No tasks available
-	}
-	if errors.Is(err, ErrConcurrencyBlocked) {
-		// Tasks exist but blocked by concurrency - return sentinel for backoff
-		return nil, err
 	}
 	if err != nil {
 		// Log error with total context
@@ -1960,55 +1904,29 @@ func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, cou
 	return nil
 }
 
+// IncrementRunningTasksBy adds count to running_tasks for a job.
+// It is called asynchronously by WorkerPool to flush batched in-memory increments,
+// keeping the hot claim path free from jobs row contention.
+func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
+	if jobID == "" || count <= 0 {
+		return nil
+	}
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(txCtx, `
+			UPDATE jobs
+			SET running_tasks = running_tasks + $2
+			WHERE id = $1
+		`, jobID, count)
+		return err
+	})
+}
+
 // promoteWaitingTask best-effort promotes a single waiting task for the given job.
 func (q *DbQueue) promoteWaitingTask(ctx context.Context, jobID string) error {
 	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID)
 		return err
 	})
-}
-func (q *DbQueue) hasAnyConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx) bool {
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query).Scan(&exists); err != nil {
-		log.Warn().Err(err).Msg("hasAnyConcurrencyBlockedTasks fallback query failed")
-		return false
-	}
-	return exists
-}
-
-func (q *DbQueue) jobHasConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx, jobID string) bool {
-	if jobID == "" {
-		return false
-	}
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE id = $1
-			  AND status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query, jobID).Scan(&exists); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Msg("jobHasConcurrencyBlockedTasks query failed")
-		return false
-	}
-	return exists
 }
 
 // UpdateDomainTechnologies updates the detected technologies for a domain.

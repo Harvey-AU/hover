@@ -88,6 +88,7 @@ type MockDbQueue struct {
 	UpdateTaskStatusFunc        func(ctx context.Context, task *db.Task) error
 	DecrementRunningTasksFunc   func(ctx context.Context, jobID string) error
 	DecrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
+	IncrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
 	ExecuteFunc                 func(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteMaintenanceFunc      func(ctx context.Context, fn func(*sql.Tx) error) error
 	UpdateTaskHTMLMetadataFunc  func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
@@ -121,6 +122,13 @@ func (m *MockDbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string,
 	// Fallback to single decrement for compatibility in tests
 	if m.DecrementRunningTasksFunc != nil {
 		return m.DecrementRunningTasksFunc(ctx, jobID)
+	}
+	return nil
+}
+
+func (m *MockDbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
+	if m.IncrementRunningTasksByFunc != nil {
+		return m.IncrementRunningTasksByFunc(ctx, jobID, count)
 	}
 	return nil
 }
