@@ -525,10 +525,11 @@ func runJobsGenerate(args []string) error {
 		default:
 		}
 
-		// Refresh token if it's nearing expiry (within 5 minutes).
-		freshToken, err := ensureToken(ctx, ac)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: token refresh failed: %v\n", err)
+		// Silently refresh token if nearing expiry. Never open a browser mid-run.
+		// On failure, keep using the existing token — the API will return 401
+		// when it truly expires, at which point the loop exits with a clear message.
+		if freshToken, err := ensureTokenSilent(ctx, ac); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not refresh token (will retry next batch): %v\n", err)
 		} else {
 			token = freshToken
 		}
@@ -586,7 +587,7 @@ func runJobsGenerate(args []string) error {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\033[31m✗ Failed: %s — %v\033[0m\n", state.Domain, err)
 				if strings.Contains(err.Error(), "401") {
-					return fmt.Errorf("authentication failed — check your token")
+					return fmt.Errorf("session expired — re-run the command to re-authenticate")
 				}
 				state.CreateFailures++
 				if state.CreateFailures >= maxCreateRetries {
