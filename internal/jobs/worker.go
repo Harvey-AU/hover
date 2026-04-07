@@ -195,6 +195,15 @@ type WorkerPool struct {
 	runningTaskReleaseMu            sync.Mutex
 	runningTaskReleasePending       map[string]int
 
+	// In-memory running_tasks tracking (avoids hot-row contention on the jobs row).
+	// Counters are seeded from DB after reconciliation and kept in sync as tasks are
+	// claimed and completed. Increments are flushed to DB asynchronously.
+	runningTasksInMem       map[string]*atomic.Int64
+	runningTasksInMemMu     sync.RWMutex
+	runningTasksIncrPending map[string]int
+	runningTasksIncrMu      sync.Mutex
+	runningTasksIncrCh      chan string
+
 	// Technology detection
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
@@ -603,6 +612,11 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		runningTaskReleaseFlushInterval: runningTaskFlushInterval,
 		runningTaskReleasePending:       make(map[string]int),
 
+		// In-memory running_tasks tracking
+		runningTasksInMem:       make(map[string]*atomic.Int64),
+		runningTasksIncrPending: make(map[string]int),
+		runningTasksIncrCh:      make(chan string, runningTaskBuffer),
+
 		// Technology detection (initialised lazily to avoid startup errors)
 		techDetectedDomains: make(map[int]bool),
 	}
@@ -717,6 +731,7 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.StartCleanupMonitor(ctx)
 	wp.StartQuotaPromotionMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
+	wp.startRunningTaskIncrementLoop(ctx)
 	wp.startTaskHTMLPersistenceLoop(ctx)
 
 	// Start cold-storage archiver if configured.
@@ -739,6 +754,7 @@ func (wp *WorkerPool) Stop() {
 		close(wp.stopCh)
 		wp.wg.Wait()
 		wp.flushRunningTaskReleases(context.Background())
+		wp.flushRunningTaskIncrements(context.Background())
 		// Stop batch manager to flush remaining updates
 		if wp.batchManager != nil {
 			wp.batchManager.Stop()
@@ -842,6 +858,12 @@ func (wp *WorkerPool) reconcileRunningTaskCounters(ctx context.Context) error {
 			Msg("Running_tasks counters reconciled - capacity leak detected and fixed")
 	} else {
 		log.Info().Msg("Running_tasks counters already accurate - no reconciliation needed")
+	}
+
+	// Seed in-memory counters from DB so the Go-side concurrency gate is accurate
+	// immediately after reconciliation (before any tasks are claimed).
+	if err := wp.seedRunningTasksInMemFromDB(ctx); err != nil {
+		log.Warn().Err(err).Msg("Failed to seed in-memory running_tasks counters - concurrency gate may be loose until first claim")
 	}
 
 	return nil
@@ -1012,6 +1034,14 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 	wp.jobs[jobID] = true
 	wp.jobsMutex.Unlock()
 
+	// Seed in-memory running_tasks counter at zero for new jobs.
+	// If a counter already exists (e.g. job was re-added) leave it in place.
+	wp.runningTasksInMemMu.Lock()
+	if _, exists := wp.runningTasksInMem[jobID]; !exists {
+		wp.runningTasksInMem[jobID] = &atomic.Int64{}
+	}
+	wp.runningTasksInMemMu.Unlock()
+
 	// Initialise performance tracking for this job
 	wp.perfMutex.Lock()
 	wp.jobPerformance[jobID] = &JobPerformance{
@@ -1161,6 +1191,12 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 	wp.jobsMutex.Lock()
 	delete(wp.jobs, jobID)
 	wp.jobsMutex.Unlock()
+
+	// Flush any pending running_tasks increments before removing the job's state.
+	wp.flushRunningTaskIncrementForJob(context.Background(), jobID)
+	wp.runningTasksInMemMu.Lock()
+	delete(wp.runningTasksInMem, jobID)
+	wp.runningTasksInMemMu.Unlock()
 
 	// Remove performance boost for this job
 	wp.perfMutex.Lock()
@@ -1550,14 +1586,21 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			}
 		}
 
+		// Go-side concurrency gate: check in-memory counter before hitting DB.
+		// This replaces the per-claim jobs row lock that caused hot-row contention.
+		if jobInfo, exists := jobInfoSnapshot[jobID]; exists && jobInfo.Concurrency > 0 {
+			wp.runningTasksInMemMu.RLock()
+			counter, counterExists := wp.runningTasksInMem[jobID]
+			wp.runningTasksInMemMu.RUnlock()
+			if counterExists && counter.Load() >= int64(jobInfo.Concurrency) {
+				sawConcurrencyBlocked = true
+				wp.recordConcurrencyBlock(jobID)
+				continue
+			}
+		}
+
 		task, err := wp.dbQueue.GetNextTask(ctx, jobID)
 		if err == sql.ErrNoRows {
-			continue // Try next job
-		}
-		if errors.Is(err, db.ErrConcurrencyBlocked) {
-			// Job has tasks but they're blocked by concurrency limits
-			sawConcurrencyBlocked = true
-			wp.recordConcurrencyBlock(jobID)
 			continue // Try next job
 		}
 		if errors.Is(err, db.ErrPoolSaturated) {
@@ -1569,6 +1612,8 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			return nil, err // Return actual errors
 		}
 		if task != nil {
+			// Update in-memory counter immediately; DB flush is async.
+			wp.incrementRunningTaskInMem(task.JobID)
 			log.Info().
 				Str("task_id", task.ID).
 				Str("job_id", task.JobID).
@@ -2129,6 +2174,7 @@ func (wp *WorkerPool) requeueStaleRunningTasks(ctx context.Context, jobID string
 	if decErr := wp.dbQueue.DecrementRunningTasksBy(ctx, jobID, int(recovered)); decErr != nil {
 		return recovered, fmt.Errorf("failed to release running slots for job %s: %w", jobID, decErr)
 	}
+	wp.decrementRunningTaskInMemBy(jobID, int(recovered))
 	return recovered, nil
 }
 
@@ -2746,7 +2792,7 @@ func (wp *WorkerPool) scaleDownWorkers(target int) {
 // returnTaskToPending returns a claimed task back to pending status
 // Used by the health probe to check for work without actually processing it
 func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) error {
-	return wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		// Return task to pending
 		_, err := tx.ExecContext(ctx, `
 			UPDATE tasks
@@ -2757,7 +2803,7 @@ func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) er
 			return fmt.Errorf("failed to return task to pending: %w", err)
 		}
 
-		// Decrement running tasks counter
+		// Decrement running tasks counter in DB
 		_, err = tx.ExecContext(ctx, `
 			UPDATE jobs
 			SET running_tasks = running_tasks - 1
@@ -2769,6 +2815,12 @@ func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) er
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// Mirror decrement in in-memory counter.
+	wp.decrementRunningTaskInMem(task.JobID)
+	return nil
 }
 
 // healthProbe periodically checks for work when all workers are idle
@@ -3363,6 +3415,176 @@ func (wp *WorkerPool) flushRunningTaskReleaseCount(ctx context.Context, jobID st
 	}
 }
 
+// --- In-memory running_tasks increment helpers ---
+
+// incrementRunningTaskInMem bumps the in-memory counter and queues a DB flush.
+func (wp *WorkerPool) incrementRunningTaskInMem(jobID string) {
+	// Guard: maps may be nil in tests that construct WorkerPool directly.
+	if wp.runningTasksInMem == nil {
+		return
+	}
+
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+
+	if !exists {
+		wp.runningTasksInMemMu.Lock()
+		counter, exists = wp.runningTasksInMem[jobID]
+		if !exists {
+			counter = &atomic.Int64{}
+			wp.runningTasksInMem[jobID] = counter
+		}
+		wp.runningTasksInMemMu.Unlock()
+	}
+	counter.Add(1)
+
+	if wp.runningTasksIncrPending == nil {
+		return
+	}
+
+	wp.runningTasksIncrMu.Lock()
+	wp.runningTasksIncrPending[jobID]++
+	count := wp.runningTasksIncrPending[jobID]
+	wp.runningTasksIncrMu.Unlock()
+
+	// Trigger an early flush if we've accumulated a batch.
+	if count >= wp.runningTaskReleaseBatchSize && wp.runningTasksIncrCh != nil {
+		select {
+		case wp.runningTasksIncrCh <- jobID:
+		default:
+		}
+	}
+}
+
+// decrementRunningTaskInMem decrements the in-memory counter by 1.
+func (wp *WorkerPool) decrementRunningTaskInMem(jobID string) {
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if exists {
+		counter.Add(-1)
+	}
+}
+
+// decrementRunningTaskInMemBy decrements the in-memory counter by count.
+func (wp *WorkerPool) decrementRunningTaskInMemBy(jobID string, count int) {
+	if count <= 0 {
+		return
+	}
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if exists {
+		counter.Add(-int64(count))
+	}
+}
+
+// flushRunningTaskIncrements flushes all pending increments to the DB.
+func (wp *WorkerPool) flushRunningTaskIncrements(ctx context.Context) {
+	wp.runningTasksIncrMu.Lock()
+	if len(wp.runningTasksIncrPending) == 0 {
+		wp.runningTasksIncrMu.Unlock()
+		return
+	}
+	snapshot := make(map[string]int, len(wp.runningTasksIncrPending))
+	for jobID, count := range wp.runningTasksIncrPending {
+		snapshot[jobID] = count
+	}
+	wp.runningTasksIncrPending = make(map[string]int)
+	wp.runningTasksIncrMu.Unlock()
+
+	for jobID, count := range snapshot {
+		if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
+			log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
+				Msg("Failed to flush running task increments, re-queuing")
+			wp.runningTasksIncrMu.Lock()
+			wp.runningTasksIncrPending[jobID] += count
+			wp.runningTasksIncrMu.Unlock()
+		}
+	}
+}
+
+// flushRunningTaskIncrementForJob flushes pending increments for a single job.
+func (wp *WorkerPool) flushRunningTaskIncrementForJob(ctx context.Context, jobID string) {
+	wp.runningTasksIncrMu.Lock()
+	count := wp.runningTasksIncrPending[jobID]
+	if count == 0 {
+		wp.runningTasksIncrMu.Unlock()
+		return
+	}
+	delete(wp.runningTasksIncrPending, jobID)
+	wp.runningTasksIncrMu.Unlock()
+
+	if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
+			Msg("Failed to flush running task increment for job, re-queuing")
+		wp.runningTasksIncrMu.Lock()
+		wp.runningTasksIncrPending[jobID] += count
+		wp.runningTasksIncrMu.Unlock()
+	}
+}
+
+// startRunningTaskIncrementLoop mirrors startRunningTaskReleaseLoop but for increments.
+func (wp *WorkerPool) startRunningTaskIncrementLoop(ctx context.Context) {
+	wp.wg.Go(func() {
+		interval := wp.runningTaskReleaseFlushInterval
+		if interval <= 0 {
+			interval = defaultRunningTaskFlush
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				wp.flushRunningTaskIncrements(context.Background())
+				return
+			case <-wp.stopCh:
+				wp.flushRunningTaskIncrements(context.Background())
+				return
+			case jobID := <-wp.runningTasksIncrCh:
+				if jobID != "" {
+					wp.flushRunningTaskIncrementForJob(ctx, jobID)
+				}
+			case <-ticker.C:
+				wp.flushRunningTaskIncrements(ctx)
+			}
+		}
+	})
+}
+
+// seedRunningTasksInMemFromDB loads current running_tasks values for active jobs into memory.
+func (wp *WorkerPool) seedRunningTasksInMemFromDB(ctx context.Context) error {
+	rows, err := wp.db.QueryContext(ctx, `
+		SELECT id, running_tasks
+		FROM jobs
+		WHERE status IN ('running', 'pending')
+	`)
+	if err != nil {
+		return fmt.Errorf("query running_tasks for seeding: %w", err)
+	}
+	defer rows.Close()
+
+	wp.runningTasksInMemMu.Lock()
+	defer wp.runningTasksInMemMu.Unlock()
+
+	for rows.Next() {
+		var jobID string
+		var runningTasks int64
+		if err := rows.Scan(&jobID, &runningTasks); err != nil {
+			log.Warn().Err(err).Msg("Failed to scan running_tasks row during seeding")
+			continue
+		}
+		counter, exists := wp.runningTasksInMem[jobID]
+		if !exists {
+			counter = &atomic.Int64{}
+			wp.runningTasksInMem[jobID] = counter
+		}
+		counter.Store(runningTasks)
+	}
+	return rows.Err()
+}
+
 func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID cannot be empty")
@@ -3670,7 +3892,8 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 		observability.RecordWorkerTaskFailure(ctx, task.JobID, failureReason)
 	}
 
-	// Immediately queue running_tasks decrement to free concurrency slots
+	// Decrement in-memory counter immediately, then queue async DB decrement.
+	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
 		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 			Msg("Failed to decrement running_tasks counter")
@@ -4084,7 +4307,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 
 	wp.populateRequestDiagnostics(task, result)
 
-	// Immediately queue running_tasks decrement to free concurrency slot
+	// Decrement in-memory counter immediately, then queue async DB decrement.
+	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
 		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 			Msg("Failed to decrement running_tasks counter")
