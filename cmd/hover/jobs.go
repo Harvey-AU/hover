@@ -400,8 +400,9 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 
 // Test domains — same 115 diverse real-world sites from the shell script.
 var testDomains = []string{
-	// Australian businesses (5)
+	// Australian businesses (10)
 	"bankaust.com.au", "bunnings.com.au",
+	"responsibleinvestment.org", "envirotecture.com.au", "cpsn.org.au", "teamharvey.co", "goodnative.co",
 	"jbhifi.com.au", "kmart.com.au", "officeworks.com.au",
 
 	// E-commerce & retail (7)
