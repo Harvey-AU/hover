@@ -197,10 +197,10 @@ type WorkerPool struct {
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
-	storageClient          storageUploader // For uploading HTML samples
-	taskHTMLPersistCh      chan *taskHTMLPersistRequest
-	taskHTMLWorkerCount    int
-	taskHTMLPending        atomic.Int64
+	storageClient       storageUploader // For uploading HTML samples
+	taskHTMLPersistCh   chan *taskHTMLPersistRequest
+	taskHTMLWorkerCount int
+	taskHTMLPending     atomic.Int64
 
 	// Cold-storage archiver (nil when ARCHIVE_PROVIDER is unset)
 	archiver *archive.Archiver
