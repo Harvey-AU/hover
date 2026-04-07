@@ -400,13 +400,13 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 
 // Test domains — same 115 diverse real-world sites from the shell script.
 var testDomains = []string{
-	// Australian businesses (6)
-	"bankaust.com.au", "australiansuper.com", "bunnings.com.au",
+	// Australian businesses (5)
+	"bankaust.com.au", "bunnings.com.au",
 	"jbhifi.com.au", "kmart.com.au", "officeworks.com.au",
 
-	// E-commerce & retail (10)
-	"merrypeople.com", "aesop.com", "allbirds.com", "everlane.com", "warbyparker.com",
-	"casper.com", "glossier.com", "away.com", "brooklinen.com", "kotn.com",
+	// E-commerce & retail (7)
+	"merrypeople.com", "allbirds.com", "everlane.com", "warbyparker.com",
+	"glossier.com", "brooklinen.com", "kotn.com",
 
 	// Tech blogs & publications (5)
 	"csswizardry.com", "heydesigner.com", "sidebar.io", "stefanjudis.com", "smolblog.com",
@@ -415,31 +415,31 @@ var testDomains = []string{
 	"smashingmagazine.com", "css-tricks.com", "webdesignerdepot.com", "sitepoint.com", "alistapart.com",
 	"designmodo.com", "creativebloq.com", "awwwards.com", "onextrapixel.com", "hongkiat.com",
 
-	// Small business / agency sites (9)
-	"studiothink.com.au", "zeroseven.com.au", "humaan.com.au", "noice.com.au", "willandco.com.au",
-	"thecontentlab.com.au", "thisisgold.com.au", "wethecollective.com.au", "tworedshoes.com.au",
+	// Small business / agency sites (5)
+	"zeroseven.com.au", "noice.com.au", "willandco.com.au",
+	"tworedshoes.com.au",
 
 	// Developer docs & tools (8)
 	"fly.io", "railway.app", "render.com", "tailwindcss.com",
 	"nextjs.org", "react.dev", "astro.build", "svelte.dev",
 
-	// Additional dev frameworks & tooling (30)
-	"vitejs.dev", "nuxt.com", "remix.run", "solidjs.com", "qwik.dev",
+	// Additional dev frameworks & tooling (25)
+	"vitejs.dev", "nuxt.com", "remix.run", "qwik.dev",
 	"parceljs.org", "rollupjs.org", "esbuild.github.io", "bun.sh", "deno.com",
 	"cypress.io", "vitest.dev", "pnpm.io", "turbo.build",
 	"nx.dev", "oclif.io", "temporal.io", "directus.io", "strapi.io",
-	"sanity.io", "payloadcms.com", "pocketbase.io", "supabase.com", "plane.so",
-	"appsmith.com", "tooljet.com", "budibase.com", "windmill.dev", "tauri.app",
+	"sanity.io", "pocketbase.io", "supabase.com", "plane.so",
+	"appsmith.com", "budibase.com", "windmill.dev", "tauri.app",
 
-	// SaaS & productivity apps (12)
-	"linear.app", "height.app", "reclaim.ai", "mem.ai", "reflect.app",
-	"cron.com", "retool.com", "cal.com", "around.co", "raycast.com",
+	// SaaS & productivity apps (8)
+	"linear.app", "reclaim.ai", "reflect.app",
+	"cron.com", "retool.com", "cal.com", "raycast.com",
 	"warp.dev", "cursor.so",
 
-	// Niche e-commerce & DTC brands (17)
-	"studioneat.com", "feals.com", "magicspoon.com", "atlascoffeeclub.com",
-	"blueland.com", "publicgoods.com", "outerknown.com", "grovemade.com",
-	"ridgewallet.com", "ouraring.com", "carawayhome.com", "maap.cc",
+	// Niche e-commerce & DTC brands (13)
+	"feals.com", "magicspoon.com", "atlascoffeeclub.com",
+	"blueland.com", "outerknown.com", "grovemade.com",
+	"ridgewallet.com", "ouraring.com", "carawayhome.com",
 	"bellroy.com", "ritual.com", "cuyana.com", "thesill.com", "parachutehome.com",
 
 	// Indie analytics & SaaS (7)
