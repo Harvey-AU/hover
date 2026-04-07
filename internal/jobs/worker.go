@@ -67,7 +67,7 @@ const (
 	concurrencyBlockCooldown = 30 * time.Second
 
 	// maxWorkersProduction caps dynamic scaling below the DB pool budget.
-	maxWorkersProduction = 40
+	maxWorkersProduction = 100
 	// maxWorkersStaging keeps preview/staging environments conservative.
 	maxWorkersStaging = 10
 
