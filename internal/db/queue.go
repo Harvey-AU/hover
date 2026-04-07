@@ -1928,49 +1928,6 @@ func (q *DbQueue) promoteWaitingTask(ctx context.Context, jobID string) error {
 		return err
 	})
 }
-func (q *DbQueue) hasAnyConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx) bool {
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query).Scan(&exists); err != nil {
-		log.Warn().Err(err).Msg("hasAnyConcurrencyBlockedTasks fallback query failed")
-		return false
-	}
-	return exists
-}
-
-func (q *DbQueue) jobHasConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx, jobID string) bool {
-	if jobID == "" {
-		return false
-	}
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE id = $1
-			  AND status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query, jobID).Scan(&exists); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Msg("jobHasConcurrencyBlockedTasks query failed")
-		return false
-	}
-	return exists
-}
 
 // UpdateDomainTechnologies updates the detected technologies for a domain.
 // Delegates to the underlying DB implementation.
