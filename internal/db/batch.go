@@ -429,6 +429,24 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 		}
 	}
 
+	// Build the set of jobs that freed capacity — done before the tx so promotes
+	// can run in a separate transaction after the batch commits. Keeping promotes
+	// inside the batch tx caused CP Sentry errors: a failed promote left Postgres
+	// in an aborted-transaction state, and the subsequent COMMIT returned ROLLBACK.
+	jobIDsToPromote := make(map[string]bool)
+	for _, task := range completedTasks {
+		jobIDsToPromote[task.JobID] = true
+	}
+	for _, task := range failedTasks {
+		jobIDsToPromote[task.JobID] = true
+	}
+	for _, task := range skippedTasks {
+		jobIDsToPromote[task.JobID] = true
+	}
+	for _, task := range waitingTasks {
+		jobIDsToPromote[task.JobID] = true
+	}
+
 	err := bm.queue.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		// Batch update completed tasks
 		if len(completedTasks) > 0 {
@@ -471,45 +489,30 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 			}
 		}
 
-		// Promote waiting→pending for jobs that freed capacity
-		// Completed/failed/skipped tasks all free up job slots
-		jobIDsToPromote := make(map[string]bool)
-		for _, task := range completedTasks {
-			jobIDsToPromote[task.JobID] = true
-		}
-		for _, task := range failedTasks {
-			jobIDsToPromote[task.JobID] = true
-		}
-		for _, task := range skippedTasks {
-			jobIDsToPromote[task.JobID] = true
-		}
-		for _, task := range waitingTasks {
-			jobIDsToPromote[task.JobID] = true
-		}
-
-		// Call promote_waiting_task_for_job() for each affected job
-		promotedCount := 0
-		for jobID := range jobIDsToPromote {
-			_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID)
-			if err != nil {
-				log.Warn().
-					Err(err).
-					Str("job_id", jobID).
-					Msg("Failed to promote waiting task for job")
-				// Don't fail the entire batch - just log and continue
-			} else {
-				promotedCount++
-			}
-		}
-
-		if promotedCount > 0 {
-			log.Debug().
-				Int("jobs_promoted", promotedCount).
-				Msg("Promoted waiting tasks to pending")
-		}
-
 		return nil
 	})
+
+	// Promote waiting→pending in a separate transaction after the batch commits.
+	// Best-effort: a failed promote just means that job waits for the next poll cycle.
+	if err == nil && len(jobIDsToPromote) > 0 {
+		promoteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		promotedCount := 0
+		promoteErr := bm.queue.ExecuteWithContext(promoteCtx, func(txCtx context.Context, tx *sql.Tx) error {
+			for jobID := range jobIDsToPromote {
+				if _, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID); err != nil {
+					return fmt.Errorf("promote job %s: %w", jobID, err)
+				}
+				promotedCount++
+			}
+			return nil
+		})
+		if promoteErr != nil {
+			log.Warn().Err(promoteErr).Int("jobs_total", len(jobIDsToPromote)).Msg("Failed to promote waiting tasks after batch")
+		} else if promotedCount > 0 {
+			log.Debug().Int("jobs_promoted", promotedCount).Msg("Promoted waiting tasks to pending")
+		}
+	}
 
 	duration := time.Since(start)
 

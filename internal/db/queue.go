@@ -472,7 +472,12 @@ func (q *DbQueue) executeOnce(ctx context.Context, fn func(*sql.Tx) error) error
 	commitStart := time.Now()
 	if err := tx.Commit(); err != nil {
 		commitDuration := time.Since(commitStart)
-		sentry.CaptureException(err)
+		// sql.ErrTxDone means the context expired between fn completing and commit;
+		// database/sql auto-rolled-back the tx. This is a known race — retried
+		// upstream, not an unhandled exception worth capturing in Sentry.
+		if !errors.Is(err, sql.ErrTxDone) {
+			sentry.CaptureException(err)
+		}
 		log.Error().
 			Err(err).
 			Dur("begin_duration", beginDuration).
@@ -536,7 +541,9 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 	commitStart := time.Now()
 	if err := tx.Commit(); err != nil {
 		commitDuration := time.Since(commitStart)
-		sentry.CaptureException(err)
+		if !errors.Is(err, sql.ErrTxDone) {
+			sentry.CaptureException(err)
+		}
 		log.Error().
 			Err(err).
 			Dur("begin_duration", beginDuration).
