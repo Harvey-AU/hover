@@ -78,6 +78,8 @@ const (
 	taskHTMLContentEncoding  = "gzip"
 	taskHTMLPersistQueueSize = 64
 	taskHTMLPersistWorkers   = 8
+	maxHTMLPersistWorkers    = 32
+	maxHTMLPersistQueueSize  = 10_000
 	taskHTMLDrainTimeout     = 15 * time.Second
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
@@ -476,7 +478,7 @@ func runningTaskBatchSizeFromEnv() int {
 func htmlPersistWorkersFromEnv() int {
 	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_WORKERS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
-			return parsed
+			return min(parsed, maxHTMLPersistWorkers)
 		}
 	}
 	return taskHTMLPersistWorkers
@@ -485,7 +487,7 @@ func htmlPersistWorkersFromEnv() int {
 func htmlPersistQueueSizeFromEnv() int {
 	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_QUEUE_SIZE")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
-			return parsed
+			return min(parsed, maxHTMLPersistQueueSize)
 		}
 	}
 	return taskHTMLPersistQueueSize
@@ -3823,6 +3825,8 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 				}
 			case <-wp.stopCh:
 				return
+			case <-ctx.Done():
+				return
 			}
 		}
 	})
@@ -3871,17 +3875,29 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 		return
 	}
 
-	request := &taskHTMLPersistRequest{
+	// Fast-path: skip the expensive body copy when the queue is clearly full.
+	// len(ch) is a non-blocking approximation; the select below handles the
+	// race where the queue fills between this check and the actual send.
+	if len(wp.taskHTMLPersistCh) >= cap(wp.taskHTMLPersistCh) {
+		log.Warn().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+			Int("workers", wp.taskHTMLWorkerCount).
+			Msg("HTML persistence queue full, skipping upload")
+		return
+	}
+
+	wp.taskHTMLPending.Add(1)
+	select {
+	case wp.taskHTMLPersistCh <- &taskHTMLPersistRequest{
 		Task:        *task,
 		ContentType: result.ContentType,
 		Body:        append([]byte(nil), result.Body...),
 		CapturedAt:  capturedAt,
-	}
-	wp.taskHTMLPending.Add(1)
-
-	select {
-	case wp.taskHTMLPersistCh <- request:
+	}:
 	default:
+		// Queue filled in the race window between len check and send.
 		wp.taskHTMLPending.Add(-1)
 		log.Warn().
 			Str("task_id", task.ID).
