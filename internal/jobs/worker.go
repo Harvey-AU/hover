@@ -270,7 +270,7 @@ func (wp *WorkerPool) recordWaitingTask(ctx context.Context, task *db.Task, reas
 
 	observability.RecordTaskWaiting(ctx, task.JobID, string(reason), 1)
 
-	log.Info().
+	log.Debug().
 		Str("task_id", task.ID).
 		Str("job_id", task.JobID).
 		Str("waiting_reason", string(reason)).
@@ -1644,7 +1644,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				// Counter didn't exist yet (first task for this job) — full increment.
 				wp.incrementRunningTaskInMem(task.JobID)
 			}
-			log.Info().
+			log.Debug().
 				Str("task_id", task.ID).
 				Str("job_id", task.JobID).
 				Int("page_id", task.PageID).
@@ -4811,7 +4811,7 @@ func (wp *WorkerPool) updateTaskPriorities(ctx context.Context, jobID string, do
 	}
 
 	if rowsAffected > 0 {
-		log.Info().
+		log.Debug().
 			Str("job_id", jobID).
 			Int64("tasks_updated", rowsAffected).
 			Float64("new_priority", newPriority).
@@ -4916,7 +4916,7 @@ func (wp *WorkerPool) evaluateJobPerformance(jobID string, responseTime int64) {
 
 	clamped := neededBoost > oldBoost && actualBoost == oldBoost
 
-	log.Info().
+	log.Debug().
 		Str("job_id", jobID).
 		Int64("avg_response_time", avgResponseTime).
 		Int("requested_boost", neededBoost).
