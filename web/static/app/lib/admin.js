@@ -72,7 +72,7 @@ async function handleResetDatabase(session, btn, originalText) {
     });
 
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 120000);
     let response;
     try {
       response = await fetch("/v1/admin/reset-db", {
