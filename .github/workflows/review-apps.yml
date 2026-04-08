@@ -174,12 +174,15 @@ jobs:
             exit 0
           fi
           echo "Setting pool size to 40 for branch ref: $BRANCH_REF"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X PATCH \
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"default_pool_size": 40}' \
             "https://api.supabase.com/v1/projects/$BRANCH_REF/config/database/pooler")
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Response ($HTTP_STATUS): $BODY"
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "✅ Pool size set to 40"
           else
