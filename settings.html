@@ -118,11 +118,19 @@
             <div class="settings-group-title">Admin</div>
             <button
               class="settings-link settings-link--danger"
-              id="settingsResetDbBtn"
-              title="Delete all jobs and tasks - USE WITH CAUTION"
-              aria-label="Reset database - delete all jobs and tasks"
+              id="settingsResetDataBtn"
+              title="Truncate all job, task, page and domain data - USE WITH CAUTION"
+              aria-label="Reset data - truncate all jobs, tasks, pages and domains"
             >
-              Reset Database
+              Reset Data
+            </button>
+            <button
+              class="settings-link settings-link--danger"
+              id="settingsResetSchemaBtn"
+              title="Drop and rebuild entire schema - USE WITH CAUTION"
+              aria-label="Reset schema - drops all tables and replays migrations"
+            >
+              Reset Schema
             </button>
           </div>
         </aside>

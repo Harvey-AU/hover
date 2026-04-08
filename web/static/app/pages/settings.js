@@ -336,8 +336,16 @@ async function init() {
   }
 
   // Admin section (only visible to system_admin users).
-  await initAdminResetButton("settingsResetDbBtn", {
+  await initAdminResetButton("settingsResetDataBtn", {
     containerSelector: "#adminGroup",
+    endpoint: "/v1/admin/reset-data",
+    warning:
+      "WARNING: This will DELETE ALL jobs, tasks, pages and domains!\n\nIntegrations and account data will be preserved.\n\nAre you absolutely sure?",
+  });
+  await initAdminResetButton("settingsResetSchemaBtn", {
+    endpoint: "/v1/admin/reset-db",
+    warning:
+      "WARNING: This will DROP AND REBUILD THE ENTIRE SCHEMA!\n\nAll data except users and organisations will be permanently deleted, including integrations.\n\nAre you absolutely sure?",
   });
 }
 
