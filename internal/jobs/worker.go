@@ -1777,6 +1777,10 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			task.Status = string(TaskStatusWaiting)
 			task.StartedAt = time.Time{}
 			wp.decrementRunningTaskInMem(task.JobID)
+			if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
+				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
+					Msg("Failed to decrement running_tasks counter on domain delay requeue")
+			}
 			wp.batchManager.QueueTaskUpdate(task)
 			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
 			log.Debug().
