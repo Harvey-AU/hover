@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1296,6 +1297,12 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			return nil
 		}
 
+		// Sort by conflict key (job_id is constant here; page_id determines order) so
+		// concurrent transactions acquire row locks in the same order, preventing deadlocks.
+		sort.Slice(uniquePages, func(i, j int) bool {
+			return uniquePages[i].ID < uniquePages[j].ID
+		})
+
 		// Get job's max_pages, concurrency, domain, org, and current task counts
 		var cfg enqueueJobConfig
 		err := tx.QueryRowContext(ctx, `
@@ -1385,7 +1392,6 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 				unnest_source_urls,
 				unnest_priorities
 			)
-			ORDER BY unnest_job_ids, unnest_page_ids
 			ON CONFLICT (job_id, page_id) DO UPDATE
 			SET status = EXCLUDED.status,
 				host = EXCLUDED.host,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/lib/pq"
@@ -116,10 +117,18 @@ func ensurePageBatch(ctx context.Context, q TransactionExecutor, domainID int, b
 		return nil
 	}
 
+	// Sort by conflict key so concurrent transactions acquire locks in the same
+	// order, preventing deadlocks on ON CONFLICT DO UPDATE.
+	sort.Slice(unique, func(i, j int) bool {
+		if unique[i].Host != unique[j].Host {
+			return unique[i].Host < unique[j].Host
+		}
+		return unique[i].Path < unique[j].Path
+	})
+
 	upsertBatchQuery := `
 		WITH batch(host, path) AS (
 			SELECT UNNEST($2::text[]), UNNEST($3::text[])
-			ORDER BY 1, 2
 		)
 		INSERT INTO pages (domain_id, host, path)
 		SELECT $1, host, path
@@ -164,6 +173,7 @@ func ensurePageBatch(ctx context.Context, q TransactionExecutor, domainID int, b
 				SELECT DISTINCT LOWER(REGEXP_REPLACE(host, '^www\\.', '')) AS canonical_host
 				FROM UNNEST($2::text[]) AS host
 				WHERE host <> ''
+				ORDER BY 1
 			) unique_hosts
 			ON CONFLICT (domain_id, host) DO UPDATE
 			SET last_seen_at = NOW()
