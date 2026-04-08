@@ -35,6 +35,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5"
 	"github.com/lib/pq"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -182,6 +183,7 @@ type WorkerPool struct {
 	idleWorkers      map[int]time.Time // workerID -> when they went idle
 	idleWorkersMutex sync.RWMutex
 	lastScaleDown    time.Time
+	lastScaleEval    time.Time
 	idleThreshold    int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
 	scaleCooldown    time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
 
@@ -239,7 +241,14 @@ func (wp *WorkerPool) IdleWorkerCount() int {
 }
 
 func (wp *WorkerPool) logScalingDecision(decision, reason string, currentWorkers, targetWorkers int, metadata map[string]int) {
-	event := log.Info().
+	var event *zerolog.Event
+	if decision == "no_change" {
+		event = log.Debug()
+	} else {
+		event = log.Info()
+	}
+
+	event = event.
 		Str("decision", decision).
 		Str("reason", reason).
 		Int("current_workers", currentWorkers).
@@ -2646,8 +2655,12 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		return
 	}
 
-	// Emergency scale-down uses 2s cooldown instead of normal cooldown
 	emergencyCooldown := 2 * time.Second
+	if time.Since(wp.lastScaleEval) < emergencyCooldown {
+		return
+	}
+	wp.lastScaleEval = time.Now()
+
 	if time.Since(wp.lastScaleDown) < emergencyCooldown {
 		wp.workersMutex.RLock()
 		currentWorkers := wp.currentWorkers
@@ -3780,7 +3793,7 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 		}
 
 		if blockedCount > 0 {
-			log.Info().
+			log.Debug().
 				Str("task_id", task.ID).
 				Int("blocked_count", blockedCount).
 				Int("allowed_count", len(filtered)).
@@ -3894,7 +3907,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			task.Status = string(TaskStatusFailed)
 			task.CompletedAt = now
 			task.Error = taskErr.Error()
-			log.Error().
+			log.Warn().
 				Err(taskErr).
 				Str("task_id", task.ID).
 				Int("retry_count", task.RetryCount).
@@ -4447,7 +4460,7 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 
 	// Update domain with detection results
 	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, ""); err != nil {
-		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
+		log.Warn().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
 		return
 	}
 

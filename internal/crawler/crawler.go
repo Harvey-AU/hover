@@ -773,7 +773,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Str("url", targetURL).
 			Msg("Cache is now available, proceeding with second request")
 	} else {
-		log.Warn().
+		log.Debug().
 			Str("url", targetURL).
 			Int("max_checks", maxChecks).
 			Msg("Cache did not become available after maximum checks")
@@ -783,7 +783,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		// Perform second request to measure cached response time
 		secondResult, err := c.makeSecondRequest(ctx, targetURL)
 		if err != nil {
-			log.Warn().
+			log.Debug().
 				Err(err).
 				Str("url", targetURL).
 				Msg("Second request failed, but first request succeeded")
