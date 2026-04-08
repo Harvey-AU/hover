@@ -75,7 +75,7 @@ async function handleResetDatabase(session, btn, originalText) {
     const timeoutId = window.setTimeout(() => controller.abort(), 120000);
     let response;
     try {
-      response = await fetch("/v1/admin/reset-db", {
+      response = await fetch("/v1/admin/reset-data", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.access_token}`,

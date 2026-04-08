@@ -26,34 +26,11 @@ func (db *DB) ResetSchema() error {
 		log.Warn().Err(err).Msg("Failed to terminate some connections (continuing anyway)")
 	}
 
-	// Step 1: Drop all public schema tables except preserved ones (users & organisations)
-	log.Info().Msg("Step 1/4: Discovering and dropping public schema tables")
-
-	// Preserved tables — these hold account data that survives a reset
-	preserved := map[string]bool{"users": true, "organisations": true}
-
-	rows, err := db.client.Query(`
-		SELECT tablename FROM pg_tables
-		WHERE schemaname = 'public'
-		ORDER BY tablename
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to list public tables: %w", err)
-	}
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("failed to scan table name: %w", err)
-		}
-		if !preserved[name] {
-			tables = append(tables, name)
-		}
-	}
-	_ = rows.Close()
-
+	// Step 1: Drop job-related tables only (preserve users & organisations)
+	log.Info().Msg("Step 1/4: Dropping job-related tables")
+	tables := []string{"tasks", "jobs", "job_share_links", "pages", "domains"}
 	tablesDropped := 0
+
 	for i, table := range tables {
 		tableStart := time.Now()
 		log.Info().
@@ -62,7 +39,7 @@ func (db *DB) ResetSchema() error {
 			Int("total_tables", len(tables)).
 			Msg("Dropping table")
 
-		_, err := db.client.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, table)) //nolint:gosec // table names sourced from pg_tables, schema scoped to public
+		_, err := db.client.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, table)) //nolint:gosec // table names are hardcoded
 		if err != nil {
 			log.Error().
 				Err(err).
@@ -82,7 +59,7 @@ func (db *DB) ResetSchema() error {
 	log.Info().
 		Int("tables_dropped", tablesDropped).
 		Dur("step_duration", time.Since(startTime)).
-		Msg("Step 1/4 completed: Public schema tables dropped")
+		Msg("Step 1/4 completed: Job-related tables dropped")
 
 	// Clean up database functions that may conflict with migrations when re-applied.
 	log.Info().Msg("Cleaning up queue helper functions")
