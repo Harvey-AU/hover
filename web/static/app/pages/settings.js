@@ -336,7 +336,7 @@ async function init() {
   }
 
   // Admin section (only visible to system_admin users).
-  await initAdminResetButton("resetDbBtn", {
+  await initAdminResetButton("settingsResetDbBtn", {
     containerSelector: "#adminGroup",
   });
 }
