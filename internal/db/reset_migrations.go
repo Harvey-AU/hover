@@ -84,9 +84,33 @@ func (db *DB) ResetSchema() error {
 		Dur("step_duration", time.Since(startTime)).
 		Msg("Step 1/4 completed: All public schema tables dropped")
 
-	// Drop all user-defined functions in the public schema so migrations can
-	// recreate them without hitting return-type or signature conflicts.
-	log.Info().Msg("Dropping all public schema functions")
+	// Drop all views, functions, and triggers on preserved tables — everything
+	// defined in migrations so they can be cleanly recreated.
+
+	// Views
+	viewRows, err := db.client.Query(`
+		SELECT viewname FROM pg_views WHERE schemaname = 'public'
+	`)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list public views (continuing)")
+	} else {
+		var views []string
+		for viewRows.Next() {
+			var v string
+			if err := viewRows.Scan(&v); err == nil {
+				views = append(views, v)
+			}
+		}
+		_ = viewRows.Close()
+		for _, v := range views {
+			if _, err := db.client.Exec(fmt.Sprintf("DROP VIEW IF EXISTS %s CASCADE", v)); err != nil { //nolint:gosec // viewname sourced from pg_views, schema scoped to public
+				log.Warn().Err(err).Str("view", v).Msg("Failed to drop view (continuing)")
+			}
+		}
+		log.Info().Int("views_dropped", len(views)).Msg("Public schema views dropped")
+	}
+
+	// Functions
 	funcRows, err := db.client.Query(`
 		SELECT p.oid::regprocedure::text
 		FROM pg_proc p
@@ -108,11 +132,36 @@ func (db *DB) ResetSchema() error {
 		for _, sig := range sigs {
 			if _, err := db.client.Exec(fmt.Sprintf("DROP FUNCTION IF EXISTS %s CASCADE", sig)); err != nil { //nolint:gosec // sig sourced from pg_proc, schema scoped to public
 				log.Warn().Err(err).Str("function", sig).Msg("Failed to drop function (continuing)")
-			} else {
-				log.Info().Str("function", sig).Msg("Dropped function")
 			}
 		}
 		log.Info().Int("functions_dropped", len(sigs)).Msg("Public schema functions dropped")
+	}
+
+	// Triggers on preserved tables (users, organisations) — others were dropped with their tables
+	trigRows, err := db.client.Query(`
+		SELECT trigger_name, event_object_table
+		FROM information_schema.triggers
+		WHERE trigger_schema = 'public'
+		  AND event_object_table IN ('users', 'organisations')
+	`)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list triggers on preserved tables (continuing)")
+	} else {
+		type trigEntry struct{ name, table string }
+		var trigs []trigEntry
+		for trigRows.Next() {
+			var t trigEntry
+			if err := trigRows.Scan(&t.name, &t.table); err == nil {
+				trigs = append(trigs, t)
+			}
+		}
+		_ = trigRows.Close()
+		for _, t := range trigs {
+			if _, err := db.client.Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", t.name, t.table)); err != nil { //nolint:gosec // name and table sourced from information_schema, schema scoped to public
+				log.Warn().Err(err).Str("trigger", t.name).Str("table", t.table).Msg("Failed to drop trigger (continuing)")
+			}
+		}
+		log.Info().Int("triggers_dropped", len(trigs)).Msg("Triggers on preserved tables dropped")
 	}
 
 	// Step 2: Clear migration history
