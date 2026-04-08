@@ -1385,6 +1385,7 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 				unnest_source_urls,
 				unnest_priorities
 			)
+			ORDER BY unnest_job_ids, unnest_page_ids
 			ON CONFLICT (job_id, page_id) DO UPDATE
 			SET status = EXCLUDED.status,
 				host = EXCLUDED.host,

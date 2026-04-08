@@ -119,6 +119,7 @@ func ensurePageBatch(ctx context.Context, q TransactionExecutor, domainID int, b
 	upsertBatchQuery := `
 		WITH batch(host, path) AS (
 			SELECT UNNEST($2::text[]), UNNEST($3::text[])
+			ORDER BY 1, 2
 		)
 		INSERT INTO pages (domain_id, host, path)
 		SELECT $1, host, path
