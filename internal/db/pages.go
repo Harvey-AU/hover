@@ -173,8 +173,8 @@ func ensurePageBatch(ctx context.Context, q TransactionExecutor, domainID int, b
 				SELECT DISTINCT LOWER(REGEXP_REPLACE(host, '^www\\.', '')) AS canonical_host
 				FROM UNNEST($2::text[]) AS host
 				WHERE host <> ''
-				ORDER BY 1
 			) unique_hosts
+			ORDER BY canonical_host
 			ON CONFLICT (domain_id, host) DO UPDATE
 			SET last_seen_at = NOW()
 		`, domainID, pq.Array(hosts)); err != nil {
