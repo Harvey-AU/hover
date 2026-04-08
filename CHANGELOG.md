@@ -32,6 +32,8 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.31.10] – 2026-04-08
+
 ## [0.31.9] – 2026-04-08
 
 ## [0.31.8] – 2026-04-07

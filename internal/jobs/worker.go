@@ -114,6 +114,16 @@ type taskHTMLPersistRequest struct {
 	CapturedAt  time.Time
 }
 
+// ErrDomainDelay is returned by processTask when the domain rate-limit window
+// has not elapsed. The worker should requeue the task as waiting and immediately
+// pick a different task rather than blocking on the delay.
+var ErrDomainDelay = errors.New("domain rate limit delay")
+
+// domainDelayPause is a short back-off applied after requeueing a domain-delayed
+// task. It prevents a tight DB claim loop when all pending tasks belong to
+// rate-limited domains.
+const domainDelayPause = 100 * time.Millisecond
+
 type WaitingReason string
 
 const (
@@ -1760,6 +1770,31 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 		defer cancel()
 
 		result, err := wp.processTask(taskCtx, jobsTask)
+		if errors.Is(err, ErrDomainDelay) {
+			// Domain rate-limit window not elapsed — requeue as waiting without
+			// incrementing RetryCount or recording a failure. The worker is free
+			// to immediately claim a task from a different domain.
+			task.Status = string(TaskStatusWaiting)
+			task.StartedAt = time.Time{}
+			wp.decrementRunningTaskInMem(task.JobID)
+			if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
+				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
+					Msg("Failed to decrement running_tasks counter on domain delay requeue")
+			}
+			wp.batchManager.QueueTaskUpdate(task)
+			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
+			log.Debug().
+				Str("task_id", task.ID).
+				Str("domain", jobsTask.DomainName).
+				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
+			// Brief pause so the worker does not immediately spin back to the DB
+			// when all pending tasks belong to rate-limited domains.
+			select {
+			case <-time.After(domainDelayPause):
+			case <-ctx.Done():
+			}
+			return nil
+		}
 		if err != nil {
 			return wp.handleTaskError(ctx, task, result, err)
 		} else {
@@ -4514,7 +4549,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 	log.Debug().Str("url", urlStr).Str("task_id", task.ID).Msg("Starting URL warm")
 
 	limiter := wp.ensureDomainLimiter()
-	permit, err := limiter.Acquire(ctx, DomainRequest{
+	permit, acquired := limiter.TryAcquire(DomainRequest{
 		Domain:      task.DomainName,
 		JobID:       task.JobID,
 		RobotsDelay: time.Duration(task.CrawlDelay) * time.Second,
@@ -4525,8 +4560,8 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 			return 1
 		}(),
 	})
-	if err != nil {
-		return nil, err
+	if !acquired {
+		return nil, ErrDomainDelay
 	}
 	released := false
 	defer func() {
