@@ -326,7 +326,8 @@ func (ds *domainState) computeAllowedConcurrency(cfg DomainLimiterConfig, jobCon
 
 // tryAcquire is the non-blocking variant of acquire. It returns (0, false) immediately
 // if the domain's rate-limit time window has not yet elapsed, instead of sleeping.
-// Once the time window is clear, it waits briefly on concurrency (milliseconds) as normal.
+// Once the time window is clear, it waits for a concurrency slot if needed (bounded
+// by the duration of in-flight HTTP requests for that domain).
 func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Time, req DomainRequest) (time.Duration, bool) {
 	ds.mu.Lock()
 	if req.JobConcurrency <= 0 {
