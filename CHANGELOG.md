@@ -28,7 +28,24 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Prevent deadlocks on concurrent batch page upserts by sorting rows by
+  `(host, path)` in Go before building `UNNEST` arrays, ensuring all
+  transactions acquire locks in a consistent order
+- Sort enqueued pages by ID before insert to prevent lock-order deadlocks in
+  `EnqueueURLs` transactions
+- Demote permanent HTTP 4xx/429 task failures from warn/info to debug to reduce
+  log noise at the default info level
+
+### Changed
+
+- Raise review app VM to 1 GB / 2 vCPU and align `DB_MAX_OPEN_CONNS` to 40 to
+  match Supabase preview branch pool size
+- Increase production `DB_QUEUE_MAX_CONCURRENCY` to 55 to better utilise
+  available connections
+- CI now automatically sets Supabase preview branch pool size to 40 on each
+  review app deployment
 
 ## Full changelog history
 
