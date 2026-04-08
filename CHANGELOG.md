@@ -28,7 +28,13 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Workers no longer block for up to 60 s on domain rate-limit delays;
+  `TryAcquire` returns immediately when a domain's delay window is active,
+  allowing the worker to pick up a task for a different domain instead
+- Tasks that hit a domain delay are now correctly requeued as `waiting` in the
+  database (was missing `QueueTaskUpdate`, leaving them stuck as `running`)
 
 ## Full changelog history
 

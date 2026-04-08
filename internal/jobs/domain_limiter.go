@@ -168,8 +168,8 @@ func (dl *DomainLimiter) Acquire(ctx context.Context, req DomainRequest) (*Domai
 // TryAcquire attempts to acquire a domain permit without blocking on the rate-limit
 // time window. Returns (permit, true) if the domain is available now, or (nil, false)
 // if the domain is within a delay window — the caller should requeue the task as waiting.
-// If the time window is open but per-job concurrency is exhausted, it waits briefly
-// (milliseconds) for a slot, identical to Acquire.
+// If the time window is open but per-job concurrency is exhausted, it waits for a slot
+// to free up (bounded by the duration of in-flight HTTP requests for that domain).
 func (dl *DomainLimiter) TryAcquire(req DomainRequest) (*DomainPermit, bool) {
 	if req.Domain == "" {
 		return &DomainPermit{limiter: dl, domain: "", jobID: req.JobID}, true

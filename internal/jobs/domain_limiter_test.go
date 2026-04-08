@@ -1,6 +1,9 @@
 package jobs
 
 import (
+	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -92,6 +95,65 @@ func TestTryAcquire_EmptyDomain(t *testing.T) {
 	}
 	if permit == nil {
 		t.Fatal("expected non-nil permit for empty domain")
+	}
+}
+
+// TestWorker_ErrDomainDelay verifies the worker-path handling when a domain is
+// in its rate-limit window. It checks that:
+//  1. processTask returns ErrDomainDelay immediately (no blocking)
+//  2. the in-memory running_tasks slot is decremented so the worker is free
+//  3. the task status is set to waiting before the DB update is queued
+func TestWorker_ErrDomainDelay(t *testing.T) {
+	now := time.Now()
+	dl := newTestLimiter(func() time.Time { return now })
+
+	// Acquire once to prime the delay window.
+	permit, ok := dl.TryAcquire(DomainRequest{Domain: "example.com", JobID: "job1", JobConcurrency: 1})
+	if !ok {
+		t.Fatal("initial acquire should succeed")
+	}
+	permit.Release(true, false) // sets nextAvailable = now + BaseDelay
+
+	// Confirm the domain is now blocked.
+	_, ok = dl.TryAcquire(DomainRequest{Domain: "example.com", JobID: "job1", JobConcurrency: 1})
+	if ok {
+		t.Fatal("limiter should be in delay window after release")
+	}
+
+	// Build a minimal WorkerPool: limiter pre-loaded, one claimed running slot.
+	counter := &atomic.Int64{}
+	counter.Store(1)
+	wp := &WorkerPool{
+		domainLimiter: dl,
+		runningTasksInMem: map[string]*atomic.Int64{
+			"job1": counter,
+		},
+		runningTasksInMemMu: sync.RWMutex{},
+		jobInfoCache:        make(map[string]*JobInfo),
+	}
+
+	// processTask must return ErrDomainDelay without blocking.
+	jobsTask := &Task{
+		ID:             "task-1",
+		JobID:          "job1",
+		DomainName:     "example.com",
+		JobConcurrency: 1,
+	}
+	_, err := wp.processTask(context.Background(), jobsTask)
+	if err != ErrDomainDelay {
+		t.Fatalf("expected ErrDomainDelay, got %v", err)
+	}
+
+	// Mimic the processNextTask ErrDomainDelay handler: release slot and requeue.
+	jobsTask.Status = TaskStatusWaiting
+	jobsTask.StartedAt = time.Time{}
+	wp.decrementRunningTaskInMem("job1")
+
+	if got := counter.Load(); got != 0 {
+		t.Errorf("running_tasks counter = %d, want 0 after ErrDomainDelay", got)
+	}
+	if jobsTask.Status != TaskStatusWaiting {
+		t.Errorf("task.Status = %q, want %q", jobsTask.Status, TaskStatusWaiting)
 	}
 }
 

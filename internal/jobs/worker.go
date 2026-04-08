@@ -119,6 +119,11 @@ type taskHTMLPersistRequest struct {
 // pick a different task rather than blocking on the delay.
 var ErrDomainDelay = errors.New("domain rate limit delay")
 
+// domainDelayPause is a short back-off applied after requeueing a domain-delayed
+// task. It prevents a tight DB claim loop when all pending tasks belong to
+// rate-limited domains.
+const domainDelayPause = 100 * time.Millisecond
+
 type WaitingReason string
 
 const (
@@ -1771,11 +1776,19 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			// to immediately claim a task from a different domain.
 			task.Status = string(TaskStatusWaiting)
 			task.StartedAt = time.Time{}
+			wp.decrementRunningTaskInMem(task.JobID)
+			wp.batchManager.QueueTaskUpdate(task)
 			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
 			log.Debug().
 				Str("task_id", task.ID).
 				Str("domain", jobsTask.DomainName).
 				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
+			// Brief pause so the worker does not immediately spin back to the DB
+			// when all pending tasks belong to rate-limited domains.
+			select {
+			case <-time.After(domainDelayPause):
+			case <-ctx.Done():
+			}
 			return nil
 		}
 		if err != nil {
