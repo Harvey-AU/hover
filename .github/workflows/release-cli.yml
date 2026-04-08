@@ -48,6 +48,7 @@ jobs:
           gh release create "$GIT_TAG" \
             --title "CLI ${VERSION#v}" \
             --notes "CLI release ${GIT_TAG}" \
+            --prerelease \
             dist/hover_*.tar.gz dist/hover_*.zip dist/checksums.txt
 
       - name: Load secrets from 1Password
