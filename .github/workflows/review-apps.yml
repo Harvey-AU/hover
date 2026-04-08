@@ -164,6 +164,34 @@ jobs:
           echo "Preview DB available: ${{ steps.supabase.outputs.preview_db_url != '' }}"
           echo "========================================"
 
+      - name: Set preview branch pool size
+        if: steps.supabase.outputs.branch_exists == 'true'
+        run: |
+          BRANCH_URL="$BRANCH_SUPABASE_URL"
+          BRANCH_REF=$(echo "$BRANCH_URL" | sed 's|https://||' | cut -d'.' -f1)
+          if [ -z "$BRANCH_REF" ]; then
+            echo "⚠️ Could not extract branch ref from $BRANCH_URL — skipping pool size update"
+            exit 0
+          fi
+          echo "Setting pool size to 40 for branch ref: $BRANCH_REF"
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X PATCH \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"default_pool_size": 40}' \
+            "https://api.supabase.com/v1/projects/$BRANCH_REF/config/database/pooler")
+          HTTP_STATUS=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -1)
+          echo "Response ($HTTP_STATUS): $BODY"
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Pool size set to 40"
+          else
+            echo "⚠️ Pool size update returned HTTP $HTTP_STATUS — continuing"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ env.SUPABASE_ACCESS_TOKEN }}
+          BRANCH_SUPABASE_URL: ${{ steps.supabase.outputs.branch_supabase_url }}
+
       - name: Build Docker image locally
         run: docker build -t hover-pr-${{ github.event.number }} .
 

@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1295,6 +1296,12 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 		if len(uniquePages) == 0 {
 			return nil
 		}
+
+		// Sort by conflict key (job_id is constant here; page_id determines order) so
+		// concurrent transactions acquire row locks in the same order, preventing deadlocks.
+		sort.Slice(uniquePages, func(i, j int) bool {
+			return uniquePages[i].ID < uniquePages[j].ID
+		})
 
 		// Get job's max_pages, concurrency, domain, org, and current task counts
 		var cfg enqueueJobConfig
