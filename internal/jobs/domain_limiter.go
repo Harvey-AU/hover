@@ -324,19 +324,12 @@ func (ds *domainState) computeAllowedConcurrency(cfg DomainLimiterConfig, jobCon
 	return allowed
 }
 
-// tryAcquire is the non-blocking variant of acquire. It returns (0, false) immediately
-// if the domain's rate-limit time window has not yet elapsed, instead of sleeping.
-// Once the time window is clear, it waits for a concurrency slot if needed (bounded
-// by the duration of in-flight HTTP requests for that domain).
-func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Time, req DomainRequest) (time.Duration, bool) {
-	ds.mu.Lock()
-	if req.JobConcurrency <= 0 {
-		req.JobConcurrency = 1
-	}
-
-	now := nowFn()
-	if req.RobotsDelay > 0 {
-		robots := req.RobotsDelay
+// applyRobotsDelay updates ds.baseDelay (and keeps ds.adaptiveDelay >= ds.baseDelay)
+// from the robots.txt crawl delay, applying the configured multiplier.
+// Must be called with ds.mu held.
+func (ds *domainState) applyRobotsDelay(cfg DomainLimiterConfig, robotsDelay time.Duration) {
+	if robotsDelay > 0 {
+		robots := robotsDelay
 		multiplierActive := cfg.RobotsDelayMultiplier > 0 && cfg.RobotsDelayMultiplier < 1.0
 		if multiplierActive {
 			robots = time.Duration(float64(robots) * cfg.RobotsDelayMultiplier)
@@ -353,6 +346,20 @@ func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Tim
 	if ds.adaptiveDelay < ds.baseDelay {
 		ds.adaptiveDelay = ds.baseDelay
 	}
+}
+
+// tryAcquire is the non-blocking variant of acquire. It returns (0, false) immediately
+// if the domain's rate-limit time window has not yet elapsed, instead of sleeping.
+// Once the time window is clear, it waits for a concurrency slot if needed (bounded
+// by the duration of in-flight HTTP requests for that domain).
+func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Time, req DomainRequest) (time.Duration, bool) {
+	ds.mu.Lock()
+	if req.JobConcurrency <= 0 {
+		req.JobConcurrency = 1
+	}
+
+	now := nowFn()
+	ds.applyRobotsDelay(cfg, req.RobotsDelay)
 
 	waitUntil := ds.nextAvailable
 	if ds.backoffUntil.After(waitUntil) {
@@ -365,8 +372,9 @@ func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Tim
 		return 0, false
 	}
 
-	// Time window is clear. Wait briefly for a concurrency slot if needed
-	// (this wait is typically sub-millisecond).
+	// Time window is clear. Wait for a concurrency slot if needed — cond.Wait()
+	// blocks until Release() broadcasts, so this can last as long as an in-flight
+	// HTTP request (seconds) if all slots are held.
 	for {
 		js := ds.ensureJobState(req.JobID, req.JobConcurrency)
 		js.allowed = ds.computeAllowedConcurrency(cfg, req.JobConcurrency)
@@ -399,25 +407,7 @@ func (ds *domainState) acquire(ctx context.Context, cfg DomainLimiterConfig, now
 
 	for {
 		now := nowFn()
-		if req.RobotsDelay > 0 {
-			robots := req.RobotsDelay
-			multiplierActive := cfg.RobotsDelayMultiplier > 0 && cfg.RobotsDelayMultiplier < 1.0
-
-			if multiplierActive {
-				robots = time.Duration(float64(robots) * cfg.RobotsDelayMultiplier)
-			}
-			if robots < cfg.BaseDelay {
-				robots = cfg.BaseDelay
-			}
-			if multiplierActive {
-				ds.baseDelay = robots
-			} else if robots > ds.baseDelay {
-				ds.baseDelay = robots
-			}
-		}
-		if ds.adaptiveDelay < ds.baseDelay {
-			ds.adaptiveDelay = ds.baseDelay
-		}
+		ds.applyRobotsDelay(cfg, req.RobotsDelay)
 
 		waitUntil := ds.nextAvailable
 		if ds.backoffUntil.After(waitUntil) {
