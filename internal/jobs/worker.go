@@ -3907,7 +3907,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			task.Status = string(TaskStatusFailed)
 			task.CompletedAt = now
 			task.Error = taskErr.Error()
-			log.Warn().
+			log.Debug().
 				Err(taskErr).
 				Str("task_id", task.ID).
 				Int("retry_count", task.RetryCount).
@@ -3937,7 +3937,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 		task.Error = taskErr.Error()
 		logger := log.Error()
 		if isClientOrRedirectError(taskErr) {
-			logger = log.Info()
+			logger = log.Debug()
 		}
 		logger.
 			Err(taskErr).
