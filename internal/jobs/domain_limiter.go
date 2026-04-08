@@ -165,6 +165,30 @@ func (dl *DomainLimiter) Acquire(ctx context.Context, req DomainRequest) (*Domai
 	}, nil
 }
 
+// TryAcquire attempts to acquire a domain permit without blocking on the rate-limit
+// time window. Returns (permit, true) if the domain is available now, or (nil, false)
+// if the domain is within a delay window — the caller should requeue the task as waiting.
+// If the time window is open but per-job concurrency is exhausted, it waits briefly
+// (milliseconds) for a slot, identical to Acquire.
+func (dl *DomainLimiter) TryAcquire(req DomainRequest) (*DomainPermit, bool) {
+	if req.Domain == "" {
+		return &DomainPermit{limiter: dl, domain: "", jobID: req.JobID}, true
+	}
+
+	state := dl.getOrCreateState(req.Domain)
+	delay, ok := state.tryAcquire(dl.cfg, dl.now, req)
+	if !ok {
+		return nil, false
+	}
+
+	return &DomainPermit{
+		limiter: dl,
+		domain:  req.Domain,
+		jobID:   req.JobID,
+		delay:   delay,
+	}, true
+}
+
 // Release notifies the limiter about the outcome of a request.
 func (p *DomainPermit) Release(success bool, rateLimited bool) {
 	if p == nil || p.limiter == nil || p.domain == "" {
@@ -298,6 +322,72 @@ func (ds *domainState) computeAllowedConcurrency(cfg DomainLimiterConfig, jobCon
 	reduction := int(diff / cfg.ConcurrencyStep)
 	allowed := max(jobConcurrency-reduction, 1)
 	return allowed
+}
+
+// tryAcquire is the non-blocking variant of acquire. It returns (0, false) immediately
+// if the domain's rate-limit time window has not yet elapsed, instead of sleeping.
+// Once the time window is clear, it waits briefly on concurrency (milliseconds) as normal.
+func (ds *domainState) tryAcquire(cfg DomainLimiterConfig, nowFn func() time.Time, req DomainRequest) (time.Duration, bool) {
+	ds.mu.Lock()
+	if req.JobConcurrency <= 0 {
+		req.JobConcurrency = 1
+	}
+
+	now := nowFn()
+	if req.RobotsDelay > 0 {
+		robots := req.RobotsDelay
+		multiplierActive := cfg.RobotsDelayMultiplier > 0 && cfg.RobotsDelayMultiplier < 1.0
+		if multiplierActive {
+			robots = time.Duration(float64(robots) * cfg.RobotsDelayMultiplier)
+		}
+		if robots < cfg.BaseDelay {
+			robots = cfg.BaseDelay
+		}
+		if multiplierActive {
+			ds.baseDelay = robots
+		} else if robots > ds.baseDelay {
+			ds.baseDelay = robots
+		}
+	}
+	if ds.adaptiveDelay < ds.baseDelay {
+		ds.adaptiveDelay = ds.baseDelay
+	}
+
+	waitUntil := ds.nextAvailable
+	if ds.backoffUntil.After(waitUntil) {
+		waitUntil = ds.backoffUntil
+	}
+	if waitUntil.After(now) {
+		// Domain is in a rate-limit window — return immediately so the worker
+		// can requeue the task and pick work from a different domain.
+		ds.mu.Unlock()
+		return 0, false
+	}
+
+	// Time window is clear. Wait briefly for a concurrency slot if needed
+	// (this wait is typically sub-millisecond).
+	for {
+		js := ds.ensureJobState(req.JobID, req.JobConcurrency)
+		js.allowed = ds.computeAllowedConcurrency(cfg, req.JobConcurrency)
+		if js.active < js.allowed {
+			js.active++
+			delay := ds.effectiveDelay(cfg)
+			ds.nextAvailable = now.Add(delay)
+			ds.mu.Unlock()
+			return delay, true
+		}
+		ds.cond.Wait()
+		// After waking, re-check the time window — another worker may have advanced it.
+		now = nowFn()
+		waitUntil = ds.nextAvailable
+		if ds.backoffUntil.After(waitUntil) {
+			waitUntil = ds.backoffUntil
+		}
+		if waitUntil.After(now) {
+			ds.mu.Unlock()
+			return 0, false
+		}
+	}
 }
 
 func (ds *domainState) acquire(ctx context.Context, cfg DomainLimiterConfig, nowFn func() time.Time, req DomainRequest) (time.Duration, error) {
