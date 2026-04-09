@@ -194,9 +194,9 @@ func normaliseURLPath(u string, domain string) (string, string, error) {
 		base, _ := url.Parse("https://" + domain)
 		parsedURL = base.ResolveReference(parsedURL)
 	}
-	host := strings.ToLower(parsedURL.Hostname())
+	host := strings.TrimPrefix(strings.ToLower(parsedURL.Hostname()), "www.")
 	if host == "" {
-		host = strings.ToLower(strings.TrimSpace(domain))
+		host = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(domain)), "www.")
 		if host == "" {
 			return "", "", fmt.Errorf("empty host in URL normalization for %q", u)
 		}
