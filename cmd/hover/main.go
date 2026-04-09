@@ -128,16 +128,17 @@ Commands:
 Usage:
   hover jobs generate --pr <N> --anon-key <key> [options]
 
-Options:
-  --pr <N>             Target preview app hover-pr-<N>.fly.dev
-  --anon-key <key>     Supabase publishable key (auto-discovered if omitted)
-  --interval <dur>     Batch interval (e.g. 30s, 2m) [default: 3m]
-  --jobs <N>           Jobs per batch [default: 3]
-  --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
-  --repeats <N>        How many times to run each domain [default: 1]
-  --status-interval    Poll interval when waiting to rerun a domain [default: 30s]
-  --auth-url <url>     Override Supabase auth base URL
-  --api-url <url>      Override API base URL
-  --yes, -y            Skip confirmation prompt`
+  Hover options:
+	--interval <dur>     Run batch every interval (e.g. 30s, 2m) [default: 3m]
+	--jobs <N>           Jobs per batch [default: 10]
+	--concurrency <N>    Per-job concurrency 1-50, or "random" [default: 20]
+	--repeats <N>        How many times to run each domain [default: 4]
+	
+	--pr <N>             Target preview app hover-pr-<N>.fly.dev
+	--anon-key <key>     Supabase publishable key (auto-discovered if omitted)
+	--status-interval    Poll interval when waiting to rerun a domain [default: 30s]
+	--auth-url <url>     Override Supabase auth base URL
+	--api-url <url>      Override API base URL
+	--yes, -y            Skip confirmation prompt`
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(usage))
 }
