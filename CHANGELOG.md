@@ -28,7 +28,10 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Deduplicate `www.` and non-www URLs to the same page record, preventing
+  duplicate tasks for the same path (#303)
 
 ## Full changelog history
 
