@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Last reviewed: 2026-04-07
+Last reviewed: 2026-04-10
 
 Every configurable dial in the application — env vars, hardcoded constants, and
 their relationships. Values reflect production unless noted. For the flat
@@ -12,15 +12,15 @@ inventory of env vars and their classification (secret vs non-secret), see
 ## Key relationships
 
 ```
-DB_MAX_OPEN_CONNS (50)
-  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 46
-        └── DB_QUEUE_MAX_CONCURRENCY (30)  →  semaphore = min(30, 46) = 30
-              └── base workers (30) × WORKER_CONCURRENCY (1) = 30 task slots
-                    └── max workers (40) — capped below the 50-conn pool budget
+DB_MAX_OPEN_CONNS (150)
+  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 146
+        └── DB_QUEUE_MAX_CONCURRENCY (120)  →  semaphore = min(120, 146) = 120
+              └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
+                    └── max workers (160) — capped below the 180-conn Supabase pool
 ```
 
 Direct DB calls (page writes, domain lookups, etc.) bypass the queue semaphore
-and draw from the shared pool. With 30 semaphore slots out of 46 available, 16
+and draw from the shared pool. With 120 semaphore slots out of 146 available, 26
 connections remain for non-semaphored direct calls.
 
 ---
@@ -29,18 +29,22 @@ connections remain for non-semaphored direct calls.
 
 **Source:** `internal/db/db.go`, `fly.toml`
 
-| Env var / constant       | Production value    | Code default | What it controls                           |
-| ------------------------ | ------------------- | ------------ | ------------------------------------------ |
-| `DB_MAX_OPEN_CONNS`      | **50** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
-| `DB_MAX_IDLE_CONNS`      | **15** (`fly.toml`) | 20           | Idle connections kept warm                 |
-| `defaultConnMaxLifetime` | hardcoded           | 5 min        | Max connection lifetime                    |
-| `defaultConnMaxIdleTime` | hardcoded           | 2 min        | Idle connection eviction                   |
-| `statementTimeoutMs`     | hardcoded           | 60s          | Per-statement timeout (added to DSN)       |
-| `idleInTxnTimeoutMs`     | hardcoded           | 30s          | Idle-in-transaction timeout (added to DSN) |
+| Env var / constant       | Production value     | Code default | What it controls                           |
+| ------------------------ | -------------------- | ------------ | ------------------------------------------ |
+| `DB_MAX_OPEN_CONNS`      | **150** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
+| `DB_MAX_IDLE_CONNS`      | **30** (`fly.toml`)  | 20           | Idle connections kept warm                 |
+| `defaultConnMaxLifetime` | hardcoded            | 5 min        | Max connection lifetime                    |
+| `defaultConnMaxIdleTime` | hardcoded            | 2 min        | Idle connection eviction                   |
+| `statementTimeoutMs`     | hardcoded            | 60s          | Per-statement timeout (added to DSN)       |
+| `idleInTxnTimeoutMs`     | hardcoded            | 30s          | Idle-in-transaction timeout (added to DSN) |
 
 Supabase pooler is auto-detected via the `pooler.supabase.com` hostname in
 `DATABASE_URL`. When detected, `simple_protocol` and `pgbouncer=true` are
 appended to the DSN automatically.
+
+Supabase connection pool size is configured on the Supabase dashboard (currently
+180). Leave headroom above `DB_MAX_OPEN_CONNS` for Supabase-internal connections
+(realtime, auth, API, migrations).
 
 ---
 
@@ -52,16 +56,90 @@ Wraps a semaphore around all task-claim and batch-update DB operations. Direct
 DB calls (page writes, domain lookups, etc.) bypass this gate and draw directly
 from the pool.
 
-| Env var / constant             | Production value    | Default | What it controls                                                            |
-| ------------------------------ | ------------------- | ------- | --------------------------------------------------------------------------- |
-| `DB_QUEUE_MAX_CONCURRENCY`     | **30** (`fly.toml`) | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
-| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)       | 4       | Connections held back from the semaphore budget                             |
-| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)    | 0.90    | Log warn at 90% pool usage (>=45/50 open)                                   |
-| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)    | 0.95    | Fire Sentry "DB pool saturated" at 95% (>=48/50)                            |
-| `defaultExecuteTimeout`        | hardcoded           | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none     |
-| `DB_TX_MAX_RETRIES`            | **3** (unset)       | 3       | Transaction retry attempts on retryable errors                              |
-| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)   | 200ms   | Initial TX retry backoff                                                    |
-| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)  | 1500ms  | Max TX retry backoff                                                        |
+| Env var / constant             | Production value     | Default | What it controls                                                            |
+| ------------------------------ | -------------------- | ------- | --------------------------------------------------------------------------- |
+| `DB_QUEUE_MAX_CONCURRENCY`     | **120** (`fly.toml`) | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
+| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)        | 4       | Connections held back from the semaphore budget                             |
+| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)     | 0.90    | Log warn at 90% pool usage                                                  |
+| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)     | 0.95    | Fire Sentry "DB pool saturated" at 95%                                      |
+| `defaultExecuteTimeout`        | hardcoded            | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none     |
+| `DB_TX_MAX_RETRIES`            | **5** (`fly.toml`)   | 3       | Transaction retry attempts on retryable errors                              |
+| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)    | 200ms   | Initial TX retry backoff                                                    |
+| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)   | 1500ms  | Max TX retry backoff                                                        |
+
+---
+
+## Worker pool base size
+
+**Source:** `cmd/app/main.go`
+
+| Env var / constant   | Production value              | Default                    | What it controls                                     |
+| -------------------- | ----------------------------- | -------------------------- | ---------------------------------------------------- |
+| —                    | **30** hardcoded by `APP_ENV` | prod=30, staging=10, dev=5 | Base worker count — no env var; requires code change |
+| `WORKER_CONCURRENCY` | **20** (`fly.toml`)           | 1                          | Tasks per worker goroutine (range 1–20)              |
+
+Total base capacity = `base workers × WORKER_CONCURRENCY` = 30 × 20 = **600
+concurrent task slots**.
+
+---
+
+## Worker pool scaling
+
+**Source:** `internal/jobs/worker.go`
+
+The pool scales dynamically between base and max based on active job
+concurrency. Scale target formula:
+`ceil(totalJobConcurrency / WORKER_CONCURRENCY × 1.1)`, capped at
+`wp.maxWorkers` (derived from `GNH_MAX_WORKERS`, or the staging hard cap when
+`APP_ENV=staging`). Each job's effective concurrency is reduced by the domain
+limiter when adaptive delays are active.
+
+| Env var / constant                  | Production value      | Default           | What it controls                                                    |
+| ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
+| `GNH_MAX_WORKERS`                   | **160** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; staging env always uses 10                     |
+| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                |
+| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                   |
+| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                       |
+| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed |
+
+Example: 100 active jobs at concurrency=20 each → target = ceil(2000/20×1.1) =
+110 workers.
+
+---
+
+## Task monitor and promotion
+
+**Source:** `internal/jobs/worker.go` — `StartTaskMonitor`,
+`StartQuotaPromotionMonitor`
+
+Two background loops keep the pending task supply full. The quota promotion
+monitor is the primary throughput driver for jobs with waiting tasks.
+
+| Env var / constant                     | Production value     | Default | What it controls                                                                |
+| -------------------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------- |
+| `GNH_TASK_MONITOR_INTERVAL_SECONDS`    | **10s** (`fly.toml`) | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool |
+| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS` | **5s** (`fly.toml`)  | 5s      | Promotes `waiting` tasks to `pending` per job up to its concurrency limit       |
+| `pendingRebalanceInterval`             | hardcoded            | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits      |
+| `pendingRebalanceJobLimit`             | hardcoded            | 25      | Max jobs processed per rebalance sweep                                          |
+| `pendingUnlimitedCap`                  | hardcoded            | 100     | Max pending+running tasks for jobs with no explicit concurrency set             |
+| `fallbackJobConcurrency`               | hardcoded            | 20      | Concurrency assumed when job has no cached info yet                             |
+
+The promotion interval (5s) is the primary throughput ceiling for fast-domain
+jobs: a job with `concurrency=20` can complete at most
+`20 tasks / 5s = 4 tasks/sec` regardless of how many workers are available.
+
+---
+
+## Running task tracking
+
+**Source:** `internal/jobs/worker.go`
+
+Controls how the `running_tasks` counter is batched and flushed to the DB.
+
+| Env var / constant                   | Production value       | Default | What it controls                                         |
+| ------------------------------------ | ---------------------- | ------- | -------------------------------------------------------- |
+| `GNH_RUNNING_TASK_BATCH_SIZE`        | **32** (`fly.toml`)    | 4       | Tasks batched per `running_tasks` flush                  |
+| `GNH_RUNNING_TASK_FLUSH_INTERVAL_MS` | **200ms** (`fly.toml`) | 50ms    | Max interval before flushing the `running_tasks` counter |
 
 ---
 
@@ -74,54 +152,59 @@ completion.
 
 | Env var / constant          | Production value      | Default | What it controls                                               |
 | --------------------------- | --------------------- | ------- | -------------------------------------------------------------- |
-| `GNH_BATCH_CHANNEL_SIZE`    | **5000** (`fly.toml`) | 2000    | Channel buffer depth (range 500-20,000)                        |
-| `GNH_BATCH_MAX_INTERVAL_MS` | **2000ms** (unset)    | 2000ms  | Max time before forcing a flush (range 100-10,000ms)           |
+| `GNH_BATCH_CHANNEL_SIZE`    | **5000** (`fly.toml`) | 2000    | Channel buffer depth (range 500–20,000)                        |
+| `GNH_BATCH_MAX_INTERVAL_MS` | **2000ms** (unset)    | 2000ms  | Max time before forcing a flush (range 100–10,000ms)           |
 | `MaxBatchSize`              | hardcoded             | 100     | Max tasks per batch write                                      |
 | `MaxConsecutiveFailures`    | hardcoded             | 3       | Consecutive failures before falling back to individual updates |
 
 ---
 
-## Worker pool base size
-
-**Source:** `cmd/app/main.go`
-
-| Env var / constant   | Production value              | Default                    | What it controls                                     |
-| -------------------- | ----------------------------- | -------------------------- | ---------------------------------------------------- |
-| —                    | **30** hardcoded by `APP_ENV` | prod=30, staging=10, dev=5 | Base worker count — no env var; requires code change |
-| `WORKER_CONCURRENCY` | **1** (unset)                 | 1                          | Tasks per worker goroutine (range 1-20)              |
-
-Total base capacity = `base workers x WORKER_CONCURRENCY` = 30 x 1 = **30
-concurrent task slots**.
-
----
-
-## Worker pool scaling
+## HTML persistence
 
 **Source:** `internal/jobs/worker.go`
 
-The pool scales dynamically between base and max based on active job
-concurrency. Scale decisions are governed by the settings below.
+Async pool for uploading raw HTML to Supabase Storage after task completion.
 
-| Env var / constant                  | Production value         | Default             | What it controls                                                    |
-| ----------------------------------- | ------------------------ | ------------------- | ------------------------------------------------------------------- |
-| `maxWorkersProduction`              | **40** hardcoded         | prod=40, staging=10 | Max workers ceiling — no env var; requires code change              |
-| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **15s** (unset)          | 15s                 | Minimum time between scale decisions                                |
-| `GNH_WORKER_IDLE_THRESHOLD`         | **0 / disabled** (unset) | 0                   | Idle worker count before scale-down; 0 = disabled                   |
-| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **0 / disabled** (unset) | 0                   | Health probe interval (min 10s); 0 = disabled                       |
-| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)           | 20                  | Consecutive task failures before a job is marked permanently failed |
+| Env var / constant            | Production value      | Default | What it controls                        |
+| ----------------------------- | --------------------- | ------- | --------------------------------------- |
+| `GNH_HTML_PERSIST_WORKERS`    | **32** (`fly.toml`)   | 8       | Goroutines uploading HTML concurrently  |
+| `GNH_HTML_PERSIST_QUEUE_SIZE` | **2048** (`fly.toml`) | 64      | Channel buffer for pending HTML uploads |
 
 ---
 
-## Running task tracking
+## Domain rate limiter
 
-**Source:** `internal/jobs/worker.go`
+**Source:** `internal/jobs/domain_limiter.go`
 
-Controls how the `running_tasks` counter is batched and flushed to the DB.
+Adaptive per-domain delay that backs off when a site returns rate-limit signals
+and recovers after sustained successes. Env var overrides apply at startup only.
 
-| Env var / constant                   | Production value | Default | What it controls                                         |
-| ------------------------------------ | ---------------- | ------- | -------------------------------------------------------- |
-| `GNH_RUNNING_TASK_BATCH_SIZE`        | **4** (unset)    | 4       | Tasks batched per `running_tasks` flush                  |
-| `GNH_RUNNING_TASK_FLUSH_INTERVAL_MS` | **50ms** (unset) | 50ms    | Max interval before flushing the `running_tasks` counter |
+| Env var / constant                 | Production value  | Default | What it controls                                        |
+| ---------------------------------- | ----------------- | ------- | ------------------------------------------------------- |
+| `GNH_RATE_LIMIT_BASE_DELAY_MS`     | **500ms** (unset) | 500ms   | Minimum delay between requests to a domain              |
+| `GNH_RATE_LIMIT_DELAY_STEP_MS`     | **500ms** (unset) | 500ms   | Delay increment per rate-limit hit                      |
+| `GNH_RATE_LIMIT_MAX_DELAY_SECONDS` | **60s** (unset)   | 60s     | Ceiling for adaptive delay                              |
+| `GNH_RATE_LIMIT_SUCCESS_THRESHOLD` | **5** (unset)     | 5       | Consecutive successes before attempting delay reduction |
+| `GNH_ROBOTS_DELAY_MULTIPLIER`      | **0.5** (unset)   | 0.5     | Scale factor applied to `Crawl-Delay` from robots.txt   |
+
+The domain limiter also reduces a job's effective concurrency fed into
+`calculateConcurrencyTarget()`, so heavily rate-limited jobs do not inflate the
+worker count.
+
+---
+
+## Cold-storage archival
+
+**Source:** `internal/archive/archive.go`, `fly.toml`
+
+| Env var / constant       | Production value     | Default | What it controls                                                          |
+| ------------------------ | -------------------- | ------- | ------------------------------------------------------------------------- |
+| `ARCHIVE_PROVIDER`       | **r2** (`fly.toml`)  | —       | Storage backend (`r2` or `s3`)                                            |
+| `ARCHIVE_BUCKET`         | (`fly.toml`)         | —       | Bucket name for archived HTML                                             |
+| `ARCHIVE_RETENTION_JOBS` | **3** (`fly.toml`)   | —       | Last N terminal jobs (completed/failed/cancelled) kept hot per domain/org |
+| `ARCHIVE_INTERVAL`       | **1m** (`fly.toml`)  | —       | Sweep frequency                                                           |
+| `ARCHIVE_BATCH_SIZE`     | **100** (`fly.toml`) | —       | Archive candidates processed per sweep                                    |
+| `ARCHIVE_CONCURRENCY`    | **5** (`fly.toml`)   | —       | Parallel R2 uploads per sweep                                             |
 
 ---
 

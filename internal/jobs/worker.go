@@ -67,8 +67,8 @@ const (
 	// recently concurrency-blocked for the purposes of suppressing scale ups.
 	concurrencyBlockCooldown = 30 * time.Second
 
-	// maxWorkersProduction caps dynamic scaling below the DB pool budget.
-	maxWorkersProduction = 100
+	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
+	maxWorkersProduction = 160
 	// maxWorkersStaging keeps preview/staging environments conservative.
 	maxWorkersStaging = 10
 
@@ -199,6 +199,10 @@ type WorkerPool struct {
 
 	// Health probe
 	probeInterval time.Duration // from GNH_HEALTH_PROBE_INTERVAL_SECONDS (default 0 = disabled)
+
+	// Background loop intervals
+	promotionInterval   time.Duration // from GNH_QUOTA_PROMOTION_INTERVAL_SECONDS (default 5s, min 2s)
+	taskMonitorInterval time.Duration // from GNH_TASK_MONITOR_INTERVAL_SECONDS (default 10s, min 5s)
 
 	// Running task release batching
 	runningTaskReleaseCh            chan string
@@ -530,6 +534,33 @@ func runningTaskFlushIntervalFromEnv() time.Duration {
 	return defaultRunningTaskFlush
 }
 
+func maxWorkersFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_MAX_WORKERS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return maxWorkersProduction
+}
+
+func quotaPromotionIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_QUOTA_PROMOTION_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 2 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return 5 * time.Second
+}
+
+func taskMonitorIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_TASK_MONITOR_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 5 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return 10 * time.Second
+}
+
 func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInterface, numWorkers int, workerConcurrency int, dbConfig *db.Config) *WorkerPool {
 	// Validate inputs
 	if sqlDB == nil {
@@ -551,8 +582,8 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		panic("database configuration is required")
 	}
 
-	// Determine max workers based on environment to prevent resource exhaustion
-	maxWorkers := maxWorkersProduction
+	// Determine max workers: env override (GNH_MAX_WORKERS), staging hard cap, then default.
+	maxWorkers := maxWorkersFromEnv()
 	if env := os.Getenv("APP_ENV"); env == "staging" {
 		maxWorkers = maxWorkersStaging
 	}
@@ -624,6 +655,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 
 		// Health probe
 		probeInterval: probeInterval,
+
+		// Background loop intervals
+		promotionInterval:   quotaPromotionIntervalFromEnv(),
+		taskMonitorInterval: taskMonitorIntervalFromEnv(),
 
 		// Running task release batching
 		runningTaskReleaseCh:            make(chan string, runningTaskBuffer),
@@ -1840,7 +1875,7 @@ func (wp *WorkerPool) EnqueueURLs(ctx context.Context, jobID string, pages []db.
 func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 	log.Info().Msg("Starting task monitor to check for pending tasks")
 	wp.wg.Go(func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(wp.taskMonitorInterval)
 		defer ticker.Stop()
 
 		// Pending queue rebalancer ticker - demote excess pending to waiting
@@ -2983,8 +3018,7 @@ func (wp *WorkerPool) StartCleanupMonitor(ctx context.Context) {
 // StartQuotaPromotionMonitor checks for waiting tasks that can be promoted when quota becomes available
 func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 	wp.wg.Go(func() {
-		// Check every 30 seconds for waiting tasks that can now be promoted
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(wp.promotionInterval)
 		defer ticker.Stop()
 
 		for {
