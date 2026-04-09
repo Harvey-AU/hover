@@ -3017,11 +3017,12 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 
 	// Find jobs with waiting tasks where quota is available. Fetch concurrency
 	// and counter values in the same query so batch size can be computed without
-	// extra round-trips per job. get_daily_quota_remaining is called once per
-	// eligible job via the LATERAL subquery.
+	// extra round-trips per job. EXISTS avoids the fan-out that JOIN produces
+	// (one row per waiting task) before DISTINCT collapses them, which would
+	// cause the LATERAL quota call to execute once per waiting task row.
 	err := wp.dbQueue.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT DISTINCT
+			SELECT
 				j.id,
 				j.status,
 				q.quota_remaining,
@@ -3029,11 +3030,10 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 				j.running_tasks,
 				j.pending_tasks
 			FROM jobs j
-			JOIN tasks t ON t.job_id = j.id
 			CROSS JOIN LATERAL (
 				SELECT get_daily_quota_remaining(j.organisation_id) AS quota_remaining
 			) q
-			WHERE t.status = 'waiting'
+			WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.job_id = j.id AND t.status = 'waiting')
 			  AND j.status IN ('running', 'pending')
 			  AND j.organisation_id IS NOT NULL
 			  AND q.quota_remaining > 0
@@ -3086,6 +3086,13 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 		if job.Concurrency > 0 {
 			if available := job.Concurrency - job.RunningTasks - job.PendingTasks; available < slots {
 				slots = available
+			}
+		} else {
+			// No explicit concurrency limit: apply pendingUnlimitedCap to avoid
+			// bulk-promoting more tasks than workers can drain, mirroring the cap
+			// used by availablePendingSlots and the pending queue rebalancer.
+			if capAvail := pendingUnlimitedCap - job.PendingTasks; capAvail < slots {
+				slots = capAvail
 			}
 		}
 		if slots <= 0 {
