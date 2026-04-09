@@ -49,6 +49,11 @@ On merge, CI will:
   `EnqueueURLs` with `total_tasks - skipped_tasks` (now maintained incrementally
   by the statement-level trigger), removing a per-call table scan from inside
   the job-row lock
+- Fix `promote_waiting_task_for_job` to promote N tasks per slot release instead
+  of always 1; replace the stale `running_tasks` capacity join with a
+  caller-supplied count; remove the redundant promotion loop from the batch
+  flush transaction (ran under stale data and caused lock contention inside an
+  already long-held lock)
 
 ## Full changelog history
 

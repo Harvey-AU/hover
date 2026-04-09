@@ -1932,14 +1932,15 @@ func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, cou
 		return nil
 	}
 
-	// Run promotion outside the job update transaction to avoid holding both job and
-	// task locks concurrently, which was leading to deadlocks under load.
+	// Promote exactly `count` waiting tasks now that the slots are confirmed freed.
+	// Run outside the decrement transaction to avoid holding both job and task locks
+	// concurrently (previously caused deadlocks under load).
 	promoteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := q.promoteWaitingTask(promoteCtx, jobID); err != nil {
+	if err := q.promoteWaitingTasksBatch(promoteCtx, jobID, count); err != nil {
 		// Best-effort: log but don't fail – the caller already freed slots.
-		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting task after slot release")
+		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting tasks after slot release")
 	}
 
 	return nil
@@ -1962,10 +1963,15 @@ func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, cou
 	})
 }
 
-// promoteWaitingTask best-effort promotes a single waiting task for the given job.
-func (q *DbQueue) promoteWaitingTask(ctx context.Context, jobID string) error {
+// promoteWaitingTasksBatch promotes up to count waiting tasks to pending for the given job.
+// Uses the batch-aware SQL function that locks only task rows (SKIP LOCKED) and promotes
+// all slots in one UPDATE, avoiding the stale running_tasks check of the old function.
+func (q *DbQueue) promoteWaitingTasksBatch(ctx context.Context, jobID string, count int) error {
+	if count <= 0 {
+		return nil
+	}
 	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID)
+		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_tasks_for_job($1, $2)`, jobID, count)
 		return err
 	})
 }
