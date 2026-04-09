@@ -35,9 +35,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 	c := &jobsConfig{
 		Interval:       3 * time.Minute,
 		StatusInterval: 30 * time.Second,
-		JobsPerBatch:   3,
-		Repeats:        1,
-		Concurrency:    "random",
+		JobsPerBatch:   10,
+		Repeats:        4,
+		Concurrency:    "20",
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -537,7 +537,9 @@ func runJobsGenerate(args []string) error {
 
 		refreshDomainStatuses(ctx, domainStates, ac.APIURL, token, cfg.StatusInterval)
 
-		readyIndices := make([]int, 0, cfg.JobsPerBatch)
+		// First, pick domains due for a repeat (already ran at least once and job
+		// has finished). Then fill any remaining slots with random untouched domains.
+		var repeatReady, freshReady []int
 		for i := range domainStates {
 			state := &domainStates[i]
 			if state.RemainingRuns == 0 {
@@ -546,10 +548,16 @@ func runJobsGenerate(args []string) error {
 			if state.LastJobID != "" && !isTerminalJobStatus(state.LastJobStatus) {
 				continue
 			}
-			readyIndices = append(readyIndices, i)
-			if len(readyIndices) >= cfg.JobsPerBatch {
-				break
+			if state.CompletedRuns > 0 {
+				repeatReady = append(repeatReady, i)
+			} else {
+				freshReady = append(freshReady, i)
 			}
+		}
+		rand.Shuffle(len(freshReady), func(a, b int) { freshReady[a], freshReady[b] = freshReady[b], freshReady[a] })
+		readyIndices := append(repeatReady, freshReady...)
+		if len(readyIndices) > cfg.JobsPerBatch {
+			readyIndices = readyIndices[:cfg.JobsPerBatch]
 		}
 
 		if len(readyIndices) == 0 {
@@ -572,7 +580,7 @@ func runJobsGenerate(args []string) error {
 		}
 
 		batch++
-		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d (%d/%d jobs created) ===\033[0m\n", batch, jobsCreated, totalRuns)
+		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d (%d/%d jobs created) %s ===\033[0m\n", batch, jobsCreated, totalRuns, time.Now().Format("02-01 15:04:05"))
 
 		for _, idx := range readyIndices {
 			state := &domainStates[idx]
