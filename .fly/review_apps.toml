@@ -64,6 +64,9 @@ FLIGHT_RECORDER_ENABLED = "false"
 LOG_LEVEL = "info"
 OBSERVABILITY_ENABLED = "false"             # Disabled for preview (no OTEL endpoint)
 
+[deploy]
+strategy = "immediate"
+
 # Use same machine config as production but smaller
 [vm]
 memory = '1gb'
