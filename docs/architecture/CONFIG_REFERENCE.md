@@ -90,8 +90,9 @@ concurrent task slots**.
 The pool scales dynamically between base and max based on active job
 concurrency. Scale target formula:
 `ceil(totalJobConcurrency / WORKER_CONCURRENCY × 1.1)`, capped at
-`maxWorkersProduction`. Each job's effective concurrency is reduced by the
-domain limiter when adaptive delays are active.
+`wp.maxWorkers` (derived from `GNH_MAX_WORKERS`, or the staging hard cap when
+`APP_ENV=staging`). Each job's effective concurrency is reduced by the domain
+limiter when adaptive delays are active.
 
 | Env var / constant                  | Production value      | Default           | What it controls                                                    |
 | ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
@@ -196,14 +197,14 @@ worker count.
 
 **Source:** `internal/archive/archive.go`, `fly.toml`
 
-| Env var / constant       | Production value     | Default | What it controls                               |
-| ------------------------ | -------------------- | ------- | ---------------------------------------------- |
-| `ARCHIVE_PROVIDER`       | **r2** (`fly.toml`)  | —       | Storage backend (`r2` or `s3`)                 |
-| `ARCHIVE_BUCKET`         | (`fly.toml`)         | —       | Bucket name for archived HTML                  |
-| `ARCHIVE_RETENTION_JOBS` | **3** (`fly.toml`)   | —       | Completed jobs kept in Supabase per domain/org |
-| `ARCHIVE_INTERVAL`       | **1m** (`fly.toml`)  | —       | Sweep frequency                                |
-| `ARCHIVE_BATCH_SIZE`     | **100** (`fly.toml`) | —       | Archive candidates processed per sweep         |
-| `ARCHIVE_CONCURRENCY`    | **5** (`fly.toml`)   | —       | Parallel R2 uploads per sweep                  |
+| Env var / constant       | Production value     | Default | What it controls                                                          |
+| ------------------------ | -------------------- | ------- | ------------------------------------------------------------------------- |
+| `ARCHIVE_PROVIDER`       | **r2** (`fly.toml`)  | —       | Storage backend (`r2` or `s3`)                                            |
+| `ARCHIVE_BUCKET`         | (`fly.toml`)         | —       | Bucket name for archived HTML                                             |
+| `ARCHIVE_RETENTION_JOBS` | **3** (`fly.toml`)   | —       | Last N terminal jobs (completed/failed/cancelled) kept hot per domain/org |
+| `ARCHIVE_INTERVAL`       | **1m** (`fly.toml`)  | —       | Sweep frequency                                                           |
+| `ARCHIVE_BATCH_SIZE`     | **100** (`fly.toml`) | —       | Archive candidates processed per sweep                                    |
+| `ARCHIVE_CONCURRENCY`    | **5** (`fly.toml`)   | —       | Parallel R2 uploads per sweep                                             |
 
 ---
 
