@@ -28,7 +28,13 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Performance
+
+- Replace 3× correlated `COUNT(*) WHERE status = '…'` subqueries in
+  `update_job_counters` UPDATE path with O(1) incremental deltas computed from
+  `OLD`/`NEW.status`; add an early-exit guard that skips the `UPDATE jobs`
+  entirely for non-terminal, non-starting transitions (e.g. pending↔running),
+  which previously triggered all three full-table scans for no counter change
 
 ## Full changelog history
 
