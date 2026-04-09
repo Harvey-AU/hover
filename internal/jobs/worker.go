@@ -68,7 +68,7 @@ const (
 	concurrencyBlockCooldown = 30 * time.Second
 
 	// maxWorkersProduction caps dynamic scaling below the DB pool budget.
-	maxWorkersProduction = 100
+	maxWorkersProduction = 160
 	// maxWorkersStaging keeps preview/staging environments conservative.
 	maxWorkersStaging = 10
 
@@ -1840,7 +1840,7 @@ func (wp *WorkerPool) EnqueueURLs(ctx context.Context, jobID string, pages []db.
 func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 	log.Info().Msg("Starting task monitor to check for pending tasks")
 	wp.wg.Go(func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 
 		// Pending queue rebalancer ticker - demote excess pending to waiting
@@ -2983,8 +2983,8 @@ func (wp *WorkerPool) StartCleanupMonitor(ctx context.Context) {
 // StartQuotaPromotionMonitor checks for waiting tasks that can be promoted when quota becomes available
 func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 	wp.wg.Go(func() {
-		// Check every 30 seconds for waiting tasks that can now be promoted
-		ticker := time.NewTicker(30 * time.Second)
+		// Check every 5 seconds for waiting tasks that can now be promoted
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
 		for {
