@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ import (
 var version = "dev"
 
 func main() {
+	checkAndUpdate()
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -40,14 +43,12 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		checkLatestVersion()
 		if err := runJobsGenerate(os.Args[3:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "version":
 		fmt.Printf("hover v%s\n", version)
-		checkLatestVersion()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -57,9 +58,9 @@ func main() {
 	}
 }
 
-// checkLatestVersion queries the GitHub API for the latest CLI release tag
-// and prints a notice if a newer version is available.
-func checkLatestVersion() {
+// checkAndUpdate queries the GitHub API for the latest CLI release tag and
+// auto-updates via npm if a newer version is available.
+func checkAndUpdate() {
 	if version == "dev" {
 		return
 	}
@@ -88,8 +89,16 @@ func checkLatestVersion() {
 			latest = v
 		}
 	}
-	if latest != "" && compareSemver(latest, version) > 0 {
-		fmt.Fprintf(os.Stderr, "\nA newer version is available: v%s (current: v%s)\nUpdate with: npm install -g @harvey-au/hover\n", latest, version)
+	if latest == "" || compareSemver(latest, version) <= 0 {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Updating hover v%s → v%s...\n", version, latest)
+	cmd := exec.Command("npm", "install", "-g", "@harvey-au/hover")
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-update failed: %v\nRun manually: npm install -g @harvey-au/hover\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Updated to v%s.\n\n", latest)
 	}
 }
 
