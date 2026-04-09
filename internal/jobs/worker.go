@@ -3006,22 +3006,37 @@ func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 // promoteWaitingTasksWithQuota finds jobs with waiting tasks where quota is now available
 func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 	type jobInfo struct {
-		ID     string
-		Status string
+		ID             string
+		Status         string
+		QuotaRemaining int
+		Concurrency    int
+		RunningTasks   int
+		PendingTasks   int
 	}
 	var jobs []jobInfo
 
-	// Find jobs with waiting tasks that have quota available
-	// Include both 'running' and 'pending' jobs - pending jobs may have been blocked by quota at creation
+	// Find jobs with waiting tasks where quota is available. Fetch concurrency
+	// and counter values in the same query so batch size can be computed without
+	// extra round-trips per job. get_daily_quota_remaining is called once per
+	// eligible job via the LATERAL subquery.
 	err := wp.dbQueue.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT DISTINCT j.id, j.status
+			SELECT DISTINCT
+				j.id,
+				j.status,
+				q.quota_remaining,
+				COALESCE(j.concurrency, 0) AS concurrency,
+				j.running_tasks,
+				j.pending_tasks
 			FROM jobs j
 			JOIN tasks t ON t.job_id = j.id
+			CROSS JOIN LATERAL (
+				SELECT get_daily_quota_remaining(j.organisation_id) AS quota_remaining
+			) q
 			WHERE t.status = 'waiting'
 			  AND j.status IN ('running', 'pending')
 			  AND j.organisation_id IS NOT NULL
-			  AND get_daily_quota_remaining(j.organisation_id) > 0
+			  AND q.quota_remaining > 0
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to find jobs with promotable tasks: %w", err)
@@ -3030,7 +3045,7 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 
 		for rows.Next() {
 			var j jobInfo
-			if err := rows.Scan(&j.ID, &j.Status); err != nil {
+			if err := rows.Scan(&j.ID, &j.Status, &j.QuotaRemaining, &j.Concurrency, &j.RunningTasks, &j.PendingTasks); err != nil {
 				return fmt.Errorf("failed to scan job: %w", err)
 			}
 			jobs = append(jobs, j)
@@ -3042,7 +3057,6 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 		return err
 	}
 
-	// Promote waiting tasks for each job (keep promoting until quota/concurrency exhausted)
 	totalPromoted := 0
 	for _, job := range jobs {
 		// If job is pending, transition it to running and add to worker pool
@@ -3064,56 +3078,37 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 			log.Info().Str("job_id", job.ID).Msg("Transitioned pending job to running after quota became available")
 		}
 
-		jobPromoted := 0
-		// Keep calling promote until it stops promoting (quota exhausted or no more waiting)
-		for {
-			var promoted bool
-			err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-				// Check if a task was actually promoted by looking for newly pending tasks
-				var taskID *string
-				err := tx.QueryRowContext(ctx, `
-					WITH promoted AS (
-						UPDATE tasks
-						SET status = 'pending'
-						WHERE id = (
-							SELECT t.id
-							FROM tasks t
-							INNER JOIN jobs j ON t.job_id = j.id
-							WHERE t.job_id = $1
-							  AND t.status = 'waiting'
-							  AND j.status = 'running'
-							  AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks + j.pending_tasks < j.concurrency)
-							  AND (j.organisation_id IS NULL OR get_daily_quota_remaining(j.organisation_id) > 0)
-							ORDER BY t.priority_score DESC, t.created_at ASC
-							LIMIT 1
-							FOR UPDATE OF t SKIP LOCKED
-						)
-						RETURNING id
-					)
-					SELECT id FROM promoted
-				`, job.ID).Scan(&taskID)
-				if err == sql.ErrNoRows || taskID == nil {
-					promoted = false
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				promoted = true
-				return nil
-			})
-			if err != nil {
-				log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to promote waiting task for job")
-				break
+		// Compute batch size: min(quota remaining, available concurrency slots).
+		// running_tasks from the DB is an upper-bound estimate (the Go-side counter
+		// is flushed asynchronously); promote_waiting_tasks_for_job uses SKIP LOCKED
+		// so over-estimation cannot cause double-claiming.
+		slots := job.QuotaRemaining
+		if job.Concurrency > 0 {
+			if available := job.Concurrency - job.RunningTasks - job.PendingTasks; available < slots {
+				slots = available
 			}
-			if !promoted {
-				break // No more tasks to promote for this job
-			}
-			jobPromoted++
-			totalPromoted++
 		}
-		if jobPromoted > 0 {
-			log.Debug().Str("job_id", job.ID).Int("promoted", jobPromoted).Msg("Promoted waiting tasks for job")
+		if slots <= 0 {
+			continue
+		}
+
+		var promoted int
+		err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx,
+				`SELECT promote_waiting_tasks_for_job($1, $2)`, job.ID, slots,
+			).Scan(&promoted)
+		})
+		if err != nil {
+			log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to promote waiting tasks for job")
+			continue
+		}
+		if promoted > 0 {
+			log.Debug().
+				Str("job_id", job.ID).
+				Int("promoted", promoted).
+				Int("slots", slots).
+				Msg("Promoted waiting tasks for job")
+			totalPromoted += promoted
 		}
 	}
 
