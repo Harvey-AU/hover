@@ -32,6 +32,31 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.31.13] – 2026-04-09
+
+### Performance
+
+- Replace 3× correlated `COUNT(*) WHERE status = '…'` subqueries in
+  `update_job_counters` UPDATE path with O(1) incremental deltas computed from
+  `OLD`/`NEW.status`; add an early-exit guard that skips the `UPDATE jobs`
+  entirely for non-terminal, non-starting transitions (e.g. pending↔running),
+  which previously triggered all three full-table scans for no counter change
+- Drop `trigger_update_job_progress` (the legacy full-scan trigger that was
+  never removed when `update_job_counters` was added); both triggers fired on
+  every task status change causing 2× jobs row UPDATEs and 3× COUNT(\*) scans
+  per concurrent worker — the primary cause of sustained 100% Supabase CPU
+- Extend `update_job_counters` to handle job status transition (`running` →
+  `completed`) with the same O(1) incremental logic, preserving `cancelled` and
+  `failed` terminal states
+- Narrow `trg_update_job_queue_counters` from `AFTER UPDATE` (all columns) to
+  `AFTER UPDATE OF status` — eliminates function-call overhead on metadata-only
+  task updates (response_time, priority_score, etc.)
+- Replace one-at-a-time waiting-task promotion loop in
+  `promoteWaitingTasksWithQuota` with a single batch call to
+  `promote_waiting_tasks_for_job`, reducing N DB round-trips to 1 per job and
+  computing quota/concurrency limits upfront via a LATERAL subquery
+
+
 ## [0.31.12] – 2026-04-09
 
 ### Performance
