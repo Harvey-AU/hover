@@ -1,0 +1,13 @@
+-- Revert jobs table from REPLICA IDENTITY FULL to DEFAULT (primary key only).
+--
+-- REPLICA IDENTITY FULL (set in 20260101140000) causes every UPDATE on the
+-- jobs row to include the entire old + new row in the WAL entry. With two
+-- trigger UPDATEs per task status change under concurrent workers, realtime
+-- WAL polling (realtime.list_changes) was consuming ~24% of total DB time.
+--
+-- DEFAULT identity still fires INSERT/UPDATE/DELETE realtime events; only the
+-- `old` record in UPDATE payloads is reduced to the primary key. Both frontend
+-- subscribers (job-page.js, gnh-auth-extension.js) ignore payload contents and
+-- use realtime events solely as a trigger to re-fetch — no old-record data is
+-- read, so this change is safe.
+ALTER TABLE public.jobs REPLICA IDENTITY DEFAULT;
