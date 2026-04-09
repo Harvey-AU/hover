@@ -28,7 +28,19 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Performance
+
+- Add three partial/covering indexes on `tasks` to reduce Supabase CPU load
+  under high concurrency: `idx_tasks_job_has_html_storage` and
+  `idx_tasks_job_html_archived` eliminate heap scans in `MarkFullyArchivedJobs`
+  EXISTS/NOT EXISTS subqueries; `idx_tasks_job_activity_times` covers the
+  per-job MAX timestamp scan in `CleanupStuckJobs`
+- Move traffic score UPDATE in `EnqueueURLs` to a separate transaction after the
+  job-row lock is released, reducing lock hold time for concurrent workers on
+  the same job
+- Skip traffic score updates for link-discovered pages deeper than ~3 hops from
+  the homepage (priority < 0.729) — these pages are too numerous for the
+  `page_analytics` join to be worthwhile; sitemap sources always apply
 
 ## Full changelog history
 
