@@ -35,9 +35,9 @@ func parseJobsFlags(args []string) (*jobsConfig, error) {
 	c := &jobsConfig{
 		Interval:       3 * time.Minute,
 		StatusInterval: 30 * time.Second,
-		JobsPerBatch:   3,
-		Repeats:        1,
-		Concurrency:    "random",
+		JobsPerBatch:   10,
+		Repeats:        4,
+		Concurrency:    "20",
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -398,15 +398,16 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 	}
 }
 
-// Test domains — same 115 diverse real-world sites from the shell script.
+// Test domains — 215 diverse real-world sites across many categories.
 var testDomains = []string{
-	// Australian businesses (6)
-	"bankaust.com.au", "australiansuper.com", "bunnings.com.au",
+	// Australian businesses (10)
+	"bankaust.com.au", "bunnings.com.au",
+	"responsibleinvestment.org", "envirotecture.com.au", "cpsn.org.au", "teamharvey.co", "goodnative.co",
 	"jbhifi.com.au", "kmart.com.au", "officeworks.com.au",
 
-	// E-commerce & retail (10)
-	"merrypeople.com", "aesop.com", "allbirds.com", "everlane.com", "warbyparker.com",
-	"casper.com", "glossier.com", "away.com", "brooklinen.com", "kotn.com",
+	// E-commerce & retail (7)
+	"merrypeople.com", "allbirds.com", "everlane.com", "warbyparker.com",
+	"glossier.com", "brooklinen.com", "kotn.com",
 
 	// Tech blogs & publications (5)
 	"csswizardry.com", "heydesigner.com", "sidebar.io", "stefanjudis.com", "smolblog.com",
@@ -415,36 +416,92 @@ var testDomains = []string{
 	"smashingmagazine.com", "css-tricks.com", "webdesignerdepot.com", "sitepoint.com", "alistapart.com",
 	"designmodo.com", "creativebloq.com", "awwwards.com", "onextrapixel.com", "hongkiat.com",
 
-	// Small business / agency sites (9)
-	"studiothink.com.au", "zeroseven.com.au", "humaan.com.au", "noice.com.au", "willandco.com.au",
-	"thecontentlab.com.au", "thisisgold.com.au", "wethecollective.com.au", "tworedshoes.com.au",
+	// Small business / agency sites (5)
+	"zeroseven.com.au", "noice.com.au", "willandco.com.au",
+	"tworedshoes.com.au",
 
 	// Developer docs & tools (8)
 	"fly.io", "railway.app", "render.com", "tailwindcss.com",
 	"nextjs.org", "react.dev", "astro.build", "svelte.dev",
 
-	// Additional dev frameworks & tooling (30)
-	"vitejs.dev", "nuxt.com", "remix.run", "solidjs.com", "qwik.dev",
+	// Additional dev frameworks & tooling (25)
+	"vitejs.dev", "nuxt.com", "remix.run", "qwik.dev",
 	"parceljs.org", "rollupjs.org", "esbuild.github.io", "bun.sh", "deno.com",
 	"cypress.io", "vitest.dev", "pnpm.io", "turbo.build",
 	"nx.dev", "oclif.io", "temporal.io", "directus.io", "strapi.io",
-	"sanity.io", "payloadcms.com", "pocketbase.io", "supabase.com", "plane.so",
-	"appsmith.com", "tooljet.com", "budibase.com", "windmill.dev", "tauri.app",
+	"sanity.io", "pocketbase.io", "supabase.com", "plane.so",
+	"appsmith.com", "budibase.com", "windmill.dev", "tauri.app",
 
-	// SaaS & productivity apps (12)
-	"linear.app", "height.app", "reclaim.ai", "mem.ai", "reflect.app",
-	"cron.com", "retool.com", "cal.com", "around.co", "raycast.com",
+	// SaaS & productivity apps (9)
+	"linear.app", "reclaim.ai", "reflect.app",
+	"cron.com", "retool.com", "cal.com", "raycast.com",
 	"warp.dev", "cursor.so",
 
-	// Niche e-commerce & DTC brands (17)
-	"studioneat.com", "feals.com", "magicspoon.com", "atlascoffeeclub.com",
-	"blueland.com", "publicgoods.com", "outerknown.com", "grovemade.com",
-	"ridgewallet.com", "ouraring.com", "carawayhome.com", "maap.cc",
+	// Niche e-commerce & DTC brands (14)
+	"feals.com", "magicspoon.com", "atlascoffeeclub.com",
+	"blueland.com", "outerknown.com", "grovemade.com",
+	"ridgewallet.com", "ouraring.com", "carawayhome.com",
 	"bellroy.com", "ritual.com", "cuyana.com", "thesill.com", "parachutehome.com",
 
 	// Indie analytics & SaaS (7)
 	"plausible.io", "simpleanalytics.com", "savvycal.com", "commandbar.com",
 	"pirsch.io", "clarityflow.com", "swapcard.com",
+
+	// Programming languages (8)
+	"rust-lang.org", "python.org", "ruby-lang.org", "elixir-lang.org",
+	"kotlinlang.org", "ziglang.org", "typescriptlang.org", "haskell.org",
+
+	// UI frameworks & CSS libraries (8)
+	"getbootstrap.com", "bulma.io", "daisyui.com", "mantine.dev",
+	"open-props.style", "picocss.com", "milligram.io", "unocss.dev",
+
+	// Backend frameworks (7)
+	"expressjs.com", "nestjs.com", "fastify.io", "hono.dev",
+	"rocket.rs", "djangoproject.com", "gin-gonic.com",
+
+	// Databases & storage (7)
+	"postgresql.org", "redis.io", "sqlite.org", "turso.tech",
+	"neon.tech", "planetscale.com", "cockroachlabs.com",
+
+	// Observability & developer tooling (8)
+	"grafana.com", "sentry.io", "opentelemetry.io", "posthog.com",
+	"resend.com", "trigger.dev", "inngest.com", "incident.io",
+
+	// Hosting & deployment (5)
+	"netlify.com", "vercel.com", "clerk.com", "upstash.com", "coolify.io",
+
+	// Design & UX resources (7)
+	"framer.com", "nngroup.com", "typewolf.com",
+	"fontsinuse.com", "siteinspire.com", "mobbin.com", "lookup.design",
+
+	// Learning & developer community (8)
+	"freecodecamp.org", "theodinproject.com", "exercism.org",
+	"dev.to", "changelog.com", "lobste.rs", "jvns.ca", "coderpad.io",
+
+	// Email & content platforms (8)
+	"basecamp.com", "hey.com", "helpscout.com",
+	"ghost.org", "beehiiv.com", "buttondown.email",
+	"obsidian.md", "standardnotes.com",
+
+	// Australian & NZ lifestyle brands (8)
+	"frank-body.com", "afends.com", "rollas.com.au", "surfstitch.com",
+	"thankyou.co", "cottonon.com", "lovethelabel.com.au", "eucalyptus.com.au",
+
+	// Tech media & personal blogs (7)
+	"arstechnica.com", "thenextweb.com", "paulgraham.com",
+	"daringfireball.net", "simonwillison.net", "tonsky.me", "fasterthanli.me",
+
+	// DTC & lifestyle brands (9)
+	"lululemon.com", "cotopaxi.com", "patagonia.com",
+	"mejuri.com", "ugmonk.com", "framebridge.com",
+	"ruggable.com", "prose.com", "maude.com",
+
+	// API tooling & docs platforms (8)
+	"liveblocks.io", "stytch.com", "workos.com", "svix.com",
+	"zuplo.com", "scalar.com", "mintlify.com", "gitbook.com",
+
+	// Editors & dev environments (2)
+	"zed.dev", "helix-editor.com",
 }
 
 func printJobHeader(id *identity, totalRuns, domainCount int, cfg *jobsConfig) {
@@ -525,17 +582,20 @@ func runJobsGenerate(args []string) error {
 		default:
 		}
 
-		// Refresh token if it's nearing expiry (within 5 minutes).
-		freshToken, err := ensureToken(ctx, ac)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: token refresh failed: %v\n", err)
+		// Silently refresh token if nearing expiry. Never open a browser mid-run.
+		// On failure, keep using the existing token — the API will return 401
+		// when it truly expires, at which point the loop exits with a clear message.
+		if freshToken, err := ensureTokenSilent(ctx, ac); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not refresh token (will retry next batch): %v\n", err)
 		} else {
 			token = freshToken
 		}
 
 		refreshDomainStatuses(ctx, domainStates, ac.APIURL, token, cfg.StatusInterval)
 
-		readyIndices := make([]int, 0, cfg.JobsPerBatch)
+		// First, pick domains due for a repeat (already ran at least once and job
+		// has finished). Then fill any remaining slots with random untouched domains.
+		var repeatReady, freshReady []int
 		for i := range domainStates {
 			state := &domainStates[i]
 			if state.RemainingRuns == 0 {
@@ -544,10 +604,16 @@ func runJobsGenerate(args []string) error {
 			if state.LastJobID != "" && !isTerminalJobStatus(state.LastJobStatus) {
 				continue
 			}
-			readyIndices = append(readyIndices, i)
-			if len(readyIndices) >= cfg.JobsPerBatch {
-				break
+			if state.CompletedRuns > 0 {
+				repeatReady = append(repeatReady, i)
+			} else {
+				freshReady = append(freshReady, i)
 			}
+		}
+		rand.Shuffle(len(freshReady), func(a, b int) { freshReady[a], freshReady[b] = freshReady[b], freshReady[a] })
+		readyIndices := append(repeatReady, freshReady...)
+		if len(readyIndices) > cfg.JobsPerBatch {
+			readyIndices = readyIndices[:cfg.JobsPerBatch]
 		}
 
 		if len(readyIndices) == 0 {
@@ -570,7 +636,7 @@ func runJobsGenerate(args []string) error {
 		}
 
 		batch++
-		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d (%d/%d jobs created) ===\033[0m\n", batch, jobsCreated, totalRuns)
+		fmt.Fprintf(os.Stderr, "\n\033[32m=== Batch %d (%d/%d jobs created) %s ===\033[0m\n", batch, jobsCreated, totalRuns, time.Now().Format("02-01 15:04:05"))
 
 		for _, idx := range readyIndices {
 			state := &domainStates[idx]
@@ -586,7 +652,7 @@ func runJobsGenerate(args []string) error {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "\033[31m✗ Failed: %s — %v\033[0m\n", state.Domain, err)
 				if strings.Contains(err.Error(), "401") {
-					return fmt.Errorf("authentication failed — check your token")
+					return fmt.Errorf("session expired — re-run the command to re-authenticate")
 				}
 				state.CreateFailures++
 				if state.CreateFailures >= maxCreateRetries {

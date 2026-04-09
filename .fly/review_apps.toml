@@ -37,18 +37,41 @@ SLACK_CLIENT_ID = "475806237719.8953791603746"
 WEBFLOW_CLIENT_ID = "b0a05758d95823fcef73f57e836e55232bf7c5730794222786040800230ea329"
 GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleusercontent.com"
 
+# Cold-storage archival (R2) — credentials via flyctl secrets
+ARCHIVE_PROVIDER = "r2"
+ARCHIVE_BUCKET = "native-hover-archive"
+ARCHIVE_RETENTION_JOBS = "3"
+ARCHIVE_INTERVAL = "1m"
+ARCHIVE_BATCH_SIZE = "100"
+ARCHIVE_CONCURRENCY = "5"
+
 # Performance settings (preview has own DB now, can align closer to prod)
-WORKER_CONCURRENCY = "5"                    # Half of prod (respects 512mb VM)
+WORKER_CONCURRENCY = "5"                    # Quarter of prod (respects 512mb VM)
+DB_MAX_OPEN_CONNS = "40"                   # Supabase preview pool size
+DB_MAX_IDLE_CONNS = "8"                    # Scaled from prod 20
 DB_QUEUE_MAX_CONCURRENCY = "20"             # Half of prod
 DB_TX_MAX_RETRIES = "5"                     # Same as prod
 GNH_RUNNING_TASK_BATCH_SIZE = "32"          # Same as prod (reduces DB trips)
 GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"  # Same as prod
+GNH_BATCH_CHANNEL_SIZE = "1000"             # Scaled from prod 5000
+GNH_HTML_PERSIST_WORKERS = "8"              # Scaled from prod 32
+GNH_HTML_PERSIST_QUEUE_SIZE = "512"         # Scaled from prod 2048
+GNH_HEALTH_PROBE_INTERVAL_SECONDS = "30"    # Same as prod
+GNH_WORKER_IDLE_THRESHOLD = "10"            # Mark worker idle after 10 consecutive no-task polls
+GNH_WORKER_SCALE_COOLDOWN_SECONDS = "120"   # Same as prod
+ALLOW_DB_RESET = "false"
+FLIGHT_RECORDER_ENABLED = "false"
+LOG_LEVEL = "info"
+OBSERVABILITY_ENABLED = "false"             # Disabled for preview (no OTEL endpoint)
+
+[deploy]
+strategy = "immediate"
 
 # Use same machine config as production but smaller
 [vm]
-memory = '512mb'  # Smaller than production for cost savings
+memory = '1gb'
 cpu_kind = 'shared'
-cpus = 1
+cpus = 2
 
 # Same health checks as production
 [http_service]

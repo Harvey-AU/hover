@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	defaultAuthURL    = "https://hover.auth.goodnative.co"
-	defaultAnonKey    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
-	tokenSkewSeconds  = 90
-	callbackTimeout   = 5 * time.Minute
-	callbackPort      = 8765
-	supabaseTokenPath = "/auth/v1/token" //nolint:gosec // URL path, not a credential
+	defaultAuthURL           = "https://hover.auth.goodnative.co"
+	defaultAnonKey           = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdwemp0Ymd0ZGp4bmFjZGZ1anZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDUwNjYxNjMsImV4cCI6MjA2MDY0MjE2M30.eJjM2-3X8oXsFex_lQKvFkP1-_yLMHsueIn7_hCF6YI"
+	tokenSkewSeconds         = 90  // interactive: refresh within 90s of expiry
+	silentRefreshSkewSeconds = 600 // mid-run: start refreshing 10 min before expiry
+	callbackTimeout          = 5 * time.Minute
+	callbackPort             = 8765
+	supabaseTokenPath        = "/auth/v1/token" //nolint:gosec // URL path, not a credential
 )
 
 // session represents a cached Supabase auth session.
@@ -41,6 +42,16 @@ type session struct {
 }
 
 func (s *session) isValid() bool {
+	return s.isValidWithSkew(tokenSkewSeconds)
+}
+
+// isValidForSilent uses a larger skew so background refresh starts 10 min
+// before expiry, giving retries room to succeed without browser interaction.
+func (s *session) isValidForSilent() bool {
+	return s.isValidWithSkew(silentRefreshSkewSeconds)
+}
+
+func (s *session) isValidWithSkew(skewSeconds float64) bool {
 	expiresAt := s.ExpiresAt
 	if expiresAt == 0 && s.ExpiresIn > 0 && s.FetchedAt > 0 {
 		expiresAt = s.FetchedAt + s.ExpiresIn
@@ -48,7 +59,7 @@ func (s *session) isValid() bool {
 	if expiresAt == 0 {
 		return false
 	}
-	return expiresAt-tokenSkewSeconds > float64(time.Now().Unix())
+	return expiresAt-skewSeconds > float64(time.Now().Unix())
 }
 
 // authConfig holds resolved auth parameters for a CLI invocation.
@@ -117,6 +128,34 @@ func saveSession(s *session, path string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// ensureTokenSilent returns a valid access token using only cached credentials.
+// Unlike ensureToken it never opens a browser, so it is safe to call mid-run.
+// Returns an error if the token cannot be refreshed without user interaction.
+func ensureTokenSilent(ctx context.Context, cfg *authConfig) (string, error) {
+	sf := cfg.sessionFile()
+	sess, err := loadSession(sf)
+	if err != nil {
+		return "", fmt.Errorf("could not read session: %w", err)
+	}
+	if sess == nil {
+		return "", fmt.Errorf("no cached session")
+	}
+	if sess.isValidForSilent() {
+		return sess.AccessToken, nil
+	}
+	if sess.RefreshToken == "" {
+		return "", fmt.Errorf("session expired and no refresh token available")
+	}
+	refreshed, err := refreshSession(ctx, cfg, sess.RefreshToken)
+	if err != nil {
+		return "", fmt.Errorf("token refresh failed: %w", err)
+	}
+	if err := saveSession(refreshed, sf); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not cache refreshed session: %v\n", err)
+	}
+	return refreshed.AccessToken, nil
 }
 
 // ensureToken returns a valid access token, refreshing or performing a

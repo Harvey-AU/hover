@@ -88,6 +88,7 @@ type MockDbQueue struct {
 	UpdateTaskStatusFunc        func(ctx context.Context, task *db.Task) error
 	DecrementRunningTasksFunc   func(ctx context.Context, jobID string) error
 	DecrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
+	IncrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
 	ExecuteFunc                 func(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteMaintenanceFunc      func(ctx context.Context, fn func(*sql.Tx) error) error
 	UpdateTaskHTMLMetadataFunc  func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
@@ -121,6 +122,13 @@ func (m *MockDbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string,
 	// Fallback to single decrement for compatibility in tests
 	if m.DecrementRunningTasksFunc != nil {
 		return m.DecrementRunningTasksFunc(ctx, jobID)
+	}
+	return nil
+}
+
+func (m *MockDbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
+	if m.IncrementRunningTasksByFunc != nil {
+		return m.IncrementRunningTasksByFunc(ctx, jobID, count)
 	}
 	return nil
 }
@@ -162,6 +170,18 @@ func (m *MockDbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string,
 		return m.UpdateTaskHTMLMetadataFunc(ctx, taskID, metadata)
 	}
 	return nil
+}
+
+func (m *MockDbQueue) FindArchiveCandidates(_ context.Context, _, _ int) ([]db.ArchiveCandidate, error) {
+	return nil, nil
+}
+
+func (m *MockDbQueue) MarkTaskArchived(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
+func (m *MockDbQueue) MarkFullyArchivedJobs(_ context.Context) (int64, error) {
+	return 0, nil
 }
 
 // TestWorkerPoolProcessTask demonstrates the test structure for processTask

@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/observability"
@@ -34,6 +35,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5"
 	"github.com/lib/pq"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -65,22 +67,31 @@ const (
 	// recently concurrency-blocked for the purposes of suppressing scale ups.
 	concurrencyBlockCooldown = 30 * time.Second
 
+	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
+	maxWorkersProduction = 160
+	// maxWorkersStaging keeps preview/staging environments conservative.
+	maxWorkersStaging = 10
+
 	pendingRebalanceInterval = 5 * time.Minute
 	pendingRebalanceJobLimit = 25
 	pendingUnlimitedCap      = 100
 	taskHTMLStorageBucket    = "task-html"
 	taskHTMLContentEncoding  = "gzip"
-	taskHTMLPersistQueueSize = 128
-	taskHTMLPersistWorkers   = 2
+	taskHTMLPersistQueueSize = 64
+	taskHTMLPersistWorkers   = 8
+	maxHTMLPersistWorkers    = 32
+	maxHTMLPersistQueueSize  = 10_000
 	taskHTMLDrainTimeout     = 15 * time.Second
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
+	archivePingTimeout       = 10 * time.Second
 )
 
 type storageUploader interface {
 	Upload(ctx context.Context, bucket, path string, data []byte, contentType string) (string, error)
 	UploadWithOptions(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error)
 	Delete(ctx context.Context, bucket, path string) error
+	Download(ctx context.Context, bucket, path string) ([]byte, error)
 }
 
 type taskHTMLUpload struct {
@@ -102,6 +113,16 @@ type taskHTMLPersistRequest struct {
 	Body        []byte
 	CapturedAt  time.Time
 }
+
+// ErrDomainDelay is returned by processTask when the domain rate-limit window
+// has not elapsed. The worker should requeue the task as waiting and immediately
+// pick a different task rather than blocking on the delay.
+var ErrDomainDelay = errors.New("domain rate limit delay")
+
+// domainDelayPause is a short back-off applied after requeueing a domain-delayed
+// task. It prevents a tight DB claim loop when all pending tasks belong to
+// rate-limited domains.
+const domainDelayPause = 100 * time.Millisecond
 
 type WaitingReason string
 
@@ -172,11 +193,16 @@ type WorkerPool struct {
 	idleWorkers      map[int]time.Time // workerID -> when they went idle
 	idleWorkersMutex sync.RWMutex
 	lastScaleDown    time.Time
+	lastScaleEval    time.Time
 	idleThreshold    int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
 	scaleCooldown    time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
 
 	// Health probe
 	probeInterval time.Duration // from GNH_HEALTH_PROBE_INTERVAL_SECONDS (default 0 = disabled)
+
+	// Background loop intervals
+	promotionInterval   time.Duration // from GNH_QUOTA_PROMOTION_INTERVAL_SECONDS (default 5s, min 2s)
+	taskMonitorInterval time.Duration // from GNH_TASK_MONITOR_INTERVAL_SECONDS (default 10s, min 5s)
 
 	// Running task release batching
 	runningTaskReleaseCh            chan string
@@ -185,13 +211,26 @@ type WorkerPool struct {
 	runningTaskReleaseMu            sync.Mutex
 	runningTaskReleasePending       map[string]int
 
+	// In-memory running_tasks tracking (avoids hot-row contention on the jobs row).
+	// Counters are seeded from DB after reconciliation and kept in sync as tasks are
+	// claimed and completed. Increments are flushed to DB asynchronously.
+	runningTasksInMem       map[string]*atomic.Int64
+	runningTasksInMemMu     sync.RWMutex
+	runningTasksIncrPending map[string]int
+	runningTasksIncrMu      sync.Mutex
+	runningTasksIncrCh      chan string
+
 	// Technology detection
 	techDetector        *techdetect.Detector
 	techDetectedDomains map[int]bool // Domains already detected in this session
 	techDetectedMutex   sync.RWMutex
 	storageClient       storageUploader // For uploading HTML samples
 	taskHTMLPersistCh   chan *taskHTMLPersistRequest
+	taskHTMLWorkerCount int
 	taskHTMLPending     atomic.Int64
+
+	// Cold-storage archiver (nil when ARCHIVE_PROVIDER is unset)
+	archiver *archive.Archiver
 }
 
 func (wp *WorkerPool) ensureDomainLimiter() *DomainLimiter {
@@ -208,8 +247,22 @@ func (wp *WorkerPool) activeJobCount() int {
 	return len(wp.jobs)
 }
 
+// IdleWorkerCount returns the number of workers currently idle.
+func (wp *WorkerPool) IdleWorkerCount() int {
+	wp.idleWorkersMutex.RLock()
+	defer wp.idleWorkersMutex.RUnlock()
+	return len(wp.idleWorkers)
+}
+
 func (wp *WorkerPool) logScalingDecision(decision, reason string, currentWorkers, targetWorkers int, metadata map[string]int) {
-	event := log.Info().
+	var event *zerolog.Event
+	if decision == "no_change" {
+		event = log.Debug()
+	} else {
+		event = log.Info()
+	}
+
+	event = event.
 		Str("decision", decision).
 		Str("reason", reason).
 		Int("current_workers", currentWorkers).
@@ -231,7 +284,7 @@ func (wp *WorkerPool) recordWaitingTask(ctx context.Context, task *db.Task, reas
 
 	observability.RecordTaskWaiting(ctx, task.JobID, string(reason), 1)
 
-	log.Info().
+	log.Debug().
 		Str("task_id", task.ID).
 		Str("job_id", task.JobID).
 		Str("waiting_reason", string(reason)).
@@ -454,6 +507,24 @@ func runningTaskBatchSizeFromEnv() int {
 	return defaultRunningTaskBatch
 }
 
+func htmlPersistWorkersFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_WORKERS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return min(parsed, maxHTMLPersistWorkers)
+		}
+	}
+	return taskHTMLPersistWorkers
+}
+
+func htmlPersistQueueSizeFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_HTML_PERSIST_QUEUE_SIZE")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return min(parsed, maxHTMLPersistQueueSize)
+		}
+	}
+	return taskHTMLPersistQueueSize
+}
+
 func runningTaskFlushIntervalFromEnv() time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -461,6 +532,33 @@ func runningTaskFlushIntervalFromEnv() time.Duration {
 		}
 	}
 	return defaultRunningTaskFlush
+}
+
+func maxWorkersFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_MAX_WORKERS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return maxWorkersProduction
+}
+
+func quotaPromotionIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_QUOTA_PROMOTION_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 2 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return 5 * time.Second
+}
+
+func taskMonitorIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_TASK_MONITOR_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 5 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return 10 * time.Second
 }
 
 func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInterface, numWorkers int, workerConcurrency int, dbConfig *db.Config) *WorkerPool {
@@ -484,10 +582,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		panic("database configuration is required")
 	}
 
-	// Determine max workers based on environment to prevent resource exhaustion
-	maxWorkers := 50 // Production: high throughput
+	// Determine max workers: env override (GNH_MAX_WORKERS), staging hard cap, then default.
+	maxWorkers := maxWorkersFromEnv()
 	if env := os.Getenv("APP_ENV"); env == "staging" {
-		maxWorkers = 10 // Preview/staging: match conservative limits
+		maxWorkers = maxWorkersStaging
 	}
 
 	// Create batch manager before WorkerPool construction (db package reference must happen here)
@@ -558,11 +656,20 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		// Health probe
 		probeInterval: probeInterval,
 
+		// Background loop intervals
+		promotionInterval:   quotaPromotionIntervalFromEnv(),
+		taskMonitorInterval: taskMonitorIntervalFromEnv(),
+
 		// Running task release batching
 		runningTaskReleaseCh:            make(chan string, runningTaskBuffer),
 		runningTaskReleaseBatchSize:     runningTaskBatchSize,
 		runningTaskReleaseFlushInterval: runningTaskFlushInterval,
 		runningTaskReleasePending:       make(map[string]int),
+
+		// In-memory running_tasks tracking
+		runningTasksInMem:       make(map[string]*atomic.Int64),
+		runningTasksIncrPending: make(map[string]int),
+		runningTasksIncrCh:      make(chan string, runningTaskBuffer),
 
 		// Technology detection (initialised lazily to avoid startup errors)
 		techDetectedDomains: make(map[int]bool),
@@ -586,10 +693,42 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	supabaseSecretKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY")
 	if supabaseURL != "" && supabaseSecretKey != "" {
 		wp.storageClient = storage.New(supabaseURL, supabasePublishableKey, supabaseSecretKey)
-		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, taskHTMLPersistQueueSize)
-		log.Info().Msg("Storage client initialised for HTML uploads")
+		htmlQueueSize := htmlPersistQueueSizeFromEnv()
+		wp.taskHTMLWorkerCount = htmlPersistWorkersFromEnv()
+		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, htmlQueueSize)
+		log.Info().Int("queue_size", htmlQueueSize).Int("workers", wp.taskHTMLWorkerCount).Msg("Storage client initialised for HTML uploads")
 	} else {
 		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
+	}
+
+	// Initialise cold-storage archiver (gated by ARCHIVE_PROVIDER env var).
+	archiveCfg := archive.ConfigFromEnv()
+	switch {
+	case archiveCfg == nil:
+		log.Info().Msg("ARCHIVE: incomplete config or ARCHIVE_PROVIDER not set — archiving DISABLED")
+	case wp.storageClient == nil:
+		log.Error().Msg("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
+	default:
+		provider, err := archive.ProviderFromEnv()
+		if err != nil {
+			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
+		} else if provider == nil {
+			log.Warn().Msg("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
+		} else {
+			pingCtx, cancel := context.WithTimeout(context.Background(), archivePingTimeout)
+			err := provider.Ping(pingCtx, archiveCfg.Bucket)
+			cancel()
+			if err != nil {
+				log.Error().Err(err).
+					Str("provider", archiveCfg.Provider).
+					Str("bucket", archiveCfg.Bucket).
+					Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
+			} else {
+				src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
+				wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, wp.dbQueue.MarkFullyArchivedJobs, src)
+				log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
+			}
+		}
 	}
 
 	// Start the notification listener when we have connection details available.
@@ -646,7 +785,15 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 	wp.StartCleanupMonitor(ctx)
 	wp.StartQuotaPromotionMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
+	wp.startRunningTaskIncrementLoop(ctx)
 	wp.startTaskHTMLPersistenceLoop(ctx)
+
+	// Start cold-storage archiver if configured.
+	if wp.archiver != nil {
+		wp.wg.Go(func() {
+			wp.archiver.Run(ctx, wp.stopCh)
+		})
+	}
 
 	// Start orphaned task cleanup loop
 	wp.wg.Go(func() {
@@ -661,6 +808,7 @@ func (wp *WorkerPool) Stop() {
 		close(wp.stopCh)
 		wp.wg.Wait()
 		wp.flushRunningTaskReleases(context.Background())
+		wp.flushRunningTaskIncrements(context.Background())
 		// Stop batch manager to flush remaining updates
 		if wp.batchManager != nil {
 			wp.batchManager.Stop()
@@ -764,6 +912,12 @@ func (wp *WorkerPool) reconcileRunningTaskCounters(ctx context.Context) error {
 			Msg("Running_tasks counters reconciled - capacity leak detected and fixed")
 	} else {
 		log.Info().Msg("Running_tasks counters already accurate - no reconciliation needed")
+	}
+
+	// Seed in-memory counters from DB so the Go-side concurrency gate is accurate
+	// immediately after reconciliation (before any tasks are claimed).
+	if err := wp.seedRunningTasksInMemFromDB(ctx); err != nil {
+		log.Warn().Err(err).Msg("Failed to seed in-memory running_tasks counters - concurrency gate may be loose until first claim")
 	}
 
 	return nil
@@ -934,6 +1088,14 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 	wp.jobs[jobID] = true
 	wp.jobsMutex.Unlock()
 
+	// Seed in-memory running_tasks counter at zero for new jobs.
+	// If a counter already exists (e.g. job was re-added) leave it in place.
+	wp.runningTasksInMemMu.Lock()
+	if _, exists := wp.runningTasksInMem[jobID]; !exists {
+		wp.runningTasksInMem[jobID] = &atomic.Int64{}
+	}
+	wp.runningTasksInMemMu.Unlock()
+
 	// Initialise performance tracking for this job
 	wp.perfMutex.Lock()
 	wp.jobPerformance[jobID] = &JobPerformance{
@@ -1083,6 +1245,12 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 	wp.jobsMutex.Lock()
 	delete(wp.jobs, jobID)
 	wp.jobsMutex.Unlock()
+
+	// Flush any pending running_tasks increments before removing the job's state.
+	wp.flushRunningTaskIncrementForJob(context.Background(), jobID)
+	wp.runningTasksInMemMu.Lock()
+	delete(wp.runningTasksInMem, jobID)
+	wp.runningTasksInMemMu.Unlock()
 
 	// Remove performance boost for this job
 	wp.perfMutex.Lock()
@@ -1472,26 +1640,56 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			}
 		}
 
+		// Go-side concurrency gate: atomically reserve a slot before hitting DB.
+		// Uses FetchAdd to avoid TOCTOU: two goroutines both reading counter < limit
+		// then both proceeding to GetNextTask, over-claiming by 1.
+		var reservedInMem bool
+		if jobInfo, exists := jobInfoSnapshot[jobID]; exists && jobInfo.Concurrency > 0 {
+			wp.runningTasksInMemMu.RLock()
+			counter, counterExists := wp.runningTasksInMem[jobID]
+			wp.runningTasksInMemMu.RUnlock()
+			if counterExists {
+				prev := counter.Add(1) - 1
+				if prev >= int64(jobInfo.Concurrency) {
+					counter.Add(-1) // rollback: over concurrency limit
+					sawConcurrencyBlocked = true
+					wp.recordConcurrencyBlock(jobID)
+					continue
+				}
+				reservedInMem = true
+			}
+		}
+
 		task, err := wp.dbQueue.GetNextTask(ctx, jobID)
 		if err == sql.ErrNoRows {
-			continue // Try next job
-		}
-		if errors.Is(err, db.ErrConcurrencyBlocked) {
-			// Job has tasks but they're blocked by concurrency limits
-			sawConcurrencyBlocked = true
-			wp.recordConcurrencyBlock(jobID)
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			continue // Try next job
 		}
 		if errors.Is(err, db.ErrPoolSaturated) {
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			// Pool saturated - treat like no tasks available and back off
 			return nil, sql.ErrNoRows
 		}
 		if err != nil {
+			if reservedInMem {
+				wp.decrementRunningTaskInMem(jobID) // rollback reservation
+			}
 			log.Error().Err(err).Str("job_id", jobID).Msg("Error getting next pending task")
 			return nil, err // Return actual errors
 		}
 		if task != nil {
-			log.Info().
+			if reservedInMem {
+				// Slot already reserved atomically; just queue the async DB flush.
+				wp.queueRunningTaskIncrDB(task.JobID)
+			} else {
+				// Counter didn't exist yet (first task for this job) — full increment.
+				wp.incrementRunningTaskInMem(task.JobID)
+			}
+			log.Debug().
 				Str("task_id", task.ID).
 				Str("job_id", task.JobID).
 				Int("page_id", task.PageID).
@@ -1607,6 +1805,31 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 		defer cancel()
 
 		result, err := wp.processTask(taskCtx, jobsTask)
+		if errors.Is(err, ErrDomainDelay) {
+			// Domain rate-limit window not elapsed — requeue as waiting without
+			// incrementing RetryCount or recording a failure. The worker is free
+			// to immediately claim a task from a different domain.
+			task.Status = string(TaskStatusWaiting)
+			task.StartedAt = time.Time{}
+			wp.decrementRunningTaskInMem(task.JobID)
+			if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
+				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
+					Msg("Failed to decrement running_tasks counter on domain delay requeue")
+			}
+			wp.batchManager.QueueTaskUpdate(task)
+			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
+			log.Debug().
+				Str("task_id", task.ID).
+				Str("domain", jobsTask.DomainName).
+				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
+			// Brief pause so the worker does not immediately spin back to the DB
+			// when all pending tasks belong to rate-limited domains.
+			select {
+			case <-time.After(domainDelayPause):
+			case <-ctx.Done():
+			}
+			return nil
+		}
 		if err != nil {
 			return wp.handleTaskError(ctx, task, result, err)
 		} else {
@@ -1652,7 +1875,7 @@ func (wp *WorkerPool) EnqueueURLs(ctx context.Context, jobID string, pages []db.
 func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 	log.Info().Msg("Starting task monitor to check for pending tasks")
 	wp.wg.Go(func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(wp.taskMonitorInterval)
 		defer ticker.Stop()
 
 		// Pending queue rebalancer ticker - demote excess pending to waiting
@@ -2051,6 +2274,7 @@ func (wp *WorkerPool) requeueStaleRunningTasks(ctx context.Context, jobID string
 	if decErr := wp.dbQueue.DecrementRunningTasksBy(ctx, jobID, int(recovered)); decErr != nil {
 		return recovered, fmt.Errorf("failed to release running slots for job %s: %w", jobID, decErr)
 	}
+	wp.decrementRunningTaskInMemBy(jobID, int(recovered))
 	return recovered, nil
 }
 
@@ -2501,8 +2725,12 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		return
 	}
 
-	// Emergency scale-down uses 2s cooldown instead of normal cooldown
 	emergencyCooldown := 2 * time.Second
+	if time.Since(wp.lastScaleEval) < emergencyCooldown {
+		return
+	}
+	wp.lastScaleEval = time.Now()
+
 	if time.Since(wp.lastScaleDown) < emergencyCooldown {
 		wp.workersMutex.RLock()
 		currentWorkers := wp.currentWorkers
@@ -2668,7 +2896,7 @@ func (wp *WorkerPool) scaleDownWorkers(target int) {
 // returnTaskToPending returns a claimed task back to pending status
 // Used by the health probe to check for work without actually processing it
 func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) error {
-	return wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		// Return task to pending
 		_, err := tx.ExecContext(ctx, `
 			UPDATE tasks
@@ -2679,7 +2907,7 @@ func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) er
 			return fmt.Errorf("failed to return task to pending: %w", err)
 		}
 
-		// Decrement running tasks counter
+		// Decrement running tasks counter in DB
 		_, err = tx.ExecContext(ctx, `
 			UPDATE jobs
 			SET running_tasks = running_tasks - 1
@@ -2691,6 +2919,12 @@ func (wp *WorkerPool) returnTaskToPending(ctx context.Context, task *db.Task) er
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// Mirror decrement in in-memory counter.
+	wp.decrementRunningTaskInMem(task.JobID)
+	return nil
 }
 
 // healthProbe periodically checks for work when all workers are idle
@@ -2784,8 +3018,7 @@ func (wp *WorkerPool) StartCleanupMonitor(ctx context.Context) {
 // StartQuotaPromotionMonitor checks for waiting tasks that can be promoted when quota becomes available
 func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 	wp.wg.Go(func() {
-		// Check every 30 seconds for waiting tasks that can now be promoted
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(wp.promotionInterval)
 		defer ticker.Stop()
 
 		for {
@@ -2807,22 +3040,37 @@ func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 // promoteWaitingTasksWithQuota finds jobs with waiting tasks where quota is now available
 func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 	type jobInfo struct {
-		ID     string
-		Status string
+		ID             string
+		Status         string
+		QuotaRemaining int
+		Concurrency    int
+		RunningTasks   int
+		PendingTasks   int
 	}
 	var jobs []jobInfo
 
-	// Find jobs with waiting tasks that have quota available
-	// Include both 'running' and 'pending' jobs - pending jobs may have been blocked by quota at creation
+	// Find jobs with waiting tasks where quota is available. Fetch concurrency
+	// and counter values in the same query so batch size can be computed without
+	// extra round-trips per job. EXISTS avoids the fan-out that JOIN produces
+	// (one row per waiting task) before DISTINCT collapses them, which would
+	// cause the LATERAL quota call to execute once per waiting task row.
 	err := wp.dbQueue.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT DISTINCT j.id, j.status
+			SELECT
+				j.id,
+				j.status,
+				q.quota_remaining,
+				COALESCE(j.concurrency, 0) AS concurrency,
+				j.running_tasks,
+				j.pending_tasks
 			FROM jobs j
-			JOIN tasks t ON t.job_id = j.id
-			WHERE t.status = 'waiting'
+			CROSS JOIN LATERAL (
+				SELECT get_daily_quota_remaining(j.organisation_id) AS quota_remaining
+			) q
+			WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.job_id = j.id AND t.status = 'waiting')
 			  AND j.status IN ('running', 'pending')
 			  AND j.organisation_id IS NOT NULL
-			  AND get_daily_quota_remaining(j.organisation_id) > 0
+			  AND q.quota_remaining > 0
 		`)
 		if err != nil {
 			return fmt.Errorf("failed to find jobs with promotable tasks: %w", err)
@@ -2831,7 +3079,7 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 
 		for rows.Next() {
 			var j jobInfo
-			if err := rows.Scan(&j.ID, &j.Status); err != nil {
+			if err := rows.Scan(&j.ID, &j.Status, &j.QuotaRemaining, &j.Concurrency, &j.RunningTasks, &j.PendingTasks); err != nil {
 				return fmt.Errorf("failed to scan job: %w", err)
 			}
 			jobs = append(jobs, j)
@@ -2843,7 +3091,6 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 		return err
 	}
 
-	// Promote waiting tasks for each job (keep promoting until quota/concurrency exhausted)
 	totalPromoted := 0
 	for _, job := range jobs {
 		// If job is pending, transition it to running and add to worker pool
@@ -2865,56 +3112,44 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 			log.Info().Str("job_id", job.ID).Msg("Transitioned pending job to running after quota became available")
 		}
 
-		jobPromoted := 0
-		// Keep calling promote until it stops promoting (quota exhausted or no more waiting)
-		for {
-			var promoted bool
-			err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-				// Check if a task was actually promoted by looking for newly pending tasks
-				var taskID *string
-				err := tx.QueryRowContext(ctx, `
-					WITH promoted AS (
-						UPDATE tasks
-						SET status = 'pending'
-						WHERE id = (
-							SELECT t.id
-							FROM tasks t
-							INNER JOIN jobs j ON t.job_id = j.id
-							WHERE t.job_id = $1
-							  AND t.status = 'waiting'
-							  AND j.status = 'running'
-							  AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks + j.pending_tasks < j.concurrency)
-							  AND (j.organisation_id IS NULL OR get_daily_quota_remaining(j.organisation_id) > 0)
-							ORDER BY t.priority_score DESC, t.created_at ASC
-							LIMIT 1
-							FOR UPDATE OF t SKIP LOCKED
-						)
-						RETURNING id
-					)
-					SELECT id FROM promoted
-				`, job.ID).Scan(&taskID)
-				if err == sql.ErrNoRows || taskID == nil {
-					promoted = false
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				promoted = true
-				return nil
-			})
-			if err != nil {
-				log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to promote waiting task for job")
-				break
+		// Compute batch size: min(quota remaining, available concurrency slots).
+		// running_tasks from the DB is an upper-bound estimate (the Go-side counter
+		// is flushed asynchronously); promote_waiting_tasks_for_job uses SKIP LOCKED
+		// so over-estimation cannot cause double-claiming.
+		slots := job.QuotaRemaining
+		if job.Concurrency > 0 {
+			if available := job.Concurrency - job.RunningTasks - job.PendingTasks; available < slots {
+				slots = available
 			}
-			if !promoted {
-				break // No more tasks to promote for this job
+		} else {
+			// No explicit concurrency limit: apply pendingUnlimitedCap to avoid
+			// bulk-promoting more tasks than workers can drain, mirroring the cap
+			// used by availablePendingSlots and the pending queue rebalancer.
+			if capAvail := pendingUnlimitedCap - (job.PendingTasks + job.RunningTasks); capAvail < slots {
+				slots = capAvail
 			}
-			jobPromoted++
-			totalPromoted++
 		}
-		if jobPromoted > 0 {
-			log.Debug().Str("job_id", job.ID).Int("promoted", jobPromoted).Msg("Promoted waiting tasks for job")
+		if slots <= 0 {
+			continue
+		}
+
+		var promoted int
+		err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx,
+				`SELECT promote_waiting_tasks_for_job($1, $2)`, job.ID, slots,
+			).Scan(&promoted)
+		})
+		if err != nil {
+			log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to promote waiting tasks for job")
+			continue
+		}
+		if promoted > 0 {
+			log.Debug().
+				Str("job_id", job.ID).
+				Int("promoted", promoted).
+				Int("slots", slots).
+				Msg("Promoted waiting tasks for job")
+			totalPromoted += promoted
 		}
 	}
 
@@ -3285,9 +3520,209 @@ func (wp *WorkerPool) flushRunningTaskReleaseCount(ctx context.Context, jobID st
 	}
 }
 
+// --- In-memory running_tasks increment helpers ---
+
+// incrementRunningTaskInMem bumps the in-memory counter and queues a DB flush.
+func (wp *WorkerPool) incrementRunningTaskInMem(jobID string) {
+	// Guard: maps may be nil in tests that construct WorkerPool directly.
+	if wp.runningTasksInMem == nil {
+		return
+	}
+
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+
+	if !exists {
+		wp.runningTasksInMemMu.Lock()
+		counter, exists = wp.runningTasksInMem[jobID]
+		if !exists {
+			counter = &atomic.Int64{}
+			wp.runningTasksInMem[jobID] = counter
+		}
+		wp.runningTasksInMemMu.Unlock()
+	}
+	counter.Add(1)
+
+	if wp.runningTasksIncrPending == nil {
+		return
+	}
+
+	wp.runningTasksIncrMu.Lock()
+	wp.runningTasksIncrPending[jobID]++
+	count := wp.runningTasksIncrPending[jobID]
+	wp.runningTasksIncrMu.Unlock()
+
+	// Trigger an early flush if we've accumulated a batch.
+	if count >= wp.runningTaskReleaseBatchSize && wp.runningTasksIncrCh != nil {
+		select {
+		case wp.runningTasksIncrCh <- jobID:
+		default:
+		}
+	}
+}
+
+// queueRunningTaskIncrDB queues a DB flush for a job whose in-memory counter was
+// already bumped atomically by the concurrency gate. Only queues the DB side.
+func (wp *WorkerPool) queueRunningTaskIncrDB(jobID string) {
+	if wp.runningTasksIncrPending == nil {
+		return
+	}
+
+	wp.runningTasksIncrMu.Lock()
+	wp.runningTasksIncrPending[jobID]++
+	count := wp.runningTasksIncrPending[jobID]
+	wp.runningTasksIncrMu.Unlock()
+
+	if count >= wp.runningTaskReleaseBatchSize && wp.runningTasksIncrCh != nil {
+		select {
+		case wp.runningTasksIncrCh <- jobID:
+		default:
+		}
+	}
+}
+
+// decrementRunningTaskInMem decrements the in-memory counter by 1.
+func (wp *WorkerPool) decrementRunningTaskInMem(jobID string) {
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if exists {
+		counter.Add(-1)
+	}
+}
+
+// decrementRunningTaskInMemBy decrements the in-memory counter by count.
+func (wp *WorkerPool) decrementRunningTaskInMemBy(jobID string, count int) {
+	if count <= 0 {
+		return
+	}
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if exists {
+		counter.Add(-int64(count))
+	}
+}
+
+// flushRunningTaskIncrements flushes all pending increments to the DB.
+func (wp *WorkerPool) flushRunningTaskIncrements(ctx context.Context) {
+	wp.runningTasksIncrMu.Lock()
+	if len(wp.runningTasksIncrPending) == 0 {
+		wp.runningTasksIncrMu.Unlock()
+		return
+	}
+	snapshot := make(map[string]int, len(wp.runningTasksIncrPending))
+	for jobID, count := range wp.runningTasksIncrPending {
+		snapshot[jobID] = count
+	}
+	wp.runningTasksIncrPending = make(map[string]int)
+	wp.runningTasksIncrMu.Unlock()
+
+	for jobID, count := range snapshot {
+		if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
+			log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
+				Msg("Failed to flush running task increments, re-queuing")
+			wp.runningTasksIncrMu.Lock()
+			wp.runningTasksIncrPending[jobID] += count
+			wp.runningTasksIncrMu.Unlock()
+		}
+	}
+}
+
+// flushRunningTaskIncrementForJob flushes pending increments for a single job.
+func (wp *WorkerPool) flushRunningTaskIncrementForJob(ctx context.Context, jobID string) {
+	wp.runningTasksIncrMu.Lock()
+	count := wp.runningTasksIncrPending[jobID]
+	if count == 0 {
+		wp.runningTasksIncrMu.Unlock()
+		return
+	}
+	delete(wp.runningTasksIncrPending, jobID)
+	wp.runningTasksIncrMu.Unlock()
+
+	if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
+			Msg("Failed to flush running task increment for job, re-queuing")
+		wp.runningTasksIncrMu.Lock()
+		wp.runningTasksIncrPending[jobID] += count
+		wp.runningTasksIncrMu.Unlock()
+	}
+}
+
+// startRunningTaskIncrementLoop mirrors startRunningTaskReleaseLoop but for increments.
+func (wp *WorkerPool) startRunningTaskIncrementLoop(ctx context.Context) {
+	wp.wg.Go(func() {
+		interval := wp.runningTaskReleaseFlushInterval
+		if interval <= 0 {
+			interval = defaultRunningTaskFlush
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				wp.flushRunningTaskIncrements(context.Background())
+				return
+			case <-wp.stopCh:
+				wp.flushRunningTaskIncrements(context.Background())
+				return
+			case jobID := <-wp.runningTasksIncrCh:
+				if jobID != "" {
+					wp.flushRunningTaskIncrementForJob(ctx, jobID)
+				}
+			case <-ticker.C:
+				wp.flushRunningTaskIncrements(ctx)
+			}
+		}
+	})
+}
+
+// seedRunningTasksInMemFromDB loads current running_tasks values for active jobs into memory.
+func (wp *WorkerPool) seedRunningTasksInMemFromDB(ctx context.Context) error {
+	rows, err := wp.db.QueryContext(ctx, `
+		SELECT id, running_tasks
+		FROM jobs
+		WHERE status IN ('running', 'pending')
+	`)
+	if err != nil {
+		return fmt.Errorf("query running_tasks for seeding: %w", err)
+	}
+	defer rows.Close()
+
+	wp.runningTasksInMemMu.Lock()
+	defer wp.runningTasksInMemMu.Unlock()
+
+	for rows.Next() {
+		var jobID string
+		var runningTasks int64
+		if err := rows.Scan(&jobID, &runningTasks); err != nil {
+			log.Warn().Err(err).Msg("Failed to scan running_tasks row during seeding")
+			continue
+		}
+		counter, exists := wp.runningTasksInMem[jobID]
+		if !exists {
+			counter = &atomic.Int64{}
+			wp.runningTasksInMem[jobID] = counter
+		}
+		counter.Store(runningTasks)
+	}
+	return rows.Err()
+}
+
 func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID cannot be empty")
+	}
+
+	// Flush any pending increment for this job before queuing the decrement.
+	// Without this, a decrement can reach the DB before its matching increment,
+	// causing the WHERE running_tasks > 0 guard to skip the decrement entirely —
+	// leaving running_tasks permanently inflated.
+	if wp.runningTasksIncrCh != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		wp.flushRunningTaskIncrementForJob(flushCtx, jobID)
+		flushCancel()
 	}
 
 	select {
@@ -3429,7 +3864,7 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 		}
 
 		if blockedCount > 0 {
-			log.Info().
+			log.Debug().
 				Str("task_id", task.ID).
 				Int("blocked_count", blockedCount).
 				Int("allowed_count", len(filtered)).
@@ -3543,7 +3978,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			task.Status = string(TaskStatusFailed)
 			task.CompletedAt = now
 			task.Error = taskErr.Error()
-			log.Error().
+			log.Debug().
 				Err(taskErr).
 				Str("task_id", task.ID).
 				Int("retry_count", task.RetryCount).
@@ -3573,7 +4008,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 		task.Error = taskErr.Error()
 		logger := log.Error()
 		if isClientOrRedirectError(taskErr) {
-			logger = log.Info()
+			logger = log.Debug()
 		}
 		logger.
 			Err(taskErr).
@@ -3592,7 +4027,8 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 		observability.RecordWorkerTaskFailure(ctx, task.JobID, failureReason)
 	}
 
-	// Immediately queue running_tasks decrement to free concurrency slots
+	// Decrement in-memory counter immediately, then queue async DB decrement.
+	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
 		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 			Msg("Failed to decrement running_tasks counter")
@@ -3688,7 +4124,7 @@ func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt 
 
 	return &taskHTMLUpload{
 		Bucket:              taskHTMLStorageBucket,
-		Path:                fmt.Sprintf("jobs/%s/tasks/page-path/%s.html.gz", task.JobID, task.ID),
+		Path:                archive.TaskHTMLObjectPath(task.JobID, task.ID),
 		ContentType:         contentType,
 		UploadContentType:   uploadContentType,
 		ContentEncoding:     taskHTMLContentEncoding,
@@ -3720,11 +4156,38 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 		return
 	}
 
-	for range taskHTMLPersistWorkers {
+	workerCount := wp.taskHTMLWorkerCount
+	pressureThreshold := cap(wp.taskHTMLPersistCh) / 2
+	log.Info().Int("workers", workerCount).Int("pressure_threshold", pressureThreshold).Msg("Starting HTML persistence workers")
+	for range workerCount {
 		wp.wg.Go(func() {
 			wp.taskHTMLPersistenceWorker(ctx)
 		})
 	}
+
+	// Periodic queue-depth monitor: logs at warn when depth exceeds half capacity.
+	wp.wg.Go(func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				depth := len(wp.taskHTMLPersistCh)
+				if depth > pressureThreshold {
+					log.Warn().
+						Int("queue_depth", depth).
+						Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+						Int("workers", workerCount).
+						Int("pending", int(wp.taskHTMLPending.Load())).
+						Msg("HTML persistence queue pressure")
+				}
+			case <-wp.stopCh:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	})
 }
 
 func (wp *WorkerPool) taskHTMLPersistenceWorker(ctx context.Context) {
@@ -3770,19 +4233,36 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 		return
 	}
 
-	request := &taskHTMLPersistRequest{
+	// Fast-path: skip the expensive body copy when the queue is clearly full.
+	// len(ch) is a non-blocking approximation; the select below handles the
+	// race where the queue fills between this check and the actual send.
+	if len(wp.taskHTMLPersistCh) >= cap(wp.taskHTMLPersistCh) {
+		log.Warn().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+			Int("workers", wp.taskHTMLWorkerCount).
+			Msg("HTML persistence queue full, skipping upload")
+		return
+	}
+
+	wp.taskHTMLPending.Add(1)
+	select {
+	case wp.taskHTMLPersistCh <- &taskHTMLPersistRequest{
 		Task:        *task,
 		ContentType: result.ContentType,
 		Body:        append([]byte(nil), result.Body...),
 		CapturedAt:  capturedAt,
-	}
-	wp.taskHTMLPending.Add(1)
-
-	select {
-	case wp.taskHTMLPersistCh <- request:
+	}:
 	default:
+		// Queue filled in the race window between len check and send.
 		wp.taskHTMLPending.Add(-1)
-		log.Warn().Str("task_id", task.ID).Str("job_id", task.JobID).Msg("Task HTML persistence queue is full, skipping HTML upload")
+		log.Warn().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
+			Int("workers", wp.taskHTMLWorkerCount).
+			Msg("HTML persistence queue full, skipping upload")
 	}
 }
 
@@ -3962,7 +4442,8 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 
 	wp.populateRequestDiagnostics(task, result)
 
-	// Immediately queue running_tasks decrement to free concurrency slot
+	// Decrement in-memory counter immediately, then queue async DB decrement.
+	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
 		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 			Msg("Failed to decrement running_tasks counter")
@@ -4050,7 +4531,7 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 
 	// Update domain with detection results
 	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, ""); err != nil {
-		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
+		log.Warn().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
 		return
 	}
 
@@ -4104,7 +4585,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 	log.Debug().Str("url", urlStr).Str("task_id", task.ID).Msg("Starting URL warm")
 
 	limiter := wp.ensureDomainLimiter()
-	permit, err := limiter.Acquire(ctx, DomainRequest{
+	permit, acquired := limiter.TryAcquire(DomainRequest{
 		Domain:      task.DomainName,
 		JobID:       task.JobID,
 		RobotsDelay: time.Duration(task.CrawlDelay) * time.Second,
@@ -4115,8 +4596,8 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 			return 1
 		}(),
 	})
-	if err != nil {
-		return nil, err
+	if !acquired {
+		return nil, ErrDomainDelay
 	}
 	released := false
 	defer func() {
@@ -4401,7 +4882,7 @@ func (wp *WorkerPool) updateTaskPriorities(ctx context.Context, jobID string, do
 	}
 
 	if rowsAffected > 0 {
-		log.Info().
+		log.Debug().
 			Str("job_id", jobID).
 			Int64("tasks_updated", rowsAffected).
 			Float64("new_priority", newPriority).
@@ -4506,7 +4987,7 @@ func (wp *WorkerPool) evaluateJobPerformance(jobID string, responseTime int64) {
 
 	clamped := neededBoost > oldBoost && actualBoost == oldBoost
 
-	log.Info().
+	log.Debug().
 		Str("job_id", jobID).
 		Int64("avg_response_time", avgResponseTime).
 		Int("requested_boost", neededBoost).

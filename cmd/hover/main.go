@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ import (
 var version = "dev"
 
 func main() {
+	checkAndUpdate()
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -40,14 +43,12 @@ func main() {
 				os.Exit(0)
 			}
 		}
-		checkLatestVersion()
 		if err := runJobsGenerate(os.Args[3:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	case "version":
 		fmt.Printf("hover v%s\n", version)
-		checkLatestVersion()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -57,9 +58,9 @@ func main() {
 	}
 }
 
-// checkLatestVersion queries the GitHub API for the latest CLI release tag
-// and prints a notice if a newer version is available.
-func checkLatestVersion() {
+// checkAndUpdate queries the GitHub API for the latest CLI release tag and
+// auto-updates via npm if a newer version is available.
+func checkAndUpdate() {
 	if version == "dev" {
 		return
 	}
@@ -88,8 +89,18 @@ func checkLatestVersion() {
 			latest = v
 		}
 	}
-	if latest != "" && compareSemver(latest, version) > 0 {
-		fmt.Fprintf(os.Stderr, "\nA newer version is available: v%s (current: v%s)\nUpdate with: npm install -g @harvey-au/hover\n", latest, version)
+	if latest == "" || compareSemver(latest, version) <= 0 {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Updating hover v%s → v%s...\n", version, latest)
+	cmd := exec.Command("npm", "install", "-g", "@harvey-au/hover")
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Auto-update failed: %v\nRun manually: npm install -g @harvey-au/hover\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Updated to v%s — restart hover to use new version.\n\n", latest)
 	}
 }
 
@@ -119,16 +130,17 @@ Commands:
 Usage:
   hover jobs generate --pr <N> --anon-key <key> [options]
 
-Options:
-  --pr <N>             Target preview app hover-pr-<N>.fly.dev
-  --anon-key <key>     Supabase publishable key (auto-discovered if omitted)
-  --interval <dur>     Batch interval (e.g. 30s, 2m) [default: 3m]
-  --jobs <N>           Jobs per batch [default: 3]
-  --concurrency <N>    Per-job concurrency 1-50, or "random" [default: random]
-  --repeats <N>        How many times to run each domain [default: 1]
-  --status-interval    Poll interval when waiting to rerun a domain [default: 30s]
-  --auth-url <url>     Override Supabase auth base URL
-  --api-url <url>      Override API base URL
-  --yes, -y            Skip confirmation prompt`
+  Hover options:
+	--interval <dur>     Run batch every interval (e.g. 30s, 2m) [default: 3m]
+	--jobs <N>           Jobs per batch [default: 10]
+	--concurrency <N>    Per-job concurrency 1-50, or "random" [default: 20]
+	--repeats <N>        How many times to run each domain [default: 4]
+	
+	--pr <N>             Target preview app hover-pr-<N>.fly.dev
+	--anon-key <key>     Supabase publishable key (auto-discovered if omitted)
+	--status-interval    Poll interval when waiting to rerun a domain [default: 30s]
+	--auth-url <url>     Override Supabase auth base URL
+	--api-url <url>      Override API base URL
+	--yes, -y            Skip confirmation prompt`
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(usage))
 }

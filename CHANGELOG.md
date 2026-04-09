@@ -74,9 +74,238 @@ On merge, CI will:
 
 ## Full changelog history
 
+## [0.31.14] – 2026-04-09
+
+### Performance
+
+- Drop 6 redundant indexes on the `tasks` table (`idx_tasks_job_id_status`,
+  `idx_tasks_job_host`, `idx_tasks_job_id`,
+  `idx_tasks_job_status_priority_pending`, `idx_tasks_pending_by_job_priority`,
+  `idx_tasks_pending_claim_order`); removing `idx_tasks_job_id_status`
+  re-enables PostgreSQL HOT for status-only updates, eliminating full index
+  maintenance across all 17 indexes on every task transition; retains
+  `idx_tasks_running_started_at` which is used by stuck-task detection queries
+
+### Internal
+
+- Upgrade OpenTelemetry SDK to v1.43.0
+- Pin Prettier to package.json version in auto-release workflow via `npm ci`
+
+## [0.31.13] – 2026-04-09
+
+### Performance
+
+- Replace 3× correlated `COUNT(*) WHERE status = '…'` subqueries in
+  `update_job_counters` UPDATE path with O(1) incremental deltas computed from
+  `OLD`/`NEW.status`; add an early-exit guard that skips the `UPDATE jobs`
+  entirely for non-terminal, non-starting transitions (e.g. pending↔running),
+  which previously triggered all three full-table scans for no counter change
+- Drop `trigger_update_job_progress` (the legacy full-scan trigger that was
+  never removed when `update_job_counters` was added); both triggers fired on
+  every task status change causing 2× jobs row UPDATEs and 3× COUNT(\*) scans
+  per concurrent worker — the primary cause of sustained 100% Supabase CPU
+- Extend `update_job_counters` to handle job status transition (`running` →
+  `completed`) with the same O(1) incremental logic, preserving `cancelled` and
+  `failed` terminal states
+- Narrow `trg_update_job_queue_counters` from `AFTER UPDATE` (all columns) to
+  `AFTER UPDATE OF status` — eliminates function-call overhead on metadata-only
+  task updates (response_time, priority_score, etc.)
+- Replace one-at-a-time waiting-task promotion loop in
+  `promoteWaitingTasksWithQuota` with a single batch call to
+  `promote_waiting_tasks_for_job`, reducing N DB round-trips to 1 per job and
+  computing quota/concurrency limits upfront via a LATERAL subquery
+
+## [0.31.12] – 2026-04-09
+
+### Performance
+
+- Add three partial/covering indexes on `tasks` to reduce Supabase CPU load
+  under high concurrency: `idx_tasks_job_has_html_storage` and
+  `idx_tasks_job_html_archived` eliminate heap scans in `MarkFullyArchivedJobs`
+  EXISTS/NOT EXISTS subqueries; `idx_tasks_job_activity_times` covers the
+  per-job MAX timestamp scan in `CleanupStuckJobs`
+- Move traffic score UPDATE in `EnqueueURLs` to a separate transaction after the
+  job-row lock is released, reducing lock hold time for concurrent workers on
+  the same job
+- Skip traffic score updates for link-discovered pages deeper than ~3 hops from
+  the homepage (priority < 0.729) — these pages are too numerous for the
+  `page_analytics` join to be worthwhile; sitemap sources always apply
+- Merge two row-level INSERT triggers (`update_job_counters`,
+  `update_job_queue_counters`) into a single statement-level trigger; a 500-row
+  batch now emits one `UPDATE jobs` instead of 1,000, eliminating the dominant
+  source of lock contention during `EnqueueURLs`
+- Replace correlated `COUNT(*) WHERE status != 'skipped'` subquery in
+  `EnqueueURLs` with `total_tasks - skipped_tasks` (now maintained incrementally
+  by the statement-level trigger), removing a per-call table scan from inside
+  the job-row lock
+- Fix `promote_waiting_task_for_job` to promote N tasks per slot release instead
+  of always 1; replace the stale `running_tasks` capacity join with a
+  caller-supplied count; remove the redundant promotion loop from the batch
+  flush transaction (ran under stale data and caused lock contention inside an
+  already long-held lock)
+
+## [0.31.11] – 2026-04-09
+
+### Fixed
+
+- Deduplicate `www.` and non-www URLs to the same page record, preventing
+  duplicate tasks for the same path (#303)
+
+## [0.31.10] – 2026-04-08
+
+### Fixed
+
+- Workers no longer block for up to 60 s on domain rate-limit delays;
+  `TryAcquire` returns immediately when a domain's delay window is active,
+  allowing the worker to pick up a task for a different domain instead
+- Domain-delayed tasks are now correctly requeued as `waiting`: the DB
+  `running_tasks` slot is released via `releaseRunningTaskSlot` (previously
+  missing, causing `running_tasks` to stay at the concurrency cap and
+  permanently blocking task promotion), the task status is persisted via
+  `QueueTaskUpdate`, and the in-memory concurrency counter is decremented
+
+## [0.31.9] – 2026-04-08
+
+### Fixed
+
+- Prevent deadlocks on concurrent batch page upserts by sorting rows by
+  `(host, path)` in Go before building `UNNEST` arrays, ensuring all
+  transactions acquire locks in a consistent order
+- Sort enqueued pages by ID before insert to prevent lock-order deadlocks in
+  `EnqueueURLs` transactions
+- Demote permanent HTTP 4xx/429 task failures from warn/info to debug to reduce
+  log noise at the default info level
+
+### Changed
+
+- Raise review app VM to 1 GB / 2 vCPU and align `DB_MAX_OPEN_CONNS` to 40 to
+  match Supabase preview branch pool size
+- Increase production `DB_QUEUE_MAX_CONCURRENCY` to 55 to better utilise
+  available connections
+- CI now automatically sets Supabase preview branch pool size to 40 on each
+  review app deployment
+
+## [0.31.8] – 2026-04-07
+
+### Changed
+
+- Cap dynamic worker max scale from 50 to 40 to stay within DB pool budget
+- Raise `DB_MAX_OPEN_CONNS` from 45 to 50 (pgBouncer ceiling is 90)
+- Lower `DB_QUEUE_MAX_CONCURRENCY` from 40 to 30, leaving 16 connections for
+  non-queue direct calls
+- Add `GNH_BATCH_CHANNEL_SIZE=5000` to absorb peak batch write bursts (was 2,000
+  default)
+
+## [0.31.7] – 2026-04-06
+
+### Added
+
+- Cold storage archival system — completed task HTML automatically moves from
+  Supabase hot storage to R2 (or S3/B2) via a background sweep, keeping storage
+  within quota without losing data
+- `archived` job status — jobs are marked archived once all their task HTML has
+  been moved to cold storage; the UI renders this as a success state, not an
+  error
+- Archive startup connectivity check — logs a clear error on boot if the cold
+  storage bucket is unreachable before the first sweep runs
+- `cmd/archive_key_migrate` one-shot tool to rekey existing archived objects
+  from the old path format to the canonical
+  `jobs/<id>/tasks/<id>/page-content.html.gz` layout
+
+### Security
+
+- Set TLS 1.2 minimum on AIA cert-inspection transport to prevent protocol
+  downgrade during handshake
+- Route all AIA HTTP requests through `ssrfSafeDialContext` — IP check at
+  connect time (not just URL-parse time) to prevent DNS rebinding
+- Add `CheckRedirect` to AIA and cert-inspection clients to re-validate redirect
+  targets against scheme and private-host checks, preventing SSRF via redirect
+- Bound `isPrivateHost` DNS lookup with a 2 s context; fail-closed on timeout
+- AIA intermediate certs stored in a separate slice — never injected into
+  `TLSClientConfig.RootCAs`; chain verified via `VerifyConnection` callback
+- Guard AIA intermediate acceptance: reject self-signed certs and certs without
+  `IsCA + BasicConstraintsValid`
+- Sanitise AIA log calls to record `host` only, not the full raw URL
+- Replace credential-like literals in DSN test fixtures with neutral
+  placeholders; remove associated `nolint:gosec` annotations
+
+### Fixed
+
+- Archive default interval corrected to 1 minute (was 1 hour in code default,
+  conflicting with fly.toml override)
+- Sweep shutdown now propagates a sweep-scoped cancel to all in-flight archive
+  goroutines — stop signal no longer leaves goroutines running detached
+- Job card renders `archived` status with success styling instead of falling
+  through to the error branch
+- Archive CAS update now checks `RowsAffected` before deleting the old object —
+  prevents orphan deletion if another process already migrated the key
+- R2 upload: use unsigned payload and explicit `Content-Length` header; disable
+  auto-checksum trailer to avoid SDK/R2 compatibility issues
+- Fix doubled path segment in cold storage object key
+- Fix archive bucket name mismatch between config and fly secrets
+- Fix content type fallback so archived HTML is always stored as
+  `text/html; charset=utf-8` + `gzip` encoding
+
 ## [0.31.6] – 2026-04-06
 
+### Added
+
+- `hover jobs generate --repeats N` flag to run each test domain N times,
+  cycling through domains as their previous jobs reach a terminal status
+- `hover jobs generate --limit N` flag to cap total jobs submitted regardless of
+  domain count × repeats
+- Per-domain stall backoff: after 3 consecutive status-refresh failures the job
+  is placed in a timed backoff (5× `--status-interval`) before the domain is
+  allowed to restart, preventing duplicate jobs while still recovering from
+  transient API errors
+- Per-domain create-retry cap: after 3 consecutive `createJob` failures the run
+  slot is marked skipped so the load test loop can always terminate
+- `"paused"` treated as a terminal job status so paused jobs do not block
+  subsequent repeats
+
+### Fixed
+
+- `createJob` now returns a real error when the response cannot be parsed or
+  contains no job ID, rather than recording a fake `"unknown"` ID
+- HTTP error responses from `createJob` and `fetchJobStatus` no longer include
+  the raw response body; errors now report the HTTP status code and optional
+  `X-Request-Id` header value only
+- Skipped run slots (create-retry cap reached) no longer increment
+  `jobsCreated`; the summary accurately reflects only successfully submitted
+  jobs
+
 ## [0.31.5] – 2026-04-06
+
+### Security
+
+- Fix P-256 JWKS coordinate encoding in tests — replaced `big.Int.Bytes()`
+  (drops leading zeros) with `ecdh.PublicKey.Bytes()` to produce RFC 7518
+  §6.2.1.2-compliant fixed-length coordinates
+- Harden AIA fetching in `tls_aia.go` against DNS rebinding by routing all AIA
+  HTTP requests through `ssrfSafeDialContext()` (IP check at connect time, not
+  just URL-parse time)
+- Add `CheckRedirect` to AIA and cert-inspection clients to re-validate redirect
+  targets against scheme and `isPrivateHost` checks, preventing SSRF via
+  redirect
+- Replace unbounded `net.LookupHost` in `isPrivateHost` with a 2 s
+  context-bounded `net.DefaultResolver.LookupIPAddr`; fail-closed on timeout
+- Deduplicate private-IP predicate in `isPrivateHost` — now delegates to shared
+  `isPrivateOrLocalIP` from `crawler.go`
+- Set `MinVersion: tls.VersionTLS12` on AIA cert-inspection transport to prevent
+  protocol downgrade during handshake
+- Add `ssrfSafeDialContext` and `CheckRedirect` guard to cert-inspection client
+  (`inspectClient`) so the HEAD request used to read the leaf cert is also
+  protected against DNS rebinding and open redirects
+- Replace credential-like literals (`user:pass`, `password=pass`) in DSN test
+  fixtures with neutral placeholders; remove `nolint:gosec` annotations
+- Refactor AIA intermediate handling: fetched certs are now stored in a separate
+  `intermediates []*x509.Certificate` slice and never injected into
+  `TLSClientConfig.RootCAs`; the retry uses a `VerifyConnection` callback that
+  verifies the chain against system roots + fetched intermediates via
+  `x509.VerifyOptions`
+- Guard AIA intermediate acceptance with `IsCA + BasicConstraintsValid` and
+  self-signed checks so root CAs served from AIA URLs are rejected
+- Sanitise AIA log calls to log `host` only, not the full raw URL
 
 ## [0.31.4] – 2026-04-05
 

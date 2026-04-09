@@ -133,6 +133,36 @@ func (c *Client) GetSignedURL(ctx context.Context, bucket, path string, expiresI
 	return c.baseURL + result.SignedURL, nil
 }
 
+// Download retrieves a file's contents from the specified bucket and path.
+func (c *Client) Download(ctx context.Context, bucket, path string) ([]byte, error) {
+	url := fmt.Sprintf("%s/object/%s/%s", c.baseURL, bucket, path)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.setAuthHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read download response: %w", err)
+	}
+
+	return data, nil
+}
+
 // Delete removes a file from storage
 func (c *Client) Delete(ctx context.Context, bucket, path string) error {
 	url := fmt.Sprintf("%s/object/%s/%s", c.baseURL, bucket, path)

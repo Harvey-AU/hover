@@ -23,10 +23,14 @@ type DbQueueInterface interface {
 	UpdateTaskStatus(ctx context.Context, task *db.Task) error
 	DecrementRunningTasks(ctx context.Context, jobID string) error
 	DecrementRunningTasksBy(ctx context.Context, jobID string, count int) error
+	IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error
 	Execute(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error
 	ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error) error
 	SetConcurrencyOverride(fn db.ConcurrencyOverrideFunc)
 	UpdateDomainTechnologies(ctx context.Context, domainID int, technologies, headers []byte, htmlPath string) error
 	UpdateTaskHTMLMetadata(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
+	FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]db.ArchiveCandidate, error)
+	MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error
+	MarkFullyArchivedJobs(ctx context.Context) (int64, error)
 }

@@ -30,6 +30,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	schedulerTickInterval   = 30 * time.Second
+	schedulerBatchSize      = 50
+	completionCheckInterval = 30 * time.Second
+	healthCheckInterval     = 5 * time.Minute
+)
+
 // bump
 // minInt returns the smaller of two integers
 func minInt(a, b int) int {
@@ -45,7 +52,7 @@ func minInt(a, b int) int {
 func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *jobs.JobManager, pgDB *db.DB) {
 	defer wg.Done()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
 
 	log.Info().Msg("Job scheduler started")
@@ -56,7 +63,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 			log.Info().Msg("Job scheduler stopped")
 			return
 		case <-ticker.C:
-			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, 50)
+			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, schedulerBatchSize)
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to get schedulers ready to run")
 				continue
@@ -157,10 +164,10 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB) {
 	defer wg.Done() // Signal completion when exiting
 
-	completionTicker := time.NewTicker(30 * time.Second)
+	completionTicker := time.NewTicker(completionCheckInterval)
 	defer completionTicker.Stop()
 
-	healthTicker := time.NewTicker(5 * time.Minute)
+	healthTicker := time.NewTicker(healthCheckInterval)
 	defer healthTicker.Stop()
 
 	// Helper to check job completion

@@ -8,23 +8,30 @@ primary_region = 'syd'
 
 [build]
 
+# For documentation on all env vars below, see docs/architecture/CONFIG_REFERENCE.md
 [env]
   APP_ENV = "production"
   APP_URL = "https://hover.app.goodnative.co"
   SETTINGS_URL = "https://hover.app.goodnative.co/settings"
-  WORKER_CONCURRENCY = "10"  # Increasing this pushes Supabase small plan past CPU limit
-  ALLOW_DB_RESET = "false"
+  WORKER_CONCURRENCY = "20"
+  GNH_MAX_WORKERS = "160"
+  GNH_QUOTA_PROMOTION_INTERVAL_SECONDS = "5"
+  GNH_TASK_MONITOR_INTERVAL_SECONDS = "10"
+  ALLOW_DB_RESET = "true"
   GNH_HEALTH_PROBE_INTERVAL_SECONDS = "30"
-  GNH_WORKER_IDLE_THRESHOLD = "0.10"
+  GNH_WORKER_IDLE_THRESHOLD = "10"
   GNH_WORKER_SCALE_COOLDOWN_SECONDS = "120"
-  DB_MAX_OPEN_CONNS = "45"
-  DB_MAX_IDLE_CONNS = "15"
-  DB_QUEUE_MAX_CONCURRENCY = "40"
+  DB_MAX_OPEN_CONNS = "150"
+  DB_MAX_IDLE_CONNS = "30"
+  DB_QUEUE_MAX_CONCURRENCY = "120"
   DB_TX_MAX_RETRIES = "5"
   FLIGHT_RECORDER_ENABLED = "false"
   LOG_LEVEL = "info"
+  GNH_BATCH_CHANNEL_SIZE = "5000"
   GNH_RUNNING_TASK_BATCH_SIZE = "32"
   GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
+  GNH_HTML_PERSIST_WORKERS = "32"
+  GNH_HTML_PERSIST_QUEUE_SIZE = "2048"
   OBSERVABILITY_ENABLED = "true"
   SUPABASE_AUTH_URL = "https://hover.auth.goodnative.co"
   SUPABASE_URL = "https://gpzjtbgtdjxnacdfujvx.supabase.co"
@@ -38,6 +45,13 @@ primary_region = 'syd'
   WEBFLOW_CLIENT_ID = "b0a05758d95823fcef73f57e836e55232bf7c5730794222786040800230ea329"
   GOOGLE_CLIENT_ID = "721107686014-okh41udv0lkb40ijnsoeh53unj9kn0en.apps.googleusercontent.com"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp"
+  # Cold-storage archival (R2) — defaults in internal/archive/archive.go
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
+  ARCHIVE_RETENTION_JOBS = "3"   # completed jobs kept in Supabase per domain/org
+  ARCHIVE_INTERVAL = "1m"       # sweep frequency
+  ARCHIVE_BATCH_SIZE = "100"    # candidates per sweep
+  ARCHIVE_CONCURRENCY = "5"     # parallel uploads per sweep
 
 [deploy]
   strategy = "immediate"
@@ -65,6 +79,6 @@ primary_region = 'syd'
   app = "./main --log-level=info"
 
 [[vm]]
-  memory = '2gb'
+  memory = '8gb'
   cpu_kind = 'performance'
-  cpus = 1
+  cpus = 4

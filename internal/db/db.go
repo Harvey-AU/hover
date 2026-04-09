@@ -17,6 +17,18 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const (
+	// defaultConnMaxLifetime controls how long a connection can live before
+	// being recycled. Shorter values improve compatibility with pgBouncer.
+	defaultConnMaxLifetime = 5 * time.Minute
+	// defaultConnMaxIdleTime closes idle connections after this duration.
+	defaultConnMaxIdleTime = 2 * time.Minute
+	// statementTimeoutMs is the per-statement timeout appended to the DSN.
+	statementTimeoutMs = "60000"
+	// idleInTxnTimeoutMs is the idle-in-transaction timeout appended to the DSN.
+	idleInTxnTimeoutMs = "30000"
+)
+
 // DB represents a PostgreSQL database connection
 type DB struct {
 	client *sql.DB
@@ -247,8 +259,8 @@ func cleanupAppConnections(ctx context.Context, client *sql.DB, appName string) 
 func (c *Config) ConnectionString() string {
 	connStr := strings.TrimSpace(c.DatabaseURL)
 	if connStr != "" {
-		connStr, _ = addConnSetting(connStr, "idle_in_transaction_session_timeout", "30000")
-		connStr, _ = addConnSetting(connStr, "statement_timeout", "60000")
+		connStr, _ = addConnSetting(connStr, "idle_in_transaction_session_timeout", idleInTxnTimeoutMs)
+		connStr, _ = addConnSetting(connStr, "statement_timeout", statementTimeoutMs)
 		if strings.Contains(connStr, "pooler.supabase.com") {
 			if newStr, added := addConnSetting(connStr, "default_query_exec_mode", "simple_protocol"); added {
 				log.Info().Msg("Added minimal prepared statement disabling for pooler connection")
@@ -271,8 +283,8 @@ func (c *Config) ConnectionString() string {
 	connStr = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		c.Host, c.Port, c.User, c.Password, c.Database, sslMode)
 
-	connStr, _ = addConnSetting(connStr, "idle_in_transaction_session_timeout", "30000")
-	connStr, _ = addConnSetting(connStr, "statement_timeout", "60000")
+	connStr, _ = addConnSetting(connStr, "idle_in_transaction_session_timeout", idleInTxnTimeoutMs)
+	connStr, _ = addConnSetting(connStr, "statement_timeout", statementTimeoutMs)
 	if strings.Contains(connStr, "pooler.supabase.com") {
 		if newStr, added := addConnSetting(connStr, "default_query_exec_mode", "simple_protocol"); added {
 			log.Info().Msg("Added minimal prepared statement disabling for pooler connection")
@@ -336,7 +348,7 @@ func New(config *Config) (*DB, error) {
 		config.MaxOpenConns = defaultMaxOpen
 	}
 	if config.MaxLifetime == 0 {
-		config.MaxLifetime = 5 * time.Minute // Shorter lifetime for pooler compatibility
+		config.MaxLifetime = defaultConnMaxLifetime
 	}
 
 	if config.ApplicationName == "" {
@@ -356,7 +368,7 @@ func New(config *Config) (*DB, error) {
 	client.SetMaxOpenConns(config.MaxOpenConns)
 	client.SetMaxIdleConns(config.MaxIdleConns)
 	client.SetConnMaxLifetime(config.MaxLifetime)
-	client.SetConnMaxIdleTime(2 * time.Minute) // Close idle connections after 2 minutes
+	client.SetConnMaxIdleTime(defaultConnMaxIdleTime)
 
 	// Test connection
 	if err := client.Ping(); err != nil {
@@ -425,8 +437,8 @@ func InitFromEnv() (*DB, error) {
 			ApplicationName: appName,
 		}
 
-		url, _ = addConnSetting(url, "statement_timeout", "60000")
-		url, _ = addConnSetting(url, "idle_in_transaction_session_timeout", "30000")
+		url, _ = addConnSetting(url, "statement_timeout", statementTimeoutMs)
+		url, _ = addConnSetting(url, "idle_in_transaction_session_timeout", idleInTxnTimeoutMs)
 
 		if strings.Contains(url, "pooler.supabase.com") {
 			if newStr, added := addConnSetting(url, "default_query_exec_mode", "simple_protocol"); added {
@@ -462,7 +474,7 @@ func InitFromEnv() (*DB, error) {
 		client.SetMaxOpenConns(config.MaxOpenConns)
 		client.SetMaxIdleConns(config.MaxIdleConns)
 		client.SetConnMaxLifetime(config.MaxLifetime)
-		client.SetConnMaxIdleTime(2 * time.Minute) // Close idle connections after 2 minutes
+		client.SetConnMaxIdleTime(defaultConnMaxIdleTime)
 
 		// Verify connection
 		if err := client.Ping(); err != nil {
@@ -638,7 +650,7 @@ func (db *DB) ResetDataOnly() error {
 
 	// Use TRUNCATE instead of DELETE - it's atomic, faster, and handles concurrent access better
 	// TRUNCATE automatically handles foreign key constraints with CASCADE
-	tables := []string{"tasks", "jobs", "job_share_links", "schedulers", "pages", "domains"}
+	tables := []string{"tasks", "jobs", "job_share_links", "schedulers", "pages", "domains", "page_analytics", "domain_hosts", "notifications"}
 	totalRowsDeleted := int64(0)
 
 	log.Info().Msg("Step 1/2: Truncating all data from tables")

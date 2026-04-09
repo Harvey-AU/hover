@@ -17,20 +17,18 @@ export function isSystemAdmin(session) {
 }
 
 /**
- * Handle database reset with triple confirmation.
+ * Handle a reset action with triple confirmation.
  * @param {object} session — Supabase session object
  * @param {HTMLElement} btn — the button element (for state updates)
  * @param {string} originalText — original button text to restore on failure
+ * @param {string} endpoint — API endpoint to POST to
+ * @param {string} warning — first confirmation warning message
  */
-async function handleResetDatabase(session, btn, originalText) {
-  console.info("reset-db: user clicked reset button");
+async function handleReset(session, btn, originalText, endpoint, warning) {
+  console.info(`reset: user clicked button (${endpoint})`);
 
-  if (
-    !confirm(
-      "WARNING: This will DELETE ALL jobs and tasks!\n\nAre you absolutely sure you want to reset the database?"
-    )
-  ) {
-    console.info("reset-db: first confirmation declined");
+  if (!confirm(warning)) {
+    console.info("reset: first confirmation declined");
     return;
   }
 
@@ -39,14 +37,14 @@ async function handleResetDatabase(session, btn, originalText) {
       'This action CANNOT be undone. All data will be permanently lost.\n\nType "DELETE" in the next prompt to confirm.'
     )
   ) {
-    console.info("reset-db: second confirmation declined");
+    console.info("reset: second confirmation declined");
     return;
   }
 
   const typeCheck = prompt("Type DELETE to confirm:");
   if (typeCheck !== "DELETE") {
     alert("Reset cancelled - you did not type DELETE correctly.");
-    console.info("reset-db: delete keyword mismatch");
+    console.info("reset: delete keyword mismatch");
     return;
   }
 
@@ -55,11 +53,13 @@ async function handleResetDatabase(session, btn, originalText) {
       btn.disabled = true;
       btn.textContent = "Resetting...";
     }
-    console.info("reset-db: request initialised");
+    console.info(`reset: sending POST ${endpoint}`, {
+      user: session.user?.id ?? "unknown",
+    });
 
     if (!session?.access_token) {
       alert("Not authenticated");
-      console.warn("reset-db: no session – aborting");
+      console.warn("reset: no session – aborting");
       if (btn) {
         btn.disabled = false;
         btn.textContent = originalText;
@@ -67,15 +67,11 @@ async function handleResetDatabase(session, btn, originalText) {
       return;
     }
 
-    console.info("reset-db: sending POST /v1/admin/reset-db", {
-      user: session.user?.id ?? "unknown",
-    });
-
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 120000);
     let response;
     try {
-      response = await fetch("/v1/admin/reset-db", {
+      response = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
@@ -88,12 +84,12 @@ async function handleResetDatabase(session, btn, originalText) {
     }
 
     if (response.ok) {
-      console.info("reset-db: completed successfully");
-      alert("Database reset successful! Page will reload.");
+      console.info("reset: completed successfully");
+      alert("Reset successful! Page will reload.");
       window.location.reload();
     } else {
       const error = await response.text();
-      console.error("reset-db: server returned error", error);
+      console.error("reset: server returned error", error);
       alert(`Reset failed: ${error}`);
       if (btn) {
         btn.disabled = false;
@@ -105,7 +101,7 @@ async function handleResetDatabase(session, btn, originalText) {
       error?.name === "AbortError"
         ? "Request timed out. Please try again."
         : String(error?.message ?? error);
-    console.error("reset-db: unexpected failure", error);
+    console.error("reset: unexpected failure", error);
     alert(`Error: ${message}`);
     if (btn) {
       btn.disabled = false;
@@ -115,10 +111,12 @@ async function handleResetDatabase(session, btn, originalText) {
 }
 
 /**
- * Initialise admin reset button. Shows button if user is system admin.
+ * Initialise an admin reset button. Shows button if user is system admin.
  * @param {string} buttonId — ID of the reset button element
- * @param {object} [options]
- * @param {string} [options.containerSelector] — selector for container to show
+ * @param {object} options
+ * @param {string} options.endpoint — API endpoint to POST to
+ * @param {string} options.warning — first confirmation warning message
+ * @param {string} [options.containerSelector] — selector for container to show on first call
  */
 export async function initAdminResetButton(buttonId, options = {}) {
   const session = await getSession();
@@ -139,6 +137,6 @@ export async function initAdminResetButton(buttonId, options = {}) {
 
   const originalText = btn.textContent;
   btn.addEventListener("click", () =>
-    handleResetDatabase(session, btn, originalText)
+    handleReset(session, btn, originalText, options.endpoint, options.warning)
   );
 }

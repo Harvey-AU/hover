@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +66,7 @@ const (
 	minRejectWaitDelta         = 5
 	poolLogCooldown            = 5 * time.Second
 	defaultQueueConcurrency    = 12
+	defaultExecuteTimeout      = 30 * time.Second
 	defaultTxRetries           = 3
 	defaultRetryBaseDelay      = 200 * time.Millisecond
 	defaultRetryMaxDelay       = 1500 * time.Millisecond
@@ -74,6 +76,14 @@ const (
 
 	waitingReasonConcurrencyLimit = "concurrency_limit"
 	waitingReasonQuotaExhausted   = "quota_exhausted"
+
+	// minPriorityForTrafficScore is the minimum structural priority a page must have
+	// for traffic-score updates to be applied when discovered via link-following.
+	// Based on 0.9^3 ≈ 0.729 (homepage = 1.000, each link level × 0.9), representing
+	// ~3 link-hops from the homepage. Pages deeper than this are too numerous and their
+	// ordering matters less to crawl efficiency. Sitemap sources are always eligible
+	// regardless of priority.
+	minPriorityForTrafficScore = 0.729
 )
 
 // NewDbQueue creates a PostgreSQL job queue
@@ -188,7 +198,7 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 	// Add timeout to context if none exists
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
 		defer cancel()
 	}
 
@@ -315,7 +325,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 	// Add timeout to context if none exists
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
 		defer cancel()
 	}
 
@@ -911,9 +921,146 @@ type TaskHTMLMetadata struct {
 	CapturedAt          time.Time
 }
 
-// GetNextTask gets a pending task using row-level locking
-// Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers
-// Combines SELECT and UPDATE in a CTE for atomic claiming
+// ArchiveCandidate represents a task whose HTML is eligible for cold-storage archival.
+type ArchiveCandidate struct {
+	TaskID              string
+	JobID               string
+	StorageBucket       string
+	StoragePath         string
+	SHA256              string
+	CompressedSizeBytes int64
+	ContentType         string
+	ContentEncoding     string
+}
+
+// FindArchiveCandidates returns tasks whose HTML should be moved to cold storage.
+// retentionJobs controls how many recent completed/failed/cancelled jobs per
+// (domain_id, organisation_id) are kept hot. Tasks beyond that threshold are
+// candidates.
+func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]ArchiveCandidate, error) {
+	var candidates []ArchiveCandidate
+
+	err := q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(txCtx, `
+			WITH ranked AS (
+				SELECT j.id,
+					   ROW_NUMBER() OVER (
+						   PARTITION BY j.domain_id, j.organisation_id
+						   ORDER BY COALESCE(j.completed_at, j.created_at) DESC
+					   ) AS rn
+				FROM jobs j
+				WHERE j.status IN ('completed', 'failed', 'cancelled')
+			)
+			SELECT t.id, t.job_id, t.html_storage_bucket, t.html_storage_path,
+				   COALESCE(t.html_sha256, ''), COALESCE(t.html_compressed_size_bytes, 0),
+				   COALESCE(t.html_content_type, ''), COALESCE(t.html_content_encoding, '')
+			FROM tasks t
+			JOIN ranked r ON r.id = t.job_id
+			WHERE r.rn > $1
+			  AND t.html_storage_bucket IS NOT NULL
+			  AND t.html_storage_path IS NOT NULL
+			  AND t.html_archived_at IS NULL
+			LIMIT $2
+		`, retentionJobs, limit)
+		if err != nil {
+			return fmt.Errorf("archive candidate query failed: %w", err)
+		}
+		defer rows.Close()
+
+		// Reset slice so retried Execute callbacks don't accumulate duplicates.
+		candidates = candidates[:0]
+
+		for rows.Next() {
+			var c ArchiveCandidate
+			if err := rows.Scan(&c.TaskID, &c.JobID, &c.StorageBucket, &c.StoragePath,
+				&c.SHA256, &c.CompressedSizeBytes, &c.ContentType, &c.ContentEncoding); err != nil {
+				return fmt.Errorf("scanning archive candidate: %w", err)
+			}
+			candidates = append(candidates, c)
+		}
+		return rows.Err()
+	})
+
+	return candidates, err
+}
+
+// MarkTaskArchived records that a task's HTML has been moved to cold storage
+// and clears the hot-storage reference so it can be reclaimed.
+func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error {
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		result, err := tx.ExecContext(txCtx, `
+			UPDATE tasks
+			SET html_archive_provider = $2,
+				html_archive_bucket   = $3,
+				html_archive_key      = $4,
+				html_archived_at      = NOW(),
+				html_storage_bucket   = NULL,
+				html_storage_path     = NULL
+			WHERE id = $1
+			  AND html_archived_at IS NULL
+		`, taskID, provider, bucket, key)
+		if err != nil {
+			return fmt.Errorf("mark task %s archived: %w", taskID, err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark task %s archived: reading rows affected: %w", taskID, err)
+		}
+		if rowsAffected == 0 {
+			// Already archived or task doesn't exist — check which.
+			var exists bool
+			err = tx.QueryRowContext(txCtx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
+			if err != nil {
+				return fmt.Errorf("mark task %s archived: existence check: %w", taskID, err)
+			}
+			if exists {
+				return nil // already archived — idempotent success
+			}
+			return fmt.Errorf("mark task %s archived: task not found", taskID)
+		}
+		return nil
+	})
+}
+
+// MarkFullyArchivedJobs transitions terminal jobs to 'archived' when all their
+// HTML has been moved to cold storage. Returns the number of jobs marked.
+func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
+	var rowsAffected int64
+
+	err := q.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			SET status = 'archived'
+			WHERE status IN ('completed', 'failed', 'cancelled')
+			  AND NOT EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_storage_path IS NOT NULL
+			  )
+			  AND EXISTS (
+				SELECT 1 FROM tasks t
+				WHERE t.job_id = jobs.id
+				  AND t.html_archived_at IS NOT NULL
+			  )
+		`)
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: %w", err)
+		}
+		rowsAffected, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark fully archived jobs: reading rows affected: %w", err)
+		}
+		return nil
+	})
+
+	return rowsAffected, err
+}
+
+// GetNextTask gets a pending task using row-level locking.
+// Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers.
+// Combines SELECT and UPDATE in a CTE for atomic claiming.
+// Concurrency enforcement is handled by the Go-side in-memory counter in WorkerPool;
+// the jobs row is no longer locked or updated during claim to eliminate hot-row contention.
 func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) {
 	var task Task
 	now := time.Now().UTC()
@@ -926,21 +1073,17 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 		attemptCount++
 		queryStart := time.Now()
 
-		// Use CTE to select and update in a single atomic query
-		// This reduces transaction time and minimises lock holding
-		// Also enforces per-job concurrency limits by checking running_tasks < concurrency
-		// Only locks the specific job row for the task we claim (not all eligible jobs)
+		// Two-CTE query: select a pending task then mark it running atomically.
+		// We no longer touch the jobs row here — running_tasks is incremented
+		// asynchronously by WorkerPool.incrementRunningTaskInMem / flushRunningTaskIncrements.
 		query := `
 			WITH next_task AS (
-				-- Claim a task and check job concurrency in one step
 				SELECT t.id, t.job_id, t.page_id, t.host, t.path, t.created_at, t.retry_count,
 				       t.source_type, t.source_url, t.priority_score
 				FROM tasks t
 				INNER JOIN jobs j ON t.job_id = j.id
 				WHERE t.status = 'pending'
 				AND j.status = 'running'
-				-- Support legacy jobs with NULL or 0 concurrency (unlimited)
-				AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks < j.concurrency)
 				-- Quota enforcement: don't claim if org has exceeded daily quota (completed pages only)
 				AND (j.organisation_id IS NULL OR NOT is_org_over_daily_quota(j.organisation_id))
 		`
@@ -957,39 +1100,26 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 				LIMIT 1
 				FOR UPDATE OF t SKIP LOCKED
 			),
-			job_update AS (
-				UPDATE jobs j
-				SET running_tasks = running_tasks + 1
-				FROM next_task nt
-				WHERE j.id = nt.job_id
-				  AND (j.concurrency IS NULL OR j.concurrency = 0 OR j.running_tasks < j.concurrency)
-				RETURNING j.id, j.running_tasks, j.concurrency
-			),
 			task_update AS (
 				UPDATE tasks
 				SET status = 'running', started_at = $1
 				FROM next_task nt
-				JOIN job_update ju ON ju.id = nt.job_id
 				WHERE tasks.id = nt.id
 				RETURNING tasks.id, tasks.job_id, tasks.page_id, tasks.host, tasks.path,
 				          tasks.created_at, tasks.retry_count, tasks.source_type,
-				          tasks.source_url, tasks.priority_score,
-				          ju.running_tasks, ju.concurrency
+				          tasks.source_url, tasks.priority_score
 			)
-			SELECT id, job_id, page_id, host, path, created_at, retry_count, source_type, source_url, priority_score,
-			       running_tasks, concurrency
+			SELECT id, job_id, page_id, host, path, created_at, retry_count, source_type, source_url, priority_score
 			FROM task_update
 		`
 
 		// Execute the combined query
 		row := tx.QueryRowContext(ctx, query, args...)
 
-		var jobRunningTasks sql.NullInt64
-		var jobConcurrency sql.NullInt64
 		err := row.Scan(
 			&task.ID, &task.JobID, &task.PageID, &task.Host, &task.Path,
 			&task.CreatedAt, &task.RetryCount, &task.SourceType, &task.SourceURL,
-			&task.PriorityScore, &jobRunningTasks, &jobConcurrency,
+			&task.PriorityScore,
 		)
 		elapsed := time.Since(queryStart)
 
@@ -998,27 +1128,6 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 			metricsJobID := jobID
 			if metricsJobID == "" {
 				metricsJobID = "__all__"
-			}
-
-			if jobID == "" {
-				hasBlocked := q.hasAnyConcurrencyBlockedTasks(ctx, tx)
-				if hasBlocked {
-					log.Debug().
-						Str("job_id", jobID).
-						Dur("query_duration", elapsed).
-						Int("attempt", attemptCount).
-						Msg("Tasks available but blocked by job concurrency limit")
-					observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "concurrency_blocked")
-					return ErrConcurrencyBlocked
-				}
-			} else if q.jobHasConcurrencyBlockedTasks(ctx, tx, jobID) {
-				log.Debug().
-					Str("job_id", jobID).
-					Dur("query_duration", elapsed).
-					Int("attempt", attemptCount).
-					Msg("Tasks available but blocked by job concurrency limit")
-				observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "concurrency_blocked")
-				return ErrConcurrencyBlocked
 			}
 
 			log.Debug().
@@ -1048,30 +1157,14 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 		task.Status = "running"
 		task.StartedAt = now
 
-		runningValue := int64(0)
-		if jobRunningTasks.Valid {
-			runningValue = jobRunningTasks.Int64
-		}
-
-		concurrencyValue := int64(0)
-		unlimited := true
-		if jobConcurrency.Valid && jobConcurrency.Int64 > 0 {
-			concurrencyValue = jobConcurrency.Int64
-			unlimited = false
-		}
-
 		log.Debug().
 			Str("job_id", task.JobID).
 			Str("task_id", task.ID).
 			Dur("query_duration", elapsed).
 			Int("attempt", attemptCount).
-			Int64("job_running_tasks", runningValue).
-			Int64("job_concurrency_limit", concurrencyValue).
-			Bool("job_concurrency_unlimited", unlimited).
 			Msg("Claimed next task")
 
 		observability.RecordTaskClaimAttempt(ctx, task.JobID, elapsed, "claimed")
-		observability.RecordJobConcurrencySnapshot(ctx, task.JobID, runningValue, concurrencyValue, unlimited)
 
 		return nil
 	})
@@ -1093,10 +1186,6 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 
 	if err == sql.ErrNoRows {
 		return nil, nil // No tasks available
-	}
-	if errors.Is(err, ErrConcurrencyBlocked) {
-		// Tasks exist but blocked by concurrency - return sentinel for backoff
-		return nil, err
 	}
 	if err != nil {
 		// Log error with total context
@@ -1210,17 +1299,28 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 		return nil
 	}
 
-	return q.Execute(ctx, func(tx *sql.Tx) error {
+	// Declared outside Execute so cfg is accessible after the transaction commits
+	// and the job lock is released (used by the traffic-score update below).
+	var cfg enqueueJobConfig
+
+	err := q.Execute(ctx, func(tx *sql.Tx) error {
 		uniquePages := deduplicatePages(pages)
 		if len(uniquePages) == 0 {
 			return nil
 		}
 
-		// Get job's max_pages, concurrency, domain, org, and current task counts
-		var cfg enqueueJobConfig
+		// Sort by conflict key (job_id is constant here; page_id determines order) so
+		// concurrent transactions acquire row locks in the same order, preventing deadlocks.
+		sort.Slice(uniquePages, func(i, j int) bool {
+			return uniquePages[i].ID < uniquePages[j].ID
+		})
+
+		// Get job's max_pages, concurrency, domain, org, and current task counts.
+		// total_tasks - skipped_tasks is maintained incrementally by triggers and
+		// avoids the correlated COUNT(*) subquery that previously ran under the job lock.
 		err := tx.QueryRowContext(ctx, `
 			SELECT j.max_pages, j.concurrency, j.running_tasks, j.pending_tasks, j.domain_id, d.name,
-				   COALESCE((SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status != 'skipped'), 0),
+				   j.total_tasks - j.skipped_tasks,
 				   j.organisation_id,
 				   CASE WHEN j.organisation_id IS NOT NULL
 				        THEN get_daily_quota_remaining(j.organisation_id)
@@ -1404,31 +1504,6 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			return fmt.Errorf("failed to insert tasks: %w", err)
 		}
 
-		// Apply traffic scores from page_analytics using GREATEST
-		// This ensures high-traffic pages get prioritised even if structural priority is low
-		if cfg.orgID.Valid && cfg.domainID.Valid {
-			_, err = tx.ExecContext(ctx, `
-				UPDATE tasks t
-				SET priority_score = GREATEST(t.priority_score, COALESCE(pa.traffic_score, 0))
-				FROM pages p
-				JOIN page_analytics pa ON pa.organisation_id = $1
-					AND pa.domain_id = $2
-					AND pa.path = p.path
-				WHERE t.page_id = p.id
-				AND t.job_id = $3
-				AND t.status IN ('pending', 'waiting')
-				AND COALESCE(pa.traffic_score, 0) > t.priority_score
-			`, cfg.orgID.String, cfg.domainID.Int64, jobID)
-			if err != nil {
-				// Log but don't fail - traffic scores are an optimisation
-				log.Warn().
-					Err(err).
-					Str("job_id", jobID).
-					Str("next_action", "continuing_without_traffic_scores").
-					Msg("Failed to apply traffic scores to new tasks; continuing without scores")
-			}
-		}
-
 		// Note: Daily usage is incremented when tasks COMPLETE, not when created
 		// See batch.go FlushUpdates for quota increment on completion/failure
 
@@ -1461,6 +1536,51 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Apply traffic scores in a separate transaction — after the job-lock has been released —
+	// to reduce the time concurrent EnqueueURLs calls for the same job wait on the lock.
+	// Only score pages from this batch (t.page_id = ANY(eligiblePageIDs)): tasks enqueued
+	// by previous calls were already scored at their enqueue time, so a job-wide scan is
+	// unnecessary. For link-discovered pages, further restrict to those at or above
+	// minPriorityForTrafficScore (≈ level 3 in the hierarchy); deeper pages are too
+	// numerous and their rank relative to each other matters too little to justify the join.
+	if cfg.orgID.Valid && cfg.domainID.Valid {
+		var eligiblePageIDs []int
+		for _, p := range pages {
+			if sourceType != "link" || p.Priority >= minPriorityForTrafficScore {
+				eligiblePageIDs = append(eligiblePageIDs, p.ID)
+			}
+		}
+		if len(eligiblePageIDs) > 0 {
+			if err2 := q.Execute(ctx, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `
+					UPDATE tasks t
+					SET priority_score = GREATEST(t.priority_score, COALESCE(pa.traffic_score, 0))
+					FROM pages p
+					JOIN page_analytics pa ON pa.organisation_id = $1
+						AND pa.domain_id = $2
+						AND pa.path = p.path
+					WHERE t.page_id = p.id
+					AND t.job_id = $3
+					AND t.page_id = ANY($4)
+					AND t.status IN ('pending', 'waiting')
+					AND COALESCE(pa.traffic_score, 0) > t.priority_score
+				`, cfg.orgID.String, cfg.domainID.Int64, jobID, pq.Array(eligiblePageIDs))
+				return err
+			}); err2 != nil {
+				log.Warn().
+					Err(err2).
+					Str("job_id", jobID).
+					Str("next_action", "continuing_without_traffic_scores").
+					Msg("Failed to apply traffic scores to new tasks; continuing without scores")
+			}
+		}
+	}
+
+	return nil
 }
 
 // CleanupStuckJobs finds and fixes jobs that are stuck in pending/running state
@@ -1811,68 +1931,48 @@ func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, cou
 		return nil
 	}
 
-	// Run promotion outside the job update transaction to avoid holding both job and
-	// task locks concurrently, which was leading to deadlocks under load.
+	// Promote exactly `count` waiting tasks now that the slots are confirmed freed.
+	// Run outside the decrement transaction to avoid holding both job and task locks
+	// concurrently (previously caused deadlocks under load).
 	promoteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := q.promoteWaitingTask(promoteCtx, jobID); err != nil {
+	if err := q.promoteWaitingTasksBatch(promoteCtx, jobID, count); err != nil {
 		// Best-effort: log but don't fail – the caller already freed slots.
-		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting task after slot release")
+		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting tasks after slot release")
 	}
 
 	return nil
 }
 
-// promoteWaitingTask best-effort promotes a single waiting task for the given job.
-func (q *DbQueue) promoteWaitingTask(ctx context.Context, jobID string) error {
+// IncrementRunningTasksBy adds count to running_tasks for a job.
+// It is called asynchronously by WorkerPool to flush batched in-memory increments,
+// keeping the hot claim path free from jobs row contention.
+func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
+	if jobID == "" || count <= 0 {
+		return nil
+	}
 	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID)
+		_, err := tx.ExecContext(txCtx, `
+			UPDATE jobs
+			SET running_tasks = running_tasks + $2
+			WHERE id = $1
+		`, jobID, count)
 		return err
 	})
 }
-func (q *DbQueue) hasAnyConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx) bool {
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query).Scan(&exists); err != nil {
-		log.Warn().Err(err).Msg("hasAnyConcurrencyBlockedTasks fallback query failed")
-		return false
-	}
-	return exists
-}
 
-func (q *DbQueue) jobHasConcurrencyBlockedTasks(ctx context.Context, tx *sql.Tx, jobID string) bool {
-	if jobID == "" {
-		return false
+// promoteWaitingTasksBatch promotes up to count waiting tasks to pending for the given job.
+// Uses the batch-aware SQL function that locks only task rows (SKIP LOCKED) and promotes
+// all slots in one UPDATE, avoiding the stale running_tasks check of the old function.
+func (q *DbQueue) promoteWaitingTasksBatch(ctx context.Context, jobID string, count int) error {
+	if count <= 0 {
+		return nil
 	}
-	query := `
-		SELECT EXISTS (
-			SELECT 1
-			FROM jobs
-			WHERE id = $1
-			  AND status = 'running'
-			  AND concurrency IS NOT NULL
-			  AND concurrency > 0
-			  AND running_tasks >= concurrency
-			  AND pending_tasks > 0
-		)
-	`
-	var exists bool
-	if err := tx.QueryRowContext(ctx, query, jobID).Scan(&exists); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Msg("jobHasConcurrencyBlockedTasks query failed")
-		return false
-	}
-	return exists
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_tasks_for_job($1, $2)`, jobID, count)
+		return err
+	})
 }
 
 // UpdateDomainTechnologies updates the detected technologies for a domain.
