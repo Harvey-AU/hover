@@ -26,9 +26,22 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:patch]
 
-_Add unreleased changes here._
+### Performance
+
+- Drop 6 redundant indexes on the `tasks` table (`idx_tasks_job_id_status`,
+  `idx_tasks_job_host`, `idx_tasks_job_id`,
+  `idx_tasks_job_status_priority_pending`, `idx_tasks_pending_by_job_priority`,
+  `idx_tasks_pending_claim_order`); removing `idx_tasks_job_id_status`
+  re-enables PostgreSQL HOT for status-only updates, eliminating full index
+  maintenance across all 17 indexes on every task transition; retains
+  `idx_tasks_running_started_at` which is used by stuck-task detection queries
+
+### Internal
+
+- Upgrade OpenTelemetry SDK to v1.43.0
+- Pin Prettier to package.json version in auto-release workflow via `npm ci`
 
 ## Full changelog history
 
