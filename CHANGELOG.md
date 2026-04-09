@@ -32,6 +32,23 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.31.14] – 2026-04-09
+
+### Performance
+
+- Drop 6 redundant indexes on the `tasks` table (`idx_tasks_job_id_status`,
+  `idx_tasks_job_host`, `idx_tasks_job_id`,
+  `idx_tasks_job_status_priority_pending`, `idx_tasks_pending_by_job_priority`,
+  `idx_tasks_pending_claim_order`); removing `idx_tasks_job_id_status`
+  re-enables PostgreSQL HOT for status-only updates, eliminating full index
+  maintenance across all 17 indexes on every task transition; retains
+  `idx_tasks_running_started_at` which is used by stuck-task detection queries
+
+### Internal
+
+- Upgrade OpenTelemetry SDK to v1.43.0
+- Pin Prettier to package.json version in auto-release workflow via `npm ci`
+
 ## [0.31.13] – 2026-04-09
 
 ### Performance
