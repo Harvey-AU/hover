@@ -398,7 +398,7 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 	}
 }
 
-// Test domains — same 115 diverse real-world sites from the shell script.
+// Test domains — 215 diverse real-world sites across many categories.
 var testDomains = []string{
 	// Australian businesses (10)
 	"bankaust.com.au", "bunnings.com.au",
@@ -432,12 +432,12 @@ var testDomains = []string{
 	"sanity.io", "pocketbase.io", "supabase.com", "plane.so",
 	"appsmith.com", "budibase.com", "windmill.dev", "tauri.app",
 
-	// SaaS & productivity apps (8)
+	// SaaS & productivity apps (9)
 	"linear.app", "reclaim.ai", "reflect.app",
 	"cron.com", "retool.com", "cal.com", "raycast.com",
 	"warp.dev", "cursor.so",
 
-	// Niche e-commerce & DTC brands (13)
+	// Niche e-commerce & DTC brands (14)
 	"feals.com", "magicspoon.com", "atlascoffeeclub.com",
 	"blueland.com", "outerknown.com", "grovemade.com",
 	"ridgewallet.com", "ouraring.com", "carawayhome.com",
@@ -446,6 +446,62 @@ var testDomains = []string{
 	// Indie analytics & SaaS (7)
 	"plausible.io", "simpleanalytics.com", "savvycal.com", "commandbar.com",
 	"pirsch.io", "clarityflow.com", "swapcard.com",
+
+	// Programming languages (8)
+	"rust-lang.org", "python.org", "ruby-lang.org", "elixir-lang.org",
+	"kotlinlang.org", "ziglang.org", "typescriptlang.org", "haskell.org",
+
+	// UI frameworks & CSS libraries (8)
+	"getbootstrap.com", "bulma.io", "daisyui.com", "mantine.dev",
+	"open-props.style", "picocss.com", "milligram.io", "unocss.dev",
+
+	// Backend frameworks (7)
+	"expressjs.com", "nestjs.com", "fastify.io", "hono.dev",
+	"rocket.rs", "djangoproject.com", "gin-gonic.com",
+
+	// Databases & storage (7)
+	"postgresql.org", "redis.io", "sqlite.org", "turso.tech",
+	"neon.tech", "planetscale.com", "cockroachlabs.com",
+
+	// Observability & developer tooling (8)
+	"grafana.com", "sentry.io", "opentelemetry.io", "posthog.com",
+	"resend.com", "trigger.dev", "inngest.com", "incident.io",
+
+	// Hosting & deployment (5)
+	"netlify.com", "vercel.com", "clerk.com", "upstash.com", "coolify.io",
+
+	// Design & UX resources (7)
+	"framer.com", "nngroup.com", "typewolf.com",
+	"fontsinuse.com", "siteinspire.com", "mobbin.com", "lookup.design",
+
+	// Learning & developer community (8)
+	"freecodecamp.org", "theodinproject.com", "exercism.org",
+	"dev.to", "changelog.com", "lobste.rs", "jvns.ca", "coderpad.io",
+
+	// Email & content platforms (8)
+	"basecamp.com", "hey.com", "helpscout.com",
+	"ghost.org", "beehiiv.com", "buttondown.email",
+	"obsidian.md", "standardnotes.com",
+
+	// Australian & NZ lifestyle brands (8)
+	"frank-body.com", "afends.com", "rollas.com.au", "surfstitch.com",
+	"thankyou.co", "cottonon.com", "lovethelabel.com.au", "eucalyptus.com.au",
+
+	// Tech media & personal blogs (7)
+	"arstechnica.com", "thenextweb.com", "paulgraham.com",
+	"daringfireball.net", "simonwillison.net", "tonsky.me", "fasterthanli.me",
+
+	// DTC & lifestyle brands (9)
+	"lululemon.com", "cotopaxi.com", "patagonia.com",
+	"mejuri.com", "ugmonk.com", "framebridge.com",
+	"ruggable.com", "prose.com", "maude.com",
+
+	// API tooling & docs platforms (8)
+	"liveblocks.io", "stytch.com", "workos.com", "svix.com",
+	"zuplo.com", "scalar.com", "mintlify.com", "gitbook.com",
+
+	// Editors & dev environments (2)
+	"zed.dev", "helix-editor.com",
 }
 
 func printJobHeader(id *identity, totalRuns, domainCount int, cfg *jobsConfig) {
