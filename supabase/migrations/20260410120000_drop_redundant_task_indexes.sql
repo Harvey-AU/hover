@@ -6,14 +6,14 @@
 -- that includes the status column. When HOT is defeated, all 17 indexes are
 -- maintained on every update — not just the ones that changed.
 --
--- Dropping these 7 indexes:
+-- Dropping these 6 indexes:
 --   1. Re-enables HOT for status-only updates (idx_tasks_job_id_status removal)
 --   2. Removes ~63MB of index storage
 --   3. Reduces index maintenance overhead on every task status transition
 --
 -- Each index below is either superseded by a more specific composite index,
--- unused in any query (idx_tasks_job_host, idx_tasks_running_started_at), or
--- obsolete from an earlier schema iteration (idx_tasks_pending_claim_order).
+-- unused in any query (idx_tasks_job_host), or obsolete from an earlier schema
+-- iteration (idx_tasks_pending_claim_order).
 
 -- Full non-partial index on (job_id, status): defeats HOT on every status
 -- change. Superseded by idx_tasks_claim_optimised, idx_tasks_waiting_by_job,
@@ -44,7 +44,3 @@ DROP INDEX IF EXISTS idx_tasks_pending_by_job_priority;
 -- priority_score first. Entirely obsolete.
 DROP INDEX IF EXISTS idx_tasks_pending_claim_order;
 
--- (started_at) WHERE running: Supabase advisor suggestion, but no query
--- in the codebase filters by (status = 'running', started_at). Stuck job
--- detection uses idx_tasks_job_activity_times instead.
-DROP INDEX IF EXISTS idx_tasks_running_started_at;
