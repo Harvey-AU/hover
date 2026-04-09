@@ -41,6 +41,14 @@ On merge, CI will:
 - Skip traffic score updates for link-discovered pages deeper than ~3 hops from
   the homepage (priority < 0.729) — these pages are too numerous for the
   `page_analytics` join to be worthwhile; sitemap sources always apply
+- Merge two row-level INSERT triggers (`update_job_counters`,
+  `update_job_queue_counters`) into a single statement-level trigger; a 500-row
+  batch now emits one `UPDATE jobs` instead of 1,000, eliminating the dominant
+  source of lock contention during `EnqueueURLs`
+- Replace correlated `COUNT(*) WHERE status != 'skipped'` subquery in
+  `EnqueueURLs` with `total_tasks - skipped_tasks` (now maintained incrementally
+  by the statement-level trigger), removing a per-call table scan from inside
+  the job-row lock
 
 ## Full changelog history
 

@@ -1315,10 +1315,12 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			return uniquePages[i].ID < uniquePages[j].ID
 		})
 
-		// Get job's max_pages, concurrency, domain, org, and current task counts
+		// Get job's max_pages, concurrency, domain, org, and current task counts.
+		// total_tasks - skipped_tasks is maintained incrementally by triggers and
+		// avoids the correlated COUNT(*) subquery that previously ran under the job lock.
 		err := tx.QueryRowContext(ctx, `
 			SELECT j.max_pages, j.concurrency, j.running_tasks, j.pending_tasks, j.domain_id, d.name,
-				   COALESCE((SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status != 'skipped'), 0),
+				   j.total_tasks - j.skipped_tasks,
 				   j.organisation_id,
 				   CASE WHEN j.organisation_id IS NOT NULL
 				        THEN get_daily_quota_remaining(j.organisation_id)
