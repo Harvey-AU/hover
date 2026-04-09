@@ -130,7 +130,7 @@ version.
 
 ### Task Lifecycle
 
-```
+```text
 waiting → pending → running → completed
                            ↘ failed
                            ↘ skipped
