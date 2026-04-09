@@ -76,6 +76,14 @@ const (
 
 	waitingReasonConcurrencyLimit = "concurrency_limit"
 	waitingReasonQuotaExhausted   = "quota_exhausted"
+
+	// minPriorityForTrafficScore is the minimum structural priority a page must have
+	// for traffic-score updates to be applied when discovered via link-following.
+	// Based on 0.9^3 ≈ 0.729 (homepage = 1.000, each link level × 0.9), representing
+	// ~3 link-hops from the homepage. Pages deeper than this are too numerous and their
+	// ordering matters less to crawl efficiency. Sitemap sources are always eligible
+	// regardless of priority.
+	minPriorityForTrafficScore = 0.729
 )
 
 // NewDbQueue creates a PostgreSQL job queue
@@ -1291,7 +1299,11 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 		return nil
 	}
 
-	return q.Execute(ctx, func(tx *sql.Tx) error {
+	// Declared outside Execute so cfg is accessible after the transaction commits
+	// and the job lock is released (used by the traffic-score update below).
+	var cfg enqueueJobConfig
+
+	err := q.Execute(ctx, func(tx *sql.Tx) error {
 		uniquePages := deduplicatePages(pages)
 		if len(uniquePages) == 0 {
 			return nil
@@ -1303,11 +1315,12 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			return uniquePages[i].ID < uniquePages[j].ID
 		})
 
-		// Get job's max_pages, concurrency, domain, org, and current task counts
-		var cfg enqueueJobConfig
+		// Get job's max_pages, concurrency, domain, org, and current task counts.
+		// total_tasks - skipped_tasks is maintained incrementally by triggers and
+		// avoids the correlated COUNT(*) subquery that previously ran under the job lock.
 		err := tx.QueryRowContext(ctx, `
 			SELECT j.max_pages, j.concurrency, j.running_tasks, j.pending_tasks, j.domain_id, d.name,
-				   COALESCE((SELECT COUNT(*) FROM tasks WHERE job_id = $1 AND status != 'skipped'), 0),
+				   j.total_tasks - j.skipped_tasks,
 				   j.organisation_id,
 				   CASE WHEN j.organisation_id IS NOT NULL
 				        THEN get_daily_quota_remaining(j.organisation_id)
@@ -1491,31 +1504,6 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			return fmt.Errorf("failed to insert tasks: %w", err)
 		}
 
-		// Apply traffic scores from page_analytics using GREATEST
-		// This ensures high-traffic pages get prioritised even if structural priority is low
-		if cfg.orgID.Valid && cfg.domainID.Valid {
-			_, err = tx.ExecContext(ctx, `
-				UPDATE tasks t
-				SET priority_score = GREATEST(t.priority_score, COALESCE(pa.traffic_score, 0))
-				FROM pages p
-				JOIN page_analytics pa ON pa.organisation_id = $1
-					AND pa.domain_id = $2
-					AND pa.path = p.path
-				WHERE t.page_id = p.id
-				AND t.job_id = $3
-				AND t.status IN ('pending', 'waiting')
-				AND COALESCE(pa.traffic_score, 0) > t.priority_score
-			`, cfg.orgID.String, cfg.domainID.Int64, jobID)
-			if err != nil {
-				// Log but don't fail - traffic scores are an optimisation
-				log.Warn().
-					Err(err).
-					Str("job_id", jobID).
-					Str("next_action", "continuing_without_traffic_scores").
-					Msg("Failed to apply traffic scores to new tasks; continuing without scores")
-			}
-		}
-
 		// Note: Daily usage is incremented when tasks COMPLETE, not when created
 		// See batch.go FlushUpdates for quota increment on completion/failure
 
@@ -1548,6 +1536,51 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Apply traffic scores in a separate transaction — after the job-lock has been released —
+	// to reduce the time concurrent EnqueueURLs calls for the same job wait on the lock.
+	// Only score pages from this batch (t.page_id = ANY(eligiblePageIDs)): tasks enqueued
+	// by previous calls were already scored at their enqueue time, so a job-wide scan is
+	// unnecessary. For link-discovered pages, further restrict to those at or above
+	// minPriorityForTrafficScore (≈ level 3 in the hierarchy); deeper pages are too
+	// numerous and their rank relative to each other matters too little to justify the join.
+	if cfg.orgID.Valid && cfg.domainID.Valid {
+		var eligiblePageIDs []int
+		for _, p := range pages {
+			if sourceType != "link" || p.Priority >= minPriorityForTrafficScore {
+				eligiblePageIDs = append(eligiblePageIDs, p.ID)
+			}
+		}
+		if len(eligiblePageIDs) > 0 {
+			if err2 := q.Execute(ctx, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(ctx, `
+					UPDATE tasks t
+					SET priority_score = GREATEST(t.priority_score, COALESCE(pa.traffic_score, 0))
+					FROM pages p
+					JOIN page_analytics pa ON pa.organisation_id = $1
+						AND pa.domain_id = $2
+						AND pa.path = p.path
+					WHERE t.page_id = p.id
+					AND t.job_id = $3
+					AND t.page_id = ANY($4)
+					AND t.status IN ('pending', 'waiting')
+					AND COALESCE(pa.traffic_score, 0) > t.priority_score
+				`, cfg.orgID.String, cfg.domainID.Int64, jobID, pq.Array(eligiblePageIDs))
+				return err
+			}); err2 != nil {
+				log.Warn().
+					Err(err2).
+					Str("job_id", jobID).
+					Str("next_action", "continuing_without_traffic_scores").
+					Msg("Failed to apply traffic scores to new tasks; continuing without scores")
+			}
+		}
+	}
+
+	return nil
 }
 
 // CleanupStuckJobs finds and fixes jobs that are stuck in pending/running state
@@ -1898,14 +1931,15 @@ func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, cou
 		return nil
 	}
 
-	// Run promotion outside the job update transaction to avoid holding both job and
-	// task locks concurrently, which was leading to deadlocks under load.
+	// Promote exactly `count` waiting tasks now that the slots are confirmed freed.
+	// Run outside the decrement transaction to avoid holding both job and task locks
+	// concurrently (previously caused deadlocks under load).
 	promoteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := q.promoteWaitingTask(promoteCtx, jobID); err != nil {
+	if err := q.promoteWaitingTasksBatch(promoteCtx, jobID, count); err != nil {
 		// Best-effort: log but don't fail – the caller already freed slots.
-		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting task after slot release")
+		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to promote waiting tasks after slot release")
 	}
 
 	return nil
@@ -1928,10 +1962,15 @@ func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, cou
 	})
 }
 
-// promoteWaitingTask best-effort promotes a single waiting task for the given job.
-func (q *DbQueue) promoteWaitingTask(ctx context.Context, jobID string) error {
+// promoteWaitingTasksBatch promotes up to count waiting tasks to pending for the given job.
+// Uses the batch-aware SQL function that locks only task rows (SKIP LOCKED) and promotes
+// all slots in one UPDATE, avoiding the stale running_tasks check of the old function.
+func (q *DbQueue) promoteWaitingTasksBatch(ctx context.Context, jobID string, count int) error {
+	if count <= 0 {
+		return nil
+	}
 	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_task_for_job($1)`, jobID)
+		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_tasks_for_job($1, $2)`, jobID, count)
 		return err
 	})
 }
