@@ -8,10 +8,14 @@ System design, database schema, and API specifications for Hover.
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System design, components, worker
   pools, and job lifecycle
+- **[CONFIG_REFERENCE.md](./CONFIG_REFERENCE.md)** - Every configurable dial:
+  env vars, hardcoded constants, and their relationships
 - **[DATABASE.md](./DATABASE.md)** - PostgreSQL schema, queries, and performance
   optimisation
 - **[API.md](./API.md)** - RESTful API endpoints, authentication, and response
   formats
+- **[webflow-designer-extension.md](./webflow-designer-extension.md)** - Webflow
+  Designer Extension integration architecture
 
 ## 🏗️ System Overview
 
