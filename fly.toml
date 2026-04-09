@@ -8,6 +8,7 @@ primary_region = 'syd'
 
 [build]
 
+# For documentation on all env vars below, see docs/architecture/CONFIG_REFERENCE.md
 [env]
   APP_ENV = "production"
   APP_URL = "https://hover.app.goodnative.co"
