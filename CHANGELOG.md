@@ -56,7 +56,6 @@ _Add unreleased changes here._
   `promote_waiting_tasks_for_job`, reducing N DB round-trips to 1 per job and
   computing quota/concurrency limits upfront via a LATERAL subquery
 
-
 ## [0.31.12] – 2026-04-09
 
 ### Performance
