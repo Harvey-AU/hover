@@ -3091,7 +3091,7 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 			// No explicit concurrency limit: apply pendingUnlimitedCap to avoid
 			// bulk-promoting more tasks than workers can drain, mirroring the cap
 			// used by availablePendingSlots and the pending queue rebalancer.
-			if capAvail := pendingUnlimitedCap - job.PendingTasks; capAvail < slots {
+			if capAvail := pendingUnlimitedCap - (job.PendingTasks + job.RunningTasks); capAvail < slots {
 				slots = capAvail
 			}
 		}
