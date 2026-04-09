@@ -9,9 +9,9 @@
 --
 -- Fix: compute the delta from OLD/NEW status in plpgsql local variables, then
 -- apply a single O(1) UPDATE with no subqueries. Also add an early-exit guard:
--- if no terminal counter changes (and the task is not transitioning to running),
--- skip the UPDATE entirely — covering the common pending/waiting ↔ running
--- transitions that previously hit all three COUNT(*) scans for nothing.
+-- if no terminal counter changes (and the task is not its first transition to
+-- running), skip the UPDATE entirely — covering the common pending/waiting ↔
+-- running transitions that previously hit all three COUNT(*) scans for nothing.
 
 CREATE OR REPLACE FUNCTION update_job_counters()
 RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public AS $$
@@ -42,10 +42,11 @@ BEGIN
                                   WHEN OLD.status = 'skipped'   THEN -1
                                   ELSE 0 END;
 
-        -- Skip the UPDATE entirely when no terminal counters change and
-        -- this is not the first task transitioning to running (started_at).
+        -- Skip the UPDATE entirely when no terminal counters change and this is
+        -- not the task's first transition to running (OLD.started_at IS NOT NULL
+        -- means the task ran before, so job.started_at is already set).
         IF v_completed_delta = 0 AND v_failed_delta = 0 AND v_skipped_delta = 0
-           AND NEW.status != 'running'
+           AND (NEW.status != 'running' OR OLD.started_at IS NOT NULL)
         THEN
             RETURN NEW;
         END IF;
@@ -71,8 +72,10 @@ BEGIN
                 WHEN started_at IS NULL AND NEW.status = 'running' THEN NOW()
                 ELSE started_at
             END,
+            -- Include 'skipped' as a terminal status: if the last task becomes
+            -- skipped the job is finished even though it neither completed nor failed.
             completed_at = CASE
-                WHEN NEW.status IN ('completed', 'failed')
+                WHEN NEW.status IN ('completed', 'failed', 'skipped')
                  AND completed_at IS NULL
                  AND (
                      GREATEST(0, completed_tasks + v_completed_delta)
@@ -85,34 +88,39 @@ BEGIN
         WHERE id = NEW.job_id;
 
     ELSIF TG_OP = 'DELETE' THEN
-        -- Task deleted — decrement counters (unchanged from previous version).
+        -- Compute per-status deltas upfront so the progress expression can
+        -- reference post-delete values rather than the original row values
+        -- (all SET expressions in a single UPDATE see the pre-update row).
+        v_completed_delta := CASE WHEN OLD.status = 'completed' THEN 1 ELSE 0 END;
+        v_failed_delta    := CASE WHEN OLD.status = 'failed'    THEN 1 ELSE 0 END;
+        v_skipped_delta   := CASE WHEN OLD.status = 'skipped'   THEN 1 ELSE 0 END;
+
         UPDATE jobs
-        SET total_tasks = GREATEST(0, total_tasks - 1),
-            completed_tasks = CASE
-                WHEN OLD.status = 'completed' THEN GREATEST(0, completed_tasks - 1)
-                ELSE completed_tasks
-            END,
-            failed_tasks = CASE
-                WHEN OLD.status = 'failed' THEN GREATEST(0, failed_tasks - 1)
-                ELSE failed_tasks
-            END,
-            skipped_tasks = CASE
-                WHEN OLD.status = 'skipped' THEN GREATEST(0, skipped_tasks - 1)
-                ELSE skipped_tasks
-            END,
-            sitemap_tasks = CASE
+        SET
+            total_tasks     = GREATEST(0, total_tasks     - 1),
+            completed_tasks = GREATEST(0, completed_tasks - v_completed_delta),
+            failed_tasks    = GREATEST(0, failed_tasks    - v_failed_delta),
+            skipped_tasks   = GREATEST(0, skipped_tasks   - v_skipped_delta),
+            sitemap_tasks   = CASE
                 WHEN OLD.source_type = 'sitemap' THEN GREATEST(0, sitemap_tasks - 1)
                 ELSE sitemap_tasks
             END,
-            found_tasks = CASE
-                WHEN OLD.source_type != 'sitemap' OR OLD.source_type IS NULL
+            found_tasks     = CASE
+                WHEN OLD.source_type IS DISTINCT FROM 'sitemap'
                 THEN GREATEST(0, found_tasks - 1)
                 ELSE found_tasks
             END,
+            -- Use post-delete counter values (original minus the deltas above).
             progress = CASE
-                WHEN total_tasks > 0 AND (total_tasks - skipped_tasks) > 0 THEN
-                    ((completed_tasks + failed_tasks)::REAL
-                     / (total_tasks - skipped_tasks)::REAL) * 100.0
+                WHEN GREATEST(0, total_tasks - 1) > 0
+                 AND (GREATEST(0, total_tasks - 1)
+                      - GREATEST(0, skipped_tasks - v_skipped_delta)) > 0
+                THEN (
+                    (GREATEST(0, completed_tasks - v_completed_delta)
+                     + GREATEST(0, failed_tasks   - v_failed_delta))::REAL
+                    / (GREATEST(0, total_tasks - 1)
+                       - GREATEST(0, skipped_tasks - v_skipped_delta))::REAL
+                ) * 100.0
                 ELSE 0.0
             END
         WHERE id = OLD.job_id;
