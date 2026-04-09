@@ -1542,21 +1542,19 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 
 	// Apply traffic scores in a separate transaction — after the job-lock has been released —
 	// to reduce the time concurrent EnqueueURLs calls for the same job wait on the lock.
-	// For link-discovered pages, only apply if the source page was high enough in the hierarchy
-	// (priority >= minPriorityForTrafficScore ≈ level 3); deeper pages are too numerous and
-	// their relative ordering matters too little to justify the page_analytics join.
-	// Sitemap and other source types are always eligible regardless of priority.
+	// Only score pages from this batch (t.page_id = ANY(eligiblePageIDs)): tasks enqueued
+	// by previous calls were already scored at their enqueue time, so a job-wide scan is
+	// unnecessary. For link-discovered pages, further restrict to those at or above
+	// minPriorityForTrafficScore (≈ level 3 in the hierarchy); deeper pages are too
+	// numerous and their rank relative to each other matters too little to justify the join.
 	if cfg.orgID.Valid && cfg.domainID.Valid {
-		eligible := sourceType != "link"
-		if !eligible {
-			for _, p := range pages {
-				if p.Priority >= minPriorityForTrafficScore {
-					eligible = true
-					break
-				}
+		var eligiblePageIDs []int
+		for _, p := range pages {
+			if sourceType != "link" || p.Priority >= minPriorityForTrafficScore {
+				eligiblePageIDs = append(eligiblePageIDs, p.ID)
 			}
 		}
-		if eligible {
+		if len(eligiblePageIDs) > 0 {
 			if err2 := q.Execute(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `
 					UPDATE tasks t
@@ -1567,9 +1565,10 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 						AND pa.path = p.path
 					WHERE t.page_id = p.id
 					AND t.job_id = $3
+					AND t.page_id = ANY($4)
 					AND t.status IN ('pending', 'waiting')
 					AND COALESCE(pa.traffic_score, 0) > t.priority_score
-				`, cfg.orgID.String, cfg.domainID.Int64, jobID)
+				`, cfg.orgID.String, cfg.domainID.Int64, jobID, pq.Array(eligiblePageIDs))
 				return err
 			}); err2 != nil {
 				log.Warn().
