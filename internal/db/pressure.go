@@ -65,6 +65,10 @@ type PressureController struct {
 	cooldownDown time.Duration
 	cooldownUp   time.Duration
 	minLimit     int32
+
+	// OnAdjust is called after each scale-up or scale-down with direction "up" or "down".
+	// Must not block. Set once at construction time before any concurrent use.
+	OnAdjust func(direction string)
 }
 
 // newPressureController creates a controller that starts at pressureInitialLimit
@@ -167,6 +171,9 @@ func (pc *PressureController) maybeAdjust() {
 		newLimit := max(current-pc.stepDown, pc.minLimit)
 		pc.limit.Store(newLimit)
 		pc.lastScaleDown = time.Now()
+		if pc.OnAdjust != nil {
+			pc.OnAdjust("down")
+		}
 		log.Warn().
 			Float64("exec_ema_ms", pc.ema).
 			Int32("limit_before", current).
@@ -203,6 +210,9 @@ func (pc *PressureController) maybeAdjust() {
 		newLimit := min(current+pc.stepUp, pc.maxLimit)
 		pc.limit.Store(newLimit)
 		pc.lastScaleUp = time.Now()
+		if pc.OnAdjust != nil {
+			pc.OnAdjust("up")
+		}
 		log.Info().
 			Float64("exec_ema_ms", pc.ema).
 			Int32("limit_before", current).

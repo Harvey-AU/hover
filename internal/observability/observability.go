@@ -82,6 +82,11 @@ var (
 	dbPoolReservedGauge     metric.Int64Gauge
 	dbPoolRejectCounter     metric.Int64Counter
 
+	dbPressureEMAGauge       metric.Float64Gauge
+	dbPressureLimitGauge     metric.Int64Gauge
+	dbPressureAdjustCounter  metric.Int64Counter
+	dbSemaphoreWaitHistogram metric.Float64Histogram
+
 	fdCurrentGauge  metric.Int64Gauge
 	fdLimitGauge    metric.Int64Gauge
 	fdPressureGauge metric.Float64Gauge
@@ -468,6 +473,40 @@ func initDBPoolInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		"bee.process.fd.pressure",
 		metric.WithDescription("File descriptor usage ratio (current / limit)"),
 	)
+	if err != nil {
+		return err
+	}
+
+	dbPressureEMAGauge, err = meter.Float64Gauge(
+		"bee.db.pressure.ema_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Exponential moving average of DB query execution time — the pressure controller signal"),
+	)
+	if err != nil {
+		return err
+	}
+
+	dbPressureLimitGauge, err = meter.Int64Gauge(
+		"bee.db.pressure.limit",
+		metric.WithDescription("Current pressure-adjusted concurrency limit for the DB queue semaphore"),
+	)
+	if err != nil {
+		return err
+	}
+
+	dbPressureAdjustCounter, err = meter.Int64Counter(
+		"bee.db.pressure.adjustments_total",
+		metric.WithDescription("Number of times the pressure controller scaled concurrency up or down"),
+	)
+	if err != nil {
+		return err
+	}
+
+	dbSemaphoreWaitHistogram, err = meter.Float64Histogram(
+		"bee.db.semaphore.wait_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Time spent waiting to acquire a DB queue semaphore slot"),
+	)
 	return err
 }
 
@@ -684,6 +723,33 @@ func RecordTaskWaiting(ctx context.Context, jobID string, reason string, count i
 func RecordDBPoolRejection(ctx context.Context) {
 	if dbPoolRejectCounter != nil {
 		dbPoolRejectCounter.Add(ctx, 1, metric.WithAttributes())
+	}
+}
+
+// RecordDBPressureStats records the pressure controller's current EMA and concurrency limit.
+// Call this alongside RecordDBPoolStats for a complete pool+pressure snapshot in Grafana.
+func RecordDBPressureStats(ctx context.Context, emaMs float64, limit int32) {
+	if dbPressureEMAGauge != nil {
+		dbPressureEMAGauge.Record(ctx, emaMs)
+	}
+	if dbPressureLimitGauge != nil {
+		dbPressureLimitGauge.Record(ctx, int64(limit))
+	}
+}
+
+// RecordDBPressureAdjustment increments the adjustment counter.
+// direction must be "up" or "down".
+func RecordDBPressureAdjustment(ctx context.Context, direction string) {
+	if dbPressureAdjustCounter != nil {
+		dbPressureAdjustCounter.Add(ctx, 1,
+			metric.WithAttributes(attribute.String("direction", direction)))
+	}
+}
+
+// RecordSemaphoreWait records the time spent waiting to acquire a DB queue semaphore slot.
+func RecordSemaphoreWait(ctx context.Context, waitMs float64) {
+	if dbSemaphoreWaitHistogram != nil {
+		dbSemaphoreWaitHistogram.Record(ctx, waitMs)
 	}
 }
 

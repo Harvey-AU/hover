@@ -132,7 +132,7 @@ func NewDbQueue(db *DB) *DbQueue {
 
 	semaphore = make(chan struct{}, maxConcurrent)
 
-	return &DbQueue{
+	q := &DbQueue{
 		db:                  db,
 		poolWarnThreshold:   warn,
 		poolRejectThreshold: reject,
@@ -143,8 +143,13 @@ func NewDbQueue(db *DB) *DbQueue {
 		retryBaseDelay:      baseDelay,
 		retryMaxDelay:       maxDelay,
 		rng:                 nil, // Initialised on first use in randInt63n
-		pressure:            newPressureController(maxConcurrent),
 	}
+
+	q.pressure = newPressureController(maxConcurrent)
+	q.pressure.OnAdjust = func(direction string) {
+		observability.RecordDBPressureAdjustment(context.Background(), direction)
+	}
+	return q
 }
 
 // SetConcurrencyOverride sets a callback to retrieve effective concurrency from the domain limiter
@@ -807,8 +812,10 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 			}
 		}
 
+		semWaitStart := time.Now()
 		select {
 		case q.poolSemaphore <- struct{}{}:
+			observability.RecordSemaphoreWait(ctx, float64(time.Since(semWaitStart).Milliseconds()))
 			release = func() { <-q.poolSemaphore }
 		case <-ctx.Done():
 			// Explicitly log pool rejections when context expires before acquiring semaphore
@@ -858,6 +865,9 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 		Reserved:     q.preserveConnections,
 		Usage:        usage,
 	})
+	if q.pressure != nil {
+		observability.RecordDBPressureStats(ctx, q.pressure.EMA(), q.pressure.EffectiveLimit())
+	}
 
 	waitDelta := stats.WaitCount - q.lastRejectWaitCount
 	if usage >= q.poolRejectThreshold && waitDelta >= minRejectWaitDelta && time.Since(q.lastRejectLog) > poolLogCooldown {
