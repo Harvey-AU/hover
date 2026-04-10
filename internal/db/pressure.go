@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/rs/zerolog/log"
 )
 
@@ -169,6 +170,19 @@ func (pc *PressureController) maybeAdjust() {
 				Int32("concurrency_floor", pc.minLimit).
 				Int32("concurrency_ceiling", pc.maxLimit).
 				Msg("DB pressure at floor — queue concurrency fully shed, Supabase severely overloaded")
+			sentry.WithScope(func(scope *sentry.Scope) {
+				scope.SetLevel(sentry.LevelWarning)
+				scope.SetTag("event_type", "db_pressure")
+				scope.SetTag("state", "floor")
+				scope.SetContext("db_pressure", map[string]any{
+					"pool_wait_ema_ms":  pc.ema,
+					"ema_high_mark_ms":  pc.highMark,
+					"concurrency_slots": newLimit,
+					"concurrency_floor": pc.minLimit,
+					"concurrency_ceiling": pc.maxLimit,
+				})
+				sentry.CaptureMessage("DB pressure at floor — queue concurrency fully shed")
+			})
 		}
 
 	case pc.ema < pc.lowMark && current < pc.maxLimit:
