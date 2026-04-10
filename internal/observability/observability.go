@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otelprom "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric"
@@ -168,10 +169,34 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		return nil, fmt.Errorf("create Prometheus exporter: %w", err)
 	}
 
-	meterProvider := sdkmetric.NewMeterProvider(
+	meterOpts := []sdkmetric.Option{
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(promExporter),
-	)
+	}
+
+	if cfg.OTLPEndpoint != "" {
+		metricsEndpoint := deriveMetricsEndpoint(cfg.OTLPEndpoint)
+		metricClientOpts := []otlpmetrichttp.Option{
+			otlpmetrichttp.WithEndpointURL(metricsEndpoint),
+		}
+		if cfg.OTLPInsecure {
+			metricClientOpts = append(metricClientOpts, otlpmetrichttp.WithInsecure())
+		}
+		if len(cfg.OTLPHeaders) > 0 {
+			metricClientOpts = append(metricClientOpts, otlpmetrichttp.WithHeaders(cfg.OTLPHeaders))
+		}
+		metricExporter, merr := otlpmetrichttp.New(ctx, metricClientOpts...)
+		if merr != nil {
+			fmt.Printf("WARN: Failed to create OTLP metric exporter (metrics push disabled): %v\n", merr)
+		} else {
+			meterOpts = append(meterOpts, sdkmetric.WithReader(
+				sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(30*time.Second)),
+			))
+			fmt.Printf("INFO: OTLP metric exporter initialised successfully for endpoint: %s\n", metricsEndpoint)
+		}
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(meterOpts...)
 	otel.SetMeterProvider(meterProvider)
 
 	initOnce.Do(func() {
@@ -210,6 +235,15 @@ func getOTLPEndpointOption(endpoint string) otlptracehttp.Option {
 		return otlptracehttp.WithEndpointURL(endpoint)
 	}
 	return otlptracehttp.WithEndpoint(endpoint)
+}
+
+// deriveMetricsEndpoint converts a traces OTLP endpoint URL to the metrics equivalent.
+// e.g. ".../otlp/v1/traces" → ".../otlp/v1/metrics"
+func deriveMetricsEndpoint(tracesEndpoint string) string {
+	if strings.HasSuffix(tracesEndpoint, "/v1/traces") {
+		return strings.TrimSuffix(tracesEndpoint, "/v1/traces") + "/v1/metrics"
+	}
+	return tracesEndpoint
 }
 
 // WrapHandler applies OpenTelemetry instrumentation to an http.Handler when the providers are active.
