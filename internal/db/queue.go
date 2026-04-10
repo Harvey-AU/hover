@@ -288,8 +288,12 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 				Msg("Database transaction finished with no rows")
 			return execErr
 		}
-		// Don't log concurrency blocking as error - it's normal backoff behaviour
+		// Don't log concurrency blocking as error - it's normal backoff behaviour.
+		// Still record pool wait so the pressure controller sees the signal.
 		if errors.Is(execErr, ErrConcurrencyBlocked) {
+			if q.pressure != nil {
+				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+			}
 			return execErr
 		}
 
@@ -425,8 +429,12 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 				Msg("Database transaction finished with no rows")
 			return execErr
 		}
-		// Don't log concurrency blocking as error - it's normal backoff behaviour
+		// Don't log concurrency blocking as error - it's normal backoff behaviour.
+		// Still record pool wait so the pressure controller sees the signal.
 		if errors.Is(execErr, ErrConcurrencyBlocked) {
+			if q.pressure != nil {
+				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+			}
 			return execErr
 		}
 

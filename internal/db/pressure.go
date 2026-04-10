@@ -79,10 +79,26 @@ func newPressureController(maxLimit int) *PressureController {
 	if safeMax < initial {
 		initial = safeMax
 	}
+	highMark := parsePressureFloat("GNH_PRESSURE_HIGH_MARK_MS", pressureHighMarkDefaultMs)
+	lowMark := parsePressureFloat("GNH_PRESSURE_LOW_MARK_MS", pressureLowMarkDefaultMs)
+
+	// Ensure a valid deadband. If env vars collapse or invert the band, log and
+	// fall back to defaults so the controller behaves predictably.
+	if lowMark >= highMark {
+		log.Warn().
+			Float64("low_mark", lowMark).
+			Float64("high_mark", highMark).
+			Float64("default_low", pressureLowMarkDefaultMs).
+			Float64("default_high", pressureHighMarkDefaultMs).
+			Msg("GNH_PRESSURE_LOW_MARK_MS >= GNH_PRESSURE_HIGH_MARK_MS — falling back to defaults")
+		lowMark = pressureLowMarkDefaultMs
+		highMark = pressureHighMarkDefaultMs
+	}
+
 	pc := &PressureController{
 		maxLimit:     safeMax,
-		highMark:     parsePressureFloat("GNH_PRESSURE_HIGH_MARK_MS", pressureHighMarkDefaultMs),
-		lowMark:      parsePressureFloat("GNH_PRESSURE_LOW_MARK_MS", pressureLowMarkDefaultMs),
+		highMark:     highMark,
+		lowMark:      lowMark,
 		stepDown:     pressureStepDown,
 		stepUp:       pressureStepUp,
 		minLimit:     pressureMinLimit,
