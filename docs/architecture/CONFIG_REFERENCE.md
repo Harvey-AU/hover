@@ -12,11 +12,12 @@ inventory of env vars and their classification (secret vs non-secret), see
 ## Key relationships
 
 ```
-DB_MAX_OPEN_CONNS (150)
-  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 146
-        └── DB_QUEUE_MAX_CONCURRENCY (120)  →  semaphore = min(120, 146) = 120
-              └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
-                    └── max workers (160) — capped below the 180-conn Supabase pool
+DB_MAX_OPEN_CONNS (110)
+  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 106
+        └── DB_QUEUE_MAX_CONCURRENCY (88)  →  hard cap = min(88, 106) = 88
+              └── PressureController soft limit  →  88 down to 10, self-tuning
+                    └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
+                          └── max workers (130) — capped below the 180-conn Supabase pool
 ```
 
 Direct DB calls (page writes, domain lookups, etc.) bypass the queue semaphore
@@ -50,22 +51,49 @@ Supabase connection pool size is configured on the Supabase dashboard (currently
 
 ## Queue semaphore
 
-**Source:** `internal/db/queue.go`
+**Source:** `internal/db/queue.go`, `internal/db/pressure.go`
 
 Wraps a semaphore around all task-claim and batch-update DB operations. Direct
 DB calls (page writes, domain lookups, etc.) bypass this gate and draw directly
 from the pool.
 
-| Env var / constant             | Production value     | Default | What it controls                                                            |
-| ------------------------------ | -------------------- | ------- | --------------------------------------------------------------------------- |
-| `DB_QUEUE_MAX_CONCURRENCY`     | **120** (`fly.toml`) | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
-| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)        | 4       | Connections held back from the semaphore budget                             |
-| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)     | 0.90    | Log warn at 90% pool usage                                                  |
-| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)     | 0.95    | Fire Sentry "DB pool saturated" at 95%                                      |
-| `defaultExecuteTimeout`        | hardcoded            | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none     |
-| `DB_TX_MAX_RETRIES`            | **5** (`fly.toml`)   | 3       | Transaction retry attempts on retryable errors                              |
-| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)    | 200ms   | Initial TX retry backoff                                                    |
-| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)   | 1500ms  | Max TX retry backoff                                                        |
+The semaphore has two limits:
+
+- **Hard limit** — `min(DB_QUEUE_MAX_CONCURRENCY, MAX_OPEN − RESERVED)`, set at
+  startup. The channel capacity never exceeds this.
+- **Soft limit** — the pressure-adjusted effective limit maintained by
+  `PressureController`. Starts at the hard limit and moves between `minLimit`
+  (10) and the hard limit based on observed `pool_wait_total`.
+
+| Env var / constant             | Production value    | Default | What it controls                                                        |
+| ------------------------------ | ------------------- | ------- | ----------------------------------------------------------------------- |
+| `DB_QUEUE_MAX_CONCURRENCY`     | **88** (`fly.toml`) | 12      | Semaphore hard cap; effective = `min(this, MAX_OPEN − RESERVED)`        |
+| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)       | 4       | Connections held back from the semaphore budget                         |
+| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)    | 0.90    | Log warn at 90% pool usage                                              |
+| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)    | 0.95    | Fire Sentry "DB pool saturated" at 95%                                  |
+| `defaultExecuteTimeout`        | hardcoded           | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none |
+| `DB_TX_MAX_RETRIES`            | **5** (`fly.toml`)  | 3       | Transaction retry attempts on retryable errors                          |
+| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)   | 200ms   | Initial TX retry backoff                                                |
+| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)  | 1500ms  | Max TX retry backoff                                                    |
+
+### Adaptive pressure controller
+
+**Source:** `internal/db/pressure.go`
+
+Automatically reduces the semaphore soft limit when Supabase is under load and
+restores it when pressure eases. Signal is `pool_wait_total` per transaction —
+the cumulative time spent waiting to acquire a semaphore slot.
+
+| Env var / constant          | Default | What it controls                                                |
+| --------------------------- | ------- | --------------------------------------------------------------- |
+| `GNH_PRESSURE_HIGH_MARK_MS` | 300ms   | EMA above this triggers a reduction (step −5, floor 10)         |
+| `GNH_PRESSURE_LOW_MARK_MS`  | 50ms    | EMA below this triggers restoration (step +5, ceiling hard cap) |
+| `pressureEMAAlpha`          | 0.15    | Smoothing factor — lower = slower to react, more stable         |
+| `pressureCooldown`          | 15s     | Minimum gap between consecutive adjustments                     |
+| `pressureWarmupSamples`     | 5       | Observations required before the controller acts                |
+
+Typical lifecycle under load: limit 88 → 83 → 78 … → 10 (floor), then recovers
+as pool wait drops back below 50ms.
 
 ---
 
