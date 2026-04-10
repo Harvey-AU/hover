@@ -29,11 +29,11 @@ const (
 )
 
 // PressureController adaptively adjusts the queue semaphore's effective limit
-// based on observed pool_wait_total per transaction.
+// based on observed query execution time per transaction.
 //
 // Signal: every completed Execute / ExecuteWithContext call reports its
-// cumulative pool_wait_total. An EMA of those samples is compared against
-// highMark / lowMark thresholds:
+// cumulative exec_total (time spent actually running DB queries). An EMA of
+// those samples is compared against highMark / lowMark thresholds:
 //
 //   - EMA > highMark → reduce limit by stepDown every cooldownDown (floor: minLimit)
 //   - EMA < lowMark  → restore limit by stepUp every cooldownUp (ceiling: maxLimit)
@@ -127,17 +127,17 @@ func (pc *PressureController) EffectiveLimit() int32 {
 	return pc.limit.Load()
 }
 
-// Record adds a pool_wait observation (cumulative milliseconds for one
-// transaction) and adjusts the effective limit when thresholds are crossed.
+// Record adds a query execution time observation (cumulative milliseconds for
+// one transaction) and adjusts the effective limit when thresholds are crossed.
 // Safe to call concurrently.
-func (pc *PressureController) Record(poolWaitMs float64) {
+func (pc *PressureController) Record(execMs float64) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 
 	if pc.samples == 0 {
-		pc.ema = poolWaitMs
+		pc.ema = execMs
 	} else {
-		pc.ema = pressureEMAAlpha*poolWaitMs + (1.0-pressureEMAAlpha)*pc.ema
+		pc.ema = pressureEMAAlpha*execMs + (1.0-pressureEMAAlpha)*pc.ema
 	}
 	pc.samples++
 
@@ -168,14 +168,14 @@ func (pc *PressureController) maybeAdjust() {
 		pc.limit.Store(newLimit)
 		pc.lastScaleDown = time.Now()
 		log.Warn().
-			Float64("pool_wait_ema_ms", pc.ema).
+			Float64("exec_ema_ms", pc.ema).
 			Int32("limit_before", current).
 			Int32("limit_after", newLimit).
 			Int32("limit_ceiling", pc.maxLimit).
 			Msg("DB pressure high — reducing queue concurrency")
 		if newLimit == pc.minLimit {
 			log.Error().
-				Float64("pool_wait_ema_ms", pc.ema).
+				Float64("exec_ema_ms", pc.ema).
 				Float64("ema_high_mark_ms", pc.highMark).
 				Int32("concurrency_slots", newLimit).
 				Int32("concurrency_floor", pc.minLimit).
@@ -186,7 +186,7 @@ func (pc *PressureController) maybeAdjust() {
 				scope.SetTag("event_type", "db_pressure")
 				scope.SetTag("state", "floor")
 				scope.SetContext("db_pressure", map[string]any{
-					"pool_wait_ema_ms":    pc.ema,
+					"exec_ema_ms":         pc.ema,
 					"ema_high_mark_ms":    pc.highMark,
 					"concurrency_slots":   newLimit,
 					"concurrency_floor":   pc.minLimit,
@@ -204,14 +204,14 @@ func (pc *PressureController) maybeAdjust() {
 		pc.limit.Store(newLimit)
 		pc.lastScaleUp = time.Now()
 		log.Info().
-			Float64("pool_wait_ema_ms", pc.ema).
+			Float64("exec_ema_ms", pc.ema).
 			Int32("limit_before", current).
 			Int32("limit_after", newLimit).
 			Int32("limit_ceiling", pc.maxLimit).
 			Msg("DB pressure eased — restoring queue concurrency")
 		if newLimit == pc.maxLimit {
 			log.Info().
-				Float64("pool_wait_ema_ms", pc.ema).
+				Float64("exec_ema_ms", pc.ema).
 				Float64("ema_low_mark_ms", pc.lowMark).
 				Int32("concurrency_slots", newLimit).
 				Int32("concurrency_floor", pc.minLimit).
