@@ -7,8 +7,13 @@
 -- Requires pg_cron extension (enabled in Supabase dashboard).
 -- Uses cron.schedule() which upserts by name, so re-running is safe.
 
-SELECT cron.schedule(
-  'vacuum-tasks-jobs-pages',
-  '0 17 * * *',
-  $$VACUUM ANALYZE tasks; VACUUM ANALYZE jobs; VACUUM ANALYZE pages;$$
-);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    PERFORM cron.schedule(
+      'vacuum-tasks-jobs-pages',
+      '0 17 * * *',
+      'VACUUM ANALYZE tasks; VACUUM ANALYZE jobs; VACUUM ANALYZE pages;'
+    );
+  END IF;
+END $$;
