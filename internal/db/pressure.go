@@ -161,6 +161,13 @@ func (pc *PressureController) maybeAdjust() {
 			Int32("limit_after", newLimit).
 			Int32("limit_ceiling", pc.maxLimit).
 			Msg("DB pressure high — reducing queue concurrency")
+		if newLimit == pc.minLimit {
+			log.Error().
+				Float64("pool_wait_ema_ms", pc.ema).
+				Int32("limit", newLimit).
+				Int32("limit_ceiling", pc.maxLimit).
+				Msg("DB pressure at floor — queue concurrency fully shed, Supabase severely overloaded")
+		}
 
 	case pc.ema < pc.lowMark && current < pc.maxLimit:
 		if time.Since(pc.lastScaleUp) < pc.cooldownUp {
@@ -175,6 +182,13 @@ func (pc *PressureController) maybeAdjust() {
 			Int32("limit_after", newLimit).
 			Int32("limit_ceiling", pc.maxLimit).
 			Msg("DB pressure eased — restoring queue concurrency")
+		if newLimit == pc.maxLimit {
+			log.Info().
+				Float64("pool_wait_ema_ms", pc.ema).
+				Int32("limit", newLimit).
+				Int32("limit_ceiling", pc.maxLimit).
+				Msg("DB pressure cleared — queue concurrency fully restored")
+		}
 	}
 }
 
