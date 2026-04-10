@@ -12,15 +12,16 @@ inventory of env vars and their classification (secret vs non-secret), see
 ## Key relationships
 
 ```
-DB_MAX_OPEN_CONNS (150)
-  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 146
-        └── DB_QUEUE_MAX_CONCURRENCY (120)  →  semaphore = min(120, 146) = 120
-              └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
-                    └── max workers (160) — capped below the 180-conn Supabase pool
+DB_MAX_OPEN_CONNS (110)
+  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 106
+        └── DB_QUEUE_MAX_CONCURRENCY (88)  →  hard cap = min(88, 106) = 88
+              └── PressureController soft limit  →  88 down to 10, self-tuning
+                    └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
+                          └── max workers (130) — capped below the 180-conn Supabase pool
 ```
 
 Direct DB calls (page writes, domain lookups, etc.) bypass the queue semaphore
-and draw from the shared pool. With 120 semaphore slots out of 146 available, 26
+and draw from the shared pool. With 88 semaphore slots out of 110 total, 22
 connections remain for non-semaphored direct calls.
 
 ---
@@ -31,8 +32,8 @@ connections remain for non-semaphored direct calls.
 
 | Env var / constant       | Production value     | Code default | What it controls                           |
 | ------------------------ | -------------------- | ------------ | ------------------------------------------ |
-| `DB_MAX_OPEN_CONNS`      | **150** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
-| `DB_MAX_IDLE_CONNS`      | **30** (`fly.toml`)  | 20           | Idle connections kept warm                 |
+| `DB_MAX_OPEN_CONNS`      | **110** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
+| `DB_MAX_IDLE_CONNS`      | **25** (`fly.toml`)  | 20           | Idle connections kept warm                 |
 | `defaultConnMaxLifetime` | hardcoded            | 5 min        | Max connection lifetime                    |
 | `defaultConnMaxIdleTime` | hardcoded            | 2 min        | Idle connection eviction                   |
 | `statementTimeoutMs`     | hardcoded            | 60s          | Per-statement timeout (added to DSN)       |
@@ -50,22 +51,53 @@ Supabase connection pool size is configured on the Supabase dashboard (currently
 
 ## Queue semaphore
 
-**Source:** `internal/db/queue.go`
+**Source:** `internal/db/queue.go`, `internal/db/pressure.go`
 
 Wraps a semaphore around all task-claim and batch-update DB operations. Direct
 DB calls (page writes, domain lookups, etc.) bypass this gate and draw directly
 from the pool.
 
-| Env var / constant             | Production value     | Default | What it controls                                                            |
-| ------------------------------ | -------------------- | ------- | --------------------------------------------------------------------------- |
-| `DB_QUEUE_MAX_CONCURRENCY`     | **120** (`fly.toml`) | 12      | Semaphore slots for queue ops; effective = `min(this, MAX_OPEN − RESERVED)` |
-| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)        | 4       | Connections held back from the semaphore budget                             |
-| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)     | 0.90    | Log warn at 90% pool usage                                                  |
-| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)     | 0.95    | Fire Sentry "DB pool saturated" at 95%                                      |
-| `defaultExecuteTimeout`        | hardcoded            | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none     |
-| `DB_TX_MAX_RETRIES`            | **5** (`fly.toml`)   | 3       | Transaction retry attempts on retryable errors                              |
-| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)    | 200ms   | Initial TX retry backoff                                                    |
-| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)   | 1500ms  | Max TX retry backoff                                                        |
+The semaphore has two limits:
+
+- **Hard limit** — `min(DB_QUEUE_MAX_CONCURRENCY, MAX_OPEN − RESERVED)`, set at
+  startup. The channel capacity never exceeds this.
+- **Soft limit** — the pressure-adjusted effective limit maintained by
+  `PressureController`. Starts at `pressureInitialLimit` (55) and moves between
+  `minLimit` (10) and the hard limit based on observed `pool_wait_total`.
+
+| Env var / constant             | Production value    | Default | What it controls                                                        |
+| ------------------------------ | ------------------- | ------- | ----------------------------------------------------------------------- |
+| `DB_QUEUE_MAX_CONCURRENCY`     | **88** (`fly.toml`) | 12      | Semaphore hard cap; effective = `min(this, MAX_OPEN − RESERVED)`        |
+| `DB_POOL_RESERVED_CONNECTIONS` | **4** (unset)       | 4       | Connections held back from the semaphore budget                         |
+| `DB_POOL_WARN_THRESHOLD`       | **0.90** (unset)    | 0.90    | Log warn at 90% pool usage                                              |
+| `DB_POOL_REJECT_THRESHOLD`     | **0.95** (unset)    | 0.95    | Fire Sentry "DB pool saturated" at 95%                                  |
+| `defaultExecuteTimeout`        | hardcoded           | 30s     | Context timeout for `Execute`/`ExecuteWithContext` when caller has none |
+| `DB_TX_MAX_RETRIES`            | **5** (`fly.toml`)  | 3       | Transaction retry attempts on retryable errors                          |
+| `DB_TX_BACKOFF_BASE_MS`        | **200ms** (unset)   | 200ms   | Initial TX retry backoff                                                |
+| `DB_TX_BACKOFF_MAX_MS`         | **1500ms** (unset)  | 1500ms  | Max TX retry backoff                                                    |
+
+### Adaptive pressure controller
+
+**Source:** `internal/db/pressure.go`
+
+Automatically reduces the semaphore soft limit when Supabase is under load and
+restores it when pressure eases. Signal is `pool_wait_total` per transaction —
+the cumulative time spent waiting to acquire a semaphore slot.
+
+| Env var / constant          | Default | What it controls                                                           |
+| --------------------------- | ------- | -------------------------------------------------------------------------- |
+| `GNH_PRESSURE_HIGH_MARK_MS` | 500ms   | EMA above this triggers a reduction (step −10, floor 10, every 10s)        |
+| `GNH_PRESSURE_LOW_MARK_MS`  | 100ms   | EMA below this triggers restoration (step +3, ceiling hard cap, every 30s) |
+| `pressureEMAAlpha`          | 0.15    | Smoothing factor — lower = slower to react, more stable                    |
+| `pressureInitialLimit`      | 55      | Starting soft limit — conservative to protect DB on restart under load     |
+| `pressureWarmupSamples`     | 5       | Observations required before the controller acts                           |
+
+Deadband: EMA between 100ms and 500ms → limit holds steady. If
+`GNH_PRESSURE_LOW_MARK_MS >= GNH_PRESSURE_HIGH_MARK_MS` the controller logs a
+warning and falls back to defaults.
+
+Typical lifecycle under load: limit 55 → 45 → 35 … → 10 (floor), then recovers 3
+slots every 30s as pool wait drops back below 100ms.
 
 ---
 
@@ -96,7 +128,7 @@ limiter when adaptive delays are active.
 
 | Env var / constant                  | Production value      | Default           | What it controls                                                    |
 | ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
-| `GNH_MAX_WORKERS`                   | **160** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; staging env always uses 10                     |
+| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; staging env always uses 10                     |
 | `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                |
 | `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                   |
 | `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                       |
