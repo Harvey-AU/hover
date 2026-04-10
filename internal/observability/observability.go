@@ -82,10 +82,10 @@ var (
 	dbPoolReservedGauge     metric.Int64Gauge
 	dbPoolRejectCounter     metric.Int64Counter
 
-	dbPressureEMAGauge        metric.Float64Gauge
-	dbPressureLimitGauge      metric.Int64Gauge
-	dbPressureAdjustCounter   metric.Int64Counter
-	dbSemaphoreWaitHistogram  metric.Float64Histogram
+	dbPressureEMAGauge       metric.Float64Gauge
+	dbPressureLimitGauge     metric.Int64Gauge
+	dbPressureAdjustCounter  metric.Int64Counter
+	dbSemaphoreWaitHistogram metric.Float64Histogram
 
 	fdCurrentGauge  metric.Int64Gauge
 	fdLimitGauge    metric.Int64Gauge
