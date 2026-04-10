@@ -96,13 +96,24 @@ func newPressureController(maxLimit int) *PressureController {
 		highMark = pressureHighMarkDefaultMs
 	}
 
+	// If the pool is configured smaller than the default floor, clamp the floor
+	// to maxLimit to avoid an unresolvable inconsistency where we can never shed.
+	minLimit := pressureMinLimit
+	if safeMax < minLimit {
+		log.Warn().
+			Int32("max_limit", safeMax).
+			Int32("min_limit_default", minLimit).
+			Msg("DB_QUEUE_MAX_CONCURRENCY smaller than pressure floor — clamping floor to max")
+		minLimit = safeMax
+	}
+
 	pc := &PressureController{
 		maxLimit:     safeMax,
 		highMark:     highMark,
 		lowMark:      lowMark,
 		stepDown:     pressureStepDown,
 		stepUp:       pressureStepUp,
-		minLimit:     pressureMinLimit,
+		minLimit:     minLimit,
 		cooldownDown: pressureCooldownDown,
 		cooldownUp:   pressureCooldownUp,
 	}
@@ -175,10 +186,10 @@ func (pc *PressureController) maybeAdjust() {
 				scope.SetTag("event_type", "db_pressure")
 				scope.SetTag("state", "floor")
 				scope.SetContext("db_pressure", map[string]any{
-					"pool_wait_ema_ms":  pc.ema,
-					"ema_high_mark_ms":  pc.highMark,
-					"concurrency_slots": newLimit,
-					"concurrency_floor": pc.minLimit,
+					"pool_wait_ema_ms":    pc.ema,
+					"ema_high_mark_ms":    pc.highMark,
+					"concurrency_slots":   newLimit,
+					"concurrency_floor":   pc.minLimit,
 					"concurrency_ceiling": pc.maxLimit,
 				})
 				sentry.CaptureMessage("DB pressure at floor — queue concurrency fully shed")
@@ -215,6 +226,11 @@ func parsePressureFloat(key string, fallback float64) float64 {
 		if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
 			return v
 		}
+		log.Debug().
+			Str("key", key).
+			Str("value", raw).
+			Float64("fallback", fallback).
+			Msg("Invalid pressure config value — using default")
 	}
 	return fallback
 }
