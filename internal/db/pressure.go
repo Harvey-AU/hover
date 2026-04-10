@@ -73,7 +73,7 @@ func newPressureController(maxLimit int) *PressureController {
 	// practice, but clamp explicitly to satisfy the linter and be defensive.
 	safeMax := int32(math.MaxInt32)
 	if maxLimit <= math.MaxInt32 {
-		safeMax = int32(maxLimit)
+		safeMax = int32(maxLimit) //nolint:gosec // G115: bounds-checked immediately above
 	}
 	initial := pressureInitialLimit
 	if safeMax < initial {
