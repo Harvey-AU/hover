@@ -21,7 +21,7 @@ DB_MAX_OPEN_CONNS (110)
 ```
 
 Direct DB calls (page writes, domain lookups, etc.) bypass the queue semaphore
-and draw from the shared pool. With 120 semaphore slots out of 146 available, 26
+and draw from the shared pool. With 88 semaphore slots out of 110 total, 22
 connections remain for non-semaphored direct calls.
 
 ---
@@ -32,8 +32,8 @@ connections remain for non-semaphored direct calls.
 
 | Env var / constant       | Production value     | Code default | What it controls                           |
 | ------------------------ | -------------------- | ------------ | ------------------------------------------ |
-| `DB_MAX_OPEN_CONNS`      | **150** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
-| `DB_MAX_IDLE_CONNS`      | **30** (`fly.toml`)  | 20           | Idle connections kept warm                 |
+| `DB_MAX_OPEN_CONNS`      | **110** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
+| `DB_MAX_IDLE_CONNS`      | **25** (`fly.toml`)  | 20           | Idle connections kept warm                 |
 | `defaultConnMaxLifetime` | hardcoded            | 5 min        | Max connection lifetime                    |
 | `defaultConnMaxIdleTime` | hardcoded            | 2 min        | Idle connection eviction                   |
 | `statementTimeoutMs`     | hardcoded            | 60s          | Per-statement timeout (added to DSN)       |

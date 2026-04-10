@@ -788,7 +788,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 		// The check is intentionally non-blocking: a small overshoot is acceptable
 		// because the channel hard cap still holds.
 		if q.pressure != nil {
-			if int32(len(q.poolSemaphore)) >= q.pressure.EffectiveLimit() {
+			if len(q.poolSemaphore) >= int(q.pressure.EffectiveLimit()) {
 				log.Debug().
 					Int32("soft_limit", q.pressure.EffectiveLimit()).
 					Int("in_flight", len(q.poolSemaphore)).

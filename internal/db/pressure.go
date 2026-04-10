@@ -1,6 +1,7 @@
 package db
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -68,12 +69,18 @@ type PressureController struct {
 // newPressureController creates a controller that starts at pressureInitialLimit
 // (clamped to maxLimit) and adjusts dynamically as pool-wait observations arrive.
 func newPressureController(maxLimit int) *PressureController {
+	// Guard against int32 overflow — maxLimit is always a small pool size in
+	// practice, but clamp explicitly to satisfy the linter and be defensive.
+	safeMax := int32(math.MaxInt32)
+	if maxLimit <= math.MaxInt32 {
+		safeMax = int32(maxLimit)
+	}
 	initial := pressureInitialLimit
-	if int32(maxLimit) < initial {
-		initial = int32(maxLimit)
+	if safeMax < initial {
+		initial = safeMax
 	}
 	pc := &PressureController{
-		maxLimit:     int32(maxLimit),
+		maxLimit:     safeMax,
 		highMark:     parsePressureFloat("GNH_PRESSURE_HIGH_MARK_MS", pressureHighMarkDefaultMs),
 		lowMark:      parsePressureFloat("GNH_PRESSURE_LOW_MARK_MS", pressureLowMarkDefaultMs),
 		stepDown:     pressureStepDown,
