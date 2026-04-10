@@ -51,7 +51,7 @@ type DbQueue struct {
 	// concurrencyOverride is a callback to get effective concurrency overrides from domain limiter
 	concurrencyOverride ConcurrencyOverrideFunc
 	// pressure adaptively adjusts the effective semaphore limit based on
-	// observed pool_wait_total, preventing Supabase from being overwhelmed.
+	// observed query execution time, preventing Supabase from being overwhelmed.
 	pressure *PressureController
 }
 
@@ -262,9 +262,9 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 
 		if execErr == nil {
 			totalDuration := time.Since(totalStart)
-			// Feed pool wait into the adaptive pressure controller.
+			// Feed exec time into the adaptive pressure controller.
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			// Log if transaction was slow (>5s) to help diagnose performance issues
 			if totalDuration > 5*time.Second {
@@ -282,7 +282,7 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 		if errors.Is(execErr, sql.ErrNoRows) {
 			totalDuration := time.Since(totalStart)
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Debug().
 				Err(execErr).
@@ -294,10 +294,10 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 			return execErr
 		}
 		// Don't log concurrency blocking as error - it's normal backoff behaviour.
-		// Still record pool wait so the pressure controller sees the signal.
+		// Still record exec time so the pressure controller sees the signal.
 		if errors.Is(execErr, ErrConcurrencyBlocked) {
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			return execErr
 		}
@@ -307,7 +307,7 @@ func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
 		if !q.shouldRetry(execErr) || attempt == maxAttempts-1 {
 			totalDuration := time.Since(totalStart)
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Error().
 				Err(execErr).
@@ -403,9 +403,9 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 
 		if execErr == nil {
 			totalDuration := time.Since(totalStart)
-			// Feed pool wait into the adaptive pressure controller.
+			// Feed exec time into the adaptive pressure controller.
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			// Log if transaction was slow (>5s) to help diagnose performance issues
 			if totalDuration > 5*time.Second {
@@ -423,7 +423,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 		if errors.Is(execErr, sql.ErrNoRows) {
 			totalDuration := time.Since(totalStart)
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Debug().
 				Err(execErr).
@@ -435,10 +435,10 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 			return execErr
 		}
 		// Don't log concurrency blocking as error - it's normal backoff behaviour.
-		// Still record pool wait so the pressure controller sees the signal.
+		// Still record exec time so the pressure controller sees the signal.
 		if errors.Is(execErr, ErrConcurrencyBlocked) {
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			return execErr
 		}
@@ -448,7 +448,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 		if !q.shouldRetry(execErr) || attempt == maxAttempts-1 {
 			totalDuration := time.Since(totalStart)
 			if q.pressure != nil {
-				q.pressure.Record(float64(poolWaitTotal.Milliseconds()))
+				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Error().
 				Err(execErr).
@@ -805,7 +805,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 				log.Debug().
 					Int32("soft_limit", q.pressure.EffectiveLimit()).
 					Int("in_flight", len(q.poolSemaphore)).
-					Float64("pool_wait_ema_ms", q.pressure.EMA()).
+					Float64("exec_ema_ms", q.pressure.EMA()).
 					Msg("DB pressure soft limit reached — shedding request")
 				observability.RecordDBPoolRejection(ctx)
 				return noop, ErrPoolSaturated
