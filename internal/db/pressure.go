@@ -269,7 +269,7 @@ func parsePressureFloat(key string, fallback float64) float64 {
 
 func parsePressureInt32(key string, fallback int32) int32 {
 	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
-		v, err := strconv.Atoi(raw)
+		v, err := strconv.ParseInt(raw, 10, 32)
 		if err == nil && v > 0 {
 			return int32(v)
 		}

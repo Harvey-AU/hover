@@ -347,7 +347,7 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 	if options.UseSitemap {
 		jobID := job.ID
 		go func() {
-			procCtx, procCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			procCtx, procCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer procCancel()
 			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
 		}()
@@ -356,7 +356,7 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 
 	// Manual root URL creation - process in background for consistency
 	// Use detached context with timeout for background processing
-	backgroundCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	backgroundCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	go func() {
 		defer cancel()
 		rootPath := "/"
