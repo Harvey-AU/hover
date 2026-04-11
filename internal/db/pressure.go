@@ -25,7 +25,7 @@ const (
 	pressureCooldownDown      = 10 * time.Second // min gap between shed adjustments
 	pressureCooldownUp        = 30 * time.Second // min gap between restore adjustments
 	pressureWarmupSamples     = 5                // samples required before acting
-	pressureInitialLimit      = int32(55)        // conservative start — known-safe level
+	pressureInitialLimit      = int32(30)        // conservative start — known-safe level
 )
 
 // PressureController adaptively adjusts the queue semaphore's effective limit
