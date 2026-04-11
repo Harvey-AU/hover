@@ -28,12 +28,45 @@ func (m *MockDbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error
 	return args.Error(0)
 }
 
+// ExecuteControl mocks the ExecuteControl method
+func (m *MockDbQueue) ExecuteControl(ctx context.Context, fn func(*sql.Tx) error) error {
+	args := m.Called(ctx, fn)
+
+	if args.Error(0) == nil && fn != nil {
+		return fn(nil)
+	}
+
+	return args.Error(0)
+}
+
+// ExecuteControlWithContext mocks the ExecuteControlWithContext method
+func (m *MockDbQueue) ExecuteControlWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	args := m.Called(ctx, fn)
+
+	if args.Error(0) == nil && fn != nil {
+		return fn(ctx, nil)
+	}
+
+	return args.Error(0)
+}
+
 // ExecuteMaintenance mocks the ExecuteMaintenance method
 func (m *MockDbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error) error {
 	args := m.Called(ctx, fn)
 
 	if args.Error(0) == nil && fn != nil {
 		return fn(nil)
+	}
+
+	return args.Error(0)
+}
+
+// ExecuteWithContext mocks the ExecuteWithContext method
+func (m *MockDbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	args := m.Called(ctx, fn)
+
+	if args.Error(0) == nil && fn != nil {
+		return fn(ctx, nil)
 	}
 
 	return args.Error(0)
