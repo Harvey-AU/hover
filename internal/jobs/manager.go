@@ -1145,11 +1145,11 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	// Step 4: Record filtered sitemap URL count as a snapshot before any tasks are inserted.
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
-			UPDATE jobs SET sitemap_urls_found = $1 WHERE id = $2
+			UPDATE jobs SET sitemap_tasks_found = $1 WHERE id = $2
 		`, len(urls), jobID)
 		return err
 	}); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Int("sitemap_urls_found", len(urls)).Msg("Failed to record sitemap_urls_found")
+		log.Warn().Err(err).Str("job_id", jobID).Int("sitemap_tasks_found", len(urls)).Msg("Failed to record sitemap_tasks_found")
 	}
 
 	// Step 5: Enqueue URLs in batches or create fallback
