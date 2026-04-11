@@ -1142,7 +1142,17 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	// Step 3: Filter URLs against robots.txt and path patterns
 	urls = jm.filterURLsAgainstRobots(urls, robotsRules, includePaths, excludePaths)
 
-	// Step 4: Enqueue URLs in batches or create fallback
+	// Step 4: Record filtered sitemap URL count as a snapshot before any tasks are inserted.
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET sitemap_urls_found = $1 WHERE id = $2
+		`, len(urls), jobID)
+		return err
+	}); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Int("sitemap_urls_found", len(urls)).Msg("Failed to record sitemap_urls_found")
+	}
+
+	// Step 5: Enqueue URLs in batches or create fallback
 	if len(urls) > 0 {
 		// Hoist the homepage to the front so it's in the first batch and gets
 		// priority 1.0 scoring regardless of its position in the sitemap.
