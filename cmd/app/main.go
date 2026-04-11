@@ -203,7 +203,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 			FROM jobs j
 			WHERE j.status = 'running'
 			  AND j.progress = 0
-			  AND j.started_at < NOW() - INTERVAL '5 minutes'
+			  AND j.started_at < NOW() - INTERVAL '15 minutes'
 		`).Scan(&totalStuckJobs)
 
 		if err != nil {
@@ -225,7 +225,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				FROM jobs j
 				WHERE j.status = 'running'
 				  AND j.progress = 0
-				  AND j.started_at < NOW() - INTERVAL '5 minutes'
+				  AND j.started_at < NOW() - INTERVAL '15 minutes'
 				ORDER BY j.started_at ASC
 				LIMIT 10
 			`)

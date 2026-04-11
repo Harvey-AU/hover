@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +192,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 			fmt.Printf("WARN: Failed to create OTLP metric exporter (metrics push disabled): %v\n", merr)
 		} else {
 			meterOpts = append(meterOpts, sdkmetric.WithReader(
-				sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(30*time.Second)),
+				sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(otelExportInterval())),
 			))
 			fmt.Printf("INFO: OTLP metric exporter initialised successfully for endpoint: %s\n", metricsEndpoint)
 		}
@@ -228,6 +230,19 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		Shutdown:       shutdown,
 		Config:         cfg,
 	}, nil
+}
+
+// otelExportInterval returns the OTEL metric export interval from
+// GNH_OTEL_EXPORT_INTERVAL_SECONDS (default 60s). Increasing this from the
+// previous 30s default halves the per-export sample burst, keeping it within
+// Grafana Mimir's ingestion rate limit under high load.
+func otelExportInterval() time.Duration {
+	if s := os.Getenv("GNH_OTEL_EXPORT_INTERVAL_SECONDS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 60 * time.Second
 }
 
 func getOTLPEndpointOption(endpoint string) otlptracehttp.Option {
