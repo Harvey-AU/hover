@@ -26,9 +26,20 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:patch]
 
-_Add unreleased changes here._
+### Fixed
+
+- Global sitemap insertion semaphore (`GNH_SITEMAP_CONCURRENCY`, default 3)
+  limits how many jobs may insert sitemap batches concurrently; previously N
+  simultaneous job creations launched N independent goroutines each writing
+  100-URL UNNEST batches every 200ms, causing a combined write burst that pushed
+  DB EMA well above the 60ms high-water mark and shed concurrency to the 10-slot
+  floor
+- Archive sweeps now permanently skip tasks where both hot storage (Supabase)
+  and cold storage (R2) return a 404; previously the task was left with
+  `html_archived_at = NULL` and re-queued on every sweep, burning S3 quota and
+  archive-worker capacity with no chance of success
 
 ## Full changelog history
 
