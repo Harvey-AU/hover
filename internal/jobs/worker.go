@@ -2148,6 +2148,10 @@ func (s jobQueueState) availablePendingSlots() int {
 func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (bool, error) {
 	state, err := wp.loadJobQueueState(ctx, jobID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			log.Info().Str("job_id", jobID).Msg("Job no longer exists in database, removing stale worker-pool entry")
+			return true, nil
+		}
 		return false, err
 	}
 
@@ -2262,6 +2266,9 @@ func (wp *WorkerPool) loadJobQueueState(ctx context.Context, jobID string) (*job
 		)
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("failed to load job state: %w", err)
 	}
 	return state, nil
