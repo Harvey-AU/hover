@@ -1154,6 +1154,7 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			select {
 			case jm.sitemapSem <- struct{}{}:
 			case <-ctx.Done():
+				jm.clearInitialisingAfterSitemapCancel(jobID, batchNum)
 				log.Warn().Err(ctx.Err()).Str("job_id", jobID).Int("batch_number", batchNum).Msg("Stopped waiting for sitemap insert slot")
 				return
 			}
@@ -1221,6 +1222,28 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			jm.workerPool.NotifyNewTasks()
 		}
 	}
+}
+
+func (jm *JobManager) clearInitialisingAfterSitemapCancel(jobID string, batchNum int) {
+	go func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := jm.dbQueue.Execute(cleanupCtx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(cleanupCtx, `
+				UPDATE jobs
+				SET status = $1
+				WHERE id = $2 AND status = $3
+			`, JobStatusPending, jobID, JobStatusInitialising)
+			return err
+		}); err != nil {
+			log.Warn().
+				Err(err).
+				Str("job_id", jobID).
+				Int("batch_number", batchNum).
+				Msg("Failed to clear initialising state after sitemap cancellation")
+		}
+	}()
 }
 
 // transitionInitialisingToPending moves a job from initialising → pending so the

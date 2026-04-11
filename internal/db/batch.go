@@ -349,7 +349,11 @@ func (bm *BatchManager) processUpdateBatches() {
 				}
 			}
 			for {
-				overflowBatch := bm.popOverflowBatch(MaxBatchSize - len(batch))
+				limit := MaxBatchSize - len(batch)
+				if limit <= 0 {
+					limit = MaxBatchSize
+				}
+				overflowBatch := bm.popOverflowBatch(limit)
 				if len(overflowBatch) == 0 {
 					break
 				}

@@ -1661,6 +1661,10 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 		return nil, sql.ErrNoRows
 	}
 
+	rand.Shuffle(len(activeJobs), func(i, j int) {
+		activeJobs[i], activeJobs[j] = activeJobs[j], activeJobs[i]
+	})
+
 	// Track if we saw any concurrency-blocked jobs
 	sawConcurrencyBlocked := false
 
@@ -1972,12 +1976,16 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	log.Debug().Msg("Checking database for jobs with pending tasks")
 
-	var jobIDs []string
+	type pendingJob struct {
+		ID     string
+		Status string
+	}
+	var jobs []pendingJob
 	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		// Query for jobs with pending tasks using job counters
 		// Include pending jobs so fresh jobs after a reset get picked up immediately.
 		rows, err := tx.QueryContext(ctx, `
-			SELECT id
+			SELECT id, status
 			FROM jobs
 			WHERE status IN ('pending', 'running')
 			  AND pending_tasks > 0
@@ -1990,11 +1998,11 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 		defer rows.Close()
 
 		for rows.Next() {
-			var jobID string
-			if err := rows.Scan(&jobID); err != nil {
+			var job pendingJob
+			if err := rows.Scan(&job.ID, &job.Status); err != nil {
 				return err
 			}
-			jobIDs = append(jobIDs, jobID)
+			jobs = append(jobs, job)
 		}
 		return rows.Err()
 	})
@@ -2004,10 +2012,14 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 		return err
 	}
 
-	jobsFound := len(jobIDs)
-	foundIDs := jobIDs
+	jobsFound := len(jobs)
+	foundIDs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		foundIDs = append(foundIDs, job.ID)
+	}
 	// For each job with pending tasks, add it to the worker pool
-	for _, jobID := range jobIDs {
+	for _, job := range jobs {
+		jobID := job.ID
 		// Check if already in our active jobs
 		wp.jobsMutex.RLock()
 		active := wp.jobs[jobID]
@@ -2040,7 +2052,11 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 
 			wp.AddJob(jobID, options)
 
-			// Update job status if needed
+		} else {
+			log.Debug().Str("job_id", jobID).Msg("Job already active in worker pool")
+		}
+
+		if job.Status == string(JobStatusPending) {
 			err = wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `
 					UPDATE jobs SET
@@ -2056,8 +2072,6 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 			} else {
 				log.Info().Str("job_id", jobID).Msg("Updated job status to running")
 			}
-		} else {
-			log.Debug().Str("job_id", jobID).Msg("Job already active in worker pool")
 		}
 	}
 
@@ -3866,6 +3880,24 @@ func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
 		return
 	}
 
+	drain := func(drainCtx context.Context) {
+		for {
+			if wp.discoveredLinkPending.Load() == 0 {
+				return
+			}
+			select {
+			case <-drainCtx.Done():
+				return
+			case request := <-wp.discoveredLinkPersistCh:
+				if request != nil {
+					wp.processDiscoveredLinks(drainCtx, &request.Task, request.Links, request.SourceURL)
+				}
+				wp.discoveredLinkPending.Add(-1)
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
+
 	log.Info().Int("workers", discoveredLinkWorkers).Int("queue_cap", cap(wp.discoveredLinkPersistCh)).Msg("Starting discovered link workers")
 	for range discoveredLinkWorkers {
 		wp.wg.Go(func() {
@@ -3874,11 +3906,17 @@ func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
 				case request := <-wp.discoveredLinkPersistCh:
 					if request != nil {
 						wp.processDiscoveredLinks(context.Background(), &request.Task, request.Links, request.SourceURL)
-						wp.discoveredLinkPending.Add(-1)
 					}
+					wp.discoveredLinkPending.Add(-1)
 				case <-wp.stopCh:
+					drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
+					drain(drainCtx)
+					cancel()
 					return
 				case <-ctx.Done():
+					drainCtx, cancel := context.WithTimeout(context.Background(), taskHTMLDrainTimeout)
+					drain(drainCtx)
+					cancel()
 					return
 				}
 			}

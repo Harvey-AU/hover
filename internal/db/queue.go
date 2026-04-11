@@ -411,6 +411,10 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 		}
 	}()
 
+	if err := applyLocalStatementTimeout(ctx, tx); err != nil {
+		return err
+	}
+
 	queryStart := time.Now()
 	if err := fn(ctx, tx); err != nil {
 		queryDuration := time.Since(queryStart)
@@ -450,6 +454,29 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 			Dur("query", queryDuration).
 			Dur("commit", commitDuration).
 			Msg("Slow transaction breakdown")
+	}
+
+	return nil
+}
+
+func applyLocalStatementTimeout(ctx context.Context, tx *sql.Tx) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		remaining = time.Millisecond
+	}
+
+	timeoutMs := remaining.Milliseconds()
+	if timeoutMs < 1 {
+		timeoutMs = 1
+	}
+
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", timeoutMs)); err != nil {
+		return fmt.Errorf("failed to set local statement timeout: %w", err)
 	}
 
 	return nil

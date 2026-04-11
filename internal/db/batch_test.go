@@ -67,3 +67,36 @@ func TestBatchManagerPopOverflowBatchHonoursLimit(t *testing.T) {
 		t.Fatalf("expected 1 overflow update to remain, got %d", got)
 	}
 }
+
+func TestBatchManagerShutdownDrainCanEmptyOverflowWhenBatchAlreadyFull(t *testing.T) {
+	bm := &BatchManager{
+		overflow: map[string]*TaskUpdate{
+			"task-1": {Task: &Task{ID: "task-1"}},
+			"task-2": {Task: &Task{ID: "task-2"}},
+			"task-3": {Task: &Task{ID: "task-3"}},
+		},
+	}
+	batch := make([]*TaskUpdate, 0, MaxBatchSize+len(bm.overflow))
+	for i := 0; i < MaxBatchSize; i++ {
+		batch = append(batch, &TaskUpdate{Task: &Task{ID: "existing"}})
+	}
+
+	for {
+		limit := MaxBatchSize - len(batch)
+		if limit <= 0 {
+			limit = MaxBatchSize
+		}
+		overflowBatch := bm.popOverflowBatch(limit)
+		if len(overflowBatch) == 0 {
+			break
+		}
+		batch = append(batch, overflowBatch...)
+	}
+
+	if got := len(bm.overflow); got != 0 {
+		t.Fatalf("expected overflow to drain completely, got %d entries remaining", got)
+	}
+	if got := len(batch); got != MaxBatchSize+3 {
+		t.Fatalf("expected shutdown batch to include overflow updates, got %d entries", got)
+	}
+}
