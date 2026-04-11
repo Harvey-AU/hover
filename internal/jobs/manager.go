@@ -57,16 +57,20 @@ type JobManager struct {
 	// Map to track which pages have been processed for each job
 	processedPages map[string]struct{} // Key format: "jobID_pageID"
 	pagesMutex     sync.RWMutex        // Mutex for thread-safe access
+
+	sitemapSem chan struct{} // limits concurrent sitemap batch insertions across all jobs
 }
 
 // NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface, workerPool *WorkerPool) *JobManager {
+	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
 		db:             db,
 		dbQueue:        dbQueue,
 		crawler:        crawler,
 		workerPool:     workerPool,
 		processedPages: make(map[string]struct{}),
+		sitemapSem:     make(chan struct{}, sitemapConcurrency),
 	}
 }
 
@@ -341,12 +345,39 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 // setupJobURLDiscovery handles URL discovery for the job (sitemap or manual)
 func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, options *JobOptions, domainID int, normalisedDomain string) error {
 	if options.UseSitemap {
-		// Fetch and process sitemap in a separate goroutine
-		// Use detached context with timeout for background processing
-		backgroundCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		// Fetch and process sitemap in a separate goroutine.
+		// The semaphore is acquired first, before creating the processing timeout,
+		// so that the 30-minute sitemap budget is not consumed by queue wait time.
+		jobID := job.ID
 		go func() {
-			defer cancel()
-			jm.processSitemap(backgroundCtx, job.ID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
+			// Block on the semaphore with a generous outer timeout. If we cannot
+			// acquire a slot within 60 minutes the job is marked as failed so it
+			// does not silently stall in the initialising state indefinitely.
+			semCtx, semCancel := context.WithTimeout(context.Background(), 60*time.Minute)
+			defer semCancel()
+			select {
+			case jm.sitemapSem <- struct{}{}:
+				// acquired — proceed
+			case <-semCtx.Done():
+				log.Error().Str("job_id", jobID).Msg("Timed out waiting for sitemap semaphore slot")
+				if updateErr := jm.dbQueue.Execute(context.Background(), func(tx *sql.Tx) error {
+					_, err := tx.ExecContext(context.Background(), `
+						UPDATE jobs
+						SET status = $1, error_message = $2, completed_at = $3
+						WHERE id = $4
+					`, JobStatusFailed, "timed out waiting for sitemap processing slot", time.Now().UTC(), jobID)
+					return err
+				}); updateErr != nil {
+					log.Error().Err(updateErr).Str("job_id", jobID).Msg("Failed to mark timed-out sitemap job as failed")
+				}
+				return
+			}
+			defer func() { <-jm.sitemapSem }()
+
+			// Start the processing timeout only after the slot is in hand.
+			procCtx, procCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer procCancel()
+			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
 		}()
 		return nil
 	}
@@ -1111,7 +1142,17 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	// Step 3: Filter URLs against robots.txt and path patterns
 	urls = jm.filterURLsAgainstRobots(urls, robotsRules, includePaths, excludePaths)
 
-	// Step 4: Enqueue URLs in batches or create fallback
+	// Step 4: Record filtered sitemap URL count as a snapshot before any tasks are inserted.
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET sitemap_tasks_found = $1 WHERE id = $2
+		`, len(urls), jobID)
+		return err
+	}); err != nil {
+		log.Warn().Err(err).Str("job_id", jobID).Int("sitemap_tasks_found", len(urls)).Msg("Failed to record sitemap_tasks_found")
+	}
+
+	// Step 5: Enqueue URLs in batches or create fallback
 	if len(urls) > 0 {
 		// Hoist the homepage to the front so it's in the first batch and gets
 		// priority 1.0 scoring regardless of its position in the sitemap.
@@ -1253,6 +1294,23 @@ func hoistHomepageToFront(urls []string, domain string) []string {
 		}
 	}
 	return urls
+}
+
+// sitemapInsertConcurrency returns the maximum number of jobs that may insert
+// sitemap batches concurrently. Configurable via GNH_SITEMAP_CONCURRENCY; defaults to 3.
+func sitemapInsertConcurrency() int {
+	const defaultConcurrency = 3
+	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_CONCURRENCY")); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Err(err).Msg("Invalid GNH_SITEMAP_CONCURRENCY — using default")
+		} else if n <= 0 {
+			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Msg("GNH_SITEMAP_CONCURRENCY must be positive — using default")
+		} else {
+			return n
+		}
+	}
+	return defaultConcurrency
 }
 
 // sitemapBatchSize returns the number of URLs to insert per sitemap batch.
