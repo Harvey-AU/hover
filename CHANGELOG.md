@@ -28,7 +28,23 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Protect control-plane queue traffic from bulk sitemap/link-write pressure by
+  splitting DB execution into protected control and pressure-shed bulk lanes;
+  retune pressure defaults to start at the full 88-slot cap, shed more gently to
+  a 30-slot floor, and expose explicit initial/floor/step env vars
+- Add a generic waiting-task recovery monitor so jobs with free capacity and
+  queued `waiting` tasks can recover after transient promotion failures without
+  being mistaken for “no work”; pending jobs now remain quota-capped until they
+  actually have promotable slots
+- Narrow sitemap concurrency gating to batch insertion only, preventing large
+  sitemap discovery/parsing jobs from monopolising the global sitemap lane
+- Make task completion resilient under load by coalescing batch-update overflow
+  instead of blocking workers, and by moving discovered-link persistence onto an
+  async queue
+- Add `GNH_LINK_DISCOVERY_MIN_PRIORITY` so low-priority deep links below `0.7`
+  no longer create new tasks, reducing expansion churn on large crawls
 
 ## Full changelog history
 

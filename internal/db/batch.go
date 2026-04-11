@@ -158,14 +158,18 @@ type BatchManager struct {
 	wg               sync.WaitGroup
 	consecutiveFails int
 	mu               sync.Mutex
+	overflowMu       sync.Mutex
+	overflow         map[string]*TaskUpdate
+	lastOverflowLog  time.Time
 }
 
 // NewBatchManager creates a new batch manager
 func NewBatchManager(queue QueueExecutor) *BatchManager {
 	bm := &BatchManager{
-		queue:   queue,
-		updates: make(chan *TaskUpdate, BatchChannelSize),
-		stopCh:  make(chan struct{}),
+		queue:    queue,
+		updates:  make(chan *TaskUpdate, BatchChannelSize),
+		stopCh:   make(chan struct{}),
+		overflow: make(map[string]*TaskUpdate),
 	}
 
 	// Start the batch processor
@@ -192,13 +196,48 @@ func (bm *BatchManager) QueueTaskUpdate(task *Task) {
 	case bm.updates <- update:
 		// Queued successfully
 	default:
-		// Channel full - this is critical, log and block
-		log.Error().
-			Str("task_id", task.ID).
-			Int("channel_size", BatchChannelSize).
-			Msg("Update batch channel full, blocking until space available")
-		bm.updates <- update // Block until space available
+		bm.overflowMu.Lock()
+		bm.overflow[task.ID] = update
+		overflowDepth := len(bm.overflow)
+		shouldLog := time.Since(bm.lastOverflowLog) > 5*time.Second
+		if shouldLog {
+			bm.lastOverflowLog = time.Now()
+		}
+		bm.overflowMu.Unlock()
+
+		if shouldLog {
+			log.Warn().
+				Str("task_id", task.ID).
+				Int("channel_depth", len(bm.updates)).
+				Int("channel_size", BatchChannelSize).
+				Int("overflow_depth", overflowDepth).
+				Msg("Update batch channel full, coalescing task update in overflow buffer")
+		}
 	}
+}
+
+func (bm *BatchManager) popOverflowBatch(limit int) []*TaskUpdate {
+	if limit <= 0 {
+		return nil
+	}
+
+	bm.overflowMu.Lock()
+	defer bm.overflowMu.Unlock()
+
+	if len(bm.overflow) == 0 {
+		return nil
+	}
+
+	updates := make([]*TaskUpdate, 0, min(limit, len(bm.overflow)))
+	for taskID, update := range bm.overflow {
+		updates = append(updates, update)
+		delete(bm.overflow, taskID)
+		if len(updates) >= limit {
+			break
+		}
+	}
+
+	return updates
 }
 
 // processUpdateBatches accumulates and flushes task updates
@@ -295,6 +334,7 @@ func (bm *BatchManager) processUpdateBatches() {
 			}
 
 		case <-ticker.C:
+			batch = append(batch, bm.popOverflowBatch(MaxBatchSize-len(batch))...)
 			flush()
 
 		case <-bm.stopCh:
@@ -307,6 +347,13 @@ func (bm *BatchManager) processUpdateBatches() {
 				default:
 					draining = false
 				}
+			}
+			for {
+				overflowBatch := bm.popOverflowBatch(MaxBatchSize - len(batch))
+				if len(overflowBatch) == 0 {
+					break
+				}
+				batch = append(batch, overflowBatch...)
 			}
 
 			// Retry final flush with backoff to ensure zero data loss on shutdown
