@@ -32,6 +32,21 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.2] – 2026-04-11
+
+### Fixed
+
+- OTEL metric export interval is now configurable via
+  `GNH_OTEL_EXPORT_INTERVAL_SECONDS` (default 60s); under high load the previous
+  30s interval caused export bursts to exceed Grafana Mimir's ingestion rate
+  limit, dropping metric samples and causing Grafana charts to go dark
+- Orphaned task cleanup now pauses 100ms between batch iterations, preventing
+  consecutive large UPDATE bursts from spiking the DB pressure EMA when a job
+  fails with many tasks
+- Stuck job health monitor threshold raised from 5 to 15 minutes, matching the
+  maximum natural retry cycle duration and eliminating premature alerts for jobs
+  on slow sites
+
 ## [0.32.1] – 2026-04-11
 
 ### Fixed
