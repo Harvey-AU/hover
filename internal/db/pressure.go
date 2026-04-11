@@ -25,7 +25,7 @@ const (
 	pressureCooldownDown      = 10 * time.Second // min gap between shed adjustments
 	pressureCooldownUp        = 30 * time.Second // min gap between restore adjustments
 	pressureWarmupSamples     = 5                // samples required before acting
-	pressureInitialLimit      = int32(55)        // conservative start — known-safe level
+	pressureInitialLimit      = int32(30)        // conservative start — known-safe level
 )
 
 // PressureController adaptively adjusts the queue semaphore's effective limit
@@ -42,7 +42,7 @@ const (
 // Shedding is faster than restoring by design: react quickly to protect
 // Supabase, but open capacity back up cautiously.
 //
-// The controller starts at pressureInitialLimit (55) rather than maxLimit so
+// The controller starts at pressureInitialLimit (30) rather than maxLimit so
 // that a restart under load doesn't immediately saturate the DB before the
 // EMA has warmed up.
 type PressureController struct {

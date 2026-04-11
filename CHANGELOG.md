@@ -32,6 +32,33 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.0] – 2026-04-11
+
+### Added
+
+- Adaptive DB pressure controller: EMA-based semaphore throttle that sheds
+  concurrency slots when query execution time crosses a configurable high-water
+  mark and restores them gradually when load eases; tunable via
+  `GNH_PRESSURE_HIGH_MARK_MS` (default 60ms) and `GNH_PRESSURE_LOW_MARK_MS`
+  (default 20ms)
+- Four new OTEL metrics pushed to Grafana via OTLP: `bee.db.pressure.ema_ms`,
+  `bee.db.pressure.limit`, `bee.db.pressure.adjustments_total`,
+  `bee.db.semaphore.wait_ms`
+- OTLP metrics export alongside existing Prometheus endpoint; metrics endpoint
+  derived automatically from the traces endpoint (`/v1/traces` → `/v1/metrics`)
+
+### Changed
+
+- Sitemap task insertion now batches 100 URLs at a time (down from 1,000) with a
+  configurable inter-batch delay (`GNH_SITEMAP_BATCH_DELAY_MS`, default 200ms)
+  to prevent write bursts from spiking DB pressure on large sitemaps
+- Jobs with sitemaps now transition to `running` after the first batch of tasks
+  is inserted rather than waiting for the full sitemap crawl to complete;
+  homepage (`/`) is hoisted to the front of the URL list to ensure it is in the
+  first batch and scored with priority 1.0
+- Pressure controller initial concurrency limit lowered from 55 → 30 to start
+  conservatively after a restart
+
 ## [0.31.14] – 2026-04-09
 
 ### Performance

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1111,8 +1113,14 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 
 	// Step 4: Enqueue URLs in batches or create fallback
 	if len(urls) > 0 {
-		// Process URLs in batches to avoid database timeouts on large sitemaps
-		const batchSize = 1000
+		// Hoist the homepage to the front so it's in the first batch and gets
+		// priority 1.0 scoring regardless of its position in the sitemap.
+		urls = hoistHomepageToFront(urls, domain)
+
+		// Throttled batch insertion — small batches with a sleep between each to
+		// avoid a write burst that spikes DB pressure and overwhelms Supabase.
+		batchSize := sitemapBatchSize()
+		batchDelay := sitemapBatchDelay()
 		totalBatches := (len(urls) + batchSize - 1) / batchSize
 
 		log.Info().
@@ -1120,7 +1128,10 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			Int("total_urls", len(urls)).
 			Int("batch_size", batchSize).
 			Int("total_batches", totalBatches).
+			Dur("batch_delay_ms", batchDelay).
 			Msg("Enqueueing sitemap URLs in batches")
+
+		firstBatchDone := false
 
 		for i := 0; i < len(urls); i += batchSize {
 			end := min(i+batchSize, len(urls))
@@ -1146,15 +1157,55 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 				Int("urls_enqueued", end).
 				Int("total_urls", len(urls)).
 				Msg("Enqueued URL batch")
+
+			// After the first successful batch, open the job for workers immediately.
+			// Remaining batches continue inserting in the background while workers
+			// drain the already-enqueued tasks.
+			if !firstBatchDone {
+				firstBatchDone = true
+				if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
+					log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to open job after first batch")
+				} else if jm.workerPool != nil {
+					jm.workerPool.NotifyNewTasks()
+				}
+			}
+
+			// Throttle between batches to spread DB write load.
+			if end < len(urls) {
+				time.Sleep(batchDelay)
+			}
+		}
+
+		// If every batch failed, still exit initialising so the job doesn't get stuck.
+		if !firstBatchDone {
+			if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
+				log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after all batches failed")
+				return
+			}
+			if jm.workerPool != nil {
+				jm.workerPool.NotifyNewTasks()
+			}
 		}
 	} else {
 		if err := jm.enqueueFallbackURL(ctx, jobID, domain); err != nil {
 			return
 		}
+		// Fallback URL enqueued — open the job for workers.
+		if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
+			log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after fallback URL")
+			return
+		}
+		if jm.workerPool != nil {
+			jm.workerPool.NotifyNewTasks()
+		}
 	}
+}
 
-	// Transition from initialising → pending so the worker pool picks it up
-	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+// transitionInitialisingToPending moves a job from initialising → pending so the
+// worker pool can pick it up. Safe to call mid-sitemap-crawl once the first batch
+// of tasks has been inserted.
+func (jm *JobManager) transitionInitialisingToPending(ctx context.Context, jobID string) error {
+	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET status = $1
 			WHERE id = $2 AND status = $3
@@ -1170,13 +1221,70 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			return fmt.Errorf("job %s no longer in initialising state (may have been cancelled)", jobID)
 		}
 		return nil
-	}); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending")
-		return
-	}
+	})
+}
 
-	// Notify workers immediately that new tasks are available
-	if jm.workerPool != nil {
-		jm.workerPool.NotifyNewTasks()
+// hoistHomepageToFront moves the root path URL to the front of the list so it
+// is guaranteed to be in the first sitemap batch and scored with priority 1.0.
+// Sitemaps do not guarantee any ordering so we enforce this explicitly.
+func hoistHomepageToFront(urls []string, domain string) []string {
+	if len(urls) == 0 {
+		return urls
 	}
+	homepages := []string{
+		"https://" + domain + "/",
+		"https://" + domain,
+		"http://" + domain + "/",
+		"http://" + domain,
+	}
+	for i, u := range urls {
+		for _, hp := range homepages {
+			if u == hp {
+				if i == 0 {
+					return urls
+				}
+				// Swap to front
+				result := make([]string, len(urls))
+				result[0] = urls[i]
+				copy(result[1:], urls[:i])
+				copy(result[1+i:], urls[i+1:])
+				return result
+			}
+		}
+	}
+	return urls
+}
+
+// sitemapBatchSize returns the number of URLs to insert per sitemap batch.
+// Configurable via GNH_SITEMAP_BATCH_SIZE; defaults to 100.
+func sitemapBatchSize() int {
+	const defaultSize = 100
+	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_SIZE")); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_SIZE — using default")
+		} else if n <= 0 {
+			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Msg("GNH_SITEMAP_BATCH_SIZE must be positive — using default")
+		} else {
+			return n
+		}
+	}
+	return defaultSize
+}
+
+// sitemapBatchDelay returns the delay between sitemap insertion batches.
+// Configurable via GNH_SITEMAP_BATCH_DELAY_MS; defaults to 200ms.
+func sitemapBatchDelay() time.Duration {
+	const defaultDelay = 200 * time.Millisecond
+	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_DELAY_MS")); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_DELAY_MS — using default")
+		} else if n < 0 {
+			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Msg("GNH_SITEMAP_BATCH_DELAY_MS must be non-negative — using default")
+		} else {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return defaultDelay
 }
