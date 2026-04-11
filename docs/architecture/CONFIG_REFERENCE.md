@@ -81,8 +81,9 @@ The semaphore has two limits:
 **Source:** `internal/db/pressure.go`
 
 Automatically reduces the semaphore soft limit when Supabase is under load and
-restores it when pressure eases. Signal is `pool_wait_total` per transaction —
-the cumulative time spent waiting to acquire a semaphore slot.
+restores it when pressure eases. Signal is `exec_total` per transaction — the
+cumulative time spent actually executing DB queries (not semaphore wait time).
+Slow queries indicate Supabase is overloaded; fast queries indicate headroom.
 
 | Env var / constant          | Default | What it controls                                                           |
 | --------------------------- | ------- | -------------------------------------------------------------------------- |
