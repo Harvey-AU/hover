@@ -266,7 +266,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				Int("total_stuck_jobs", totalStuckJobs).
 				Int("sample_count", len(stuckJobs)).
 				Strs("sample_job_ids", jobIDs).
-				Msg("CRITICAL: Jobs stuck without progress for >5 minutes")
+				Msg("CRITICAL: Jobs stuck without progress for >15 minutes")
 		}
 
 		// Check for stuck tasks - get total counts first

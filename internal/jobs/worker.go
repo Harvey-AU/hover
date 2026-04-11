@@ -3402,8 +3402,7 @@ func (wp *WorkerPool) cleanupOrphanedTasks(ctx context.Context) error {
 		if cleaned < batchSize {
 			break
 		}
-		// Brief pause between batches to avoid a back-to-back write burst that
-		// spikes the DB EMA. Mirrors the same pattern in recoverStaleTasks().
+		// Brief pause between batches to avoid a write burst spiking the DB EMA.
 		time.Sleep(100 * time.Millisecond)
 	}
 
