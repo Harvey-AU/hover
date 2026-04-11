@@ -1488,7 +1488,7 @@ func (wp *WorkerPool) processTaskResult(result error, workerID int, consecutiveN
 				wp.maybeEmergencyScaleDown()
 			}
 		} else if errors.Is(result, db.ErrPoolSaturated) {
-			*consecutiveNoTasks = max(*consecutiveNoTasks, 1)
+			*consecutiveNoTasks++
 			log.Warn().Err(result).Int("worker_id", workerID).Msg("Control-lane DB saturation while claiming work")
 		} else {
 			log.Error().Err(result).Int("worker_id", workerID).Msg("Task processing failed")
@@ -3853,6 +3853,15 @@ func cloneDiscoveredLinks(links map[string][]string) map[string][]string {
 	return cloned
 }
 
+func sourceURLForDiscoveredLinks(task *db.Task, result *crawler.CrawlResult, domainName string) string {
+	if result != nil {
+		if finalURL := strings.TrimSpace(result.URL); finalURL != "" {
+			return util.NormaliseURL(finalURL)
+		}
+	}
+	return constructTaskURL(task.Path, task.Host, domainName)
+}
+
 func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.CrawlResult) {
 	if wp.discoveredLinkPersistCh == nil || task == nil || result == nil || len(result.Links) == 0 {
 		return
@@ -3883,7 +3892,7 @@ func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.Craw
 			AllowCrossSubdomainLinks: jobInfo.AllowCrossSubdomainLinks,
 		},
 		Links:     cloneDiscoveredLinks(result.Links),
-		SourceURL: constructTaskURL(task.Path, task.Host, jobInfo.DomainName),
+		SourceURL: sourceURLForDiscoveredLinks(task, result, jobInfo.DomainName),
 	}
 
 	wp.discoveredLinkPending.Add(1)
@@ -3929,7 +3938,7 @@ func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
 				select {
 				case request := <-wp.discoveredLinkPersistCh:
 					if request != nil {
-						wp.processDiscoveredLinks(context.Background(), &request.Task, request.Links, request.SourceURL)
+						wp.processDiscoveredLinks(ctx, &request.Task, request.Links, request.SourceURL)
 					}
 					wp.discoveredLinkPending.Add(-1)
 				case <-wp.stopCh:

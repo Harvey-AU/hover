@@ -37,3 +37,12 @@ func TestMaxWorkersFromEnv_InvalidOverrideFallsBackToEnvironmentDefault(t *testi
 		t.Fatalf("maxWorkersFromEnv() = %d, want %d", got, maxWorkersStaging)
 	}
 }
+
+func TestMaxWorkersFromEnv_InvalidOverrideProductionFallsBackToEnvironmentDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("GNH_MAX_WORKERS", "invalid")
+
+	if got := maxWorkersFromEnv(); got != maxWorkersProduction {
+		t.Fatalf("maxWorkersFromEnv() = %d, want %d", got, maxWorkersProduction)
+	}
+}
