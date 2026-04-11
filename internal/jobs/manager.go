@@ -57,16 +57,20 @@ type JobManager struct {
 	// Map to track which pages have been processed for each job
 	processedPages map[string]struct{} // Key format: "jobID_pageID"
 	pagesMutex     sync.RWMutex        // Mutex for thread-safe access
+
+	sitemapSem chan struct{} // limits concurrent sitemap batch insertions across all jobs
 }
 
 // NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface, workerPool *WorkerPool) *JobManager {
+	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
 		db:             db,
 		dbQueue:        dbQueue,
 		crawler:        crawler,
 		workerPool:     workerPool,
 		processedPages: make(map[string]struct{}),
+		sitemapSem:     make(chan struct{}, sitemapConcurrency),
 	}
 }
 
@@ -346,6 +350,16 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 		backgroundCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		go func() {
 			defer cancel()
+			// Acquire the global sitemap semaphore before any DB writes begin.
+			// This prevents concurrent batch insertion storms when many jobs are
+			// created simultaneously — each 100-URL UNNEST batch is cheap alone,
+			// but N jobs × N batches in parallel overwhelms Supabase.
+			select {
+			case jm.sitemapSem <- struct{}{}:
+				defer func() { <-jm.sitemapSem }()
+			case <-backgroundCtx.Done():
+				return
+			}
 			jm.processSitemap(backgroundCtx, job.ID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
 		}()
 		return nil
@@ -1253,6 +1267,23 @@ func hoistHomepageToFront(urls []string, domain string) []string {
 		}
 	}
 	return urls
+}
+
+// sitemapInsertConcurrency returns the maximum number of jobs that may insert
+// sitemap batches concurrently. Configurable via GNH_SITEMAP_CONCURRENCY; defaults to 3.
+func sitemapInsertConcurrency() int {
+	const defaultConcurrency = 3
+	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_CONCURRENCY")); val != "" {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Err(err).Msg("Invalid GNH_SITEMAP_CONCURRENCY — using default")
+		} else if n <= 0 {
+			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Msg("GNH_SITEMAP_CONCURRENCY must be positive — using default")
+		} else {
+			return n
+		}
+	}
+	return defaultConcurrency
 }
 
 // sitemapBatchSize returns the number of URLs to insert per sitemap batch.

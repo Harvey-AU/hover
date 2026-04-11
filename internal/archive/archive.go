@@ -42,6 +42,10 @@ type ArchiveSource interface {
 	// OnArchived is called after the candidate has been safely persisted
 	// in cold storage and verified.
 	OnArchived(ctx context.Context, candidate ArchiveCandidate, provider, bucket, key string) error
+	// MarkSkipped permanently excludes a candidate from future sweeps.
+	// Called when both hot and cold storage return a permanent 404 — retrying
+	// would waste resources with no chance of success.
+	MarkSkipped(ctx context.Context, candidate ArchiveCandidate) error
 }
 
 // DefaultConfig returns sensible defaults, overridable via environment.

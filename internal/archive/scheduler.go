@@ -169,6 +169,19 @@ func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 	}
 }
 
+// isPermanent404 returns true when an error indicates the object definitively
+// does not exist in storage (S3 NoSuchKey, Supabase not_found, HTTP 404).
+// These are not transient — retrying on subsequent sweeps is wasteful.
+func isPermanent404(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "NoSuchKey") ||
+		strings.Contains(msg, "not_found") ||
+		strings.Contains(msg, "StatusCode: 404")
+}
+
 func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveCandidate) {
 	lg := log.With().
 		Str("task_id", c.TaskID).
@@ -185,7 +198,14 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
 		rc, coldErr := a.provider.Download(ctx, a.cfg.Bucket, key)
 		if coldErr != nil {
-			lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
+			if isPermanent404(coldErr) {
+				lg.Warn().Str("task_id", c.TaskID).Msg("Both storages returned permanent 404 — marking archive as skipped")
+				if markErr := src.MarkSkipped(ctx, c); markErr != nil {
+					lg.Error().Err(markErr).Msg("Failed to mark archive as skipped")
+				}
+			} else {
+				lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
+			}
 			return
 		}
 		var readErr error

@@ -1080,6 +1080,24 @@ func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket
 	})
 }
 
+// MarkArchiveSkipped sets html_archived_at on a task to exclude it from future
+// archive sweeps. Used when both hot and cold storage return a permanent 404 —
+// the data is irrecoverably gone and retrying wastes resources.
+func (q *DbQueue) MarkArchiveSkipped(ctx context.Context, taskID string) error {
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(txCtx, `
+			UPDATE tasks
+			SET html_archived_at = NOW()
+			WHERE id = $1
+			  AND html_archived_at IS NULL
+		`, taskID)
+		if err != nil {
+			return fmt.Errorf("mark archive skipped for task %s: %w", taskID, err)
+		}
+		return nil
+	})
+}
+
 // MarkFullyArchivedJobs transitions terminal jobs to 'archived' when all their
 // HTML has been moved to cold storage. Returns the number of jobs marked.
 func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {

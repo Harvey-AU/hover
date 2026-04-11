@@ -180,6 +180,10 @@ func (m *MockDbQueue) MarkTaskArchived(_ context.Context, _, _, _, _ string) err
 	return nil
 }
 
+func (m *MockDbQueue) MarkArchiveSkipped(_ context.Context, _ string) error {
+	return nil
+}
+
 func (m *MockDbQueue) MarkFullyArchivedJobs(_ context.Context) (int64, error) {
 	return 0, nil
 }

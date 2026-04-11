@@ -16,6 +16,7 @@ type TaskHTMLSource struct {
 type archiveDB interface {
 	FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]db.ArchiveCandidate, error)
 	MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error
+	MarkArchiveSkipped(ctx context.Context, taskID string) error
 }
 
 // NewTaskHTMLSource creates an ArchiveSource backed by the given DB queue.
@@ -49,4 +50,8 @@ func (s *TaskHTMLSource) FindCandidates(ctx context.Context, batchSize int) ([]A
 
 func (s *TaskHTMLSource) OnArchived(ctx context.Context, c ArchiveCandidate, provider, bucket, key string) error {
 	return s.dbQueue.MarkTaskArchived(ctx, c.TaskID, provider, bucket, key)
+}
+
+func (s *TaskHTMLSource) MarkSkipped(ctx context.Context, c ArchiveCandidate) error {
+	return s.dbQueue.MarkArchiveSkipped(ctx, c.TaskID)
 }
