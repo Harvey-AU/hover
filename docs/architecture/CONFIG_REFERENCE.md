@@ -252,13 +252,13 @@ Async pool for uploading raw HTML to Supabase Storage after task completion.
 Adaptive per-domain delay that backs off when a site returns rate-limit signals
 and recovers after sustained successes. Env var overrides apply at startup only.
 
-| Env var / constant                 | Production value  | Default | What it controls                                        |
-| ---------------------------------- | ----------------- | ------- | ------------------------------------------------------- |
-| `GNH_RATE_LIMIT_BASE_DELAY_MS`     | **500ms** (unset) | 500ms   | Minimum delay between requests to a domain              |
-| `GNH_RATE_LIMIT_DELAY_STEP_MS`     | **500ms** (unset) | 500ms   | Delay increment per rate-limit hit                      |
-| `GNH_RATE_LIMIT_MAX_DELAY_SECONDS` | **60s** (unset)   | 60s     | Ceiling for adaptive delay                              |
-| `GNH_RATE_LIMIT_SUCCESS_THRESHOLD` | **5** (unset)     | 5       | Consecutive successes before attempting delay reduction |
-| `GNH_ROBOTS_DELAY_MULTIPLIER`      | **0.5** (unset)   | 0.5     | Scale factor applied to `Crawl-Delay` from robots.txt   |
+| Env var / constant                 | Production value      | Default | What it controls                                        |
+| ---------------------------------- | --------------------- | ------- | ------------------------------------------------------- |
+| `GNH_RATE_LIMIT_BASE_DELAY_MS`     | **50ms** (`fly.toml`) | 50ms    | Minimum delay between requests to a domain              |
+| `GNH_RATE_LIMIT_DELAY_STEP_MS`     | **500ms** (unset)     | 500ms   | Delay increment per rate-limit hit                      |
+| `GNH_RATE_LIMIT_MAX_DELAY_SECONDS` | **60s** (unset)       | 60s     | Ceiling for adaptive delay                              |
+| `GNH_RATE_LIMIT_SUCCESS_THRESHOLD` | **5** (unset)         | 5       | Consecutive successes before attempting delay reduction |
+| `GNH_ROBOTS_DELAY_MULTIPLIER`      | **0.5** (unset)       | 0.5     | Scale factor applied to `Crawl-Delay` from robots.txt   |
 
 The domain limiter also reduces a job's effective concurrency fed into
 `calculateConcurrencyTarget()`, so heavily rate-limited jobs do not inflate the

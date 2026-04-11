@@ -29,7 +29,7 @@ type DomainLimiterConfig struct {
 
 func defaultDomainLimiterConfig() DomainLimiterConfig {
 	cfg := DomainLimiterConfig{
-		BaseDelay:             500 * time.Millisecond,
+		BaseDelay:             50 * time.Millisecond,
 		DelayStep:             500 * time.Millisecond,
 		SuccessProbeThreshold: 5,
 		MaxAdaptiveDelay:      60 * time.Second,

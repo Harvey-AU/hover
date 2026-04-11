@@ -1680,15 +1680,6 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 
 	// Try to get a task from each active job
 	for _, jobID := range activeJobs {
-		// Skip jobs whose domain isn't available yet
-		if wp.domainLimiter != nil {
-			if jobInfo, exists := jobInfoSnapshot[jobID]; exists && jobInfo.DomainName != "" {
-				if wp.domainLimiter.EstimatedWait(jobInfo.DomainName) > 0 {
-					continue // Domain not available yet, try other jobs
-				}
-			}
-		}
-
 		// Go-side concurrency gate: atomically reserve a slot before hitting DB.
 		// Uses FetchAdd to avoid TOCTOU: two goroutines both reading counter < limit
 		// then both proceeding to GetNextTask, over-claiming by 1.
@@ -1982,13 +1973,18 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	}
 	var jobs []pendingJob
 	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// Query for jobs with pending tasks using job counters
-		// Include pending jobs so fresh jobs after a reset get picked up immediately.
+		// Query jobs that actually have pending task rows so stale job counters
+		// do not hide runnable work from the task monitor.
 		rows, err := tx.QueryContext(ctx, `
-			SELECT id, status
-			FROM jobs
-			WHERE status IN ('pending', 'running')
-			  AND pending_tasks > 0
+			SELECT j.id, j.status
+			FROM jobs j
+			WHERE j.status IN ('pending', 'running')
+			  AND EXISTS (
+				SELECT 1
+				FROM tasks t
+				WHERE t.job_id = j.id
+				  AND t.status = 'pending'
+			  )
 			LIMIT 100
 		`)
 
@@ -2231,10 +2227,25 @@ func (wp *WorkerPool) loadJobQueueState(ctx context.Context, jobID string) (*job
 	state := &jobQueueState{}
 	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			SELECT status, pending_tasks, waiting_tasks, running_tasks,
-			       total_tasks, completed_tasks, failed_tasks, skipped_tasks, concurrency, created_at
-			FROM jobs
-			WHERE id = $1
+			WITH task_counts AS (
+				SELECT
+					job_id,
+					COUNT(*) FILTER (WHERE status = 'pending') AS actual_pending,
+					COUNT(*) FILTER (WHERE status = 'waiting') AS actual_waiting,
+					COUNT(*) FILTER (WHERE status = 'running') AS actual_running
+				FROM tasks
+				WHERE job_id = $1
+				GROUP BY job_id
+			)
+			SELECT j.status,
+			       COALESCE(tc.actual_pending, 0),
+			       COALESCE(tc.actual_waiting, 0),
+			       COALESCE(tc.actual_running, 0),
+			       j.total_tasks, j.completed_tasks, j.failed_tasks, j.skipped_tasks,
+			       j.concurrency, j.created_at
+			FROM jobs j
+			LEFT JOIN task_counts tc ON tc.job_id = j.id
+			WHERE j.id = $1
 		`, jobID).Scan(
 			&state.Status,
 			&state.Pending,
@@ -3116,6 +3127,16 @@ func (wp *WorkerPool) recoverWaitingTasks(ctx context.Context) error {
 
 	err := wp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
+			WITH task_counts AS (
+				SELECT
+					job_id,
+					COUNT(*) FILTER (WHERE status = 'pending') AS actual_pending,
+					COUNT(*) FILTER (WHERE status = 'running') AS actual_running,
+					COUNT(*) FILTER (WHERE status = 'waiting') AS actual_waiting
+				FROM tasks
+				WHERE status IN ('pending', 'running', 'waiting')
+				GROUP BY job_id
+			)
 			SELECT
 				j.id,
 				j.status,
@@ -3124,10 +3145,11 @@ func (wp *WorkerPool) recoverWaitingTasks(ctx context.Context) error {
 					ELSE NULL
 				END AS quota_remaining,
 				COALESCE(j.concurrency, 0) AS concurrency,
-				j.running_tasks,
-				j.pending_tasks
+				COALESCE(tc.actual_running, 0) AS running_tasks,
+				COALESCE(tc.actual_pending, 0) AS pending_tasks
 			FROM jobs j
-			WHERE j.waiting_tasks > 0
+			JOIN task_counts tc ON tc.job_id = j.id
+			WHERE tc.actual_waiting > 0
 			  AND j.status IN ('running', 'pending')
 		`)
 		if err != nil {

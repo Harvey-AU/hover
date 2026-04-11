@@ -45,6 +45,10 @@ On merge, CI will:
   async queue
 - Add `GNH_LINK_DISCOVERY_MIN_PRIORITY` so low-priority deep links below `0.7`
   no longer create new tasks, reducing expansion churn on large crawls
+- Stop claim-time domain wait gating from starving healthy jobs, use actual
+  task-state counts when recovering/removing queued jobs, and lower the base
+  per-domain pacing floor to 50ms so healthy domains can refill worker capacity
+  more aggressively
 
 ## Full changelog history
 
