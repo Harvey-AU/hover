@@ -3,11 +3,13 @@ package archive
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/rs/zerolog/log"
 )
 
@@ -170,16 +172,26 @@ func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 }
 
 // isPermanent404 returns true when an error indicates the object definitively
-// does not exist in storage (S3 NoSuchKey, Supabase not_found, HTTP 404).
-// These are not transient — retrying on subsequent sweeps is wasteful.
+// does not exist in storage. These are not transient — retrying on subsequent
+// sweeps is wasteful.
 func isPermanent404(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Typed S3/R2 errors (aws-sdk-go-v2)
+	var notFound *types.NotFound
+	if errors.As(err, &notFound) {
+		return true
+	}
+	var noSuchKey *types.NoSuchKey
+	if errors.As(err, &noSuchKey) {
+		return true
+	}
+	// Supabase storage returns HTTP 400 with a JSON body containing statusCode 404
+	// and error "not_found"; match either the parsed field or the raw string.
 	msg := err.Error()
-	return strings.Contains(msg, "NoSuchKey") ||
-		strings.Contains(msg, "not_found") ||
-		strings.Contains(msg, "StatusCode: 404")
+	return strings.Contains(msg, "not_found") ||
+		strings.Contains(msg, "download failed with status 404")
 }
 
 func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveCandidate) {
@@ -198,7 +210,7 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
 		rc, coldErr := a.provider.Download(ctx, a.cfg.Bucket, key)
 		if coldErr != nil {
-			if isPermanent404(coldErr) {
+			if isPermanent404(err) && isPermanent404(coldErr) {
 				lg.Warn().Str("task_id", c.TaskID).Msg("Both storages returned permanent 404 — marking archive as skipped")
 				if markErr := src.MarkSkipped(ctx, c); markErr != nil {
 					lg.Error().Err(markErr).Msg("Failed to mark archive as skipped")

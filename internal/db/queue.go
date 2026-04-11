@@ -1087,7 +1087,9 @@ func (q *DbQueue) MarkArchiveSkipped(ctx context.Context, taskID string) error {
 	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(txCtx, `
 			UPDATE tasks
-			SET html_archived_at = NOW()
+			SET html_archived_at    = NOW(),
+			    html_storage_bucket = NULL,
+			    html_storage_path   = NULL
 			WHERE id = $1
 			  AND html_archived_at IS NULL
 		`, taskID)

@@ -345,22 +345,30 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 // setupJobURLDiscovery handles URL discovery for the job (sitemap or manual)
 func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, options *JobOptions, domainID int, normalisedDomain string) error {
 	if options.UseSitemap {
-		// Fetch and process sitemap in a separate goroutine
-		// Use detached context with timeout for background processing
-		backgroundCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		// Fetch and process sitemap in a separate goroutine.
+		// The semaphore is acquired first, before creating the processing timeout,
+		// so that the 30-minute sitemap budget is not consumed by queue wait time.
+		jobID := job.ID
 		go func() {
-			defer cancel()
-			// Acquire the global sitemap semaphore before any DB writes begin.
-			// This prevents concurrent batch insertion storms when many jobs are
-			// created simultaneously — each 100-URL UNNEST batch is cheap alone,
-			// but N jobs × N batches in parallel overwhelms Supabase.
+			// Block on the semaphore with a generous outer timeout. If we cannot
+			// acquire a slot within 60 minutes the job is marked as failed so it
+			// does not silently stall in the initialising state indefinitely.
+			semCtx, semCancel := context.WithTimeout(context.Background(), 60*time.Minute)
+			defer semCancel()
 			select {
 			case jm.sitemapSem <- struct{}{}:
-				defer func() { <-jm.sitemapSem }()
-			case <-backgroundCtx.Done():
+				// acquired — proceed
+			case <-semCtx.Done():
+				log.Error().Str("job_id", jobID).Msg("Timed out waiting for sitemap semaphore slot")
+				jm.updateJobWithError(semCtx, jobID, "timed out waiting for sitemap processing slot")
 				return
 			}
-			jm.processSitemap(backgroundCtx, job.ID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
+			defer func() { <-jm.sitemapSem }()
+
+			// Start the processing timeout only after the slot is in hand.
+			procCtx, procCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer procCancel()
+			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
 		}()
 		return nil
 	}

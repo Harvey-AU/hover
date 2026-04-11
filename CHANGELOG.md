@@ -36,10 +36,10 @@ On merge, CI will:
   100-URL UNNEST batches every 200ms, causing a combined write burst that pushed
   DB EMA well above the 60ms high-water mark and shed concurrency to the 10-slot
   floor
-- Archive sweeps now permanently skip tasks where both hot storage (Supabase)
-  and cold storage (R2) return a 404; previously the task was left with
-  `html_archived_at = NULL` and re-queued on every sweep, burning S3 quota and
-  archive-worker capacity with no chance of success
+- Archive sweeps now permanently skip tasks where both hot storage and cold
+  storage return a 404; previously the task was left with
+  `html_archived_at = NULL` and re-queued on every sweep, consuming cold storage
+  quota and archive-worker capacity with no chance of success
 
 ## Full changelog history
 
