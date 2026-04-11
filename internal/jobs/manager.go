@@ -360,7 +360,7 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 				// acquired — proceed
 			case <-semCtx.Done():
 				log.Error().Str("job_id", jobID).Msg("Timed out waiting for sitemap semaphore slot")
-				jm.updateJobWithError(semCtx, jobID, "timed out waiting for sitemap processing slot")
+				jm.updateJobWithError(context.Background(), jobID, "timed out waiting for sitemap processing slot")
 				return
 			}
 			defer func() { <-jm.sitemapSem }()
