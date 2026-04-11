@@ -19,13 +19,12 @@ const (
 	pressureHighMarkDefaultMs = 500.0            // EMA above this → shed load
 	pressureLowMarkDefaultMs  = 100.0            // EMA below this → restore capacity
 	pressureEMAAlpha          = 0.15             // smoothing factor (lower = smoother)
-	pressureStepDown          = int32(10)        // slots removed per shed adjustment
+	pressureStepDownDefault   = int32(5)         // slots removed per shed adjustment
 	pressureStepUp            = int32(3)         // slots added per restore adjustment
-	pressureMinLimit          = int32(10)        // never drop below this
+	pressureMinLimitDefault   = int32(30)        // never drop below this
 	pressureCooldownDown      = 10 * time.Second // min gap between shed adjustments
 	pressureCooldownUp        = 30 * time.Second // min gap between restore adjustments
 	pressureWarmupSamples     = 5                // samples required before acting
-	pressureInitialLimit      = int32(30)        // conservative start — known-safe level
 )
 
 // PressureController adaptively adjusts the queue semaphore's effective limit
@@ -42,9 +41,8 @@ const (
 // Shedding is faster than restoring by design: react quickly to protect
 // Supabase, but open capacity back up cautiously.
 //
-// The controller starts at pressureInitialLimit (30) rather than maxLimit so
-// that a restart under load doesn't immediately saturate the DB before the
-// EMA has warmed up.
+// The controller starts at the configured initial limit which defaults to the
+// lane's hard cap so full throughput is available unless pressure rises.
 type PressureController struct {
 	mu            sync.Mutex
 	ema           float64
@@ -71,7 +69,8 @@ type PressureController struct {
 	OnAdjust func(direction string)
 }
 
-// newPressureController creates a controller that starts at pressureInitialLimit
+// newPressureController creates a controller that starts at the configured
+// initial limit and clamps all values to the queue lane's hard cap.
 // (clamped to maxLimit) and adjusts dynamically as pool-wait observations arrive.
 func newPressureController(maxLimit int) *PressureController {
 	// Guard against int32 overflow — maxLimit is always a small pool size in
@@ -79,10 +78,6 @@ func newPressureController(maxLimit int) *PressureController {
 	safeMax := int32(math.MaxInt32)
 	if maxLimit <= math.MaxInt32 {
 		safeMax = int32(maxLimit) //nolint:gosec // G115: bounds-checked immediately above
-	}
-	initial := pressureInitialLimit
-	if safeMax < initial {
-		initial = safeMax
 	}
 	highMark := parsePressureFloat("GNH_PRESSURE_HIGH_MARK_MS", pressureHighMarkDefaultMs)
 	lowMark := parsePressureFloat("GNH_PRESSURE_LOW_MARK_MS", pressureLowMarkDefaultMs)
@@ -102,7 +97,7 @@ func newPressureController(maxLimit int) *PressureController {
 
 	// If the pool is configured smaller than the default floor, clamp the floor
 	// to maxLimit to avoid an unresolvable inconsistency where we can never shed.
-	minLimit := pressureMinLimit
+	minLimit := parsePressureInt32("GNH_PRESSURE_MIN_LIMIT", pressureMinLimitDefault)
 	if safeMax < minLimit {
 		log.Warn().
 			Int32("max_limit", safeMax).
@@ -110,12 +105,39 @@ func newPressureController(maxLimit int) *PressureController {
 			Msg("DB_QUEUE_MAX_CONCURRENCY smaller than pressure floor — clamping floor to max")
 		minLimit = safeMax
 	}
+	if minLimit < 1 {
+		minLimit = 1
+	}
+
+	initial := parsePressureInt32("GNH_PRESSURE_INITIAL_LIMIT", safeMax)
+	if initial > safeMax {
+		log.Warn().
+			Int32("initial_limit", initial).
+			Int32("max_limit", safeMax).
+			Msg("GNH_PRESSURE_INITIAL_LIMIT exceeds queue cap — clamping to max")
+		initial = safeMax
+	}
+	if initial < minLimit {
+		log.Warn().
+			Int32("initial_limit", initial).
+			Int32("min_limit", minLimit).
+			Msg("GNH_PRESSURE_INITIAL_LIMIT below pressure floor — clamping to floor")
+		initial = minLimit
+	}
+
+	stepDown := parsePressureInt32("GNH_PRESSURE_STEP_DOWN", pressureStepDownDefault)
+	if stepDown < 1 {
+		log.Warn().
+			Int32("step_down", stepDown).
+			Msg("GNH_PRESSURE_STEP_DOWN must be positive — using default")
+		stepDown = pressureStepDownDefault
+	}
 
 	pc := &PressureController{
 		maxLimit:     safeMax,
 		highMark:     highMark,
 		lowMark:      lowMark,
-		stepDown:     pressureStepDown,
+		stepDown:     stepDown,
 		stepUp:       pressureStepUp,
 		minLimit:     minLimit,
 		cooldownDown: pressureCooldownDown,
@@ -240,6 +262,21 @@ func parsePressureFloat(key string, fallback float64) float64 {
 			Str("key", key).
 			Str("value", raw).
 			Float64("fallback", fallback).
+			Msg("Invalid pressure config value — using default")
+	}
+	return fallback
+}
+
+func parsePressureInt32(key string, fallback int32) int32 {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 32)
+		if err == nil && v > 0 {
+			return int32(v)
+		}
+		log.Debug().
+			Str("key", key).
+			Str("value", raw).
+			Int32("fallback", fallback).
 			Msg("Invalid pressure config value — using default")
 	}
 	return fallback

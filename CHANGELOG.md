@@ -32,6 +32,37 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.3] – 2026-04-11
+
+### Fixed
+
+- Protect control-plane queue traffic from bulk sitemap/link-write pressure by
+  splitting DB execution into protected control and pressure-shed bulk lanes;
+  retune pressure defaults to start at the full 88-slot cap, shed more gently to
+  a 30-slot floor, and expose explicit initial/floor/step env vars
+- Add a generic waiting-task recovery monitor so jobs with free capacity and
+  queued `waiting` tasks can recover after transient promotion failures without
+  being mistaken for “no work”; pending jobs now remain quota-capped until they
+  actually have promotable slots
+- Narrow sitemap concurrency gating to batch insertion only, preventing large
+  sitemap discovery/parsing jobs from monopolising the global sitemap lane
+- Make task completion resilient under load by coalescing batch-update overflow
+  instead of blocking workers, and by moving discovered-link persistence onto an
+  async queue
+- Add `GNH_LINK_DISCOVERY_MIN_PRIORITY` so low-priority deep links below `0.7`
+  no longer create new tasks, reducing expansion churn on large crawls
+- Stop claim-time domain wait gating from starving healthy jobs, use actual
+  task-state counts when recovering/removing queued jobs, and lower the base
+  per-domain pacing floor to 50ms so healthy domains can refill worker capacity
+  more aggressively
+- Sync review app crawler tuning with production logic dials, enable OTEL on
+  preview branches for throughput debugging, and make `GNH_MAX_WORKERS` override
+  the staging fallback when explicitly set
+- Scale preview pressure shedding to the smaller review-app queue budget, clear
+  stale in-memory worker jobs after DB resets so fresh jobs can be claimed
+  again, and sync `OTEL_EXPORTER_OTLP_HEADERS` into review-app CI so preview
+  telemetry authenticates correctly
+
 ## [0.32.2] – 2026-04-11
 
 ### Fixed

@@ -42,8 +42,10 @@ type DbQueue struct {
 	lastRejectLog       time.Time
 	lastRejectWaitCount int64
 	poolSemaphore       chan struct{}
+	controlSemaphore    chan struct{}
 	preserveConnections int
 	maxConcurrent       int
+	controlConcurrent   int
 	maxTxRetries        int
 	retryBaseDelay      time.Duration
 	retryMaxDelay       time.Duration
@@ -69,7 +71,9 @@ const (
 	minRejectWaitDelta         = 5
 	poolLogCooldown            = 5 * time.Second
 	defaultQueueConcurrency    = 12
+	defaultControlConcurrency  = 4
 	defaultExecuteTimeout      = 30 * time.Second
+	controlExecuteTimeout      = 10 * time.Second
 	defaultTxRetries           = 3
 	defaultRetryBaseDelay      = 200 * time.Millisecond
 	defaultRetryMaxDelay       = 1500 * time.Millisecond
@@ -87,6 +91,13 @@ const (
 	// ordering matters less to crawl efficiency. Sitemap sources are always eligible
 	// regardless of priority.
 	minPriorityForTrafficScore = 0.729
+)
+
+type queueLane string
+
+const (
+	queueLaneBulk    queueLane = "bulk"
+	queueLaneControl queueLane = "control"
 )
 
 // NewDbQueue creates a PostgreSQL job queue
@@ -112,33 +123,42 @@ func NewDbQueue(db *DB) *DbQueue {
 	maxDelay := max(parseDurationEnvMS("DB_TX_BACKOFF_MAX_MS", defaultRetryMaxDelay), baseDelay)
 
 	var semaphore chan struct{}
+	var controlSemaphore chan struct{}
 	maxConcurrent := queueLimit
+	controlConcurrent := defaultControlConcurrency
 	if db != nil && db.config != nil {
 		maxOpen := db.config.MaxOpenConns
 		if maxOpen > 0 {
-			poolCapacity := max(maxOpen-reserve, 1)
-			if queueLimit > 0 && queueLimit < poolCapacity {
+			available := max(maxOpen-reserve, 1)
+			bulkCapacity := max(available-defaultControlConcurrency, 1)
+			if queueLimit > 0 && queueLimit < bulkCapacity {
 				maxConcurrent = queueLimit
 			} else {
-				maxConcurrent = poolCapacity
+				maxConcurrent = bulkCapacity
 			}
-			reserve = maxOpen - maxConcurrent
+			controlConcurrent = max(available-maxConcurrent, 1)
 		}
 	}
 
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
 	}
+	if controlConcurrent < 1 {
+		controlConcurrent = 1
+	}
 
 	semaphore = make(chan struct{}, maxConcurrent)
+	controlSemaphore = make(chan struct{}, controlConcurrent)
 
 	q := &DbQueue{
 		db:                  db,
 		poolWarnThreshold:   warn,
 		poolRejectThreshold: reject,
 		poolSemaphore:       semaphore,
+		controlSemaphore:    controlSemaphore,
 		preserveConnections: reserve,
 		maxConcurrent:       maxConcurrent,
+		controlConcurrent:   controlConcurrent,
 		maxTxRetries:        txRetries,
 		retryBaseDelay:      baseDelay,
 		retryMaxDelay:       maxDelay,
@@ -200,155 +220,41 @@ func parseDurationEnvMS(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
-// Execute runs a database operation in a transaction
+// Execute runs a bulk-lane database operation in a transaction.
 func (q *DbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error {
-	totalStart := time.Now()
-
-	// Add timeout to context if none exists
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
-		defer cancel()
-	}
-
-	maxAttempts := max(q.maxTxRetries, 1)
-
-	var lastErr error
-	var poolWaitTotal time.Duration
-	var execTotal time.Duration
-
-	for attempt := range maxAttempts {
-		poolWaitStart := time.Now()
-		release, err := q.ensurePoolCapacity(ctx)
-		poolWait := time.Since(poolWaitStart)
-		poolWaitTotal += poolWait
-
-		if err != nil {
-			// Classify the error type for observability
-			errorClass := classifyError(err)
-
-			if !q.shouldRetry(err) || attempt == maxAttempts-1 {
-				// Log pool saturation details
-				log.Warn().
-					Err(err).
-					Str("error_class", errorClass).
-					Dur("pool_wait_total", poolWaitTotal).
-					Dur("total_duration", time.Since(totalStart)).
-					Int("attempt", attempt+1).
-					Int("max_attempts", maxAttempts).
-					Msg("Failed to acquire database connection")
-				return err
-			}
-
-			backoff := q.computeBackoff(attempt)
-			log.Debug().
-				Err(err).
-				Str("error_class", errorClass).
-				Dur("backoff", backoff).
-				Int("attempt", attempt+1).
-				Msg("Pool capacity check failed, retrying after backoff")
-
-			if err := q.waitForRetry(ctx, attempt); err != nil {
-				return err
-			}
-			continue
-		}
-
-		execStart := time.Now()
-		execErr := q.executeOnce(ctx, fn)
-		execDuration := time.Since(execStart)
-		execTotal += execDuration
-		release()
-
-		if execErr == nil {
-			totalDuration := time.Since(totalStart)
-			// Feed exec time into the adaptive pressure controller.
-			if q.pressure != nil {
-				q.pressure.Record(float64(execTotal.Milliseconds()))
-			}
-			// Log if transaction was slow (>5s) to help diagnose performance issues
-			if totalDuration > 5*time.Second {
-				log.Warn().
-					Dur("total_duration", totalDuration).
-					Dur("pool_wait_total", poolWaitTotal).
-					Dur("exec_total", execTotal).
-					Int("attempts", attempt+1).
-					Msg("Slow database transaction completed")
-			}
-			return nil
-		}
-
-		lastErr = execErr
-		if errors.Is(execErr, sql.ErrNoRows) {
-			totalDuration := time.Since(totalStart)
-			if q.pressure != nil {
-				q.pressure.Record(float64(execTotal.Milliseconds()))
-			}
-			log.Debug().
-				Err(execErr).
-				Dur("total_duration", totalDuration).
-				Dur("pool_wait_total", poolWaitTotal).
-				Dur("exec_total", execTotal).
-				Int("attempt", attempt+1).
-				Msg("Database transaction finished with no rows")
-			return execErr
-		}
-		// Don't log concurrency blocking as error - it's normal backoff behaviour.
-		// Still record exec time so the pressure controller sees the signal.
-		if errors.Is(execErr, ErrConcurrencyBlocked) {
-			if q.pressure != nil {
-				q.pressure.Record(float64(execTotal.Milliseconds()))
-			}
-			return execErr
-		}
-
-		errorClass := classifyError(execErr)
-
-		if !q.shouldRetry(execErr) || attempt == maxAttempts-1 {
-			totalDuration := time.Since(totalStart)
-			if q.pressure != nil {
-				q.pressure.Record(float64(execTotal.Milliseconds()))
-			}
-			log.Error().
-				Err(execErr).
-				Str("error_class", errorClass).
-				Dur("total_duration", totalDuration).
-				Dur("pool_wait_total", poolWaitTotal).
-				Dur("exec_total", execTotal).
-				Int("attempt", attempt+1).
-				Int("max_attempts", maxAttempts).
-				Bool("retryable", q.shouldRetry(execErr)).
-				Msg("Database transaction failed")
-			return execErr
-		}
-
-		backoff := q.computeBackoff(attempt)
-		log.Debug().
-			Err(execErr).
-			Str("error_class", errorClass).
-			Dur("backoff", backoff).
-			Dur("exec_duration", execDuration).
-			Int("attempt", attempt+1).
-			Msg("Transaction failed, retrying after backoff")
-
-		if err := q.waitForRetry(ctx, attempt); err != nil {
-			return err
-		}
-	}
-
-	return lastErr
+	return q.executeWithContextLane(ctx, queueLaneBulk, func(_ context.Context, tx *sql.Tx) error {
+		return fn(tx)
+	})
 }
 
-// ExecuteWithContext runs a transactional operation with full context propagation.
-// The callback receives both the context and transaction, ensuring SQL statements
-// can respect timeouts. This should be preferred over Execute for all new code.
+// ExecuteControl runs a control-lane database operation in a transaction.
+func (q *DbQueue) ExecuteControl(ctx context.Context, fn func(*sql.Tx) error) error {
+	return q.executeWithContextLane(ctx, queueLaneControl, func(_ context.Context, tx *sql.Tx) error {
+		return fn(tx)
+	})
+}
+
+// ExecuteWithContext runs a bulk-lane transactional operation with full context propagation.
 func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	return q.executeWithContextLane(ctx, queueLaneBulk, fn)
+}
+
+// ExecuteControlWithContext runs a control-lane transactional operation with full context propagation.
+func (q *DbQueue) ExecuteControlWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	return q.executeWithContextLane(ctx, queueLaneControl, fn)
+}
+
+func (q *DbQueue) executeWithContextLane(ctx context.Context, lane queueLane, fn func(context.Context, *sql.Tx) error) error {
 	totalStart := time.Now()
 
 	// Add timeout to context if none exists
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, defaultExecuteTimeout)
+		timeout := defaultExecuteTimeout
+		if lane == queueLaneControl {
+			timeout = controlExecuteTimeout
+		}
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 
@@ -360,7 +266,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 
 	for attempt := range maxAttempts {
 		poolWaitStart := time.Now()
-		release, err := q.ensurePoolCapacity(ctx)
+		release, err := q.ensurePoolCapacity(ctx, lane)
 		poolWait := time.Since(poolWaitStart)
 		poolWaitTotal += poolWait
 
@@ -372,6 +278,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 				// Log pool saturation details
 				log.Warn().
 					Err(err).
+					Str("lane", string(lane)).
 					Str("error_class", errorClass).
 					Dur("pool_wait_total", poolWaitTotal).
 					Dur("total_duration", time.Since(totalStart)).
@@ -384,6 +291,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 			backoff := q.computeBackoff(attempt)
 			log.Debug().
 				Err(err).
+				Str("lane", string(lane)).
 				Str("error_class", errorClass).
 				Dur("backoff", backoff).
 				Int("attempt", attempt+1).
@@ -403,13 +311,13 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 
 		if execErr == nil {
 			totalDuration := time.Since(totalStart)
-			// Feed exec time into the adaptive pressure controller.
-			if q.pressure != nil {
+			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			// Log if transaction was slow (>5s) to help diagnose performance issues
 			if totalDuration > 5*time.Second {
 				log.Warn().
+					Str("lane", string(lane)).
 					Dur("total_duration", totalDuration).
 					Dur("pool_wait_total", poolWaitTotal).
 					Dur("exec_total", execTotal).
@@ -422,11 +330,12 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 		lastErr = execErr
 		if errors.Is(execErr, sql.ErrNoRows) {
 			totalDuration := time.Since(totalStart)
-			if q.pressure != nil {
+			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Debug().
 				Err(execErr).
+				Str("lane", string(lane)).
 				Dur("total_duration", totalDuration).
 				Dur("pool_wait_total", poolWaitTotal).
 				Dur("exec_total", execTotal).
@@ -437,7 +346,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 		// Don't log concurrency blocking as error - it's normal backoff behaviour.
 		// Still record exec time so the pressure controller sees the signal.
 		if errors.Is(execErr, ErrConcurrencyBlocked) {
-			if q.pressure != nil {
+			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			return execErr
@@ -447,11 +356,12 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 
 		if !q.shouldRetry(execErr) || attempt == maxAttempts-1 {
 			totalDuration := time.Since(totalStart)
-			if q.pressure != nil {
+			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
 			log.Error().
 				Err(execErr).
+				Str("lane", string(lane)).
 				Str("error_class", errorClass).
 				Dur("total_duration", totalDuration).
 				Dur("pool_wait_total", poolWaitTotal).
@@ -466,6 +376,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 		backoff := q.computeBackoff(attempt)
 		log.Debug().
 			Err(execErr).
+			Str("lane", string(lane)).
 			Str("error_class", errorClass).
 			Dur("backoff", backoff).
 			Dur("exec_duration", execDuration).
@@ -480,7 +391,7 @@ func (q *DbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Contex
 	return lastErr
 }
 
-func (q *DbQueue) executeOnce(ctx context.Context, fn func(*sql.Tx) error) error {
+func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	beginStart := time.Now()
 	tx, err := q.db.client.BeginTx(ctx, nil)
 	beginDuration := time.Since(beginStart)
@@ -500,8 +411,12 @@ func (q *DbQueue) executeOnce(ctx context.Context, fn func(*sql.Tx) error) error
 		}
 	}()
 
+	if err := applyLocalStatementTimeout(ctx, tx); err != nil {
+		return err
+	}
+
 	queryStart := time.Now()
-	if err := fn(tx); err != nil {
+	if err := fn(ctx, tx); err != nil {
 		queryDuration := time.Since(queryStart)
 		// Log slow queries even when they fail
 		if queryDuration > 5*time.Second {
@@ -544,65 +459,24 @@ func (q *DbQueue) executeOnce(ctx context.Context, fn func(*sql.Tx) error) error
 	return nil
 }
 
-func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
-	beginStart := time.Now()
-	tx, err := q.db.client.BeginTx(ctx, nil)
-	beginDuration := time.Since(beginStart)
-
-	if err != nil {
-		sentry.CaptureException(err)
-		log.Error().
-			Err(err).
-			Dur("begin_duration", beginDuration).
-			Msg("Failed to begin transaction")
-		return fmt.Errorf("failed to begin transaction: %w", err)
+func applyLocalStatementTimeout(ctx context.Context, tx *sql.Tx) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
 	}
-	var committed bool
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
 
-	queryStart := time.Now()
-	if err := fn(ctx, tx); err != nil {
-		queryDuration := time.Since(queryStart)
-		// Log slow queries even when they fail
-		if queryDuration > 5*time.Second {
-			log.Warn().
-				Err(err).
-				Dur("begin_duration", beginDuration).
-				Dur("query_duration", queryDuration).
-				Msg("Slow query failed in transaction")
-		}
-		return err
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		remaining = time.Millisecond
 	}
-	queryDuration := time.Since(queryStart)
 
-	commitStart := time.Now()
-	if err := tx.Commit(); err != nil {
-		commitDuration := time.Since(commitStart)
-		sentry.CaptureException(err)
-		log.Error().
-			Err(err).
-			Dur("begin_duration", beginDuration).
-			Dur("query_duration", queryDuration).
-			Dur("commit_duration", commitDuration).
-			Msg("Failed to commit transaction")
-		return fmt.Errorf("failed to commit transaction: %w", err)
+	timeoutMs := remaining.Milliseconds()
+	if timeoutMs < 1 {
+		timeoutMs = 1
 	}
-	committed = true
-	commitDuration := time.Since(commitStart)
 
-	// Log breakdown for slow transactions
-	totalDuration := beginDuration + queryDuration + commitDuration
-	if totalDuration > 5*time.Second {
-		log.Warn().
-			Dur("total", totalDuration).
-			Dur("begin", beginDuration).
-			Dur("query", queryDuration).
-			Dur("commit", commitDuration).
-			Msg("Slow transaction breakdown")
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%dms'", timeoutMs)); err != nil {
+		return fmt.Errorf("failed to set local statement timeout: %w", err)
 	}
 
 	return nil
@@ -788,23 +662,28 @@ func (q *DbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error
 	return nil
 }
 
-func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
+func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(), error) {
 	noop := func() {}
 	if q == nil || q.db == nil || q.db.client == nil {
 		return noop, nil
 	}
 
 	release := noop
-	if q.poolSemaphore != nil {
+	semaphore := q.poolSemaphore
+	if lane == queueLaneControl {
+		semaphore = q.controlSemaphore
+	}
+	if semaphore != nil {
 		// Enforce the pressure-adjusted soft limit before blocking on the channel.
 		// len(poolSemaphore) == current in-flight count (send=acquire, recv=release).
 		// The check is intentionally non-blocking: a small overshoot is acceptable
 		// because the channel hard cap still holds.
-		if q.pressure != nil {
-			if len(q.poolSemaphore) >= int(q.pressure.EffectiveLimit()) {
+		if lane == queueLaneBulk && q.pressure != nil {
+			if len(semaphore) >= int(q.pressure.EffectiveLimit()) {
 				log.Debug().
+					Str("lane", string(lane)).
 					Int32("soft_limit", q.pressure.EffectiveLimit()).
-					Int("in_flight", len(q.poolSemaphore)).
+					Int("in_flight", len(semaphore)).
 					Float64("exec_ema_ms", q.pressure.EMA()).
 					Msg("DB pressure soft limit reached — shedding request")
 				observability.RecordDBPoolRejection(ctx)
@@ -814,15 +693,16 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 
 		semWaitStart := time.Now()
 		select {
-		case q.poolSemaphore <- struct{}{}:
+		case semaphore <- struct{}{}:
 			observability.RecordSemaphoreWait(ctx, float64(time.Since(semWaitStart).Milliseconds()))
-			release = func() { <-q.poolSemaphore }
+			release = func() { <-semaphore }
 		case <-ctx.Done():
 			// Explicitly log pool rejections when context expires before acquiring semaphore
 			log.Debug().
+				Str("lane", string(lane)).
 				Err(ctx.Err()).
-				Int("semaphore_capacity", cap(q.poolSemaphore)).
-				Int("semaphore_in_use", len(q.poolSemaphore)).
+				Int("semaphore_capacity", cap(semaphore)).
+				Int("semaphore_in_use", len(semaphore)).
 				Msg("Pool semaphore rejected request - context done before acquiring slot")
 			observability.RecordDBPoolRejection(ctx)
 			return noop, ErrPoolSaturated
@@ -836,6 +716,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
 		if fdPressure > fdPressureThreshold {
 			log.Warn().
+				Str("lane", string(lane)).
 				Int("fd_current", fdCurrent).
 				Int("fd_limit", fdLimit).
 				Float64("fd_pressure", fdPressure).
@@ -872,6 +753,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 	waitDelta := stats.WaitCount - q.lastRejectWaitCount
 	if usage >= q.poolRejectThreshold && waitDelta >= minRejectWaitDelta && time.Since(q.lastRejectLog) > poolLogCooldown {
 		log.Warn().
+			Str("lane", string(lane)).
 			Int("in_use", stats.InUse).
 			Int("max_open", maxOpen).
 			Int("reserved", q.preserveConnections).
@@ -900,6 +782,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context) (func(), error) {
 
 	if usage >= q.poolWarnThreshold && time.Since(q.lastWarnLog) > poolLogCooldown {
 		log.Warn().
+			Str("lane", string(lane)).
 			Int("in_use", stats.InUse).
 			Int("max_open", maxOpen).
 			Int("reserved", q.preserveConnections).
@@ -1147,7 +1030,7 @@ func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) 
 	totalStart := time.Now()
 	var attemptCount int
 
-	err := q.Execute(ctx, func(tx *sql.Tx) error {
+	err := q.ExecuteControl(ctx, func(tx *sql.Tx) error {
 		attemptCount++
 		queryStart := time.Now()
 
@@ -1971,7 +1854,7 @@ func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, cou
 
 	var freedCapacity bool
 
-	err := q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+	err := q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		// Decrement running_tasks count in a single atomic update
 		decrementQuery := `
 			UPDATE jobs
@@ -2030,7 +1913,7 @@ func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, cou
 	if jobID == "" || count <= 0 {
 		return nil
 	}
-	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+	return q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(txCtx, `
 			UPDATE jobs
 			SET running_tasks = running_tasks + $2
@@ -2047,7 +1930,7 @@ func (q *DbQueue) promoteWaitingTasksBatch(ctx context.Context, jobID string, co
 	if count <= 0 {
 		return nil
 	}
-	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+	return q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_tasks_for_job($1, $2)`, jobID, count)
 		return err
 	})

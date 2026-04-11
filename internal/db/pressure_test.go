@@ -16,7 +16,7 @@ func newTestPressureController(maxLimit int) *PressureController {
 
 func TestPressureController_StartsAtInitialLimit(t *testing.T) {
 	pc := newTestPressureController(88)
-	want := pressureInitialLimit
+	want := int32(88)
 	if got := pc.EffectiveLimit(); got != want {
 		t.Fatalf("expected initial limit %d, got %d", want, got)
 	}
@@ -38,8 +38,8 @@ func TestPressureController_ReducesOnHighPressure(t *testing.T) {
 		pc.Record(600)
 	}
 
-	if got := pc.EffectiveLimit(); got >= int32(pressureInitialLimit) {
-		t.Fatalf("expected limit to decrease from %d, got %d", pressureInitialLimit, got)
+	if got := pc.EffectiveLimit(); got >= 88 {
+		t.Fatalf("expected limit to decrease from %d, got %d", 88, got)
 	}
 }
 
@@ -53,9 +53,9 @@ func TestPressureController_ReducesByStepDown(t *testing.T) {
 	}
 	after := pc.EffectiveLimit()
 
-	if before-after != pressureStepDown {
+	if before-after != pressureStepDownDefault {
 		t.Fatalf("expected reduction of %d, got %d (before=%d after=%d)",
-			pressureStepDown, before-after, before, after)
+			pressureStepDownDefault, before-after, before, after)
 	}
 }
 
@@ -69,7 +69,7 @@ func TestPressureController_RestoresOnLowPressure(t *testing.T) {
 		pc.Record(800)
 	}
 	reduced := pc.EffectiveLimit()
-	if reduced >= pressureInitialLimit {
+	if reduced >= 88 {
 		t.Fatalf("expected limit to decrease, got %d", reduced)
 	}
 
@@ -85,6 +85,8 @@ func TestPressureController_RestoresOnLowPressure(t *testing.T) {
 }
 
 func TestPressureController_RestoresByStepUp(t *testing.T) {
+	t.Setenv("GNH_PRESSURE_INITIAL_LIMIT", "30")
+	t.Setenv("GNH_PRESSURE_MIN_LIMIT", "30")
 	pc := newTestPressureController(88)
 	pc.highMark = 500
 	pc.lowMark = 100
@@ -113,8 +115,8 @@ func TestPressureController_NeverDropsBelowMinLimit(t *testing.T) {
 		pc.Record(9999)
 	}
 
-	if got := pc.EffectiveLimit(); got < pressureMinLimit {
-		t.Fatalf("limit %d dropped below minimum %d", got, pressureMinLimit)
+	if got := pc.EffectiveLimit(); got < pressureMinLimitDefault {
+		t.Fatalf("limit %d dropped below minimum %d", got, pressureMinLimitDefault)
 	}
 }
 
@@ -229,6 +231,29 @@ func TestPressureController_AsymmetricSteps(t *testing.T) {
 	// Verify stepDown > stepUp (shed faster than restore).
 	if pc.stepDown <= pc.stepUp {
 		t.Fatalf("expected stepDown (%d) > stepUp (%d)", pc.stepDown, pc.stepUp)
+	}
+}
+
+func TestPressureController_ClampsConfiguredInitialLimit(t *testing.T) {
+	t.Setenv("GNH_PRESSURE_INITIAL_LIMIT", "200")
+	t.Setenv("GNH_PRESSURE_MIN_LIMIT", "30")
+
+	pc := newTestPressureController(88)
+	if got := pc.EffectiveLimit(); got != 88 {
+		t.Fatalf("expected initial limit clamped to 88, got %d", got)
+	}
+}
+
+func TestPressureController_ClampsConfiguredFloorToMax(t *testing.T) {
+	t.Setenv("GNH_PRESSURE_MIN_LIMIT", "60")
+	t.Setenv("GNH_PRESSURE_INITIAL_LIMIT", "60")
+
+	pc := newTestPressureController(20)
+	if got := pc.minLimit; got != 20 {
+		t.Fatalf("expected min limit clamped to 20, got %d", got)
+	}
+	if got := pc.EffectiveLimit(); got != 20 {
+		t.Fatalf("expected initial limit clamped to 20, got %d", got)
 	}
 }
 

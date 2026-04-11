@@ -90,6 +90,7 @@ type MockDbQueue struct {
 	DecrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
 	IncrementRunningTasksByFunc func(ctx context.Context, jobID string, count int) error
 	ExecuteFunc                 func(ctx context.Context, fn func(*sql.Tx) error) error
+	ExecuteControlFunc          func(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteMaintenanceFunc      func(ctx context.Context, fn func(*sql.Tx) error) error
 	UpdateTaskHTMLMetadataFunc  func(ctx context.Context, taskID string, metadata db.TaskHTMLMetadata) error
 }
@@ -140,6 +141,13 @@ func (m *MockDbQueue) Execute(ctx context.Context, fn func(*sql.Tx) error) error
 	return nil
 }
 
+func (m *MockDbQueue) ExecuteControl(ctx context.Context, fn func(*sql.Tx) error) error {
+	if m.ExecuteControlFunc != nil {
+		return m.ExecuteControlFunc(ctx, fn)
+	}
+	return m.Execute(ctx, fn)
+}
+
 func (m *MockDbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	if m.ExecuteFunc != nil {
 		// For simplicity, wrap to call ExecuteFunc
@@ -148,6 +156,15 @@ func (m *MockDbQueue) ExecuteWithContext(ctx context.Context, fn func(context.Co
 		})
 	}
 	return nil
+}
+
+func (m *MockDbQueue) ExecuteControlWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
+	if m.ExecuteControlFunc != nil {
+		return m.ExecuteControlFunc(ctx, func(tx *sql.Tx) error {
+			return fn(ctx, tx)
+		})
+	}
+	return m.ExecuteWithContext(ctx, fn)
 }
 
 func (m *MockDbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error) error {
