@@ -49,6 +49,9 @@ On merge, CI will:
   task-state counts when recovering/removing queued jobs, and lower the base
   per-domain pacing floor to 50ms so healthy domains can refill worker capacity
   more aggressively
+- Sync review app crawler tuning with production logic dials, enable OTEL on
+  preview branches for throughput debugging, and make `GNH_MAX_WORKERS` override
+  the staging fallback when explicitly set
 
 ## Full changelog history
 

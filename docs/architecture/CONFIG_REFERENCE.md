@@ -138,13 +138,13 @@ concurrent task slots**.
 The pool scales dynamically between base and max based on active job
 concurrency. Scale target formula:
 `ceil(totalJobConcurrency / WORKER_CONCURRENCY × 1.1)`, capped at
-`wp.maxWorkers` (derived from `GNH_MAX_WORKERS`, or the staging hard cap when
-`APP_ENV=staging`). Each job's effective concurrency is reduced by the domain
-limiter when adaptive delays are active.
+`wp.maxWorkers` (derived from `GNH_MAX_WORKERS`, or the environment fallback
+when the env var is unset). Each job's effective concurrency is reduced by the
+domain limiter when adaptive delays are active.
 
 | Env var / constant                  | Production value      | Default           | What it controls                                                    |
 | ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
-| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; staging env always uses 10                     |
+| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10             |
 | `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                |
 | `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                   |
 | `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                       |
@@ -152,6 +152,11 @@ limiter when adaptive delays are active.
 
 Example: 100 active jobs at concurrency=20 each → target = ceil(2000/20×1.1) =
 110 workers.
+
+Review apps now set `GNH_MAX_WORKERS=130` explicitly and keep `APP_ENV=staging`,
+so preview branches inherit production-scale worker ceilings for throughput
+debugging while still using smaller DB and queue budgets. Preview OTEL exports
+can be filtered via `deployment.environment=staging`.
 
 ---
 
@@ -166,7 +171,7 @@ but lost inline promotion under load.
 
 | Env var / constant                      | Production value     | Default | What it controls                                                                |
 | --------------------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------- |
-| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **10s** (`fly.toml`) | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool |
+| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **20s** (`fly.toml`) | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool |
 | `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)  | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available      |
 | `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`) | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset       |
 | `pendingRebalanceInterval`              | hardcoded            | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits      |

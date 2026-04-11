@@ -69,7 +69,8 @@ const (
 
 	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
 	maxWorkersProduction = 160
-	// maxWorkersStaging keeps preview/staging environments conservative.
+	// maxWorkersStaging keeps preview/staging environments conservative when
+	// GNH_MAX_WORKERS is unset.
 	maxWorkersStaging = 10
 
 	pendingRebalanceInterval = 5 * time.Minute
@@ -557,12 +558,16 @@ func runningTaskFlushIntervalFromEnv() time.Duration {
 }
 
 func maxWorkersFromEnv() int {
+	fallback := maxWorkersProduction
+	if os.Getenv("APP_ENV") == "staging" {
+		fallback = maxWorkersStaging
+	}
 	if raw := strings.TrimSpace(os.Getenv("GNH_MAX_WORKERS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
 			return parsed
 		}
 	}
-	return maxWorkersProduction
+	return fallback
 }
 
 func quotaPromotionIntervalFromEnv() time.Duration {
@@ -618,11 +623,8 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		panic("database configuration is required")
 	}
 
-	// Determine max workers: env override (GNH_MAX_WORKERS), staging hard cap, then default.
+	// Determine max workers: env override (GNH_MAX_WORKERS), then environment fallback.
 	maxWorkers := maxWorkersFromEnv()
-	if env := os.Getenv("APP_ENV"); env == "staging" {
-		maxWorkers = maxWorkersStaging
-	}
 
 	// Create batch manager before WorkerPool construction (db package reference must happen here)
 	batchMgr := db.NewBatchManager(dbQueue)
