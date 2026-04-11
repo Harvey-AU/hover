@@ -345,36 +345,8 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 // setupJobURLDiscovery handles URL discovery for the job (sitemap or manual)
 func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, options *JobOptions, domainID int, normalisedDomain string) error {
 	if options.UseSitemap {
-		// Fetch and process sitemap in a separate goroutine.
-		// The semaphore is acquired first, before creating the processing timeout,
-		// so that the 30-minute sitemap budget is not consumed by queue wait time.
 		jobID := job.ID
 		go func() {
-			// Block on the semaphore with a generous outer timeout. If we cannot
-			// acquire a slot within 60 minutes the job is marked as failed so it
-			// does not silently stall in the initialising state indefinitely.
-			semCtx, semCancel := context.WithTimeout(context.Background(), 60*time.Minute)
-			defer semCancel()
-			select {
-			case jm.sitemapSem <- struct{}{}:
-				// acquired — proceed
-			case <-semCtx.Done():
-				log.Error().Str("job_id", jobID).Msg("Timed out waiting for sitemap semaphore slot")
-				if updateErr := jm.dbQueue.Execute(context.Background(), func(tx *sql.Tx) error {
-					_, err := tx.ExecContext(context.Background(), `
-						UPDATE jobs
-						SET status = $1, error_message = $2, completed_at = $3
-						WHERE id = $4
-					`, JobStatusFailed, "timed out waiting for sitemap processing slot", time.Now().UTC(), jobID)
-					return err
-				}); updateErr != nil {
-					log.Error().Err(updateErr).Str("job_id", jobID).Msg("Failed to mark timed-out sitemap job as failed")
-				}
-				return
-			}
-			defer func() { <-jm.sitemapSem }()
-
-			// Start the processing timeout only after the slot is in hand.
 			procCtx, procCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer procCancel()
 			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
@@ -1179,7 +1151,16 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			batch := urls[i:end]
 			batchNum := (i / batchSize) + 1
 
-			if err := jm.enqueueSitemapURLs(ctx, jobID, domain, batch); err != nil {
+			select {
+			case jm.sitemapSem <- struct{}{}:
+			case <-ctx.Done():
+				log.Warn().Err(ctx.Err()).Str("job_id", jobID).Int("batch_number", batchNum).Msg("Stopped waiting for sitemap insert slot")
+				return
+			}
+
+			err := jm.enqueueSitemapURLs(ctx, jobID, domain, batch)
+			<-jm.sitemapSem
+			if err != nil {
 				log.Warn().
 					Err(err).
 					Str("job_id", jobID).

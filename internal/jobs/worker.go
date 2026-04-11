@@ -85,6 +85,8 @@ const (
 	taskHTMLReadyRetryDelay  = 250 * time.Millisecond
 	taskHTMLReadyMaxWait     = 5 * time.Second
 	archivePingTimeout       = 10 * time.Second
+	discoveredLinkQueueSize  = 256
+	discoveredLinkWorkers    = 4
 )
 
 type storageUploader interface {
@@ -112,6 +114,12 @@ type taskHTMLPersistRequest struct {
 	ContentType string
 	Body        []byte
 	CapturedAt  time.Time
+}
+
+type discoveredLinkPersistRequest struct {
+	Task      Task
+	Links     map[string][]string
+	SourceURL string
 }
 
 // ErrDomainDelay is returned by processTask when the domain rate-limit window
@@ -201,8 +209,10 @@ type WorkerPool struct {
 	probeInterval time.Duration // from GNH_HEALTH_PROBE_INTERVAL_SECONDS (default 0 = disabled)
 
 	// Background loop intervals
-	promotionInterval   time.Duration // from GNH_QUOTA_PROMOTION_INTERVAL_SECONDS (default 5s, min 2s)
-	taskMonitorInterval time.Duration // from GNH_TASK_MONITOR_INTERVAL_SECONDS (default 10s, min 5s)
+	promotionInterval        time.Duration // from GNH_QUOTA_PROMOTION_INTERVAL_SECONDS (default 5s, min 2s)
+	taskMonitorInterval      time.Duration // from GNH_TASK_MONITOR_INTERVAL_SECONDS (default 10s, min 5s)
+	waitingRecoveryInterval  time.Duration // from GNH_WAITING_RECOVERY_INTERVAL_SECONDS (default 2s, min 1s)
+	linkDiscoveryMinPriority float64       // from GNH_LINK_DISCOVERY_MIN_PRIORITY (default 0.7)
 
 	// Running task release batching
 	runningTaskReleaseCh            chan string
@@ -221,13 +231,15 @@ type WorkerPool struct {
 	runningTasksIncrCh      chan string
 
 	// Technology detection
-	techDetector        *techdetect.Detector
-	techDetectedDomains map[int]bool // Domains already detected in this session
-	techDetectedMutex   sync.RWMutex
-	storageClient       storageUploader // For uploading HTML samples
-	taskHTMLPersistCh   chan *taskHTMLPersistRequest
-	taskHTMLWorkerCount int
-	taskHTMLPending     atomic.Int64
+	techDetector            *techdetect.Detector
+	techDetectedDomains     map[int]bool // Domains already detected in this session
+	techDetectedMutex       sync.RWMutex
+	storageClient           storageUploader // For uploading HTML samples
+	taskHTMLPersistCh       chan *taskHTMLPersistRequest
+	taskHTMLWorkerCount     int
+	taskHTMLPending         atomic.Int64
+	discoveredLinkPersistCh chan *discoveredLinkPersistRequest
+	discoveredLinkPending   atomic.Int64
 
 	// Cold-storage archiver (nil when ARCHIVE_PROVIDER is unset)
 	archiver *archive.Archiver
@@ -525,6 +537,16 @@ func htmlPersistQueueSizeFromEnv() int {
 	return taskHTMLPersistQueueSize
 }
 
+func linkDiscoveryMinPriorityFromEnv() float64 {
+	const fallback = 0.7
+	if raw := strings.TrimSpace(os.Getenv("GNH_LINK_DISCOVERY_MIN_PRIORITY")); raw != "" {
+		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed >= 0 && parsed <= 1 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 func runningTaskFlushIntervalFromEnv() time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -550,6 +572,20 @@ func quotaPromotionIntervalFromEnv() time.Duration {
 		}
 	}
 	return 5 * time.Second
+}
+
+func waitingRecoveryIntervalFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_WAITING_RECOVERY_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("GNH_QUOTA_PROMOTION_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return time.Duration(parsed) * time.Second
+		}
+	}
+	return 2 * time.Second
 }
 
 func taskMonitorIntervalFromEnv() time.Duration {
@@ -612,6 +648,8 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	runningTaskBatchSize := runningTaskBatchSizeFromEnv()
 	runningTaskFlushInterval := runningTaskFlushIntervalFromEnv()
 	runningTaskBuffer := max(numWorkers*workerConcurrency*2, 64)
+	waitingRecoveryInterval := waitingRecoveryIntervalFromEnv()
+	linkDiscoveryMinPriority := linkDiscoveryMinPriorityFromEnv()
 
 	wp := &WorkerPool{
 		db:              sqlDB,
@@ -657,8 +695,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		probeInterval: probeInterval,
 
 		// Background loop intervals
-		promotionInterval:   quotaPromotionIntervalFromEnv(),
-		taskMonitorInterval: taskMonitorIntervalFromEnv(),
+		promotionInterval:        quotaPromotionIntervalFromEnv(),
+		taskMonitorInterval:      taskMonitorIntervalFromEnv(),
+		waitingRecoveryInterval:  waitingRecoveryInterval,
+		linkDiscoveryMinPriority: linkDiscoveryMinPriority,
 
 		// Running task release batching
 		runningTaskReleaseCh:            make(chan string, runningTaskBuffer),
@@ -672,7 +712,8 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		runningTasksIncrCh:      make(chan string, runningTaskBuffer),
 
 		// Technology detection (initialised lazily to avoid startup errors)
-		techDetectedDomains: make(map[int]bool),
+		techDetectedDomains:     make(map[int]bool),
+		discoveredLinkPersistCh: make(chan *discoveredLinkPersistRequest, discoveredLinkQueueSize),
 	}
 
 	// Initialise technology detector (non-fatal if it fails)
@@ -783,10 +824,11 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 
 	wp.StartTaskMonitor(ctx)
 	wp.StartCleanupMonitor(ctx)
-	wp.StartQuotaPromotionMonitor(ctx)
+	wp.StartWaitingTaskRecoveryMonitor(ctx)
 	wp.startRunningTaskReleaseLoop(ctx)
 	wp.startRunningTaskIncrementLoop(ctx)
 	wp.startTaskHTMLPersistenceLoop(ctx)
+	wp.startDiscoveredLinkPersistenceLoop(ctx)
 
 	// Start cold-storage archiver if configured.
 	if wp.archiver != nil {
@@ -1443,6 +1485,9 @@ func (wp *WorkerPool) processTaskResult(result error, workerID int, consecutiveN
 			if errors.Is(result, db.ErrConcurrencyBlocked) {
 				wp.maybeEmergencyScaleDown()
 			}
+		} else if errors.Is(result, db.ErrPoolSaturated) {
+			*consecutiveNoTasks = max(*consecutiveNoTasks, 1)
+			log.Warn().Err(result).Int("worker_id", workerID).Msg("Control-lane DB saturation while claiming work")
 		} else {
 			log.Error().Err(result).Int("worker_id", workerID).Msg("Task processing failed")
 		}
@@ -1671,8 +1716,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			if reservedInMem {
 				wp.decrementRunningTaskInMem(jobID) // rollback reservation
 			}
-			// Pool saturated - treat like no tasks available and back off
-			return nil, sql.ErrNoRows
+			return nil, err
 		}
 		if err != nil {
 			if reservedInMem {
@@ -3015,10 +3059,11 @@ func (wp *WorkerPool) StartCleanupMonitor(ctx context.Context) {
 	log.Info().Msg("Job cleanup monitor started")
 }
 
-// StartQuotaPromotionMonitor checks for waiting tasks that can be promoted when quota becomes available
-func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
+// StartWaitingTaskRecoveryMonitor continuously recovers jobs whose waiting
+// queues have stalled despite free capacity being available.
+func (wp *WorkerPool) StartWaitingTaskRecoveryMonitor(ctx context.Context) {
 	wp.wg.Go(func() {
-		ticker := time.NewTicker(wp.promotionInterval)
+		ticker := time.NewTicker(wp.waitingRecoveryInterval)
 		defer ticker.Stop()
 
 		for {
@@ -3028,59 +3073,58 @@ func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
 			case <-wp.stopCh:
 				return
 			case <-ticker.C:
-				if err := wp.promoteWaitingTasksWithQuota(ctx); err != nil {
-					log.Error().Err(err).Msg("Failed to promote waiting tasks")
+				if err := wp.recoverWaitingTasks(ctx); err != nil {
+					log.Error().Err(err).Msg("Failed to recover waiting tasks")
 				}
 			}
 		}
 	})
-	log.Info().Msg("Quota promotion monitor started")
+	log.Info().Dur("interval", wp.waitingRecoveryInterval).Msg("Waiting task recovery monitor started")
 }
 
-// promoteWaitingTasksWithQuota finds jobs with waiting tasks where quota is now available
-func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
+// StartQuotaPromotionMonitor is retained as a compatibility shim for existing
+// callers; waiting-task recovery now handles both quota-aware and generic
+// promotion paths.
+func (wp *WorkerPool) StartQuotaPromotionMonitor(ctx context.Context) {
+	wp.StartWaitingTaskRecoveryMonitor(ctx)
+}
+
+func (wp *WorkerPool) recoverWaitingTasks(ctx context.Context) error {
 	type jobInfo struct {
 		ID             string
 		Status         string
-		QuotaRemaining int
+		QuotaRemaining sql.NullInt64
 		Concurrency    int
 		RunningTasks   int
 		PendingTasks   int
 	}
 	var jobs []jobInfo
 
-	// Find jobs with waiting tasks where quota is available. Fetch concurrency
-	// and counter values in the same query so batch size can be computed without
-	// extra round-trips per job. EXISTS avoids the fan-out that JOIN produces
-	// (one row per waiting task) before DISTINCT collapses them, which would
-	// cause the LATERAL quota call to execute once per waiting task row.
-	err := wp.dbQueue.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
+	err := wp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT
 				j.id,
 				j.status,
-				q.quota_remaining,
+				CASE
+					WHEN j.organisation_id IS NOT NULL THEN get_daily_quota_remaining(j.organisation_id)
+					ELSE NULL
+				END AS quota_remaining,
 				COALESCE(j.concurrency, 0) AS concurrency,
 				j.running_tasks,
 				j.pending_tasks
 			FROM jobs j
-			CROSS JOIN LATERAL (
-				SELECT get_daily_quota_remaining(j.organisation_id) AS quota_remaining
-			) q
-			WHERE EXISTS (SELECT 1 FROM tasks t WHERE t.job_id = j.id AND t.status = 'waiting')
+			WHERE j.waiting_tasks > 0
 			  AND j.status IN ('running', 'pending')
-			  AND j.organisation_id IS NOT NULL
-			  AND q.quota_remaining > 0
 		`)
 		if err != nil {
-			return fmt.Errorf("failed to find jobs with promotable tasks: %w", err)
+			return fmt.Errorf("failed to find jobs with waiting work: %w", err)
 		}
 		defer rows.Close()
 
 		for rows.Next() {
 			var j jobInfo
 			if err := rows.Scan(&j.ID, &j.Status, &j.QuotaRemaining, &j.Concurrency, &j.RunningTasks, &j.PendingTasks); err != nil {
-				return fmt.Errorf("failed to scan job: %w", err)
+				return fmt.Errorf("failed to scan waiting job: %w", err)
 			}
 			jobs = append(jobs, j)
 		}
@@ -3093,9 +3137,25 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 
 	totalPromoted := 0
 	for _, job := range jobs {
-		// If job is pending, transition it to running and add to worker pool
+		slots := int(^uint(0) >> 1)
+		if job.QuotaRemaining.Valid {
+			slots = int(job.QuotaRemaining.Int64)
+		}
+		if job.Concurrency > 0 {
+			if available := job.Concurrency - job.RunningTasks - job.PendingTasks; available < slots {
+				slots = available
+			}
+		} else {
+			if capAvail := pendingUnlimitedCap - (job.PendingTasks + job.RunningTasks); capAvail < slots {
+				slots = capAvail
+			}
+		}
+		if slots <= 0 {
+			continue
+		}
+
 		if job.Status == "pending" {
-			err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+			err := wp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `
 					UPDATE jobs SET
 						status = $1,
@@ -3105,56 +3165,29 @@ func (wp *WorkerPool) promoteWaitingTasksWithQuota(ctx context.Context) error {
 				return err
 			})
 			if err != nil {
-				log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to transition job to running")
+				log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to transition pending waiting job to running")
 				continue
 			}
 			wp.AddJob(job.ID, nil)
-			log.Info().Str("job_id", job.ID).Msg("Transitioned pending job to running after quota became available")
-		}
-
-		// Compute batch size: min(quota remaining, available concurrency slots).
-		// running_tasks from the DB is an upper-bound estimate (the Go-side counter
-		// is flushed asynchronously); promote_waiting_tasks_for_job uses SKIP LOCKED
-		// so over-estimation cannot cause double-claiming.
-		slots := job.QuotaRemaining
-		if job.Concurrency > 0 {
-			if available := job.Concurrency - job.RunningTasks - job.PendingTasks; available < slots {
-				slots = available
-			}
-		} else {
-			// No explicit concurrency limit: apply pendingUnlimitedCap to avoid
-			// bulk-promoting more tasks than workers can drain, mirroring the cap
-			// used by availablePendingSlots and the pending queue rebalancer.
-			if capAvail := pendingUnlimitedCap - (job.PendingTasks + job.RunningTasks); capAvail < slots {
-				slots = capAvail
-			}
-		}
-		if slots <= 0 {
-			continue
 		}
 
 		var promoted int
-		err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-			return tx.QueryRowContext(ctx,
-				`SELECT promote_waiting_tasks_for_job($1, $2)`, job.ID, slots,
-			).Scan(&promoted)
+		err := wp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, `SELECT promote_waiting_tasks_for_job($1, $2)`, job.ID, slots).Scan(&promoted)
 		})
 		if err != nil {
-			log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to promote waiting tasks for job")
+			log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to recover waiting tasks for job")
 			continue
 		}
 		if promoted > 0 {
-			log.Debug().
-				Str("job_id", job.ID).
-				Int("promoted", promoted).
-				Int("slots", slots).
-				Msg("Promoted waiting tasks for job")
 			totalPromoted += promoted
+			log.Debug().Str("job_id", job.ID).Int("promoted", promoted).Int("slots", slots).Msg("Recovered waiting tasks for job")
 		}
 	}
 
 	if totalPromoted > 0 {
-		log.Info().Int("total_promoted", totalPromoted).Int("jobs", len(jobs)).Msg("Promoted waiting tasks after quota became available")
+		log.Info().Int("total_promoted", totalPromoted).Int("jobs", len(jobs)).Msg("Recovered waiting tasks")
+		wp.NotifyNewTasks()
 	}
 
 	return nil
@@ -3771,6 +3804,88 @@ func constructTaskURL(path, host, domainName string) string {
 	}
 }
 
+func cloneDiscoveredLinks(links map[string][]string) map[string][]string {
+	if len(links) == 0 {
+		return nil
+	}
+	cloned := make(map[string][]string, len(links))
+	for category, values := range links {
+		cloned[category] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.CrawlResult) {
+	if wp.discoveredLinkPersistCh == nil || task == nil || result == nil || len(result.Links) == 0 {
+		return
+	}
+
+	wp.jobInfoMutex.RLock()
+	jobInfo, exists := wp.jobInfoCache[task.JobID]
+	wp.jobInfoMutex.RUnlock()
+	if !exists {
+		log.Debug().Str("job_id", task.JobID).Str("task_id", task.ID).Msg("Skipping async link expansion: job info not cached")
+		return
+	}
+	if !jobInfo.FindLinks {
+		return
+	}
+
+	request := &discoveredLinkPersistRequest{
+		Task: Task{
+			ID:                       task.ID,
+			JobID:                    task.JobID,
+			PageID:                   task.PageID,
+			Host:                     task.Host,
+			Path:                     task.Path,
+			PriorityScore:            task.PriorityScore,
+			DomainID:                 jobInfo.DomainID,
+			DomainName:               jobInfo.DomainName,
+			FindLinks:                jobInfo.FindLinks,
+			AllowCrossSubdomainLinks: jobInfo.AllowCrossSubdomainLinks,
+		},
+		Links:     cloneDiscoveredLinks(result.Links),
+		SourceURL: constructTaskURL(task.Path, task.Host, jobInfo.DomainName),
+	}
+
+	wp.discoveredLinkPending.Add(1)
+	select {
+	case wp.discoveredLinkPersistCh <- request:
+	default:
+		wp.discoveredLinkPending.Add(-1)
+		log.Warn().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Int("queue_cap", cap(wp.discoveredLinkPersistCh)).
+			Msg("Discovered link queue full, skipping async expansion")
+	}
+}
+
+func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
+	if wp.discoveredLinkPersistCh == nil {
+		return
+	}
+
+	log.Info().Int("workers", discoveredLinkWorkers).Int("queue_cap", cap(wp.discoveredLinkPersistCh)).Msg("Starting discovered link workers")
+	for range discoveredLinkWorkers {
+		wp.wg.Go(func() {
+			for {
+				select {
+				case request := <-wp.discoveredLinkPersistCh:
+					if request != nil {
+						wp.processDiscoveredLinks(context.Background(), &request.Task, request.Links, request.SourceURL)
+						wp.discoveredLinkPending.Add(-1)
+					}
+				case <-wp.stopCh:
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
+		})
+	}
+}
+
 // applyCrawlDelay applies robots.txt crawl delay if specified for the task's domain
 func applyCrawlDelay(task *Task) {
 	if task.CrawlDelay > 0 {
@@ -3783,11 +3898,11 @@ func applyCrawlDelay(task *Task) {
 	}
 }
 
-// processDiscoveredLinks handles link processing and enqueueing for discovered URLs
-func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, result *crawler.CrawlResult, sourceURL string) {
+// processDiscoveredLinks handles link processing and enqueueing for discovered URLs.
+func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, links map[string][]string, sourceURL string) {
 	log.Debug().
 		Str("task_id", task.ID).
-		Int("total_links_found", len(result.Links["header"])+len(result.Links["footer"])+len(result.Links["body"])).
+		Int("total_links_found", len(links["header"])+len(links["footer"])+len(links["body"])).
 		Bool("find_links_enabled", task.FindLinks).
 		Msg("Starting link processing and priority assignment")
 
@@ -3813,6 +3928,14 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 
 	processLinkCategory := func(links []string, priority float64) {
 		if len(links) == 0 {
+			return
+		}
+		if priority < wp.linkDiscoveryMinPriority {
+			log.Debug().
+				Str("task_id", task.ID).
+				Float64("priority", priority).
+				Float64("min_priority", wp.linkDiscoveryMinPriority).
+				Msg("Skipping discovered link persistence below priority threshold")
 			return
 		}
 
@@ -3941,13 +4064,13 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, re
 	// Apply priorities based on page type and link category
 	if isHomepage {
 		log.Debug().Str("task_id", task.ID).Msg("Processing links from HOMEPAGE")
-		processLinkCategory(result.Links["header"], 1.000)
-		processLinkCategory(result.Links["footer"], 0.990)
-		processLinkCategory(result.Links["body"], task.PriorityScore*0.9) // Children of homepage
+		processLinkCategory(links["header"], 1.000)
+		processLinkCategory(links["footer"], 0.990)
+		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of homepage
 	} else {
 		log.Debug().Str("task_id", task.ID).Msg("Processing links from regular page")
 		// For all other pages, only process body links
-		processLinkCategory(result.Links["body"], task.PriorityScore*0.9) // Children of other pages
+		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of other pages
 	}
 }
 
@@ -4454,6 +4577,9 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
+	if len(result.Links) > 0 {
+		wp.enqueueDiscoveredLinks(task, result)
+	}
 
 	wp.persistTaskHTML(ctx, task, result, now)
 
@@ -4655,11 +4781,6 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 		Int("links_found", len(result.Links)).
 		Str("content_type", result.ContentType).
 		Msg("Crawler completed")
-
-	// Process discovered links if find_links is enabled
-	if task.FindLinks && len(result.Links) > 0 {
-		wp.processDiscoveredLinks(ctx, task, result, urlStr)
-	}
 
 	return result, nil
 }
