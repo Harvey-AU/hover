@@ -42,7 +42,7 @@ const (
 // Shedding is faster than restoring by design: react quickly to protect
 // Supabase, but open capacity back up cautiously.
 //
-// The controller starts at pressureInitialLimit (55) rather than maxLimit so
+// The controller starts at pressureInitialLimit (30) rather than maxLimit so
 // that a restart under load doesn't immediately saturate the DB before the
 // EMA has warmed up.
 type PressureController struct {
