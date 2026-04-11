@@ -52,6 +52,10 @@ On merge, CI will:
 - Sync review app crawler tuning with production logic dials, enable OTEL on
   preview branches for throughput debugging, and make `GNH_MAX_WORKERS` override
   the staging fallback when explicitly set
+- Scale preview pressure shedding to the smaller review-app queue budget, clear
+  stale in-memory worker jobs after DB resets so fresh jobs can be claimed
+  again, and sync `OTEL_EXPORTER_OTLP_HEADERS` into review-app CI so preview
+  telemetry authenticates correctly
 
 ## Full changelog history
 
