@@ -1260,7 +1260,12 @@ func hoistHomepageToFront(urls []string, domain string) []string {
 func sitemapBatchSize() int {
 	const defaultSize = 100
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_SIZE")); val != "" {
-		if n, err := strconv.Atoi(val); err == nil && n > 0 {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_SIZE — using default")
+		} else if n <= 0 {
+			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Msg("GNH_SITEMAP_BATCH_SIZE must be positive — using default")
+		} else {
 			return n
 		}
 	}
@@ -1272,7 +1277,12 @@ func sitemapBatchSize() int {
 func sitemapBatchDelay() time.Duration {
 	const defaultDelay = 200 * time.Millisecond
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_DELAY_MS")); val != "" {
-		if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_DELAY_MS — using default")
+		} else if n < 0 {
+			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Msg("GNH_SITEMAP_BATCH_DELAY_MS must be non-negative — using default")
+		} else {
 			return time.Duration(n) * time.Millisecond
 		}
 	}
