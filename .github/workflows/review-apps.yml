@@ -199,19 +199,18 @@ jobs:
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
 
-          # Exact-match by name using JSON output
-          EXISTS=$(flyctl redis list --json | jq -e --arg name "$REDIS_NAME" 'map(select(.name == $name)) | length > 0' 2>/dev/null || echo "false")
-
-          if [ "$EXISTS" != "true" ]; then
+          # Check if Redis instance already exists (exact word match on name column).
+          if flyctl redis list | grep -wq "$REDIS_NAME"; then
+            echo "Upstash Redis already exists: $REDIS_NAME"
+          else
             echo "Creating Upstash Redis: $REDIS_NAME"
-            flyctl redis create \
+            # Pipe yes to auto-accept the ProdPack prompt with "N".
+            echo "N" | flyctl redis create \
               --name "$REDIS_NAME" \
               --region syd \
               --no-replicas \
               --disable-eviction \
-              --org personal
-          else
-            echo "Upstash Redis already exists: $REDIS_NAME"
+              --org personal || true
           fi
 
           # Poll for private URL (may take a moment after creation)
