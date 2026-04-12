@@ -67,6 +67,10 @@ const (
 	// recently concurrency-blocked for the purposes of suppressing scale ups.
 	concurrencyBlockCooldown = 30 * time.Second
 
+	// concurrencyBlockDebugThrottle limits per-job concurrency block diagnostics
+	// so we can sample truth without flooding production logs.
+	concurrencyBlockDebugThrottle = 5 * time.Second
+
 	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
 	maxWorkersProduction = 160
 	// maxWorkersStaging keeps preview/staging environments conservative when
@@ -231,6 +235,10 @@ type WorkerPool struct {
 	runningTasksIncrMu      sync.Mutex
 	runningTasksIncrCh      chan string
 
+	// Throttled per-job diagnostics for concurrency gate investigations.
+	concurrencyBlockDebugMu   sync.Mutex
+	concurrencyBlockDebugLast map[string]time.Time
+
 	// Technology detection
 	techDetector            *techdetect.Detector
 	techDetectedDomains     map[int]bool // Domains already detected in this session
@@ -258,6 +266,68 @@ func (wp *WorkerPool) activeJobCount() int {
 	wp.jobsMutex.RLock()
 	defer wp.jobsMutex.RUnlock()
 	return len(wp.jobs)
+}
+
+type concurrencyBlockState struct {
+	DBRunningTasks     int
+	ActualRunningTasks int
+	PendingTasks       int
+}
+
+func (wp *WorkerPool) shouldLogConcurrencyBlock(jobID string, now time.Time) bool {
+	wp.concurrencyBlockDebugMu.Lock()
+	defer wp.concurrencyBlockDebugMu.Unlock()
+
+	lastLogged, exists := wp.concurrencyBlockDebugLast[jobID]
+	if exists && now.Sub(lastLogged) < concurrencyBlockDebugThrottle {
+		return false
+	}
+
+	wp.concurrencyBlockDebugLast[jobID] = now
+	return true
+}
+
+func (wp *WorkerPool) sampleConcurrencyBlockState(ctx context.Context, jobID string) (concurrencyBlockState, error) {
+	var state concurrencyBlockState
+
+	err := wp.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(j.running_tasks, 0) AS db_running_tasks,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM tasks t
+				WHERE t.job_id = j.id
+				  AND t.status = $2
+			), 0) AS actual_running_tasks,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM tasks t
+				WHERE t.job_id = j.id
+				  AND t.status = $3
+			), 0) AS pending_tasks
+		FROM jobs j
+		WHERE j.id = $1
+	`, jobID, TaskStatusRunning, TaskStatusPending).Scan(
+		&state.DBRunningTasks,
+		&state.ActualRunningTasks,
+		&state.PendingTasks,
+	)
+	if err != nil {
+		return concurrencyBlockState{}, err
+	}
+
+	return state, nil
+}
+
+func (wp *WorkerPool) runningTasksInMemValue(jobID string) int64 {
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if !exists {
+		return 0
+	}
+
+	return counter.Load()
 }
 
 // IdleWorkerCount returns the number of workers currently idle.
@@ -709,9 +779,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		runningTaskReleasePending:       make(map[string]int),
 
 		// In-memory running_tasks tracking
-		runningTasksInMem:       make(map[string]*atomic.Int64),
-		runningTasksIncrPending: make(map[string]int),
-		runningTasksIncrCh:      make(chan string, runningTaskBuffer),
+		runningTasksInMem:         make(map[string]*atomic.Int64),
+		runningTasksIncrPending:   make(map[string]int),
+		runningTasksIncrCh:        make(chan string, runningTaskBuffer),
+		concurrencyBlockDebugLast: make(map[string]time.Time),
 
 		// Technology detection (initialised lazily to avoid startup errors)
 		techDetectedDomains:     make(map[int]bool),
@@ -1700,6 +1771,28 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 					sawConcurrencyBlocked = true
 					concurrencyBlockedJobs++
 					wp.recordConcurrencyBlock(jobID)
+					if wp.shouldLogConcurrencyBlock(jobID, time.Now()) {
+						state, sampleErr := wp.sampleConcurrencyBlockState(ctx, jobID)
+						if sampleErr != nil {
+							log.Debug().
+								Err(sampleErr).
+								Str("job_id", jobID).
+								Int64("running_tasks_in_mem", prev).
+								Int("configured_concurrency", jobInfo.Concurrency).
+								Int("active_jobs", len(activeJobs)).
+								Msg("Concurrency gate blocked job before task claim (state sample failed)")
+						} else {
+							log.Debug().
+								Str("job_id", jobID).
+								Int64("running_tasks_in_mem", prev).
+								Int("configured_concurrency", jobInfo.Concurrency).
+								Int("db_running_tasks", state.DBRunningTasks).
+								Int("actual_running_tasks", state.ActualRunningTasks).
+								Int("pending_tasks", state.PendingTasks).
+								Int("active_jobs", len(activeJobs)).
+								Msg("Concurrency gate blocked job before task claim")
+						}
+					}
 					continue
 				}
 				reservedInMem = true
@@ -1864,10 +1957,21 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("Failed to prepare task")
 			return err
 		}
+		log.Debug().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Str("domain", jobsTask.DomainName).
+			Int("job_concurrency", jobsTask.JobConcurrency).
+			Msg("Prepared claimed task for processing")
 
 		// Process the task
 		taskCtx, cancel := context.WithTimeout(ctx, taskProcessingTimeout)
 		defer cancel()
+		log.Debug().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Str("url", constructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName)).
+			Msg("Starting claimed task processing")
 
 		result, err := wp.processTask(taskCtx, jobsTask)
 		if errors.Is(err, ErrDomainDelay) {
@@ -1881,6 +1985,11 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 					Msg("Failed to decrement running_tasks counter on domain delay requeue")
 			}
+			log.Debug().
+				Str("task_id", task.ID).
+				Str("job_id", task.JobID).
+				Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+				Msg("Released task slot after domain delay requeue")
 			wp.batchManager.QueueTaskUpdate(task)
 			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
 			log.Debug().
@@ -4261,6 +4370,12 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			Msg("Failed to decrement running_tasks counter")
 		// Don't return error here; failed decrements are buffered/retried and reconciliation fixes any drift
 	}
+	log.Debug().
+		Str("task_id", task.ID).
+		Str("job_id", task.JobID).
+		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+		Str("final_status", task.Status).
+		Msg("Released task slot after task error")
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
@@ -4676,6 +4791,12 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			Msg("Failed to decrement running_tasks counter")
 		// Don't return error here; failed decrements are buffered/retried and reconciliation keeps counters accurate
 	}
+	log.Debug().
+		Str("task_id", task.ID).
+		Str("job_id", task.JobID).
+		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+		Str("final_status", task.Status).
+		Msg("Released task slot after task success")
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
