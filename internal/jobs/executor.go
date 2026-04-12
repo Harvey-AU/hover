@@ -188,6 +188,7 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 	// Guard against nil result — crawler should always return a result
 	// on success, but defensive check prevents downstream panics.
 	if result == nil {
+		status = "error"
 		nilErr := fmt.Errorf("crawler returned nil result for %s", urlStr)
 		span.RecordError(nilErr)
 		span.SetStatus(codes.Error, nilErr.Error())

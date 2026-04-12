@@ -62,6 +62,7 @@ type TaskScheduleEntry struct {
 	Path       string
 	Status     string // "pending", "waiting", "skipped"
 	Priority   float64
+	RetryCount int
 	SourceType string
 	SourceURL  string
 }
@@ -599,7 +600,7 @@ func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, p
 	var entries []TaskScheduleEntry
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT id, page_id, host, path, status, priority_score, source_type, source_url
+			SELECT id, page_id, host, path, status, priority_score, retry_count, source_type, source_url
 			FROM tasks
 			WHERE job_id = $1 AND page_id = ANY($2) AND status IN ('pending', 'waiting')
 		`, jobID, pq.Array(pageIDs))
@@ -609,7 +610,7 @@ func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, p
 		defer rows.Close()
 		for rows.Next() {
 			var e TaskScheduleEntry
-			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.SourceType, &e.SourceURL); err != nil {
+			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.RetryCount, &e.SourceType, &e.SourceURL); err != nil {
 				return err
 			}
 			entries = append(entries, e)

@@ -221,26 +221,10 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 }
 
 func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.StreamMessage, outcome *TaskOutcome) {
-	// Always ACK the stream message first (remove from PEL).
-	if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
-		swp.logger.Error().Err(err).Str("message_id", msg.MessageID).Msg("failed to ACK")
-	}
-
-	// Decrement running counter.
-	if _, err := swp.counters.Decrement(ctx, msg.JobID); err != nil {
-		swp.logger.Warn().Err(err).Str("job_id", msg.JobID).Msg("counter decrement failed")
-	}
-
-	// Release domain pacer.
 	domain := msg.Host
-	if err := swp.pacer.Release(ctx, domain, msg.JobID, outcome.Success, outcome.RateLimited); err != nil {
-		swp.logger.Warn().Err(err).Str("domain", domain).Msg("pacer release failed")
-	}
 
-	// Queue task update for batch persistence.
-	swp.batchManager.QueueTaskUpdate(outcome.Task)
-
-	// Handle retry if needed.
+	// For retryable tasks, schedule the retry BEFORE ACKing so that if
+	// scheduling fails the message stays in the PEL for redelivery.
 	if outcome.Retry != nil && outcome.Retry.ShouldRetry {
 		entry := broker.ScheduleEntry{
 			TaskID:     outcome.Task.ID,
@@ -255,9 +239,30 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 			RunAt:      outcome.Retry.NextRunAt,
 		}
 		if err := swp.scheduler.Schedule(ctx, entry); err != nil {
-			swp.logger.Error().Err(err).Str("task_id", outcome.Task.ID).Msg("failed to reschedule retry")
+			swp.logger.Error().Err(err).
+				Str("task_id", outcome.Task.ID).
+				Msg("retry schedule failed, leaving in PEL for redelivery")
+			return
 		}
 	}
+
+	// ACK the stream message (remove from PEL).
+	if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
+		swp.logger.Error().Err(err).Str("message_id", msg.MessageID).Msg("failed to ACK")
+	}
+
+	// Decrement running counter.
+	if _, err := swp.counters.Decrement(ctx, msg.JobID); err != nil {
+		swp.logger.Warn().Err(err).Str("job_id", msg.JobID).Msg("counter decrement failed")
+	}
+
+	// Release domain pacer.
+	if err := swp.pacer.Release(ctx, domain, msg.JobID, outcome.Success, outcome.RateLimited); err != nil {
+		swp.logger.Warn().Err(err).Str("domain", domain).Msg("pacer release failed")
+	}
+
+	// Queue task update for batch persistence.
+	swp.batchManager.QueueTaskUpdate(outcome.Task)
 
 	// Handle discovered links — enqueue to Postgres then schedule.
 	if len(outcome.DiscoveredLinks) > 0 {

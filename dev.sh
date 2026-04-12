@@ -117,28 +117,19 @@ EOF
 )
     echo "✅ .env.local created"
 else
-    echo "ℹ️  .env.local already exists — checking for missing Redis vars"
-    # Append Redis vars if missing from an older .env.local
-    if ! grep -q '^REDIS_URL=' .env.local 2>/dev/null; then
-        (umask 077; cat >> .env.local <<'REDIS_EOF'
-
-# Redis broker (local Docker container started by dev.sh)
-REDIS_URL=redis://localhost:6379
-REDIS_TLS_ENABLED=false
-REDIS_EOF
-)
-        echo "  ✅ Appended REDIS_URL to .env.local"
-    fi
-    if ! grep -q '^GNH_PRESSURE_HIGH_MARK_MS=' .env.local 2>/dev/null; then
-        (umask 077; cat >> .env.local <<'PRESSURE_EOF'
-
-# Pressure controller — match production thresholds
-GNH_PRESSURE_HIGH_MARK_MS=80
-GNH_PRESSURE_LOW_MARK_MS=40
-PRESSURE_EOF
-)
-        echo "  ✅ Appended pressure thresholds to .env.local"
-    fi
+    echo "ℹ️  .env.local already exists — checking for missing vars"
+    # Append each var independently so partial .env.local files get patched.
+    for VAR_LINE in \
+        "REDIS_URL=redis://localhost:6379" \
+        "REDIS_TLS_ENABLED=false" \
+        "GNH_PRESSURE_HIGH_MARK_MS=80" \
+        "GNH_PRESSURE_LOW_MARK_MS=40"; do
+        VAR_NAME="${VAR_LINE%%=*}"
+        if ! grep -q "^${VAR_NAME}=" .env.local 2>/dev/null; then
+            (umask 077; echo "$VAR_LINE" >> .env.local)
+            echo "  ✅ Appended ${VAR_NAME} to .env.local"
+        fi
+    done
 fi
 
 # Start Air with hot reloading and migration watching

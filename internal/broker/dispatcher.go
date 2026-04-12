@@ -199,7 +199,9 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 	groupName := ConsumerGroup(entry.JobID)
 
 	// Ensure consumer group exists (idempotent).
-	d.ensureConsumerGroup(ctx, streamKey, groupName)
+	if err := d.ensureConsumerGroup(ctx, streamKey, groupName); err != nil {
+		return fmt.Errorf("broker: ensure consumer group %s: %w", groupName, err)
+	}
 
 	pipe := d.client.rdb.TxPipeline()
 	pipe.XAdd(ctx, &redis.XAddArgs{
@@ -223,12 +225,13 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 }
 
 // ensureConsumerGroup creates the consumer group if it doesn't exist.
-// Errors are logged but not propagated — the group may already exist.
-func (d *Dispatcher) ensureConsumerGroup(ctx context.Context, streamKey, groupName string) {
+// Returns nil if the group already exists or was created successfully.
+func (d *Dispatcher) ensureConsumerGroup(ctx context.Context, streamKey, groupName string) error {
 	err := d.client.rdb.XGroupCreateMkStream(ctx, streamKey, groupName, "0").Err()
 	if err != nil && !isGroupExistsErr(err) {
-		d.logger.Warn().Err(err).Str("stream", streamKey).Msg("failed to create consumer group")
+		return err
 	}
+	return nil
 }
 
 func isGroupExistsErr(err error) bool {

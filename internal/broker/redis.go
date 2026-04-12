@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -26,12 +27,18 @@ type Config struct {
 }
 
 // ConfigFromEnv builds a Config from the process environment.
+// TLS is inferred from the URL scheme (rediss:// = TLS) unless
+// REDIS_TLS_ENABLED is explicitly set.
 func ConfigFromEnv() Config {
 	poolSize := envInt("REDIS_POOL_SIZE", 200)
-	tlsEnabled := envBool("REDIS_TLS_ENABLED", true)
+	url := os.Getenv("REDIS_URL")
+
+	// Default TLS from scheme: rediss:// → true, redis:// → false.
+	tlsDefault := strings.HasPrefix(url, "rediss://")
+	tlsEnabled := envBool("REDIS_TLS_ENABLED", tlsDefault)
 
 	return Config{
-		URL:          os.Getenv("REDIS_URL"),
+		URL:          url,
 		PoolSize:     poolSize,
 		TLSEnabled:   tlsEnabled,
 		ReadTimeout:  3 * time.Second,

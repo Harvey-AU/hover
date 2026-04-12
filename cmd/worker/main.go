@@ -124,6 +124,9 @@ func main() {
 	}
 
 	numWorkers := envInt("WORKER_COUNT", 30)
+	if numWorkers < 1 {
+		log.Fatal().Int("value", numWorkers).Msg("WORKER_COUNT must be >= 1")
+	}
 	consumerOpts := broker.DefaultConsumerOpts(fmt.Sprintf("worker-%s", machineName))
 	consumer := broker.NewConsumer(redisClient, consumerOpts, log.Logger)
 
@@ -167,7 +170,11 @@ func main() {
 	)
 
 	// --- running counter DB sync ---
-	syncInterval := time.Duration(envInt("REDIS_COUNTER_SYNC_INTERVAL_S", 5)) * time.Second
+	counterSyncSec := envInt("REDIS_COUNTER_SYNC_INTERVAL_S", 5)
+	if counterSyncSec < 1 {
+		counterSyncSec = 5
+	}
+	syncInterval := time.Duration(counterSyncSec) * time.Second
 	syncFn := broker.DefaultDBSyncFunc(pgDB.GetDB())
 
 	// --- start everything ---

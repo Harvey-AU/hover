@@ -12,11 +12,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the API application
-RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/app/main.go
-
-# Build the worker binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o worker ./cmd/worker/main.go
+# Build both binaries in a single layer
+RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/app/main.go && \
+    CGO_ENABLED=0 GOOS=linux go build -o worker ./cmd/worker/main.go
 
 # Final stage
 FROM alpine:3.19

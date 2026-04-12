@@ -110,8 +110,11 @@ func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult
 
 	// Gate exists — get remaining TTL.
 	ttl, err := p.client.rdb.PTTL(ctx, gateKey).Result()
-	if err != nil || ttl <= 0 {
-		// Key expired between SET NX and PTTL — treat as a short retry.
+	if err != nil {
+		return PaceResult{}, fmt.Errorf("broker: gate PTTL %s: %w", domain, err)
+	}
+	if ttl <= 0 {
+		// Key expired between SET NX and PTTL — short retry.
 		return PaceResult{Acquired: false, RetryAfter: time.Duration(delayMS) * time.Millisecond}, nil
 	}
 
