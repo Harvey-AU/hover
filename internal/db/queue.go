@@ -1254,6 +1254,24 @@ func calculateAvailableSlots(
 	return slots, quotaLimited
 }
 
+type enqueueTaskDisposition string
+
+const (
+	enqueueTaskPending enqueueTaskDisposition = "pending"
+	enqueueTaskWaiting enqueueTaskDisposition = "waiting"
+	enqueueTaskDrop    enqueueTaskDisposition = "drop"
+)
+
+func classifyEnqueuedTask(maxPages, currentTaskCount, pendingCount, waitingCount, availableSlots int) enqueueTaskDisposition {
+	if maxPages != 0 && currentTaskCount+pendingCount+waitingCount >= maxPages {
+		return enqueueTaskDrop
+	}
+	if pendingCount < availableSlots {
+		return enqueueTaskPending
+	}
+	return enqueueTaskWaiting
+}
+
 // EnqueueURLs adds multiple URLs as tasks for a job
 func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, sourceType string, sourceURL string) error {
 	if len(pages) == 0 {
@@ -1307,19 +1325,20 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			availableSlots = len(uniquePages)
 		}
 
-		// Count how many tasks will be pending/waiting vs skipped
+		// Count how many tasks will be pending/waiting vs dropped.
+		// Overflow pages above max_pages are not materialised as skipped tasks:
+		// they were never startable and would otherwise pollute task counts and dashboards.
 		pendingCount := 0
 		waitingCount := 0
-		skippedCount := 0
+		droppedCount := 0
 		for range uniquePages {
-			if cfg.maxPages == 0 || cfg.currentTaskCount+pendingCount+waitingCount < cfg.maxPages {
-				if pendingCount < availableSlots {
-					pendingCount++
-				} else {
-					waitingCount++
-				}
-			} else {
-				skippedCount++
+			switch classifyEnqueuedTask(cfg.maxPages, cfg.currentTaskCount, pendingCount, waitingCount, availableSlots) {
+			case enqueueTaskPending:
+				pendingCount++
+			case enqueueTaskWaiting:
+				waitingCount++
+			case enqueueTaskDrop:
+				droppedCount++
 			}
 		}
 
@@ -1412,17 +1431,22 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 				continue
 			}
 
-			var status string
-			if cfg.maxPages == 0 || cfg.currentTaskCount+processedPending+processedWaiting < cfg.maxPages {
-				if processedPending < availableSlots {
-					status = "pending"
-					processedPending++
-				} else {
-					status = "waiting"
-					processedWaiting++
-				}
+			disposition := classifyEnqueuedTask(
+				cfg.maxPages,
+				cfg.currentTaskCount,
+				processedPending,
+				processedWaiting,
+				availableSlots,
+			)
+			if disposition == enqueueTaskDrop {
+				continue
+			}
+
+			status := string(disposition)
+			if disposition == enqueueTaskPending {
+				processedPending++
 			} else {
-				status = "skipped"
+				processedWaiting++
 			}
 
 			taskIDs = append(taskIDs, uuid.New().String())
@@ -1493,6 +1517,15 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			} else {
 				logEvent.Msg("Created tasks in waiting status due to job concurrency limit")
 			}
+		}
+
+		if droppedCount > 0 {
+			log.Debug().
+				Str("job_id", jobID).
+				Int("dropped_tasks", droppedCount).
+				Int("current_task_count", cfg.currentTaskCount).
+				Int("max_pages", cfg.maxPages).
+				Msg("Dropped overflow tasks at max_pages limit")
 		}
 
 		return nil
