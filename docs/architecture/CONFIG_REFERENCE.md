@@ -142,13 +142,14 @@ concurrency. Scale target formula:
 when the env var is unset). Each job's effective concurrency is reduced by the
 domain limiter when adaptive delays are active.
 
-| Env var / constant                  | Production value      | Default           | What it controls                                                    |
-| ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
-| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10             |
-| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                |
-| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                   |
-| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                       |
-| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed |
+| Env var / constant                  | Production value      | Default           | What it controls                                                     |
+| ----------------------------------- | --------------------- | ----------------- | -------------------------------------------------------------------- |
+| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10              |
+| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                 |
+| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                    |
+| `GNH_DISABLE_RUNTIME_SCALE_DOWN`    | **true** (`fly.toml`) | false             | Trial safety switch that prevents runtime worker scale-down entirely |
+| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                        |
+| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed  |
 
 Example: 100 active jobs at concurrency=20 each → target = ceil(2000/20×1.1) =
 110 workers.

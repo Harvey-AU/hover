@@ -32,6 +32,13 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.5] – 2026-04-12
+
+### Fixed
+
+- Add a production safety switch to freeze runtime worker scale-down so worker
+  slots are not recycled mid-run while we stabilise the scaling lifecycle panic
+
 ## [0.32.4] – 2026-04-12
 
 ### Fixed

@@ -211,12 +211,13 @@ type WorkerPool struct {
 	priorityUpdateTracker map[string]*priorityUpdateState
 
 	// Idle worker scaling
-	idleWorkers      map[int]time.Time // workerID -> when they went idle
-	idleWorkersMutex sync.RWMutex
-	lastScaleDown    time.Time
-	lastScaleEval    time.Time
-	idleThreshold    int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
-	scaleCooldown    time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
+	idleWorkers             map[int]time.Time // workerID -> when they went idle
+	idleWorkersMutex        sync.RWMutex
+	lastScaleDown           time.Time
+	lastScaleEval           time.Time
+	idleThreshold           int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
+	scaleCooldown           time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
+	disableRuntimeScaleDown bool          // from GNH_DISABLE_RUNTIME_SCALE_DOWN (default false)
 
 	// Health probe
 	probeInterval time.Duration // from GNH_HEALTH_PROBE_INTERVAL_SECONDS (default 0 = disabled)
@@ -586,6 +587,15 @@ func scaleCooldownFromEnv() time.Duration {
 	return 15 * time.Second // Default 15s
 }
 
+func disableRuntimeScaleDownFromEnv() bool {
+	if raw := strings.TrimSpace(os.Getenv("GNH_DISABLE_RUNTIME_SCALE_DOWN")); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			return parsed
+		}
+	}
+	return false
+}
+
 func probeIntervalFromEnv() time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("GNH_HEALTH_PROBE_INTERVAL_SECONDS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 10 {
@@ -757,6 +767,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	failureThreshold := jobFailureThresholdFromEnv()
 	idleThreshold := idleThresholdFromEnv()
 	scaleCooldown := scaleCooldownFromEnv()
+	disableRuntimeScaleDown := disableRuntimeScaleDownFromEnv()
 	probeInterval := probeIntervalFromEnv()
 	runningTaskBatchSize := runningTaskBatchSizeFromEnv()
 	runningTaskFlushInterval := runningTaskFlushIntervalFromEnv()
@@ -800,9 +811,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		priorityUpdateTracker: make(map[string]*priorityUpdateState),
 
 		// Idle worker scaling
-		idleWorkers:   make(map[int]time.Time),
-		idleThreshold: idleThreshold,
-		scaleCooldown: scaleCooldown,
+		idleWorkers:             make(map[int]time.Time),
+		idleThreshold:           idleThreshold,
+		scaleCooldown:           scaleCooldown,
+		disableRuntimeScaleDown: disableRuntimeScaleDown,
 
 		// Health probe
 		probeInterval: probeInterval,
@@ -1444,13 +1456,18 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 		Int("job_boost_removed", jobBoost).
 		Msg("Scaling down worker pool")
 
-	wp.currentWorkers = targetWorkers
-	// Note: We don't actually stop excess workers, they'll exit on next task completion
+	if !wp.disableRuntimeScaleDown {
+		wp.currentWorkers = targetWorkers
+		// Note: We don't actually stop excess workers, they'll exit on next task completion
+	}
 	wp.workersMutex.Unlock()
 
 	decision := "no_change"
 	reason := "base_capacity"
-	if targetWorkers < oldWorkers {
+	if targetWorkers < oldWorkers && wp.disableRuntimeScaleDown {
+		reason = "runtime_scale_down_disabled"
+		targetWorkers = oldWorkers
+	} else if targetWorkers < oldWorkers {
 		decision = "scale_down"
 		reason = "job_removed"
 	}
@@ -3050,6 +3067,15 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		return
 	}
 
+	wp.workersMutex.RLock()
+	currentWorkers := wp.currentWorkers
+	wp.workersMutex.RUnlock()
+
+	if wp.disableRuntimeScaleDown {
+		wp.logScalingDecision("no_change", "runtime_scale_down_disabled", currentWorkers, currentWorkers, nil)
+		return
+	}
+
 	emergencyCooldown := 2 * time.Second
 	if time.Since(wp.lastScaleEval) < emergencyCooldown {
 		return
@@ -3063,10 +3089,6 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		wp.logScalingDecision("no_change", "emergency_cooldown_active", currentWorkers, currentWorkers, nil)
 		return
 	}
-
-	wp.workersMutex.RLock()
-	currentWorkers := wp.currentWorkers
-	wp.workersMutex.RUnlock()
 
 	// Calculate optimal workers based on active job concurrency
 	wp.jobsMutex.RLock()
@@ -3123,6 +3145,14 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 func (wp *WorkerPool) maybeScaleDown() {
 	// Feature disabled
 	if wp.idleThreshold == 0 {
+		return
+	}
+
+	if wp.disableRuntimeScaleDown {
+		wp.workersMutex.RLock()
+		currentWorkers := wp.currentWorkers
+		wp.workersMutex.RUnlock()
+		wp.logScalingDecision("no_change", "runtime_scale_down_disabled", currentWorkers, currentWorkers, nil)
 		return
 	}
 
