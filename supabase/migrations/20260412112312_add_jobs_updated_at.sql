@@ -18,5 +18,5 @@ CREATE TRIGGER update_jobs_updated_at
   EXECUTE FUNCTION public.update_updated_at_column();
 
 CREATE INDEX IF NOT EXISTS idx_jobs_active_updated_at
-  ON public.jobs (updated_at ASC, started_at ASC, created_at ASC)
+  ON public.jobs (updated_at ASC, started_at ASC NULLS FIRST, created_at ASC)
   WHERE status IN ('pending', 'running');
