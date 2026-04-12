@@ -1782,20 +1782,48 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 								Int("active_jobs", len(activeJobs)).
 								Msg("Concurrency gate blocked job before task claim (state sample failed)")
 						} else {
-							log.Debug().
-								Str("job_id", jobID).
-								Int64("running_tasks_in_mem", prev).
-								Int("configured_concurrency", jobInfo.Concurrency).
-								Int("db_running_tasks", state.DBRunningTasks).
-								Int("actual_running_tasks", state.ActualRunningTasks).
-								Int("pending_tasks", state.PendingTasks).
-								Int("active_jobs", len(activeJobs)).
-								Msg("Concurrency gate blocked job before task claim")
+							trueRunning := max(state.ActualRunningTasks, state.DBRunningTasks)
+							if trueRunning < jobInfo.Concurrency && prev > int64(trueRunning) {
+								counter.Store(int64(trueRunning))
+								log.Warn().
+									Str("job_id", jobID).
+									Int64("old_running_tasks_in_mem", prev).
+									Int("repaired_running_tasks_in_mem", trueRunning).
+									Int("configured_concurrency", jobInfo.Concurrency).
+									Int("db_running_tasks", state.DBRunningTasks).
+									Int("actual_running_tasks", state.ActualRunningTasks).
+									Int("pending_tasks", state.PendingTasks).
+									Int("active_jobs", len(activeJobs)).
+									Msg("Repaired false concurrency saturation before task claim")
+
+								repairedPrev := counter.Add(1) - 1
+								if repairedPrev < int64(jobInfo.Concurrency) {
+									reservedInMem = true
+								} else {
+									counter.Add(-1)
+								}
+							}
+
+							if !reservedInMem {
+								log.Debug().
+									Str("job_id", jobID).
+									Int64("running_tasks_in_mem", prev).
+									Int("configured_concurrency", jobInfo.Concurrency).
+									Int("db_running_tasks", state.DBRunningTasks).
+									Int("actual_running_tasks", state.ActualRunningTasks).
+									Int("pending_tasks", state.PendingTasks).
+									Int("active_jobs", len(activeJobs)).
+									Msg("Concurrency gate blocked job before task claim")
+							}
 						}
 					}
-					continue
+					if !reservedInMem {
+						continue
+					}
 				}
-				reservedInMem = true
+				if !reservedInMem {
+					reservedInMem = true
+				}
 			}
 		}
 
