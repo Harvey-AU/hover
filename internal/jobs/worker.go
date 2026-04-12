@@ -71,6 +71,14 @@ const (
 	// so we can sample truth without flooding production logs.
 	concurrencyBlockDebugThrottle = 5 * time.Second
 
+	// defaultPendingAdmissionLimitMin keeps the task monitor bounded while still
+	// admitting far more runnable jobs than the old fixed LIMIT 100.
+	defaultPendingAdmissionLimitMin = 250
+
+	// defaultPendingAdmissionWorkerFactor scales admission breadth with the worker pool
+	// size so large runs can keep more jobs active without removing the bound.
+	defaultPendingAdmissionWorkerFactor = 3
+
 	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
 	maxWorkersProduction = 160
 	// maxWorkersStaging keeps preview/staging environments conservative when
@@ -132,10 +140,10 @@ type discoveredLinkPersistRequest struct {
 // pick a different task rather than blocking on the delay.
 var ErrDomainDelay = errors.New("domain rate limit delay")
 
-// domainDelayPause is a short back-off applied after requeueing a domain-delayed
+// defaultDomainDelayPause is a short back-off applied after requeueing a domain-delayed
 // task. It prevents a tight DB claim loop when all pending tasks belong to
 // rate-limited domains.
-const domainDelayPause = 100 * time.Millisecond
+const defaultDomainDelayPause = 100 * time.Millisecond
 
 type WaitingReason string
 
@@ -266,6 +274,12 @@ func (wp *WorkerPool) activeJobCount() int {
 	wp.jobsMutex.RLock()
 	defer wp.jobsMutex.RUnlock()
 	return len(wp.jobs)
+}
+
+func (wp *WorkerPool) pendingAdmissionLimit() int {
+	factor := pendingAdmissionWorkerFactorFromEnv()
+	minLimit := pendingAdmissionLimitMinFromEnv()
+	return max(wp.maxWorkers*factor, minLimit)
 }
 
 type concurrencyBlockState struct {
@@ -670,6 +684,33 @@ func taskMonitorIntervalFromEnv() time.Duration {
 		}
 	}
 	return 10 * time.Second
+}
+
+func pendingAdmissionLimitMinFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_PENDING_ADMISSION_LIMIT_MIN")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return defaultPendingAdmissionLimitMin
+}
+
+func pendingAdmissionWorkerFactorFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_PENDING_ADMISSION_WORKER_FACTOR")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return defaultPendingAdmissionWorkerFactor
+}
+
+func domainDelayPauseFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_DOMAIN_DELAY_PAUSE_MS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			return time.Duration(parsed) * time.Millisecond
+		}
+	}
+	return defaultDomainDelayPause
 }
 
 func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInterface, numWorkers int, workerConcurrency int, dbConfig *db.Config) *WorkerPool {
@@ -1735,14 +1776,12 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 		return nil, sql.ErrNoRows
 	}
 
-	rand.Shuffle(len(activeJobs), func(i, j int) {
-		activeJobs[i], activeJobs[j] = activeJobs[j], activeJobs[i]
-	})
-
 	// Track if we saw any concurrency-blocked jobs
 	sawConcurrencyBlocked := false
 	emptyJobs := 0
 	concurrencyBlockedJobs := 0
+	domainWindowBlockedJobs := 0
+	domainDelayPause := domainDelayPauseFromEnv()
 
 	// Snapshot job info to reduce lock contention
 	wp.jobInfoMutex.RLock()
@@ -1754,8 +1793,34 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 	}
 	wp.jobInfoMutex.RUnlock()
 
-	// Try to get a task from each active job
+	readyJobs := make([]string, 0, len(activeJobs))
+	delayedJobs := make([]string, 0, len(activeJobs))
 	for _, jobID := range activeJobs {
+		jobInfo, exists := jobInfoSnapshot[jobID]
+		if !exists || wp.domainLimiter == nil || jobInfo.DomainName == "" {
+			readyJobs = append(readyJobs, jobID)
+			continue
+		}
+
+		wait := wp.domainLimiter.EstimatedWait(jobInfo.DomainName)
+		// Jobs whose domain window is about to reopen are still worth trying now;
+		// longer waits are skipped here so we do not claim then immediately bounce
+		// the task back to waiting.
+		if wait > domainDelayPause {
+			delayedJobs = append(delayedJobs, jobID)
+			domainWindowBlockedJobs++
+			continue
+		}
+
+		readyJobs = append(readyJobs, jobID)
+	}
+
+	rand.Shuffle(len(readyJobs), func(i, j int) {
+		readyJobs[i], readyJobs[j] = readyJobs[j], readyJobs[i]
+	})
+
+	// Try to get a task from each active job
+	for _, jobID := range readyJobs {
 		// Go-side concurrency gate: atomically reserve a slot before hitting DB.
 		// Uses FetchAdd to avoid TOCTOU: two goroutines both reading counter < limit
 		// then both proceeding to GetNextTask, over-claiming by 1.
@@ -1871,6 +1936,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				Int("active_jobs", len(activeJobs)).
 				Int("empty_jobs_seen", emptyJobs).
 				Int("concurrency_blocked_jobs_seen", concurrencyBlockedJobs).
+				Int("domain_window_blocked_jobs_seen", domainWindowBlockedJobs).
 				Msg("Found and claimed pending task")
 			return task, nil
 		}
@@ -1882,8 +1948,19 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			Int("active_jobs", len(activeJobs)).
 			Int("empty_jobs", emptyJobs).
 			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
 			Msg("No claimable tasks: active jobs were concurrency-blocked")
 		return nil, db.ErrConcurrencyBlocked
+	}
+
+	if len(readyJobs) == 0 && len(delayedJobs) > 0 {
+		log.Debug().
+			Int("active_jobs", len(activeJobs)).
+			Int("empty_jobs", emptyJobs).
+			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
+			Msg("No claimable tasks: active jobs were waiting on domain windows")
+		return nil, sql.ErrNoRows
 	}
 
 	// No tasks found in any job
@@ -1891,6 +1968,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 		Int("active_jobs", len(activeJobs)).
 		Int("empty_jobs", emptyJobs).
 		Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+		Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
 		Msg("No claimable tasks in active jobs")
 	return nil, sql.ErrNoRows
 }
@@ -2024,10 +2102,10 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				Str("task_id", task.ID).
 				Str("domain", jobsTask.DomainName).
 				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
-			// Brief pause so the worker does not immediately spin back to the DB
-			// when all pending tasks belong to rate-limited domains.
+				// Brief pause so the worker does not immediately spin back to the DB
+				// when all pending tasks belong to rate-limited domains.
 			select {
-			case <-time.After(domainDelayPause):
+			case <-time.After(domainDelayPauseFromEnv()):
 			case <-ctx.Done():
 			}
 			return nil
@@ -2129,6 +2207,7 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 // checkForPendingTasks looks for any pending tasks and adds their jobs to the pool
 func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	log.Debug().Msg("Checking database for jobs with pending tasks")
+	admissionLimit := wp.pendingAdmissionLimit()
 
 	type pendingJob struct {
 		ID     string
@@ -2148,8 +2227,12 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 				WHERE t.job_id = j.id
 				  AND t.status = 'pending'
 			  )
-			LIMIT 100
-		`)
+			ORDER BY
+				j.updated_at ASC NULLS FIRST,
+				j.started_at ASC NULLS FIRST,
+				j.created_at ASC
+			LIMIT $1
+		`, admissionLimit)
 
 		if err != nil {
 			return err
@@ -2237,7 +2320,10 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	if jobsFound == 0 {
 		log.Debug().Msg("No jobs with pending tasks found")
 	} else {
-		log.Debug().Int("count", jobsFound).Msg("Found jobs with pending tasks")
+		log.Debug().
+			Int("count", jobsFound).
+			Int("admission_limit", admissionLimit).
+			Msg("Found jobs with pending tasks")
 	}
 
 	foundSet := make(map[string]struct{}, len(foundIDs))
