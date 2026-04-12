@@ -1660,6 +1660,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 
 	// If no active jobs, return immediately
 	if len(activeJobs) == 0 {
+		log.Debug().Msg("No active jobs in worker pool during task claim")
 		return nil, sql.ErrNoRows
 	}
 
@@ -1669,6 +1670,8 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 
 	// Track if we saw any concurrency-blocked jobs
 	sawConcurrencyBlocked := false
+	emptyJobs := 0
+	concurrencyBlockedJobs := 0
 
 	// Snapshot job info to reduce lock contention
 	wp.jobInfoMutex.RLock()
@@ -1695,6 +1698,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				if prev >= int64(jobInfo.Concurrency) {
 					counter.Add(-1) // rollback: over concurrency limit
 					sawConcurrencyBlocked = true
+					concurrencyBlockedJobs++
 					wp.recordConcurrencyBlock(jobID)
 					continue
 				}
@@ -1707,12 +1711,19 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			if reservedInMem {
 				wp.decrementRunningTaskInMem(jobID) // rollback reservation
 			}
+			emptyJobs++
 			continue // Try next job
 		}
 		if errors.Is(err, db.ErrPoolSaturated) {
 			if reservedInMem {
 				wp.decrementRunningTaskInMem(jobID) // rollback reservation
 			}
+			log.Debug().
+				Int("active_jobs", len(activeJobs)).
+				Int("empty_jobs", emptyJobs).
+				Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+				Str("job_id", jobID).
+				Msg("Stopped task claim scan because DB pool was saturated")
 			return nil, err
 		}
 		if err != nil {
@@ -1736,6 +1747,9 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				Int("page_id", task.PageID).
 				Str("path", task.Path).
 				Float64("priority", task.PriorityScore).
+				Int("active_jobs", len(activeJobs)).
+				Int("empty_jobs_seen", emptyJobs).
+				Int("concurrency_blocked_jobs_seen", concurrencyBlockedJobs).
 				Msg("Found and claimed pending task")
 			return task, nil
 		}
@@ -1743,10 +1757,20 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 
 	// If all jobs were concurrency-blocked, return that instead of no rows
 	if sawConcurrencyBlocked {
+		log.Debug().
+			Int("active_jobs", len(activeJobs)).
+			Int("empty_jobs", emptyJobs).
+			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+			Msg("No claimable tasks: active jobs were concurrency-blocked")
 		return nil, db.ErrConcurrencyBlocked
 	}
 
 	// No tasks found in any job
+	log.Debug().
+		Int("active_jobs", len(activeJobs)).
+		Int("empty_jobs", emptyJobs).
+		Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+		Msg("No claimable tasks in active jobs")
 	return nil, sql.ErrNoRows
 }
 

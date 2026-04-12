@@ -38,7 +38,7 @@ primary_region = 'syd'
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
   DB_TX_MAX_RETRIES = "5"
   FLIGHT_RECORDER_ENABLED = "false"
-  LOG_LEVEL = "info"
+  LOG_LEVEL = "debug"
   GNH_BATCH_CHANNEL_SIZE = "5000"
   GNH_RUNNING_TASK_BATCH_SIZE = "32"
   GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
@@ -88,7 +88,7 @@ primary_region = 'syd'
       Content-Type = "text/plain"
 
 [processes]
-  app = "./main --log-level=info"
+  app = "./main --log-level=debug"
 
 [[vm]]
   memory = '8gb'
