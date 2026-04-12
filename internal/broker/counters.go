@@ -147,7 +147,7 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		if err != nil {
 			return fmt.Errorf("begin tx: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 
 		stmt, err := tx.PrepareContext(ctx,
 			`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`)

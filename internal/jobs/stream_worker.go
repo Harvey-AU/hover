@@ -269,14 +269,9 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 		swp.handleDiscoveredLinks(ctx, outcome)
 	}
 
-	// Handle HTML upload (TODO: wire to storage client in cmd/worker).
-	if outcome.HTMLUpload != nil {
-		// The HTML upload will be handled by the persistence loop
-		// wired in cmd/worker/main.go via a channel, same pattern
-		// as the current startTaskHTMLPersistenceLoop.
-		// For now, the metadata is already applied to the db.Task
-		// via applyHTMLMetadata in the executor.
-	}
+	// HTML upload: metadata is already applied to outcome.Task by the
+	// executor via applyHTMLMetadata. The actual upload to storage will
+	// be wired through a persistence loop in cmd/worker (Stage 2).
 }
 
 func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome *TaskOutcome) {

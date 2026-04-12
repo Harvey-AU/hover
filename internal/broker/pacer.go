@@ -99,14 +99,18 @@ func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult
 	gateKey := DomainGateKey(domain)
 
 	// SET NX PX: only succeeds if key doesn't exist.
-	ok, err := p.client.rdb.SetNX(ctx, gateKey, "1", time.Duration(delayMS)*time.Millisecond).Result()
-	if err != nil {
-		return PaceResult{}, fmt.Errorf("broker: gate SET NX %s: %w", domain, err)
-	}
-
-	if ok {
+	err = p.client.rdb.SetArgs(ctx, gateKey, "1", redis.SetArgs{
+		Mode: "NX",
+		TTL:  time.Duration(delayMS) * time.Millisecond,
+	}).Err()
+	if err == nil {
+		// Key was set — domain is available.
 		return PaceResult{Acquired: true}, nil
 	}
+	if err != redis.Nil {
+		return PaceResult{}, fmt.Errorf("broker: gate SET NX %s: %w", domain, err)
+	}
+	// redis.Nil means key already existed — domain in delay window.
 
 	// Gate exists — get remaining TTL.
 	ttl, err := p.client.rdb.PTTL(ctx, gateKey).Result()

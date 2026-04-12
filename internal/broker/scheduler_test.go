@@ -16,7 +16,7 @@ func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { rdb.Close() })
+	t.Cleanup(func() { _ = rdb.Close() })
 	return &Client{rdb: rdb, logger: zerolog.Nop()}, mr
 }
 
