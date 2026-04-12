@@ -169,18 +169,18 @@ Two background loops keep the pending task supply full. The waiting-task
 recovery monitor is the general safety net for jobs that have `waiting_tasks`
 but lost inline promotion under load.
 
-| Env var / constant                      | Production value      | Default | What it controls                                                                                   |
-| --------------------------------------- | --------------------- | ------- | -------------------------------------------------------------------------------------------------- |
-| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **5s** (`fly.toml`)   | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool                    |
-| `GNH_PENDING_ADMISSION_LIMIT_MIN`       | **250** (`fly.toml`)  | 250     | Floor for how many pending jobs a monitor sweep may admit, regardless of worker count              |
-| `GNH_PENDING_ADMISSION_WORKER_FACTOR`   | **3** (`fly.toml`)    | 3       | Scales pending-job admission breadth with `GNH_MAX_WORKERS`; admission limit = max(workers×factor) |
-| `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)   | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available                         |
-| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`)  | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset                          |
-| `GNH_DOMAIN_DELAY_PAUSE_MS`             | **100ms** (`fly.toml`)| 100ms   | Short back-off after requeueing a domain-delayed task; also the threshold for skipping closed windows |
-| `pendingRebalanceInterval`              | hardcoded             | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits                         |
-| `pendingRebalanceJobLimit`              | hardcoded             | 25      | Max jobs processed per rebalance sweep                                                             |
-| `pendingUnlimitedCap`                   | hardcoded             | 100     | Max pending+running tasks for jobs with no explicit concurrency set                                |
-| `fallbackJobConcurrency`                | hardcoded             | 20      | Concurrency assumed when job has no cached info yet                                                |
+| Env var / constant                      | Production value       | Default | What it controls                                                                                      |
+| --------------------------------------- | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **5s** (`fly.toml`)    | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool                       |
+| `GNH_PENDING_ADMISSION_LIMIT_MIN`       | **250** (`fly.toml`)   | 250     | Floor for how many pending jobs a monitor sweep may admit, regardless of worker count                 |
+| `GNH_PENDING_ADMISSION_WORKER_FACTOR`   | **3** (`fly.toml`)     | 3       | Scales pending-job admission breadth with `GNH_MAX_WORKERS`; admission limit = max(workers×factor)    |
+| `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)    | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available                            |
+| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`)   | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset                             |
+| `GNH_DOMAIN_DELAY_PAUSE_MS`             | **100ms** (`fly.toml`) | 100ms   | Short back-off after requeueing a domain-delayed task; also the threshold for skipping closed windows |
+| `pendingRebalanceInterval`              | hardcoded              | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits                            |
+| `pendingRebalanceJobLimit`              | hardcoded              | 25      | Max jobs processed per rebalance sweep                                                                |
+| `pendingUnlimitedCap`                   | hardcoded              | 100     | Max pending+running tasks for jobs with no explicit concurrency set                                   |
+| `fallbackJobConcurrency`                | hardcoded              | 20      | Concurrency assumed when job has no cached info yet                                                   |
 
 Recovery is quota-aware when a quota exists, but it also scans jobs without
 relying on quota events so stalled waiting queues can recover after transient
