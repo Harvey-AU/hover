@@ -18,6 +18,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/rs/zerolog/log"
 )
 
@@ -46,6 +47,25 @@ type JobManagerInterface interface {
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
 }
 
+// TaskScheduleCallback is called after tasks are successfully inserted
+// into Postgres. The callback receives the data needed to schedule
+// the tasks into an external broker (e.g. Redis). If nil, no external
+// scheduling occurs (legacy DB-queue mode).
+type TaskScheduleCallback func(ctx context.Context, jobID string, entries []TaskScheduleEntry)
+
+// TaskScheduleEntry carries the minimal data needed to schedule a
+// newly inserted task into the Redis ZSET.
+type TaskScheduleEntry struct {
+	TaskID     string
+	PageID     int
+	Host       string
+	Path       string
+	Status     string // "pending", "waiting", "skipped"
+	Priority   float64
+	SourceType string
+	SourceURL  string
+}
+
 // JobManager handles job creation and lifecycle management
 type JobManager struct {
 	db      *sql.DB
@@ -53,6 +73,10 @@ type JobManager struct {
 	crawler CrawlerInterface
 
 	workerPool *WorkerPool
+
+	// OnTasksEnqueued is called after successful Postgres task insertion.
+	// Set by the worker service to schedule tasks into Redis.
+	OnTasksEnqueued TaskScheduleCallback
 
 	// Map to track which pages have been processed for each job
 	processedPages map[string]struct{} // Key format: "jobID_pageID"
@@ -516,6 +540,11 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 		for _, page := range filteredPages {
 			jm.markPageProcessed(jobID, page.ID)
 		}
+
+		// Notify external scheduler (Redis) if configured.
+		if jm.OnTasksEnqueued != nil {
+			jm.scheduleEnqueuedTasks(ctx, jobID, filteredPages, sourceType, sourceURL)
+		}
 	} else {
 		log.Error().
 			Err(err).
@@ -525,6 +554,53 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 	}
 
 	return err
+}
+
+// scheduleEnqueuedTasks queries for tasks just inserted into Postgres
+// and passes them to the OnTasksEnqueued callback for Redis scheduling.
+func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, pages []db.Page, sourceType, sourceURL string) {
+	if jm.OnTasksEnqueued == nil || len(pages) == 0 {
+		return
+	}
+
+	pageIDs := make([]int, 0, len(pages))
+	for _, p := range pages {
+		if p.ID != 0 {
+			pageIDs = append(pageIDs, p.ID)
+		}
+	}
+	if len(pageIDs) == 0 {
+		return
+	}
+
+	var entries []TaskScheduleEntry
+	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id, page_id, host, path, status, priority_score, source_type, source_url
+			FROM tasks
+			WHERE job_id = $1 AND page_id = ANY($2) AND status IN ('pending', 'waiting')
+		`, jobID, pq.Array(pageIDs))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e TaskScheduleEntry
+			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.SourceType, &e.SourceURL); err != nil {
+				return err
+			}
+			entries = append(entries, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		log.Error().Err(err).Str("job_id", jobID).Msg("failed to query tasks for Redis scheduling")
+		return
+	}
+
+	if len(entries) > 0 {
+		jm.OnTasksEnqueued(ctx, jobID, entries)
+	}
 }
 
 // CancelJob cancels a running job

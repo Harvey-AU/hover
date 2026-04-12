@@ -1,23 +1,17 @@
 package jobs
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"math/rand"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -76,8 +70,6 @@ const (
 	pendingRebalanceInterval = 5 * time.Minute
 	pendingRebalanceJobLimit = 25
 	pendingUnlimitedCap      = 100
-	taskHTMLStorageBucket    = "task-html"
-	taskHTMLContentEncoding  = "gzip"
 	taskHTMLPersistQueueSize = 64
 	taskHTMLPersistWorkers   = 8
 	maxHTMLPersistWorkers    = 32
@@ -97,19 +89,6 @@ type storageUploader interface {
 	Download(ctx context.Context, bucket, path string) ([]byte, error)
 }
 
-type taskHTMLUpload struct {
-	Bucket              string
-	Path                string
-	ContentType         string
-	UploadContentType   string
-	ContentEncoding     string
-	SizeBytes           int64
-	CompressedSizeBytes int64
-	SHA256              string
-	CapturedAt          time.Time
-	Payload             []byte
-}
-
 type taskHTMLPersistRequest struct {
 	Task        db.Task
 	ContentType string
@@ -122,11 +101,6 @@ type discoveredLinkPersistRequest struct {
 	Links     map[string][]string
 	SourceURL string
 }
-
-// ErrDomainDelay is returned by processTask when the domain rate-limit window
-// has not elapsed. The worker should requeue the task as waiting and immediately
-// pick a different task rather than blocking on the delay.
-var ErrDomainDelay = errors.New("domain rate limit delay")
 
 // domainDelayPause is a short back-off applied after requeueing a domain-delayed
 // task. It prevents a tight DB claim loop when all pending tasks belong to
@@ -3857,32 +3831,6 @@ func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 }
 
 // processTask processes an individual task
-// constructTaskURL builds a proper URL from task path and domain information
-func constructTaskURL(path, host, domainName string) string {
-	// Check if path is already a full URL
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return util.NormaliseURL(path)
-	} else if host != "" {
-		return util.ConstructURL(host, path)
-	} else if domainName != "" {
-		// Use centralized URL construction
-		return util.ConstructURL(domainName, path)
-	} else {
-		// Fallback case - assume path is a full URL but missing protocol
-		return util.NormaliseURL(path)
-	}
-}
-
-func cloneDiscoveredLinks(links map[string][]string) map[string][]string {
-	if len(links) == 0 {
-		return nil
-	}
-	cloned := make(map[string][]string, len(links))
-	for category, values := range links {
-		cloned[category] = append([]string(nil), values...)
-	}
-	return cloned
-}
 
 func sourceURLForDiscoveredLinks(task *db.Task, result *crawler.CrawlResult, domainName string) string {
 	if result != nil {
@@ -3890,7 +3838,7 @@ func sourceURLForDiscoveredLinks(task *db.Task, result *crawler.CrawlResult, dom
 			return util.NormaliseURL(finalURL)
 		}
 	}
-	return constructTaskURL(task.Path, task.Host, domainName)
+	return ConstructTaskURL(task.Path, task.Host, domainName)
 }
 
 func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.CrawlResult) {
@@ -4180,7 +4128,7 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result *crawler.CrawlResult, taskErr error) error {
 	now := time.Now().UTC()
 	retryReason := "non_retryable"
-	wp.populateRequestDiagnostics(task, result)
+	populateRequestDiagnostics(task, result)
 
 	// Check if this is a blocking error (403/429/503)
 	if isBlockingError(taskErr) {
@@ -4268,115 +4216,7 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 	return nil
 }
 
-func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
-	task.RequestDiagnostics = []byte("{}")
-	if result == nil || result.RequestDiagnostics == nil {
-		return
-	}
 
-	if diagnosticsBytes, err := json.Marshal(result.RequestDiagnostics); err == nil {
-		if json.Valid(diagnosticsBytes) {
-			task.RequestDiagnostics = diagnosticsBytes
-		} else {
-			log.Warn().Str("task_id", task.ID).Msg("Request diagnostics produced invalid JSON, using empty object")
-		}
-	} else {
-		log.Error().Err(err).Str("task_id", task.ID).Interface("request_diagnostics", result.RequestDiagnostics).Msg("Failed to marshal request diagnostics")
-	}
-}
-
-func canonicalTaskHTMLContentType(contentType string) string {
-	trimmed := strings.TrimSpace(contentType)
-	if trimmed == "" {
-		return ""
-	}
-
-	mediaType, _, err := mime.ParseMediaType(trimmed)
-	if err != nil {
-		return strings.ToLower(trimmed)
-	}
-
-	return strings.ToLower(mediaType)
-}
-
-func normalisedTaskHTMLContentType(contentType string) string {
-	trimmed := strings.TrimSpace(contentType)
-	if trimmed == "" {
-		return "text/html"
-	}
-
-	return strings.ToLower(trimmed)
-}
-
-func canStoreTaskHTML(contentType string, body []byte) bool {
-	if len(body) == 0 {
-		return false
-	}
-
-	mediaType := canonicalTaskHTMLContentType(contentType)
-	return mediaType == "text/html" || mediaType == "application/xhtml+xml"
-}
-
-func gzipTaskHTML(body []byte) ([]byte, error) {
-	var buffer bytes.Buffer
-	gzipWriter := gzip.NewWriter(&buffer)
-	if _, err := gzipWriter.Write(body); err != nil {
-		return nil, fmt.Errorf("write gzip html: %w", err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close gzip html: %w", err)
-	}
-	return buffer.Bytes(), nil
-}
-
-func buildTaskHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) (*taskHTMLUpload, bool, error) {
-	if task == nil || result == nil {
-		return nil, false, nil
-	}
-	if !canStoreTaskHTML(result.ContentType, result.Body) {
-		return nil, false, nil
-	}
-
-	payload, err := gzipTaskHTML(result.Body)
-	if err != nil {
-		return nil, false, err
-	}
-
-	contentType := normalisedTaskHTMLContentType(result.ContentType)
-	uploadContentType := canonicalTaskHTMLContentType(result.ContentType)
-	if uploadContentType == "" {
-		uploadContentType = "text/html"
-	}
-	checksum := sha256.Sum256(result.Body)
-
-	return &taskHTMLUpload{
-		Bucket:              taskHTMLStorageBucket,
-		Path:                archive.TaskHTMLObjectPath(task.JobID, task.ID),
-		ContentType:         contentType,
-		UploadContentType:   uploadContentType,
-		ContentEncoding:     taskHTMLContentEncoding,
-		SizeBytes:           int64(len(result.Body)),
-		CompressedSizeBytes: int64(len(payload)),
-		SHA256:              hex.EncodeToString(checksum[:]),
-		CapturedAt:          capturedAt,
-		Payload:             payload,
-	}, true, nil
-}
-
-func applyTaskHTMLMetadata(task *db.Task, upload *taskHTMLUpload) {
-	if task == nil || upload == nil {
-		return
-	}
-
-	task.HTMLStorageBucket = upload.Bucket
-	task.HTMLStoragePath = upload.Path
-	task.HTMLContentType = upload.ContentType
-	task.HTMLContentEncoding = upload.ContentEncoding
-	task.HTMLSizeBytes = upload.SizeBytes
-	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
-	task.HTMLSHA256 = upload.SHA256
-	task.HTMLCapturedAt = upload.CapturedAt
-}
 
 func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 	if wp.taskHTMLPersistCh == nil {
@@ -4456,7 +4296,11 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 	if wp.storageClient == nil || wp.taskHTMLPersistCh == nil || task == nil || result == nil {
 		return
 	}
-	if !canStoreTaskHTML(result.ContentType, result.Body) {
+	if len(result.Body) == 0 {
+		return
+	}
+	mediaType := canonicalHTMLContentType(result.ContentType)
+	if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
 		return
 	}
 
@@ -4501,11 +4345,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	}
 
 	result := &crawler.CrawlResult{ContentType: request.ContentType, Body: request.Body}
-	upload, ok, err := buildTaskHTMLUpload(&request.Task, result, request.CapturedAt)
-	if err != nil {
-		log.Warn().Err(err).Str("task_id", request.Task.ID).Msg("Failed to prepare task HTML for storage")
-		return
-	}
+	upload, ok := buildHTMLUpload(&request.Task, result, request.CapturedAt)
 	if !ok {
 		return
 	}
@@ -4522,7 +4362,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	}
 
 	htmlTask := request.Task
-	applyTaskHTMLMetadata(&htmlTask, upload)
+	applyHTMLMetadata(&htmlTask, upload)
 
 	metadata := db.TaskHTMLMetadata{
 		StorageBucket:       upload.Bucket,
@@ -4538,6 +4378,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	readyCtx, readyCancel := context.WithTimeout(ctx, taskHTMLReadyMaxWait)
 	defer readyCancel()
 	sawNotReady := false
+	var err error
 
 	for {
 		persistCtx, persistCancel := context.WithTimeout(readyCtx, 10*time.Second)
@@ -4667,7 +4508,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 		}
 	}
 
-	wp.populateRequestDiagnostics(task, result)
+	populateRequestDiagnostics(task, result)
 
 	// Decrement in-memory counter immediately, then queue async DB decrement.
 	wp.decrementRunningTaskInMem(task.JobID)
@@ -4810,7 +4651,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 	}()
 
 	// Construct a proper URL for processing
-	urlStr := constructTaskURL(task.Path, task.Host, task.DomainName)
+	urlStr := ConstructTaskURL(task.Path, task.Host, task.DomainName)
 
 	log.Debug().Str("url", urlStr).Str("task_id", task.ID).Msg("Starting URL warm")
 
@@ -4885,96 +4726,6 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 		Msg("Crawler completed")
 
 	return result, nil
-}
-
-// isRetryableError checks if an error should trigger a retry
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errorStr := strings.ToLower(err.Error())
-
-	// Network/timeout errors that should be retried
-	networkErrors := strings.Contains(errorStr, "timeout") ||
-		strings.Contains(errorStr, "deadline exceeded") ||
-		strings.Contains(errorStr, "connection") ||
-		strings.Contains(errorStr, "network") ||
-		strings.Contains(errorStr, "temporary") ||
-		strings.Contains(errorStr, "reset by peer") ||
-		strings.Contains(errorStr, "broken pipe") ||
-		strings.Contains(errorStr, "unexpected eof")
-
-	// Server errors that should be retried (likely due to load/temporary issues)
-	// Note: 503 Service Unavailable is treated as a blocking error (see isBlockingError)
-	serverErrors := strings.Contains(errorStr, "internal server error") ||
-		strings.Contains(errorStr, "bad gateway") ||
-		strings.Contains(errorStr, "gateway timeout") ||
-		strings.Contains(errorStr, "502") ||
-		strings.Contains(errorStr, "504") ||
-		strings.Contains(errorStr, "500")
-
-	return networkErrors || serverErrors
-}
-
-// isBlockingError checks if an error indicates we're being blocked
-func isBlockingError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errorStr := strings.ToLower(err.Error())
-
-	// Blocking/rate limit errors that need special handling with exponential backoff
-	return strings.Contains(errorStr, "403") ||
-		strings.Contains(errorStr, "forbidden") ||
-		strings.Contains(errorStr, "429") ||
-		strings.Contains(errorStr, "too many requests") ||
-		strings.Contains(errorStr, "rate limit") ||
-		strings.Contains(errorStr, "503") ||
-		strings.Contains(errorStr, "service unavailable")
-}
-
-var statusCodePattern = regexp.MustCompile(`\b(\d{3})\b`)
-
-func isClientOrRedirectError(err error) bool {
-	if err == nil {
-		return false
-	}
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "crawler error") {
-		keywords := []string{
-			"not found",
-			"bad request",
-			"unauthorized",
-			"forbidden",
-			"gone",
-			"method not allowed",
-			"temporary redirect",
-			"permanent redirect",
-			"moved permanently",
-			"see other",
-		}
-		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
-				return true
-			}
-		}
-	}
-	matches := statusCodePattern.FindAllStringSubmatch(lower, -1)
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		code, err := strconv.Atoi(match[1])
-		if err != nil {
-			continue
-		}
-		if code >= 400 && code < 500 {
-			return true
-		}
-	}
-	return false
 }
 
 // calculateBackoffDuration computes exponential backoff duration for retry attempts

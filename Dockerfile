@@ -12,8 +12,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the API application
 RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/app/main.go
+
+# Build the worker binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o worker ./cmd/worker/main.go
 
 # Final stage
 FROM alpine:3.19
@@ -26,8 +29,9 @@ WORKDIR /app
 # Install ca-certificates for HTTPS
 RUN apk --no-cache add ca-certificates
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/main .
+COPY --from=builder /app/worker .
 
 # Copy static files
 COPY --from=builder /app/dashboard.html .

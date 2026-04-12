@@ -43,10 +43,9 @@ func TestPopulateRequestDiagnostics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			wp := &WorkerPool{}
 			task := &db.Task{ID: "task-1"}
 
-			wp.populateRequestDiagnostics(task, tt.result)
+			populateRequestDiagnostics(task, tt.result)
 
 			if tt.expectJSON != "" {
 				if string(task.RequestDiagnostics) != tt.expectJSON {

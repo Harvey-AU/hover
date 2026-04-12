@@ -60,20 +60,19 @@ func TestBuildTaskHTMLUpload(t *testing.T) {
 	body := []byte("<html><body>Hello</body></html>")
 	capturedAt := time.Date(2026, time.March, 21, 7, 0, 0, 0, time.UTC)
 
-	upload, ok, err := buildTaskHTMLUpload(task, &crawler.CrawlResult{
+	upload, ok := buildHTMLUpload(task, &crawler.CrawlResult{
 		ContentType: "text/html; charset=utf-8",
 		Body:        body,
 	}, capturedAt)
 
-	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, upload)
 
-	assert.Equal(t, taskHTMLStorageBucket, upload.Bucket)
+	assert.Equal(t, htmlStorageBucket, upload.Bucket)
 	assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", upload.Path)
 	assert.Equal(t, "text/html; charset=utf-8", upload.ContentType)
 	assert.Equal(t, "text/html", upload.UploadContentType)
-	assert.Equal(t, taskHTMLContentEncoding, upload.ContentEncoding)
+	assert.Equal(t, htmlContentEncoding, upload.ContentEncoding)
 	assert.Equal(t, int64(len(body)), upload.SizeBytes)
 	assert.Equal(t, capturedAt, upload.CapturedAt)
 	assert.Len(t, upload.SHA256, 64)
@@ -99,12 +98,11 @@ func TestBuildTaskHTMLUploadSkipsIneligibleBodies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			upload, ok, err := buildTaskHTMLUpload(&db.Task{ID: "task", JobID: "job"}, &crawler.CrawlResult{
+			upload, ok := buildHTMLUpload(&db.Task{ID: "task", JobID: "job"}, &crawler.CrawlResult{
 				ContentType: tt.contentType,
 				Body:        tt.body,
 			}, time.Now().UTC())
 
-			require.NoError(t, err)
 			assert.False(t, ok)
 			assert.Nil(t, upload)
 		})
@@ -133,7 +131,7 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 		storageClient: &stubStorageUploader{uploadWithOptionsFunc: func(ctx context.Context, bucket, path string, data []byte, options storage.UploadOptions) (string, error) {
 			capturedOptions = options
 			capturedPayload = append([]byte(nil), data...)
-			assert.Equal(t, taskHTMLStorageBucket, bucket)
+			assert.Equal(t, htmlStorageBucket, bucket)
 			assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", path)
 			return bucket + "/" + path, nil
 		}},
@@ -142,16 +140,16 @@ func TestProcessTaskHTMLPersistencePersistsMetadataOnSuccess(t *testing.T) {
 	wp.processTaskHTMLPersistence(context.Background(), request)
 
 	assert.Equal(t, "task-123", persistedTaskID)
-	assert.Equal(t, taskHTMLStorageBucket, persistedMetadata.StorageBucket)
+	assert.Equal(t, htmlStorageBucket, persistedMetadata.StorageBucket)
 	assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", persistedMetadata.StoragePath)
 	assert.Equal(t, "text/html; charset=utf-8", persistedMetadata.ContentType)
-	assert.Equal(t, taskHTMLContentEncoding, persistedMetadata.ContentEncoding)
+	assert.Equal(t, htmlContentEncoding, persistedMetadata.ContentEncoding)
 	assert.Equal(t, int64(len(request.Body)), persistedMetadata.SizeBytes)
 	assert.Equal(t, int64(len(capturedPayload)), persistedMetadata.CompressedSizeBytes)
 	assert.Equal(t, capturedAt, persistedMetadata.CapturedAt)
 	assert.Len(t, persistedMetadata.SHA256, 64)
 	assert.Equal(t, "text/html", capturedOptions.ContentType)
-	assert.Equal(t, taskHTMLContentEncoding, capturedOptions.ContentEncoding)
+	assert.Equal(t, htmlContentEncoding, capturedOptions.ContentEncoding)
 	assert.Equal(t, request.Body, gunzipTestPayload(t, capturedPayload))
 }
 
@@ -190,7 +188,7 @@ func TestProcessTaskHTMLPersistenceDeletesUploadWhenMetadataPersistenceFails(t *
 			},
 			deleteFunc: func(ctx context.Context, bucket, path string) error {
 				deleted = true
-				assert.Equal(t, taskHTMLStorageBucket, bucket)
+				assert.Equal(t, htmlStorageBucket, bucket)
 				assert.Equal(t, "jobs/job-456/tasks/task-123/page-content.html.gz", path)
 				return nil
 			},

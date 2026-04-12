@@ -194,6 +194,39 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ env.SUPABASE_ACCESS_TOKEN }}
           BRANCH_SUPABASE_URL: ${{ steps.supabase.outputs.branch_supabase_url }}
 
+      - name: Provision Upstash Redis
+        id: redis
+        run: |
+          REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
+
+          # Create if it doesn't already exist
+          if ! flyctl redis list | grep -q "$REDIS_NAME"; then
+            echo "Creating Upstash Redis: $REDIS_NAME"
+            flyctl redis create \
+              --name "$REDIS_NAME" \
+              --region syd \
+              --no-replicas \
+              --disable-eviction \
+              --org personal
+          else
+            echo "Upstash Redis already exists: $REDIS_NAME"
+          fi
+
+          # Extract private URL from status output
+          REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null | grep -i "private url" | sed 's/.*= *//')
+
+          if [ -z "$REDIS_URL" ]; then
+            echo "⚠️ Could not extract Redis URL — worker will use DB queue fallback"
+            echo "redis_url=" >> "$GITHUB_OUTPUT"
+          else
+            echo "::add-mask::$REDIS_URL"
+            echo "redis_url=$REDIS_URL" >> "$GITHUB_OUTPUT"
+            echo "✅ Redis provisioned: $REDIS_NAME"
+          fi
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+
       - name: Build Docker image locally
         run: docker build -t hover-pr-${{ github.event.number }} .
 
@@ -259,12 +292,20 @@ jobs:
           echo "Setting test database connection and auth secrets for review app..."
           # Non-secret config (OAuth client IDs, auth URLs) is in review_apps.toml [env].
           # Only set actual secrets and per-PR dynamic values here.
+          # Build optional Redis secret flag
+          REDIS_FLAGS=()
+          if [ -n "$REVIEW_REDIS_URL" ]; then
+            REDIS_FLAGS+=(REDIS_URL="$REVIEW_REDIS_URL")
+            echo "🔴 Setting REDIS_URL for review app worker"
+          fi
+
           if [ -n "$DIRECT_URL" ]; then
             echo "📡 Setting DATABASE_DIRECT_URL for real-time notifications"
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               DATABASE_DIRECT_URL="$DIRECT_URL" \
               "${SUPABASE_URL_FLAGS[@]}" \
+              "${REDIS_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="$SENTRY_DSN" \
@@ -284,6 +325,7 @@ jobs:
             flyctl secrets set \
               DATABASE_URL="$DB_URL" \
               "${SUPABASE_URL_FLAGS[@]}" \
+              "${REDIS_FLAGS[@]}" \
               SUPABASE_JWT_SECRET="$JWT_SECRET" \
               SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
               SENTRY_DSN="$SENTRY_DSN" \
@@ -310,6 +352,7 @@ jobs:
             --image hover-pr-${{ github.event.number }}
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
 
       - name: Comment PR with app URL
         uses: actions/github-script@v8
@@ -347,7 +390,18 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
+      - name: Destroy Upstash Redis
+        run: |
+          REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
+          flyctl redis destroy "$REDIS_NAME" --yes 2>/dev/null || echo "Redis instance may not exist: $REDIS_NAME"
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+
       - name: Destroy Review App
         run: |
-          APP_NAME="hover-pr-${{ github.event.number }}"
-          flyctl apps destroy $APP_NAME --yes || echo "App may not exist"
+          APP_NAME="hover-pr-${PR_NUMBER}"
+          flyctl apps destroy "$APP_NAME" --yes || echo "App may not exist"
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}

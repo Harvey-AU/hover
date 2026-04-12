@@ -1,0 +1,44 @@
+# fly.worker.toml — Fly.io configuration for the hover worker service.
+# The worker consumes tasks from Redis Streams, executes crawls,
+# and persists results to Postgres.
+
+app = 'hover-worker'
+primary_region = 'syd'
+
+[build]
+
+[env]
+  APP_ENV = "production"
+  WORKER_COUNT = "30"
+  WORKER_CONCURRENCY = "20"
+  GNH_MAX_WORKERS = "130"
+  DB_MAX_OPEN_CONNS = "60"
+  DB_MAX_IDLE_CONNS = "15"
+  REDIS_POOL_SIZE = "200"
+  REDIS_DISPATCH_INTERVAL_MS = "100"
+  REDIS_DISPATCH_BATCH_SIZE = "50"
+  REDIS_CONSUMER_BLOCK_MS = "2000"
+  REDIS_AUTOCLAIM_INTERVAL_S = "30"
+  REDIS_COUNTER_SYNC_INTERVAL_S = "5"
+  GNH_BATCH_CHANNEL_SIZE = "5000"
+  GNH_HTML_PERSIST_WORKERS = "32"
+  GNH_HTML_PERSIST_QUEUE_SIZE = "2048"
+  LOG_LEVEL = "debug"
+  OBSERVABILITY_ENABLED = "true"
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
+  ARCHIVE_RETENTION_JOBS = "3"
+  ARCHIVE_INTERVAL = "1m"
+  ARCHIVE_BATCH_SIZE = "100"
+  ARCHIVE_CONCURRENCY = "5"
+
+[deploy]
+  strategy = "immediate"
+
+[processes]
+  worker = "./worker"
+
+[[vm]]
+  memory = '4gb'
+  cpu_kind = 'performance'
+  cpus = 2

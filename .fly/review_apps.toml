@@ -45,6 +45,15 @@ ARCHIVE_INTERVAL = "1m"
 ARCHIVE_BATCH_SIZE = "100"
 ARCHIVE_CONCURRENCY = "5"
 
+# Redis broker — REDIS_URL is set via flyctl secrets in CI
+REDIS_POOL_SIZE = "50"
+REDIS_TLS_ENABLED = "true"
+REDIS_DISPATCH_INTERVAL_MS = "200"
+REDIS_DISPATCH_BATCH_SIZE = "20"
+REDIS_CONSUMER_BLOCK_MS = "2000"
+REDIS_AUTOCLAIM_INTERVAL_S = "30"
+REDIS_COUNTER_SYNC_INTERVAL_S = "5"
+
 # Performance settings (preview has own DB now, can align closer to prod)
 WORKER_CONCURRENCY = "5"                    # Reduced for preview capacity
 DB_MAX_OPEN_CONNS = "40"                   # Supabase preview pool size
