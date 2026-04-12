@@ -142,13 +142,14 @@ concurrency. Scale target formula:
 when the env var is unset). Each job's effective concurrency is reduced by the
 domain limiter when adaptive delays are active.
 
-| Env var / constant                  | Production value      | Default           | What it controls                                                    |
-| ----------------------------------- | --------------------- | ----------------- | ------------------------------------------------------------------- |
-| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10             |
-| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                |
-| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                   |
-| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                       |
-| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed |
+| Env var / constant                  | Production value      | Default           | What it controls                                                     |
+| ----------------------------------- | --------------------- | ----------------- | -------------------------------------------------------------------- |
+| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10              |
+| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                 |
+| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                    |
+| `GNH_DISABLE_RUNTIME_SCALE_DOWN`    | **true** (`fly.toml`) | false             | Trial safety switch that prevents runtime worker scale-down entirely |
+| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                        |
+| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed  |
 
 Example: 100 active jobs at concurrency=20 each → target = ceil(2000/20×1.1) =
 110 workers.
@@ -169,15 +170,18 @@ Two background loops keep the pending task supply full. The waiting-task
 recovery monitor is the general safety net for jobs that have `waiting_tasks`
 but lost inline promotion under load.
 
-| Env var / constant                      | Production value     | Default | What it controls                                                                |
-| --------------------------------------- | -------------------- | ------- | ------------------------------------------------------------------------------- |
-| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **20s** (`fly.toml`) | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool |
-| `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)  | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available      |
-| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`) | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset       |
-| `pendingRebalanceInterval`              | hardcoded            | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits      |
-| `pendingRebalanceJobLimit`              | hardcoded            | 25      | Max jobs processed per rebalance sweep                                          |
-| `pendingUnlimitedCap`                   | hardcoded            | 100     | Max pending+running tasks for jobs with no explicit concurrency set             |
-| `fallbackJobConcurrency`                | hardcoded            | 20      | Concurrency assumed when job has no cached info yet                             |
+| Env var / constant                      | Production value       | Default | What it controls                                                                                      |
+| --------------------------------------- | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **5s** (`fly.toml`)    | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool                       |
+| `GNH_PENDING_ADMISSION_LIMIT_MIN`       | **250** (`fly.toml`)   | 250     | Floor for how many pending jobs a monitor sweep may admit, regardless of worker count                 |
+| `GNH_PENDING_ADMISSION_WORKER_FACTOR`   | **3** (`fly.toml`)     | 3       | Scales pending-job admission breadth with `GNH_MAX_WORKERS`; admission limit = max(workers×factor)    |
+| `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)    | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available                            |
+| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`)   | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset                             |
+| `GNH_DOMAIN_DELAY_PAUSE_MS`             | **100ms** (`fly.toml`) | 100ms   | Short back-off after requeueing a domain-delayed task; also the threshold for skipping closed windows |
+| `pendingRebalanceInterval`              | hardcoded              | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits                            |
+| `pendingRebalanceJobLimit`              | hardcoded              | 25      | Max jobs processed per rebalance sweep                                                                |
+| `pendingUnlimitedCap`                   | hardcoded              | 100     | Max pending+running tasks for jobs with no explicit concurrency set                                   |
+| `fallbackJobConcurrency`                | hardcoded              | 20      | Concurrency assumed when job has no cached info yet                                                   |
 
 Recovery is quota-aware when a quota exists, but it also scans jobs without
 relying on quota events so stalled waiting queues can recover after transient

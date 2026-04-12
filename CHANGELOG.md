@@ -32,6 +32,35 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.5] – 2026-04-12
+
+### Fixed
+
+- Add a production safety switch to freeze runtime worker scale-down so worker
+  slots are not recycled mid-run while we stabilise the scaling lifecycle panic
+- Isolate worker slot lifecycle state on reuse so a scaled-down worker cannot
+  share semaphore or shutdown state with a later worker started on the same
+  logical slot
+
+## [0.32.4] – 2026-04-12
+
+### Fixed
+
+- Improve scheduler fairness under high job counts by admitting pending jobs in
+  a stable least-recently-touched order instead of an arbitrary subset, reducing
+  the chance that newer or repeatedly-seen jobs crowd out older idle jobs
+- Lower the task monitor sweep interval from 20 seconds to 5 seconds so newly
+  runnable jobs join the worker pool faster during large queue spikes
+- Skip claim attempts for jobs whose domain rate-limit window is still closed,
+  reducing claim-then-requeue churn when delayed domains are mixed with healthy
+  ones
+
+### Added
+
+- Add `jobs.updated_at` with an automatic trigger and active-jobs partial index
+  so scheduler fairness can use a cheap row-level activity signal instead of
+  consulting the much larger `tasks` table on every admission sweep
+
 ## [0.32.3] – 2026-04-11
 
 ### Fixed

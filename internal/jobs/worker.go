@@ -61,6 +61,18 @@ const (
 	// recently concurrency-blocked for the purposes of suppressing scale ups.
 	concurrencyBlockCooldown = 30 * time.Second
 
+	// concurrencyBlockDebugThrottle limits per-job concurrency block diagnostics
+	// so we can sample truth without flooding production logs.
+	concurrencyBlockDebugThrottle = 5 * time.Second
+
+	// defaultPendingAdmissionLimitMin keeps the task monitor bounded while still
+	// admitting far more runnable jobs than the old fixed LIMIT 100.
+	defaultPendingAdmissionLimitMin = 250
+
+	// defaultPendingAdmissionWorkerFactor scales admission breadth with the worker pool
+	// size so large runs can keep more jobs active without removing the bound.
+	defaultPendingAdmissionWorkerFactor = 3
+
 	// maxWorkersProduction is the default cap; override with GNH_MAX_WORKERS.
 	maxWorkersProduction = 160
 	// maxWorkersStaging keeps preview/staging environments conservative when
@@ -102,10 +114,10 @@ type discoveredLinkPersistRequest struct {
 	SourceURL string
 }
 
-// domainDelayPause is a short back-off applied after requeueing a domain-delayed
+// defaultDomainDelayPause is a short back-off applied after requeueing a domain-delayed
 // task. It prevents a tight DB claim loop when all pending tasks belong to
 // rate-limited domains.
-const domainDelayPause = 100 * time.Millisecond
+const defaultDomainDelayPause = 100 * time.Millisecond
 
 type WaitingReason string
 
@@ -124,6 +136,16 @@ type JobPerformance struct {
 	LastCheck    time.Time // When we last evaluated this job
 	// LastConcurrencyBlock captures when this job last hit a concurrency cap.
 	LastConcurrencyBlock time.Time
+}
+
+type workerSlot struct {
+	semaphore chan struct{}
+}
+
+func newWorkerSlot(workerConcurrency int) *workerSlot {
+	return &workerSlot{
+		semaphore: make(chan struct{}, workerConcurrency),
+	}
 }
 
 type WorkerPool struct {
@@ -150,9 +172,8 @@ type WorkerPool struct {
 	jobManager       *JobManager // Reference to JobManager for duplicate checking
 
 	// Per-worker task concurrency
-	workerConcurrency int               // How many tasks each worker can process concurrently
-	workerSemaphores  []chan struct{}   // One semaphore per worker to limit concurrent tasks
-	workerWaitGroups  []*sync.WaitGroup // One wait group per worker for graceful shutdown
+	workerConcurrency int           // How many tasks each worker can process concurrently
+	workerSlots       []*workerSlot // One slot bundle per worker instance to isolate lifecycle on reuse
 
 	// Performance scaling
 	jobPerformance map[string]*JobPerformance
@@ -173,12 +194,13 @@ type WorkerPool struct {
 	priorityUpdateTracker map[string]*priorityUpdateState
 
 	// Idle worker scaling
-	idleWorkers      map[int]time.Time // workerID -> when they went idle
-	idleWorkersMutex sync.RWMutex
-	lastScaleDown    time.Time
-	lastScaleEval    time.Time
-	idleThreshold    int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
-	scaleCooldown    time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
+	idleWorkers             map[int]time.Time // workerID -> when they went idle
+	idleWorkersMutex        sync.RWMutex
+	lastScaleDown           time.Time
+	lastScaleEval           time.Time
+	idleThreshold           int           // from GNH_WORKER_IDLE_THRESHOLD (default 0 = disabled)
+	scaleCooldown           time.Duration // from GNH_WORKER_SCALE_COOLDOWN_SECONDS (default 15s)
+	disableRuntimeScaleDown bool          // from GNH_DISABLE_RUNTIME_SCALE_DOWN (default false)
 
 	// Health probe
 	probeInterval time.Duration // from GNH_HEALTH_PROBE_INTERVAL_SECONDS (default 0 = disabled)
@@ -204,6 +226,10 @@ type WorkerPool struct {
 	runningTasksIncrPending map[string]int
 	runningTasksIncrMu      sync.Mutex
 	runningTasksIncrCh      chan string
+
+	// Throttled per-job diagnostics for concurrency gate investigations.
+	concurrencyBlockDebugMu   sync.Mutex
+	concurrencyBlockDebugLast map[string]time.Time
 
 	// Technology detection
 	techDetector            *techdetect.Detector
@@ -232,6 +258,74 @@ func (wp *WorkerPool) activeJobCount() int {
 	wp.jobsMutex.RLock()
 	defer wp.jobsMutex.RUnlock()
 	return len(wp.jobs)
+}
+
+func (wp *WorkerPool) pendingAdmissionLimit() int {
+	factor := pendingAdmissionWorkerFactorFromEnv()
+	minLimit := pendingAdmissionLimitMinFromEnv()
+	return max(wp.maxWorkers*factor, minLimit)
+}
+
+type concurrencyBlockState struct {
+	DBRunningTasks     int
+	ActualRunningTasks int
+	PendingTasks       int
+}
+
+func (wp *WorkerPool) shouldLogConcurrencyBlock(jobID string, now time.Time) bool {
+	wp.concurrencyBlockDebugMu.Lock()
+	defer wp.concurrencyBlockDebugMu.Unlock()
+
+	lastLogged, exists := wp.concurrencyBlockDebugLast[jobID]
+	if exists && now.Sub(lastLogged) < concurrencyBlockDebugThrottle {
+		return false
+	}
+
+	wp.concurrencyBlockDebugLast[jobID] = now
+	return true
+}
+
+func (wp *WorkerPool) sampleConcurrencyBlockState(ctx context.Context, jobID string) (concurrencyBlockState, error) {
+	var state concurrencyBlockState
+
+	err := wp.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(j.running_tasks, 0) AS db_running_tasks,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM tasks t
+				WHERE t.job_id = j.id
+				  AND t.status = $2
+			), 0) AS actual_running_tasks,
+			COALESCE((
+				SELECT COUNT(*)
+				FROM tasks t
+				WHERE t.job_id = j.id
+				  AND t.status = $3
+			), 0) AS pending_tasks
+		FROM jobs j
+		WHERE j.id = $1
+	`, jobID, TaskStatusRunning, TaskStatusPending).Scan(
+		&state.DBRunningTasks,
+		&state.ActualRunningTasks,
+		&state.PendingTasks,
+	)
+	if err != nil {
+		return concurrencyBlockState{}, err
+	}
+
+	return state, nil
+}
+
+func (wp *WorkerPool) runningTasksInMemValue(jobID string) int64 {
+	wp.runningTasksInMemMu.RLock()
+	counter, exists := wp.runningTasksInMem[jobID]
+	wp.runningTasksInMemMu.RUnlock()
+	if !exists {
+		return 0
+	}
+
+	return counter.Load()
 }
 
 // IdleWorkerCount returns the number of workers currently idle.
@@ -476,6 +570,15 @@ func scaleCooldownFromEnv() time.Duration {
 	return 15 * time.Second // Default 15s
 }
 
+func disableRuntimeScaleDownFromEnv() bool {
+	if raw := strings.TrimSpace(os.Getenv("GNH_DISABLE_RUNTIME_SCALE_DOWN")); raw != "" {
+		if parsed, err := strconv.ParseBool(raw); err == nil {
+			return parsed
+		}
+	}
+	return false
+}
+
 func probeIntervalFromEnv() time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("GNH_HEALTH_PROBE_INTERVAL_SECONDS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 10 {
@@ -576,6 +679,33 @@ func taskMonitorIntervalFromEnv() time.Duration {
 	return 10 * time.Second
 }
 
+func pendingAdmissionLimitMinFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_PENDING_ADMISSION_LIMIT_MIN")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return defaultPendingAdmissionLimitMin
+}
+
+func pendingAdmissionWorkerFactorFromEnv() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_PENDING_ADMISSION_WORKER_FACTOR")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 1 {
+			return parsed
+		}
+	}
+	return defaultPendingAdmissionWorkerFactor
+}
+
+func domainDelayPauseFromEnv() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("GNH_DOMAIN_DELAY_PAUSE_MS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			return time.Duration(parsed) * time.Millisecond
+		}
+	}
+	return defaultDomainDelayPause
+}
+
 func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInterface, numWorkers int, workerConcurrency int, dbConfig *db.Config) *WorkerPool {
 	// Validate inputs
 	if sqlDB == nil {
@@ -610,16 +740,15 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	})
 
 	// Initialise per-worker structures for concurrency control
-	workerSemaphores := make([]chan struct{}, numWorkers)
-	workerWaitGroups := make([]*sync.WaitGroup, numWorkers)
+	workerSlots := make([]*workerSlot, numWorkers)
 	for i := range numWorkers {
-		workerSemaphores[i] = make(chan struct{}, workerConcurrency)
-		workerWaitGroups[i] = &sync.WaitGroup{}
+		workerSlots[i] = newWorkerSlot(workerConcurrency)
 	}
 
 	failureThreshold := jobFailureThresholdFromEnv()
 	idleThreshold := idleThresholdFromEnv()
 	scaleCooldown := scaleCooldownFromEnv()
+	disableRuntimeScaleDown := disableRuntimeScaleDownFromEnv()
 	probeInterval := probeIntervalFromEnv()
 	runningTaskBatchSize := runningTaskBatchSizeFromEnv()
 	runningTaskFlushInterval := runningTaskFlushIntervalFromEnv()
@@ -647,8 +776,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 
 		// Per-worker task concurrency
 		workerConcurrency: workerConcurrency,
-		workerSemaphores:  workerSemaphores,
-		workerWaitGroups:  workerWaitGroups,
+		workerSlots:       workerSlots,
 
 		// Performance scaling
 		jobPerformance: make(map[string]*JobPerformance),
@@ -663,9 +791,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		priorityUpdateTracker: make(map[string]*priorityUpdateState),
 
 		// Idle worker scaling
-		idleWorkers:   make(map[int]time.Time),
-		idleThreshold: idleThreshold,
-		scaleCooldown: scaleCooldown,
+		idleWorkers:             make(map[int]time.Time),
+		idleThreshold:           idleThreshold,
+		scaleCooldown:           scaleCooldown,
+		disableRuntimeScaleDown: disableRuntimeScaleDown,
 
 		// Health probe
 		probeInterval: probeInterval,
@@ -683,9 +812,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		runningTaskReleasePending:       make(map[string]int),
 
 		// In-memory running_tasks tracking
-		runningTasksInMem:       make(map[string]*atomic.Int64),
-		runningTasksIncrPending: make(map[string]int),
-		runningTasksIncrCh:      make(chan string, runningTaskBuffer),
+		runningTasksInMem:         make(map[string]*atomic.Int64),
+		runningTasksIncrPending:   make(map[string]int),
+		runningTasksIncrCh:        make(chan string, runningTaskBuffer),
+		concurrencyBlockDebugLast: make(map[string]time.Time),
 
 		// Technology detection (initialised lazily to avoid startup errors)
 		techDetectedDomains:     make(map[int]bool),
@@ -775,9 +905,10 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 
 	for i := 0; i < wp.numWorkers; i++ {
 		i := i
+		slot := wp.workerSlots[i]
 		wp.wg.Go(func() {
 			time.Sleep(time.Duration(i*50) * time.Millisecond)
-			wp.worker(ctx, i)
+			wp.worker(ctx, i, slot)
 		})
 	}
 
@@ -1306,13 +1437,18 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 		Int("job_boost_removed", jobBoost).
 		Msg("Scaling down worker pool")
 
-	wp.currentWorkers = targetWorkers
-	// Note: We don't actually stop excess workers, they'll exit on next task completion
+	if !wp.disableRuntimeScaleDown {
+		wp.currentWorkers = targetWorkers
+		// Note: We don't actually stop excess workers, they'll exit on next task completion
+	}
 	wp.workersMutex.Unlock()
 
 	decision := "no_change"
 	reason := "base_capacity"
-	if targetWorkers < oldWorkers {
+	if targetWorkers < oldWorkers && wp.disableRuntimeScaleDown {
+		reason = "runtime_scale_down_disabled"
+		targetWorkers = oldWorkers
+	} else if targetWorkers < oldWorkers {
 		decision = "scale_down"
 		reason = "job_removed"
 	}
@@ -1480,7 +1616,7 @@ func calculateBackoffSleep(consecutiveNoTasks int, baseSleep, maxSleep time.Dura
 	return baseSleepTime + jitter
 }
 
-func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
+func (wp *WorkerPool) worker(ctx context.Context, workerID int, slot *workerSlot) {
 	log.Info().
 		Int("worker_id", workerID).
 		Int("concurrency", wp.workerConcurrency).
@@ -1489,9 +1625,10 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
 	// Record worker capacity once at startup
 	observability.RecordWorkerConcurrency(ctx, workerID, 0, int64(wp.workerConcurrency))
 
-	// Get this worker's semaphore and wait group
-	sem := wp.workerSemaphores[workerID]
-	wg := wp.workerWaitGroups[workerID]
+	// Each worker instance owns its own lifecycle bundle so a reused worker ID
+	// cannot share teardown state with a retiring worker.
+	sem := slot.semaphore
+	var wg sync.WaitGroup
 
 	// Create a context for this worker that we can cancel on exit
 	workerCtx, cancelWorker := context.WithCancel(ctx)
@@ -1543,11 +1680,7 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
 		}
 
 		// Check if this worker should exit (we've scaled down)
-		wp.workersMutex.RLock()
-		shouldExit := workerID >= wp.currentWorkers
-		wp.workersMutex.RUnlock()
-
-		if shouldExit {
+		if wp.shouldExitWorker(workerID, slot) {
 			return
 		}
 
@@ -1638,14 +1771,12 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 		return nil, sql.ErrNoRows
 	}
 
-	rand.Shuffle(len(activeJobs), func(i, j int) {
-		activeJobs[i], activeJobs[j] = activeJobs[j], activeJobs[i]
-	})
-
 	// Track if we saw any concurrency-blocked jobs
 	sawConcurrencyBlocked := false
 	emptyJobs := 0
 	concurrencyBlockedJobs := 0
+	domainWindowBlockedJobs := 0
+	domainDelayPause := domainDelayPauseFromEnv()
 
 	// Snapshot job info to reduce lock contention
 	wp.jobInfoMutex.RLock()
@@ -1657,8 +1788,34 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 	}
 	wp.jobInfoMutex.RUnlock()
 
-	// Try to get a task from each active job
+	readyJobs := make([]string, 0, len(activeJobs))
+	delayedJobs := make([]string, 0, len(activeJobs))
 	for _, jobID := range activeJobs {
+		jobInfo, exists := jobInfoSnapshot[jobID]
+		if !exists || wp.domainLimiter == nil || jobInfo.DomainName == "" {
+			readyJobs = append(readyJobs, jobID)
+			continue
+		}
+
+		wait := wp.domainLimiter.EstimatedWait(jobInfo.DomainName)
+		// Jobs whose domain window is about to reopen are still worth trying now;
+		// longer waits are skipped here so we do not claim then immediately bounce
+		// the task back to waiting.
+		if wait > domainDelayPause {
+			delayedJobs = append(delayedJobs, jobID)
+			domainWindowBlockedJobs++
+			continue
+		}
+
+		readyJobs = append(readyJobs, jobID)
+	}
+
+	rand.Shuffle(len(readyJobs), func(i, j int) {
+		readyJobs[i], readyJobs[j] = readyJobs[j], readyJobs[i]
+	})
+
+	// Try to get a task from each active job
+	for _, jobID := range readyJobs {
 		// Go-side concurrency gate: atomically reserve a slot before hitting DB.
 		// Uses FetchAdd to avoid TOCTOU: two goroutines both reading counter < limit
 		// then both proceeding to GetNextTask, over-claiming by 1.
@@ -1674,9 +1831,59 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 					sawConcurrencyBlocked = true
 					concurrencyBlockedJobs++
 					wp.recordConcurrencyBlock(jobID)
-					continue
+					if wp.shouldLogConcurrencyBlock(jobID, time.Now()) {
+						state, sampleErr := wp.sampleConcurrencyBlockState(ctx, jobID)
+						if sampleErr != nil {
+							log.Debug().
+								Err(sampleErr).
+								Str("job_id", jobID).
+								Int64("running_tasks_in_mem", prev).
+								Int("configured_concurrency", jobInfo.Concurrency).
+								Int("active_jobs", len(activeJobs)).
+								Msg("Concurrency gate blocked job before task claim (state sample failed)")
+						} else {
+							trueRunning := max(state.ActualRunningTasks, state.DBRunningTasks)
+							if trueRunning < jobInfo.Concurrency && prev > int64(trueRunning) {
+								counter.Store(int64(trueRunning))
+								log.Warn().
+									Str("job_id", jobID).
+									Int64("old_running_tasks_in_mem", prev).
+									Int("repaired_running_tasks_in_mem", trueRunning).
+									Int("configured_concurrency", jobInfo.Concurrency).
+									Int("db_running_tasks", state.DBRunningTasks).
+									Int("actual_running_tasks", state.ActualRunningTasks).
+									Int("pending_tasks", state.PendingTasks).
+									Int("active_jobs", len(activeJobs)).
+									Msg("Repaired false concurrency saturation before task claim")
+
+								repairedPrev := counter.Add(1) - 1
+								if repairedPrev < int64(jobInfo.Concurrency) {
+									reservedInMem = true
+								} else {
+									counter.Add(-1)
+								}
+							}
+
+							if !reservedInMem {
+								log.Debug().
+									Str("job_id", jobID).
+									Int64("running_tasks_in_mem", prev).
+									Int("configured_concurrency", jobInfo.Concurrency).
+									Int("db_running_tasks", state.DBRunningTasks).
+									Int("actual_running_tasks", state.ActualRunningTasks).
+									Int("pending_tasks", state.PendingTasks).
+									Int("active_jobs", len(activeJobs)).
+									Msg("Concurrency gate blocked job before task claim")
+							}
+						}
+					}
+					if !reservedInMem {
+						continue
+					}
 				}
-				reservedInMem = true
+				if !reservedInMem {
+					reservedInMem = true
+				}
 			}
 		}
 
@@ -1724,6 +1931,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				Int("active_jobs", len(activeJobs)).
 				Int("empty_jobs_seen", emptyJobs).
 				Int("concurrency_blocked_jobs_seen", concurrencyBlockedJobs).
+				Int("domain_window_blocked_jobs_seen", domainWindowBlockedJobs).
 				Msg("Found and claimed pending task")
 			return task, nil
 		}
@@ -1735,8 +1943,19 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			Int("active_jobs", len(activeJobs)).
 			Int("empty_jobs", emptyJobs).
 			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
 			Msg("No claimable tasks: active jobs were concurrency-blocked")
 		return nil, db.ErrConcurrencyBlocked
+	}
+
+	if len(readyJobs) == 0 && len(delayedJobs) > 0 {
+		log.Debug().
+			Int("active_jobs", len(activeJobs)).
+			Int("empty_jobs", emptyJobs).
+			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
+			Msg("No claimable tasks: active jobs were waiting on domain windows")
+		return nil, sql.ErrNoRows
 	}
 
 	// No tasks found in any job
@@ -1744,6 +1963,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 		Int("active_jobs", len(activeJobs)).
 		Int("empty_jobs", emptyJobs).
 		Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
+		Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
 		Msg("No claimable tasks in active jobs")
 	return nil, sql.ErrNoRows
 }
@@ -1838,10 +2058,21 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			log.Error().Err(err).Str("task_id", task.ID).Msg("Failed to prepare task")
 			return err
 		}
+		log.Debug().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Str("domain", jobsTask.DomainName).
+			Int("job_concurrency", jobsTask.JobConcurrency).
+			Msg("Prepared claimed task for processing")
 
 		// Process the task
 		taskCtx, cancel := context.WithTimeout(ctx, taskProcessingTimeout)
 		defer cancel()
+		log.Debug().
+			Str("task_id", task.ID).
+			Str("job_id", task.JobID).
+			Str("url", ConstructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName)).
+			Msg("Starting claimed task processing")
 
 		result, err := wp.processTask(taskCtx, jobsTask)
 		if errors.Is(err, ErrDomainDelay) {
@@ -1855,16 +2086,21 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
 					Msg("Failed to decrement running_tasks counter on domain delay requeue")
 			}
+			log.Debug().
+				Str("task_id", task.ID).
+				Str("job_id", task.JobID).
+				Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+				Msg("Released task slot after domain delay requeue")
 			wp.batchManager.QueueTaskUpdate(task)
 			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
 			log.Debug().
 				Str("task_id", task.ID).
 				Str("domain", jobsTask.DomainName).
 				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
-			// Brief pause so the worker does not immediately spin back to the DB
-			// when all pending tasks belong to rate-limited domains.
+				// Brief pause so the worker does not immediately spin back to the DB
+				// when all pending tasks belong to rate-limited domains.
 			select {
-			case <-time.After(domainDelayPause):
+			case <-time.After(domainDelayPauseFromEnv()):
 			case <-ctx.Done():
 			}
 			return nil
@@ -1966,6 +2202,7 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 // checkForPendingTasks looks for any pending tasks and adds their jobs to the pool
 func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	log.Debug().Msg("Checking database for jobs with pending tasks")
+	admissionLimit := wp.pendingAdmissionLimit()
 
 	type pendingJob struct {
 		ID     string
@@ -1985,8 +2222,12 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 				WHERE t.job_id = j.id
 				  AND t.status = 'pending'
 			  )
-			LIMIT 100
-		`)
+			ORDER BY
+				j.updated_at ASC NULLS FIRST,
+				j.started_at ASC NULLS FIRST,
+				j.created_at ASC
+			LIMIT $1
+		`, admissionLimit)
 
 		if err != nil {
 			return err
@@ -2074,7 +2315,10 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	if jobsFound == 0 {
 		log.Debug().Msg("No jobs with pending tasks found")
 	} else {
-		log.Debug().Int("count", jobsFound).Msg("Found jobs with pending tasks")
+		log.Debug().
+			Int("count", jobsFound).
+			Int("admission_limit", admissionLimit).
+			Msg("Found jobs with pending tasks")
 	}
 
 	foundSet := make(map[string]struct{}, len(foundIDs))
@@ -2742,25 +2986,45 @@ func (wp *WorkerPool) scaleWorkers(ctx context.Context, targetWorkers int) {
 		Int("target_workers", targetWorkers).
 		Msg("Scaling worker pool")
 
-	// Initialise semaphores and wait groups for new workers
+	// Initialise isolated slot bundles for new workers.
 	for i := range workersToAdd {
 		workerID := wp.currentWorkers + i
-
-		// Extend slices if needed
-		if workerID >= len(wp.workerSemaphores) {
-			wp.workerSemaphores = append(wp.workerSemaphores, make(chan struct{}, wp.workerConcurrency))
-			wp.workerWaitGroups = append(wp.workerWaitGroups, &sync.WaitGroup{})
-		}
+		slot := wp.replaceWorkerSlotLocked(workerID)
 
 		wp.wg.Add(1)
-		go func(id, idx int) {
+		go func(id, idx int, workerSlot *workerSlot) {
 			defer wp.wg.Done()
 			time.Sleep(time.Duration(idx*50) * time.Millisecond)
-			wp.worker(ctx, id)
-		}(workerID, i)
+			wp.worker(ctx, id, workerSlot)
+		}(workerID, i, slot)
 	}
 
 	wp.currentWorkers = targetWorkers
+}
+
+func (wp *WorkerPool) replaceWorkerSlotLocked(workerID int) *workerSlot {
+	for len(wp.workerSlots) <= workerID {
+		wp.workerSlots = append(wp.workerSlots, nil)
+	}
+
+	slot := newWorkerSlot(wp.workerConcurrency)
+	wp.workerSlots[workerID] = slot
+	return slot
+}
+
+func (wp *WorkerPool) shouldExitWorker(workerID int, slot *workerSlot) bool {
+	wp.workersMutex.RLock()
+	defer wp.workersMutex.RUnlock()
+
+	if workerID >= wp.currentWorkers {
+		return true
+	}
+
+	if workerID >= len(wp.workerSlots) {
+		return true
+	}
+
+	return wp.workerSlots[workerID] != slot
 }
 
 // markWorkerIdle records that a worker has gone idle
@@ -2801,6 +3065,15 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		return
 	}
 
+	wp.workersMutex.RLock()
+	currentWorkers := wp.currentWorkers
+	wp.workersMutex.RUnlock()
+
+	if wp.disableRuntimeScaleDown {
+		wp.logScalingDecision("no_change", "runtime_scale_down_disabled", currentWorkers, currentWorkers, nil)
+		return
+	}
+
 	emergencyCooldown := 2 * time.Second
 	if time.Since(wp.lastScaleEval) < emergencyCooldown {
 		return
@@ -2814,10 +3087,6 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 		wp.logScalingDecision("no_change", "emergency_cooldown_active", currentWorkers, currentWorkers, nil)
 		return
 	}
-
-	wp.workersMutex.RLock()
-	currentWorkers := wp.currentWorkers
-	wp.workersMutex.RUnlock()
 
 	// Calculate optimal workers based on active job concurrency
 	wp.jobsMutex.RLock()
@@ -2874,6 +3143,14 @@ func (wp *WorkerPool) maybeEmergencyScaleDown() {
 func (wp *WorkerPool) maybeScaleDown() {
 	// Feature disabled
 	if wp.idleThreshold == 0 {
+		return
+	}
+
+	if wp.disableRuntimeScaleDown {
+		wp.workersMutex.RLock()
+		currentWorkers := wp.currentWorkers
+		wp.workersMutex.RUnlock()
+		wp.logScalingDecision("no_change", "runtime_scale_down_disabled", currentWorkers, currentWorkers, nil)
 		return
 	}
 
@@ -4209,6 +4486,12 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			Msg("Failed to decrement running_tasks counter")
 		// Don't return error here; failed decrements are buffered/retried and reconciliation fixes any drift
 	}
+	log.Debug().
+		Str("task_id", task.ID).
+		Str("job_id", task.JobID).
+		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+		Str("final_status", task.Status).
+		Msg("Released task slot after task error")
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
@@ -4515,6 +4798,12 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			Msg("Failed to decrement running_tasks counter")
 		// Don't return error here; failed decrements are buffered/retried and reconciliation keeps counters accurate
 	}
+	log.Debug().
+		Str("task_id", task.ID).
+		Str("job_id", task.JobID).
+		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
+		Str("final_status", task.Status).
+		Msg("Released task slot after task success")
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
