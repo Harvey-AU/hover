@@ -49,14 +49,14 @@ type ConcurrencyChecker interface {
 // Dispatcher is a long-running goroutine that moves due items from
 // per-job Redis ZSETs into per-job Redis Streams.
 type Dispatcher struct {
-	scheduler  *Scheduler
-	pacer      *DomainPacer
-	counters   *RunningCounters
-	client     *Client
-	jobLister  JobLister
-	concCheck  ConcurrencyChecker
-	opts       DispatcherOpts
-	logger     zerolog.Logger
+	scheduler *Scheduler
+	pacer     *DomainPacer
+	counters  *RunningCounters
+	client    *Client
+	jobLister JobLister
+	concCheck ConcurrencyChecker
+	opts      DispatcherOpts
+	logger    zerolog.Logger
 }
 
 // NewDispatcher creates a Dispatcher.

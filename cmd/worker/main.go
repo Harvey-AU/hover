@@ -232,7 +232,7 @@ func parseOTLPHeaders(raw string) map[string]string {
 
 // Compile-time interface checks.
 var (
-	_ broker.JobLister        = (*jobs.StreamWorkerPool)(nil)
+	_ broker.JobLister          = (*jobs.StreamWorkerPool)(nil)
 	_ broker.ConcurrencyChecker = (*jobs.StreamWorkerPool)(nil)
-	_ = (*sql.DB)(nil) // unused import guard
+	_                           = (*sql.DB)(nil) // unused import guard
 )
