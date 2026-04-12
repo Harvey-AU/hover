@@ -42,7 +42,9 @@ func (rc *RunningCounters) Decrement(ctx context.Context, jobID string) (int64, 
 	}
 	if val <= 0 {
 		// Remove zero/negative entries to keep the hash clean.
-		rc.client.rdb.HDel(ctx, RunningCountersKey, jobID)
+		if err := rc.client.rdb.HDel(ctx, RunningCountersKey, jobID).Err(); err != nil {
+			rc.logger.Warn().Err(err).Str("job_id", jobID).Msg("failed to clean zero counter entry")
+		}
 		return 0, nil
 	}
 	return val, nil
@@ -66,7 +68,11 @@ func (rc *RunningCounters) GetAll(ctx context.Context) (map[string]int64, error)
 
 	counts := make(map[string]int64, len(result))
 	for jobID, v := range result {
-		n, _ := strconv.ParseInt(v, 10, 64)
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			rc.logger.Warn().Str("job_id", jobID).Str("value", v).Err(err).Msg("non-numeric running counter")
+			continue
+		}
 		counts[jobID] = n
 	}
 	return counts, nil

@@ -248,7 +248,8 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 
 	// ACK the stream message (remove from PEL).
 	if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
-		swp.logger.Error().Err(err).Str("message_id", msg.MessageID).Msg("failed to ACK")
+		swp.logger.Error().Err(err).Str("message_id", msg.MessageID).Msg("failed to ACK, skipping bookkeeping")
+		return
 	}
 
 	// Decrement running counter.
@@ -320,10 +321,12 @@ func (swp *StreamWorkerPool) reclaimStaleMessages(ctx context.Context) {
 		// Dead-letter messages that exceeded max deliveries.
 		for _, msg := range deadLetter {
 			swp.logger.Warn().Str("task_id", msg.TaskID).Int("retry_count", msg.RetryCount).Msg("dead-lettering task after max deliveries")
-			_ = swp.consumer.Ack(ctx, jobID, msg.MessageID)
-			_, decErr := swp.counters.Decrement(ctx, jobID)
-			if decErr != nil {
-				swp.logger.Warn().Err(decErr).Msg("counter decrement on dead-letter failed")
+			if err := swp.consumer.Ack(ctx, jobID, msg.MessageID); err != nil {
+				swp.logger.Error().Err(err).Str("task_id", msg.TaskID).Msg("dead-letter ACK failed, skipping")
+				continue
+			}
+			if _, err := swp.counters.Decrement(ctx, jobID); err != nil {
+				swp.logger.Warn().Err(err).Msg("counter decrement on dead-letter failed")
 			}
 
 			// Mark as failed in Postgres.

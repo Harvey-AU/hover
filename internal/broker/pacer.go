@@ -169,7 +169,9 @@ func (p *DomainPacer) DecrementInflight(ctx context.Context, domain, jobID strin
 	}
 	// Clean up zero/negative entries.
 	if val <= 0 {
-		p.client.rdb.HDel(ctx, key, jobID)
+		if err := p.client.rdb.HDel(ctx, key, jobID).Err(); err != nil {
+			p.logger.Warn().Err(err).Str("domain", domain).Str("job_id", jobID).Msg("failed to clean zero inflight entry")
+		}
 	}
 	return nil
 }
