@@ -185,13 +185,20 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 		return e.buildErrorOutcome(ctx, task, result, err, rateLimited)
 	}
 
-	if result != nil {
-		span.SetAttributes(
-			attribute.Int("http.status_code", result.StatusCode),
-			attribute.Int("task.links_found", len(result.Links)),
-			attribute.String("task.content_type", result.ContentType),
-		)
+	// Guard against nil result — crawler should always return a result
+	// on success, but defensive check prevents downstream panics.
+	if result == nil {
+		nilErr := fmt.Errorf("crawler returned nil result for %s", urlStr)
+		span.RecordError(nilErr)
+		span.SetStatus(codes.Error, nilErr.Error())
+		return e.buildErrorOutcome(ctx, task, nil, nilErr, false)
 	}
+
+	span.SetAttributes(
+		attribute.Int("http.status_code", result.StatusCode),
+		attribute.Int("task.links_found", len(result.Links)),
+		attribute.String("task.content_type", result.ContentType),
+	)
 	span.SetStatus(codes.Ok, "completed")
 
 	log.Debug().

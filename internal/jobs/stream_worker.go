@@ -11,7 +11,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -44,6 +43,13 @@ func DefaultStreamWorkerOpts() StreamWorkerOpts {
 	}
 }
 
+const jobInfoTTL = 5 * time.Minute
+
+type cachedJobInfo struct {
+	info      *JobInfo
+	expiresAt time.Time
+}
+
 // StreamWorkerPool consumes tasks from Redis Streams, executes them
 // via the TaskExecutor, and acts on the returned TaskOutcome
 // (ack, reschedule, persist results).
@@ -58,8 +64,8 @@ type StreamWorkerPool struct {
 	opts         StreamWorkerOpts
 	logger       zerolog.Logger
 
-	// Job info cache.
-	jobInfoCache map[string]*JobInfo
+	// Job info cache with TTL eviction.
+	jobInfoCache map[string]*cachedJobInfo
 	jobInfoMutex sync.RWMutex
 	jobInfoGroup singleflight.Group
 
@@ -83,7 +89,7 @@ func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWo
 		dbQueue:      deps.DBQueue,
 		opts:         opts,
 		logger:       deps.Logger.With().Str("component", "stream_worker").Logger(),
-		jobInfoCache: make(map[string]*JobInfo),
+		jobInfoCache: make(map[string]*cachedJobInfo),
 	}
 }
 
@@ -269,17 +275,15 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 }
 
 func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome *TaskOutcome) {
-	// Discovered link persistence will be wired through the same
-	// channel-based pattern as the current worker pool. The stream
-	// worker's cmd/worker/main.go will set up the persistence loop.
-	//
-	// For now this is a placeholder — the full implementation will
-	// call EnqueueURLs on the dbQueue and then scheduler.ScheduleBatch
-	// for the newly inserted tasks.
+	// TODO(stage2): Wire discovered link persistence and Redis scheduling.
+	// This requires extracting the link filtering/insertion logic from the
+	// old worker pool's processDiscoveredLinks into a reusable function,
+	// then calling EnqueueURLs + scheduler.ScheduleBatch here.
+	// Tracked as part of Stage 2 implementation.
 	swp.logger.Debug().
 		Str("task_id", outcome.Task.ID).
 		Int("link_count", len(outcome.DiscoveredLinks)).
-		Msg("discovered links pending persistence")
+		Msg("discovered links pending persistence (Stage 2)")
 }
 
 // --- reclaim loop ---
@@ -424,10 +428,12 @@ func (swp *StreamWorkerPool) buildTask(ctx context.Context, msg broker.StreamMes
 }
 
 func (swp *StreamWorkerPool) loadJobInfo(ctx context.Context, jobID string) (*JobInfo, error) {
+	now := time.Now()
+
 	swp.jobInfoMutex.RLock()
-	if info, ok := swp.jobInfoCache[jobID]; ok {
+	if cached, ok := swp.jobInfoCache[jobID]; ok && now.Before(cached.expiresAt) {
 		swp.jobInfoMutex.RUnlock()
-		return info, nil
+		return cached.info, nil
 	}
 	swp.jobInfoMutex.RUnlock()
 
@@ -438,7 +444,10 @@ func (swp *StreamWorkerPool) loadJobInfo(ctx context.Context, jobID string) (*Jo
 		}
 
 		swp.jobInfoMutex.Lock()
-		swp.jobInfoCache[jobID] = info
+		swp.jobInfoCache[jobID] = &cachedJobInfo{
+			info:      info,
+			expiresAt: time.Now().Add(jobInfoTTL),
+		}
 		swp.jobInfoMutex.Unlock()
 
 		return info, nil
@@ -521,7 +530,7 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	for _, c := range counts {
 		total += c
 	}
-	log.Info().Int64("total_running", total).Int("jobs", len(counts)).Msg("reconciled running counters")
+	swp.logger.Info().Int64("total_running", total).Int("jobs", len(counts)).Msg("reconciled running counters")
 }
 
 // --- concurrency checking (for dispatcher) ---

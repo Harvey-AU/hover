@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // Config holds Redis connection parameters, typically loaded from
@@ -100,6 +101,8 @@ func envInt(key string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
+		log.Warn().Str("key", key).Str("value", v).Int("default", def).
+			Msg("invalid integer for env var, using default")
 		return def
 	}
 	return n

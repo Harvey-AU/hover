@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/signal"
@@ -76,6 +75,8 @@ func main() {
 	}
 	defer func() {
 		log.Info().Msg("closing database connection")
+		// Allow in-flight batch manager flushes and counter syncs to complete
+		// before tearing down the connection pool.
 		time.Sleep(1 * time.Second)
 		_ = pgDB.Close()
 	}()
@@ -234,5 +235,4 @@ func parseOTLPHeaders(raw string) map[string]string {
 var (
 	_ broker.JobLister          = (*jobs.StreamWorkerPool)(nil)
 	_ broker.ConcurrencyChecker = (*jobs.StreamWorkerPool)(nil)
-	_                           = (*sql.DB)(nil) // unused import guard
 )

@@ -42,9 +42,12 @@ func TestRunningCounters_GetAll(t *testing.T) {
 	rc := NewRunningCounters(client, zerolog.Nop())
 	ctx := context.Background()
 
-	_, _ = rc.Increment(ctx, "j1")
-	_, _ = rc.Increment(ctx, "j1")
-	_, _ = rc.Increment(ctx, "j2")
+	_, err := rc.Increment(ctx, "j1")
+	require.NoError(t, err)
+	_, err = rc.Increment(ctx, "j1")
+	require.NoError(t, err)
+	_, err = rc.Increment(ctx, "j2")
+	require.NoError(t, err)
 
 	counts, err := rc.GetAll(ctx)
 	require.NoError(t, err)
@@ -58,10 +61,11 @@ func TestRunningCounters_Reconcile(t *testing.T) {
 	ctx := context.Background()
 
 	// Start with some stale data.
-	_, _ = rc.Increment(ctx, "stale-job")
+	_, err := rc.Increment(ctx, "stale-job")
+	require.NoError(t, err)
 
 	// Reconcile with authoritative counts.
-	err := rc.Reconcile(ctx, map[string]int64{
+	err = rc.Reconcile(ctx, map[string]int64{
 		"j1": 5,
 		"j2": 3,
 	})

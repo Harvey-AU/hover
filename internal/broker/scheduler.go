@@ -129,6 +129,7 @@ func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) 
 	}
 	if errs > 0 {
 		s.logger.Warn().Int("failed", errs).Int("total", len(entries)).Msg("partial schedule batch failure")
+		return fmt.Errorf("broker: %d of %d schedule entries failed", errs, len(entries))
 	}
 	return nil
 }

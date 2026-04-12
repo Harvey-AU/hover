@@ -4216,8 +4216,6 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 	return nil
 }
 
-
-
 func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 	if wp.taskHTMLPersistCh == nil {
 		return

@@ -263,6 +263,13 @@ func parseStreamMessage(xMsg redis.XMessage) (StreamMessage, error) {
 		return v
 	}
 
+	// Validate required string fields.
+	for _, key := range []string{"task_id", "job_id", "host", "path"} {
+		if get(key) == "" {
+			return StreamMessage{}, fmt.Errorf("missing required field: %s", key)
+		}
+	}
+
 	pageID, err := strconv.Atoi(get("page_id"))
 	if err != nil {
 		return StreamMessage{}, fmt.Errorf("bad page_id: %w", err)

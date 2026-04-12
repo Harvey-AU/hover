@@ -199,8 +199,10 @@ jobs:
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
 
-          # Create if it doesn't already exist
-          if ! flyctl redis list | grep -q "$REDIS_NAME"; then
+          # Exact-match by name using JSON output
+          EXISTS=$(flyctl redis list --json | jq -e --arg name "$REDIS_NAME" 'map(select(.name == $name)) | length > 0' 2>/dev/null || echo "false")
+
+          if [ "$EXISTS" != "true" ]; then
             echo "Creating Upstash Redis: $REDIS_NAME"
             flyctl redis create \
               --name "$REDIS_NAME" \
@@ -212,11 +214,19 @@ jobs:
             echo "Upstash Redis already exists: $REDIS_NAME"
           fi
 
-          # Extract private URL from status output
-          REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null | grep -i "private url" | sed 's/.*= *//')
+          # Poll for private URL (may take a moment after creation)
+          REDIS_URL=""
+          for i in 1 2 3 4 5 6; do
+            REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null | grep -i "private url" | sed 's/.*= *//')
+            if [ -n "$REDIS_URL" ]; then
+              break
+            fi
+            echo "Waiting for Redis private URL (attempt $i/6)..."
+            sleep 5
+          done
 
           if [ -z "$REDIS_URL" ]; then
-            echo "⚠️ Could not extract Redis URL — worker will use DB queue fallback"
+            echo "⚠️ Could not extract Redis URL after 6 attempts — worker will use DB queue fallback"
             echo "redis_url=" >> "$GITHUB_OUTPUT"
           else
             echo "::add-mask::$REDIS_URL"

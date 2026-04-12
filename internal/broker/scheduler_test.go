@@ -21,7 +21,7 @@ func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
 }
 
 func TestSchedule_SingleEntry(t *testing.T) {
-	client, mr := newTestClient(t)
+	client, _ := newTestClient(t)
 	s := NewScheduler(client, zerolog.Nop())
 	ctx := context.Background()
 
@@ -43,7 +43,6 @@ func TestSchedule_SingleEntry(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify ZSET has one member via the scheduler's own API.
-	_ = mr
 	count, err := s.PendingCount(ctx, "job-1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)

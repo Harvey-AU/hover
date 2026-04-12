@@ -314,8 +314,10 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 
 // createManualRootTask creates page and task records for the root URL
 func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domainID int, rootPath string) error {
+	var taskID string
+	var pageID int
+
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		var pageID int
 		err := tx.QueryRowContext(ctx, `
 				INSERT INTO pages (domain_id, host, path)
 				VALUES ($1, $2, $3)
@@ -338,12 +340,13 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 		}
 
 		// Enqueue the root URL with its page ID
+		taskID = uuid.New().String()
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (
 				id, job_id, page_id, host, path, status, created_at, retry_count,
 				source_type, source_url
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, uuid.New().String(), job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "")
+		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "")
 
 		if err != nil {
 			return fmt.Errorf("failed to enqueue task for root path: %w", err)
@@ -356,6 +359,19 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create and enqueue root URL")
 		return err
+	}
+
+	// Notify Redis broker if configured.
+	if jm.OnTasksEnqueued != nil {
+		jm.OnTasksEnqueued(ctx, job.ID, []TaskScheduleEntry{{
+			TaskID:     taskID,
+			PageID:     pageID,
+			Host:       job.Domain,
+			Path:       rootPath,
+			Status:     "pending",
+			Priority:   0,
+			SourceType: "manual",
+		}})
 	}
 
 	log.Info().
@@ -558,6 +574,13 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 
 // scheduleEnqueuedTasks queries for tasks just inserted into Postgres
 // and passes them to the OnTasksEnqueued callback for Redis scheduling.
+//
+// NOTE: This re-queries by page_id which could theoretically pick up
+// pre-existing rows on conflict. In practice the ON CONFLICT in
+// EnqueueURLs only updates pending/waiting/skipped tasks (same states
+// we filter here), so the result set matches what was just inserted.
+// A cleaner approach (returning IDs from EnqueueURLs) requires changing
+// the DbQueueProvider interface — deferred to Stage 2.
 func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, pages []db.Page, sourceType, sourceURL string) {
 	if jm.OnTasksEnqueued == nil || len(pages) == 0 {
 		return

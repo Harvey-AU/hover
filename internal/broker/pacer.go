@@ -23,19 +23,14 @@ type PacerConfig struct {
 
 	// MaxDelayMS caps the adaptive delay. Default 60_000 (60s).
 	MaxDelayMS int
-
-	// RobotsDelayMultiplier scales the robots.txt Crawl-Delay.
-	// Default 0.5 (a 2s robots delay becomes 1s).
-	RobotsDelayMultiplier float64
 }
 
 // DefaultPacerConfig returns production defaults.
 func DefaultPacerConfig() PacerConfig {
 	return PacerConfig{
-		SuccessThreshold:      5,
-		DelayStepMS:           envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500),
-		MaxDelayMS:            envInt("GNH_RATE_LIMIT_MAX_DELAY_SECONDS", 60) * 1000,
-		RobotsDelayMultiplier: 0.5,
+		SuccessThreshold: 5,
+		DelayStepMS:      envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500),
+		MaxDelayMS:       envInt("GNH_RATE_LIMIT_MAX_DELAY_MS", 60000),
 	}
 }
 

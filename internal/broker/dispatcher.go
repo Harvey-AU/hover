@@ -3,8 +3,8 @@ package broker
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -168,11 +168,10 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			continue
 		}
 
-		// Publish to stream.
-		if err := d.publishToStream(ctx, entry); err != nil {
-			// Release the domain permit since we didn't actually start work.
+		// Publish to stream and remove from ZSET atomically via pipeline.
+		if err := d.publishAndRemove(ctx, entry); err != nil {
 			_ = d.pacer.Release(ctx, domain, jobID, false, false)
-			d.logger.Warn().Err(err).Str("task_id", entry.TaskID).Msg("stream publish failed")
+			d.logger.Warn().Err(err).Str("task_id", entry.TaskID).Msg("stream publish+remove failed")
 			continue
 		}
 
@@ -186,27 +185,24 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			d.logger.Warn().Err(err).Str("domain", domain).Msg("inflight increment failed")
 		}
 
-		// Remove from ZSET.
-		if err := d.scheduler.Remove(ctx, jobID, entry.Member()); err != nil {
-			d.logger.Warn().Err(err).Str("task_id", entry.TaskID).Msg("ZREM failed after dispatch")
-		}
-
 		dispatched++
 	}
 
 	return dispatched, nil
 }
 
-// publishToStream XADDs the task envelope to the job's stream,
-// creating the stream and consumer group lazily if needed.
-func (d *Dispatcher) publishToStream(ctx context.Context, entry *ScheduleEntry) error {
+// publishAndRemove atomically XADDs the task to the job's stream
+// and ZREMs it from the schedule ZSET in a single Redis pipeline,
+// preventing double-dispatch if either operation were to fail alone.
+func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry) error {
 	streamKey := StreamKey(entry.JobID)
 	groupName := ConsumerGroup(entry.JobID)
 
 	// Ensure consumer group exists (idempotent).
 	d.ensureConsumerGroup(ctx, streamKey, groupName)
 
-	args := &redis.XAddArgs{
+	pipe := d.client.rdb.TxPipeline()
+	pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamKey,
 		Values: map[string]interface{}{
 			"task_id":     entry.TaskID,
@@ -219,9 +215,11 @@ func (d *Dispatcher) publishToStream(ctx context.Context, entry *ScheduleEntry) 
 			"source_type": entry.SourceType,
 			"source_url":  entry.SourceURL,
 		},
-	}
+	})
+	pipe.ZRem(ctx, ScheduleKey(entry.JobID), entry.Member())
 
-	return d.client.rdb.XAdd(ctx, args).Err()
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // ensureConsumerGroup creates the consumer group if it doesn't exist.
@@ -234,18 +232,8 @@ func (d *Dispatcher) ensureConsumerGroup(ctx context.Context, streamKey, groupNa
 }
 
 func isGroupExistsErr(err error) bool {
-	return err != nil && err.Error() == "BUSYGROUP Consumer Group name already exists"
-}
-
-// envDuration reads a duration-in-milliseconds from the environment.
-func envDuration(key string, defMS int) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
-		return time.Duration(defMS) * time.Millisecond
+	if err == nil {
+		return false
 	}
-	ms, err := strconv.Atoi(v)
-	if err != nil {
-		return time.Duration(defMS) * time.Millisecond
-	}
-	return time.Duration(ms) * time.Millisecond
+	return strings.Contains(err.Error(), "BUSYGROUP")
 }
