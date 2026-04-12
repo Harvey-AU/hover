@@ -164,6 +164,16 @@ type JobPerformance struct {
 	LastConcurrencyBlock time.Time
 }
 
+type workerSlot struct {
+	semaphore chan struct{}
+}
+
+func newWorkerSlot(workerConcurrency int) *workerSlot {
+	return &workerSlot{
+		semaphore: make(chan struct{}, workerConcurrency),
+	}
+}
+
 type WorkerPool struct {
 	db               *sql.DB
 	dbQueue          DbQueueInterface
@@ -188,9 +198,8 @@ type WorkerPool struct {
 	jobManager       *JobManager // Reference to JobManager for duplicate checking
 
 	// Per-worker task concurrency
-	workerConcurrency int               // How many tasks each worker can process concurrently
-	workerSemaphores  []chan struct{}   // One semaphore per worker to limit concurrent tasks
-	workerWaitGroups  []*sync.WaitGroup // One wait group per worker for graceful shutdown
+	workerConcurrency int           // How many tasks each worker can process concurrently
+	workerSlots       []*workerSlot // One slot bundle per worker instance to isolate lifecycle on reuse
 
 	// Performance scaling
 	jobPerformance map[string]*JobPerformance
@@ -757,11 +766,9 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	})
 
 	// Initialise per-worker structures for concurrency control
-	workerSemaphores := make([]chan struct{}, numWorkers)
-	workerWaitGroups := make([]*sync.WaitGroup, numWorkers)
+	workerSlots := make([]*workerSlot, numWorkers)
 	for i := range numWorkers {
-		workerSemaphores[i] = make(chan struct{}, workerConcurrency)
-		workerWaitGroups[i] = &sync.WaitGroup{}
+		workerSlots[i] = newWorkerSlot(workerConcurrency)
 	}
 
 	failureThreshold := jobFailureThresholdFromEnv()
@@ -795,8 +802,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 
 		// Per-worker task concurrency
 		workerConcurrency: workerConcurrency,
-		workerSemaphores:  workerSemaphores,
-		workerWaitGroups:  workerWaitGroups,
+		workerSlots:       workerSlots,
 
 		// Performance scaling
 		jobPerformance: make(map[string]*JobPerformance),
@@ -925,9 +931,10 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 
 	for i := 0; i < wp.numWorkers; i++ {
 		i := i
+		slot := wp.workerSlots[i]
 		wp.wg.Go(func() {
 			time.Sleep(time.Duration(i*50) * time.Millisecond)
-			wp.worker(ctx, i)
+			wp.worker(ctx, i, slot)
 		})
 	}
 
@@ -1635,7 +1642,7 @@ func calculateBackoffSleep(consecutiveNoTasks int, baseSleep, maxSleep time.Dura
 	return baseSleepTime + jitter
 }
 
-func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
+func (wp *WorkerPool) worker(ctx context.Context, workerID int, slot *workerSlot) {
 	log.Info().
 		Int("worker_id", workerID).
 		Int("concurrency", wp.workerConcurrency).
@@ -1644,9 +1651,10 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
 	// Record worker capacity once at startup
 	observability.RecordWorkerConcurrency(ctx, workerID, 0, int64(wp.workerConcurrency))
 
-	// Get this worker's semaphore and wait group
-	sem := wp.workerSemaphores[workerID]
-	wg := wp.workerWaitGroups[workerID]
+	// Each worker instance owns its own lifecycle bundle so a reused worker ID
+	// cannot share teardown state with a retiring worker.
+	sem := slot.semaphore
+	var wg sync.WaitGroup
 
 	// Create a context for this worker that we can cancel on exit
 	workerCtx, cancelWorker := context.WithCancel(ctx)
@@ -1698,11 +1706,7 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int) {
 		}
 
 		// Check if this worker should exit (we've scaled down)
-		wp.workersMutex.RLock()
-		shouldExit := workerID >= wp.currentWorkers
-		wp.workersMutex.RUnlock()
-
-		if shouldExit {
+		if wp.shouldExitWorker(workerID, slot) {
 			return
 		}
 
@@ -3008,25 +3012,45 @@ func (wp *WorkerPool) scaleWorkers(ctx context.Context, targetWorkers int) {
 		Int("target_workers", targetWorkers).
 		Msg("Scaling worker pool")
 
-	// Initialise semaphores and wait groups for new workers
+	// Initialise isolated slot bundles for new workers.
 	for i := range workersToAdd {
 		workerID := wp.currentWorkers + i
-
-		// Extend slices if needed
-		if workerID >= len(wp.workerSemaphores) {
-			wp.workerSemaphores = append(wp.workerSemaphores, make(chan struct{}, wp.workerConcurrency))
-			wp.workerWaitGroups = append(wp.workerWaitGroups, &sync.WaitGroup{})
-		}
+		slot := wp.replaceWorkerSlotLocked(workerID)
 
 		wp.wg.Add(1)
-		go func(id, idx int) {
+		go func(id, idx int, workerSlot *workerSlot) {
 			defer wp.wg.Done()
 			time.Sleep(time.Duration(idx*50) * time.Millisecond)
-			wp.worker(ctx, id)
-		}(workerID, i)
+			wp.worker(ctx, id, workerSlot)
+		}(workerID, i, slot)
 	}
 
 	wp.currentWorkers = targetWorkers
+}
+
+func (wp *WorkerPool) replaceWorkerSlotLocked(workerID int) *workerSlot {
+	for len(wp.workerSlots) <= workerID {
+		wp.workerSlots = append(wp.workerSlots, nil)
+	}
+
+	slot := newWorkerSlot(wp.workerConcurrency)
+	wp.workerSlots[workerID] = slot
+	return slot
+}
+
+func (wp *WorkerPool) shouldExitWorker(workerID int, slot *workerSlot) bool {
+	wp.workersMutex.RLock()
+	defer wp.workersMutex.RUnlock()
+
+	if workerID >= wp.currentWorkers {
+		return true
+	}
+
+	if workerID >= len(wp.workerSlots) {
+		return true
+	}
+
+	return wp.workerSlots[workerID] != slot
 }
 
 // markWorkerIdle records that a worker has gone idle

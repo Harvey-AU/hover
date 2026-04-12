@@ -139,3 +139,69 @@ func TestRemoveJob_ScalesDownWhenEnabled(t *testing.T) {
 		t.Fatalf("currentWorkers = %d, want 32", got)
 	}
 }
+
+func TestReplaceWorkerSlotLocked_ReplacesExistingSlot(t *testing.T) {
+	wp := &WorkerPool{
+		workerConcurrency: 3,
+		workerSlots: []*workerSlot{
+			newWorkerSlot(3),
+			newWorkerSlot(3),
+		},
+	}
+
+	original := wp.workerSlots[1]
+	replacement := wp.replaceWorkerSlotLocked(1)
+
+	if replacement == nil {
+		t.Fatal("replaceWorkerSlotLocked() returned nil")
+	}
+
+	if replacement == original {
+		t.Fatal("replaceWorkerSlotLocked() reused the existing slot")
+	}
+
+	if cap(replacement.semaphore) != 3 {
+		t.Fatalf("replacement semaphore capacity = %d, want 3", cap(replacement.semaphore))
+	}
+}
+
+func TestShouldExitWorker_RejectsStaleReusedSlot(t *testing.T) {
+	wp := &WorkerPool{
+		workerConcurrency: 2,
+		currentWorkers:    2,
+		workerSlots: []*workerSlot{
+			newWorkerSlot(2),
+			newWorkerSlot(2),
+		},
+	}
+
+	original := wp.workerSlots[1]
+	if wp.shouldExitWorker(1, original) {
+		t.Fatal("shouldExitWorker() = true for active slot, want false")
+	}
+
+	wp.workersMutex.Lock()
+	wp.currentWorkers = 1
+	wp.workersMutex.Unlock()
+
+	if !wp.shouldExitWorker(1, original) {
+		t.Fatal("shouldExitWorker() = false after scale-down, want true")
+	}
+
+	wp.workersMutex.Lock()
+	wp.currentWorkers = 2
+	replacement := wp.replaceWorkerSlotLocked(1)
+	wp.workersMutex.Unlock()
+
+	if replacement == original {
+		t.Fatal("replaceWorkerSlotLocked() did not replace the stale slot")
+	}
+
+	if !wp.shouldExitWorker(1, original) {
+		t.Fatal("shouldExitWorker() = false for stale reused slot, want true")
+	}
+
+	if wp.shouldExitWorker(1, replacement) {
+		t.Fatal("shouldExitWorker() = true for replacement slot, want false")
+	}
+}

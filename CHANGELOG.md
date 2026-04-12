@@ -38,6 +38,9 @@ _Add unreleased changes here._
 
 - Add a production safety switch to freeze runtime worker scale-down so worker
   slots are not recycled mid-run while we stabilise the scaling lifecycle panic
+- Isolate worker slot lifecycle state on reuse so a scaled-down worker cannot
+  share semaphore or shutdown state with a later worker started on the same
+  logical slot
 
 ## [0.32.4] – 2026-04-12
 
