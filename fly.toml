@@ -88,7 +88,7 @@ primary_region = 'syd'
       Content-Type = "text/plain"
 
 [processes]
-  app = "./main --log-level=debug"
+  app = "./main"
 
 [[vm]]
   memory = '8gb'
