@@ -692,9 +692,6 @@ func RecordWorkerTaskOutcome(ctx context.Context, metrics WorkerTaskOutcomeMetri
 		attribute.String("task.outcome", metrics.Outcome),
 		attribute.String("task.reason", metrics.Reason),
 	}
-	if metrics.JobID != "" {
-		attrs = append(attrs, attribute.String("job.id", metrics.JobID))
-	}
 
 	if workerTaskOutcomeDuration != nil {
 		workerTaskOutcomeDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
