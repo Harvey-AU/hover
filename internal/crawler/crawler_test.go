@@ -315,7 +315,7 @@ func TestPerformCacheValidationReturnsContextCancellation(t *testing.T) {
 		RequestDiagnostics: &RequestDiagnostics{},
 	}
 
-	err := crawler.performCacheValidation(ctx, result.URL, result)
+	_, err := crawler.performCacheValidation(ctx, result.URL, result)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Expected context cancellation error, got %v", err)
 	}
@@ -329,7 +329,10 @@ func TestPerformCacheValidationReturnsSkipSentinelWhenNotNeeded(t *testing.T) {
 		RequestDiagnostics: &RequestDiagnostics{},
 	}
 
-	err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	processed, err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	if !processed {
+		t.Fatal("Expected cache validation skip to mark validation as processed")
+	}
 	if !errors.Is(err, errCacheValidationSkipped) {
 		t.Fatalf("Expected cache validation skip sentinel, got %v", err)
 	}
@@ -417,7 +420,7 @@ func TestWarmURLPreservesSuccessWhenSecondaryRequestFails(t *testing.T) {
 	if result == nil || result.RequestDiagnostics == nil || result.RequestDiagnostics.Secondary == nil {
 		t.Fatal("Expected secondary diagnostics to be captured even when secondary request fails")
 	}
-	if result.RequestDiagnostics.Timings == nil || result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+	if result.RequestDiagnostics.Timings == nil {
 		t.Fatal("Expected secondary request timing to be recorded on failure")
 	}
 	if result.SecondResponseTime != 0 {

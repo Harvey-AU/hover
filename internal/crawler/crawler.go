@@ -665,7 +665,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 var errSoftCacheValidationFailure = errors.New("cache validation failed")
 var errCacheValidationSkipped = errors.New("cache validation skipped")
 
-func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) error {
+func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) (bool, error) {
 	ensureRequestDiagnostics(res)
 
 	// Only perform cache warming if we got a MISS or EXPIRED
@@ -679,7 +679,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Str("url", targetURL).
 			Str("cache_status", res.CacheStatus).
 			Msg("No cache warming needed - cache already available or not cacheable")
-		return errCacheValidationSkipped
+		return true, errCacheValidationSkipped
 	}
 
 	// Apply randomized delay between 500-1000ms to avoid hammering origins
@@ -706,7 +706,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 	case <-ctx.Done():
 		// Context cancelled during wait
 		log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during initial delay")
-		return ctx.Err()
+		return true, ctx.Err()
 	}
 
 	// Check cache status with HEAD requests in a loop
@@ -779,7 +779,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				// Continue to next check
 			case <-ctx.Done():
 				log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during check loop")
-				return ctx.Err()
+				return true, ctx.Err()
 			}
 			// Increase delay for the next iteration
 			nextCheckDelay += 300
@@ -825,7 +825,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.RequestDiagnostics.Secondary = &secondary
 		}
 		if err != nil {
-			return fmt.Errorf("%w: secondary request failed: %w", errSoftCacheValidationFailure, err)
+			return true, fmt.Errorf("%w: secondary request failed: %w", errSoftCacheValidationFailure, err)
 		}
 		if secondResult != nil {
 			res.SecondResponseTime = secondResult.ResponseTime
@@ -860,7 +860,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Msg("Cache status did not transition to HIT; skipping second request")
 	}
 
-	return nil
+	return true, nil
 }
 
 // setupLinkExtraction configures Colly HTML handler for link extraction and categorization
@@ -1117,7 +1117,8 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 
 	if allowCacheValidation {
 		cacheValidationStart := time.Now()
-		if err := c.performCacheValidation(ctx, targetURL, res); err != nil {
+		cacheValidationProcessed, err := c.performCacheValidation(ctx, targetURL, res)
+		if err != nil {
 			if errors.Is(err, errCacheValidationSkipped) {
 				res.RequestDiagnostics.Timings.CacheValidationMS = time.Since(cacheValidationStart).Milliseconds()
 			} else {
@@ -1134,7 +1135,7 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 				}
 			}
 		}
-		if res.RequestDiagnostics.Timings.CacheValidationMS == 0 {
+		if !cacheValidationProcessed {
 			cacheValidationDuration := time.Since(cacheValidationStart)
 			observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
 				Phase:    "cache_validation",
