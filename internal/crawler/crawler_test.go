@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -274,6 +275,60 @@ func TestWarmURLSecondaryRequestDoesNotRecurseIntoCacheValidation(t *testing.T) 
 
 	if result.SecondCacheStatus != "MISS" {
 		t.Fatalf("Expected secondary cache status MISS, got %s", result.SecondCacheStatus)
+	}
+}
+
+func TestMakeSecondRequestUsesSecondaryTimingBucket(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Millisecond)
+		w.Header().Set("CF-Cache-Status", "HIT")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("secondary request"))
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.makeSecondRequest(context.Background(), ts.URL)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected secondary request timings to be populated")
+	}
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+		t.Fatal("Expected secondary timing to be recorded")
+	}
+	if result.RequestDiagnostics.Timings.PrimaryRequestMS != 0 {
+		t.Fatalf("Expected primary timing bucket to remain empty, got %d", result.RequestDiagnostics.Timings.PrimaryRequestMS)
+	}
+}
+
+func TestPerformCacheValidationReturnsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                "https://example.com",
+		CacheStatus:        "MISS",
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	err := crawler.performCacheValidation(ctx, result.URL, result)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Expected context cancellation error, got %v", err)
+	}
+}
+
+func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
+	res := &CrawlResult{
+		StatusCode: http.StatusNotFound,
+		Error:      "non-success status code: 404",
+	}
+
+	err := metricErrForRequestPhase(nil, res)
+	if err == nil {
+		t.Fatal("Expected HTTP failure to be treated as an error for telemetry")
 	}
 }
 
