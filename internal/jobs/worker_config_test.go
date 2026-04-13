@@ -79,7 +79,6 @@ func TestRemoveJob_SkipsScaleDownWhenDisabled(t *testing.T) {
 	const jobID = "job-1"
 	jobPerformance := &JobPerformance{CurrentBoost: 3}
 	jobInfo := &JobInfo{}
-	priorityState := &priorityUpdateState{}
 	failureState := &jobFailureState{}
 	runningTasks := new(atomic.Int64)
 
@@ -88,7 +87,6 @@ func TestRemoveJob_SkipsScaleDownWhenDisabled(t *testing.T) {
 		jobs:                      map[string]bool{jobID: true},
 		jobPerformance:            map[string]*JobPerformance{jobID: jobPerformance},
 		jobInfoCache:              map[string]*JobInfo{jobID: jobInfo},
-		priorityUpdateTracker:     map[string]*priorityUpdateState{jobID: priorityState},
 		jobFailureCounters:        map[string]*jobFailureState{jobID: failureState},
 		runningTasksInMem:         map[string]*atomic.Int64{jobID: runningTasks},
 		runningTasksIncrPending:   map[string]int{},
@@ -112,7 +110,6 @@ func TestRemoveJob_ScalesDownWhenEnabled(t *testing.T) {
 	const jobID = "job-1"
 	jobPerformance := &JobPerformance{CurrentBoost: 3}
 	jobInfo := &JobInfo{}
-	priorityState := &priorityUpdateState{}
 	failureState := &jobFailureState{}
 	runningTasks := new(atomic.Int64)
 
@@ -121,7 +118,6 @@ func TestRemoveJob_ScalesDownWhenEnabled(t *testing.T) {
 		jobs:                      map[string]bool{jobID: true},
 		jobPerformance:            map[string]*JobPerformance{jobID: jobPerformance},
 		jobInfoCache:              map[string]*JobInfo{jobID: jobInfo},
-		priorityUpdateTracker:     map[string]*priorityUpdateState{jobID: priorityState},
 		jobFailureCounters:        map[string]*jobFailureState{jobID: failureState},
 		runningTasksInMem:         map[string]*atomic.Int64{jobID: runningTasks},
 		runningTasksIncrPending:   map[string]int{},

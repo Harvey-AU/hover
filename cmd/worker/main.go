@@ -142,6 +142,35 @@ func main() {
 	batchManager := db.NewBatchManager(dbQueue)
 	defer batchManager.Stop()
 
+	// --- job manager (for EnqueueJobURLs + OnTasksEnqueued callback) ---
+	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr, nil)
+	jobManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
+		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Status == "skipped" {
+				continue
+			}
+			schedEntries = append(schedEntries, broker.ScheduleEntry{
+				TaskID:     e.TaskID,
+				JobID:      jobID,
+				PageID:     e.PageID,
+				Host:       e.Host,
+				Path:       e.Path,
+				Priority:   e.Priority,
+				RetryCount: e.RetryCount,
+				SourceType: e.SourceType,
+				SourceURL:  e.SourceURL,
+				RunAt:      time.Now(),
+			})
+		}
+		if len(schedEntries) > 0 {
+			if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
+				log.Error().Err(err).Str("job_id", jobID).Int("count", len(schedEntries)).
+					Msg("failed to schedule tasks into Redis")
+			}
+		}
+	}
+
 	// --- stream worker pool ---
 	swpOpts := jobs.StreamWorkerOpts{
 		NumWorkers:      numWorkers,
@@ -156,6 +185,7 @@ func main() {
 		Executor:     executor,
 		BatchManager: batchManager,
 		DBQueue:      dbQueue,
+		JobManager:   jobManager,
 		Logger:       log.Logger,
 	}, swpOpts)
 

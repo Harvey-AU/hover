@@ -10,7 +10,6 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -28,12 +27,11 @@ import (
 	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5"
-	"github.com/lib/pq"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"golang.org/x/net/publicsuffix"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -190,8 +188,6 @@ type WorkerPool struct {
 	jobFailureThreshold int
 
 	// Priority update debouncing
-	priorityMutex         sync.Mutex
-	priorityUpdateTracker map[string]*priorityUpdateState
 
 	// Idle worker scaling
 	idleWorkers             map[int]time.Time // workerID -> when they went idle
@@ -461,57 +457,6 @@ func (wp *WorkerPool) loadJobInfo(ctx context.Context, jobID string, options *Jo
 	return nil, fmt.Errorf("unexpected job info type for job %s", jobID)
 }
 
-func (wp *WorkerPool) shouldThrottlePriorityUpdate(jobID string, priority float64) (bool, time.Duration) {
-	var cooldown time.Duration
-	var tier string
-
-	switch {
-	case priority >= 0.8:
-		return false, 0
-	case priority >= 0.4:
-		cooldown = 5 * time.Second
-		tier = "medium"
-	default:
-		cooldown = 30 * time.Second
-		tier = "low"
-	}
-
-	now := time.Now()
-
-	wp.priorityMutex.Lock()
-	defer wp.priorityMutex.Unlock()
-
-	state, exists := wp.priorityUpdateTracker[jobID]
-	if !exists {
-		state = &priorityUpdateState{}
-		wp.priorityUpdateTracker[jobID] = state
-	}
-
-	var last time.Time
-	switch tier {
-	case "medium":
-		last = state.lastMedium
-	case "low":
-		last = state.lastLow
-	}
-
-	if !last.IsZero() {
-		elapsed := now.Sub(last)
-		if elapsed < cooldown {
-			return true, cooldown - elapsed
-		}
-	}
-
-	switch tier {
-	case "medium":
-		state.lastMedium = now
-	case "low":
-		state.lastLow = now
-	}
-
-	return false, 0
-}
-
 func (wp *WorkerPool) recordJobInfoCacheSize(ctx context.Context) {
 	wp.jobInfoMutex.RLock()
 	size := len(wp.jobInfoCache)
@@ -535,11 +480,6 @@ type JobInfo struct {
 type jobFailureState struct {
 	streak    int
 	triggered bool
-}
-
-type priorityUpdateState struct {
-	lastMedium time.Time
-	lastLow    time.Time
 }
 
 func jobFailureThresholdFromEnv() int {
@@ -787,8 +727,6 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		// Job failure tracking
 		jobFailureCounters:  make(map[string]*jobFailureState),
 		jobFailureThreshold: failureThreshold,
-
-		priorityUpdateTracker: make(map[string]*priorityUpdateState),
 
 		// Idle worker scaling
 		idleWorkers:             make(map[int]time.Time),
@@ -1416,10 +1354,6 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 	wp.jobInfoMutex.Unlock()
 	observability.RecordJobInfoCacheInvalidation(context.Background(), jobID, "job_removed")
 	wp.recordJobInfoCacheSize(context.Background())
-
-	wp.priorityMutex.Lock()
-	delete(wp.priorityUpdateTracker, jobID)
-	wp.priorityMutex.Unlock()
 
 	wp.jobFailureMutex.Lock()
 	delete(wp.jobFailureCounters, jobID)
@@ -4225,25 +4159,10 @@ func applyCrawlDelay(task *Task) {
 	}
 }
 
-// processDiscoveredLinks handles link processing and enqueueing for discovered URLs.
+// processDiscoveredLinks delegates to the standalone ProcessDiscoveredLinks
+// function, supplying WorkerPool-specific dependencies and robots rules.
 func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, links map[string][]string, sourceURL string) {
-	log.Debug().
-		Str("task_id", task.ID).
-		Int("total_links_found", len(links["header"])+len(links["footer"])+len(links["body"])).
-		Bool("find_links_enabled", task.FindLinks).
-		Msg("Starting link processing and priority assignment")
-
-	// Use domain ID from task (already populated from job cache)
-	domainID := task.DomainID
-	if domainID == 0 {
-		log.Error().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Msg("Missing domain ID; skipping link processing")
-		return
-	}
-
-	// Get robots rules from cache for URL filtering
+	// Resolve robots rules from cache.
 	var robotsRules *crawler.RobotsRules
 	wp.jobInfoMutex.RLock()
 	if jobInfo, exists := wp.jobInfoCache[task.JobID]; exists {
@@ -4251,154 +4170,14 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 	}
 	wp.jobInfoMutex.RUnlock()
 
-	isHomepage := task.Path == "/"
-
-	processLinkCategory := func(links []string, priority float64) {
-		if len(links) == 0 {
-			return
-		}
-		if priority < wp.linkDiscoveryMinPriority {
-			log.Debug().
-				Str("task_id", task.ID).
-				Float64("priority", priority).
-				Float64("min_priority", wp.linkDiscoveryMinPriority).
-				Msg("Skipping discovered link persistence below priority threshold")
-			return
-		}
-
-		baseURL, baseErr := url.Parse(sourceURL)
-
-		if err := ctx.Err(); err != nil {
-			log.Debug().
-				Err(err).
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Msg("Skipping discovered link processing: parent task context is done")
-			return
-		}
-
-		// 1. Filter links for same-site and robots.txt compliance
-		var filtered []string
-		var blockedCount int
-		for _, link := range links {
-			linkURL, err := url.Parse(link)
-			if err != nil {
-				continue
-			}
-
-			if !linkURL.IsAbs() {
-				if baseErr != nil || baseURL == nil {
-					continue
-				}
-				linkURL = baseURL.ResolveReference(linkURL)
-			}
-
-			if isLinkAllowedForTask(linkURL.Hostname(), task) {
-				linkURL.Fragment = ""
-				if linkURL.Path != "/" && strings.HasSuffix(linkURL.Path, "/") {
-					linkURL.Path = strings.TrimSuffix(linkURL.Path, "/")
-				}
-
-				// Check robots.txt rules
-				if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, linkURL.Path) {
-					blockedCount++
-					log.Debug().
-						Str("url", linkURL.String()).
-						Str("path", linkURL.Path).
-						Str("source", sourceURL).
-						Msg("Link blocked by robots.txt")
-					continue
-				}
-
-				filtered = append(filtered, linkURL.String())
-			}
-		}
-
-		if blockedCount > 0 {
-			log.Debug().
-				Str("task_id", task.ID).
-				Int("blocked_count", blockedCount).
-				Int("allowed_count", len(filtered)).
-				Msg("Filtered discovered links against robots.txt")
-		}
-
-		if len(filtered) == 0 {
-			return
-		}
-
-		linkCtxTimeout := discoveredLinksDBTimeout
-		if deadline, ok := ctx.Deadline(); ok {
-			remaining := time.Until(deadline)
-			if remaining <= discoveredLinksMinRemain {
-				log.Warn().
-					Str("job_id", task.JobID).
-					Str("domain", task.DomainName).
-					Str("task_id", task.ID).
-					Dur("remaining", remaining).
-					Msg("Skipping discovered link persistence: task deadline too close")
-				return
-			}
-
-			maxTimeout := remaining - discoveredLinksMinRemain
-			if maxTimeout < linkCtxTimeout {
-				linkCtxTimeout = maxTimeout
-			}
-		}
-		if linkCtxTimeout < discoveredLinksMinTimeout {
-			log.Warn().
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Dur("timeout", linkCtxTimeout).
-				Msg("Skipping discovered link persistence: insufficient timeout budget")
-			return
-		}
-		// Keep request-scoped values while detaching from parent cancellation/deadline.
-		linkCtx, linkCancel := context.WithTimeout(context.WithoutCancel(ctx), linkCtxTimeout)
-		defer linkCancel()
-
-		// 2. Create page records
-		pageIDs, hosts, paths, err := db.CreatePageRecords(linkCtx, wp.dbQueue, domainID, task.DomainName, filtered)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to create page records for links")
-			return
-		}
-
-		// 3. Create a slice of db.Page for enqueuing
-		pagesToEnqueue := make([]db.Page, len(pageIDs))
-		for i := range pageIDs {
-			pagesToEnqueue[i] = db.Page{
-				ID:   pageIDs[i],
-				Host: hosts[i],
-				Path: paths[i],
-				// Priority will be set by the caller of processLinkCategory
-			}
-		}
-
-		// 4. Enqueue new tasks
-		if err := wp.EnqueueURLs(linkCtx, task.JobID, pagesToEnqueue, "link", sourceURL); err != nil {
-			log.Error().Err(err).Msg("Failed to enqueue discovered links")
-			return // Stop if enqueuing fails
-		}
-
-		// 5. Update priorities for the newly created tasks
-		if err := wp.updateTaskPriorities(linkCtx, task.JobID, domainID, priority, paths); err != nil {
-			log.Error().Err(err).Msg("Failed to update task priorities for discovered links")
-		}
+	deps := LinkDiscoveryDeps{
+		DBQueue:     wp.dbQueue,
+		JobManager:  wp.jobManager,
+		Logger:      log.Logger,
+		MinPriority: wp.linkDiscoveryMinPriority,
 	}
 
-	// Apply priorities based on page type and link category
-	if isHomepage {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from HOMEPAGE")
-		processLinkCategory(links["header"], 1.000)
-		processLinkCategory(links["footer"], 0.990)
-		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of homepage
-	} else {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from regular page")
-		// For all other pages, only process body links
-		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of other pages
-	}
+	ProcessDiscoveredLinks(ctx, deps, task, links, sourceURL, robotsRules)
 }
 
 // handleTaskError processes task failures with appropriate retry logic and status updates
@@ -5038,128 +4817,8 @@ func calculateBackoffDuration(retryCount int) time.Duration {
 	return backoffDuration
 }
 
-func normaliseComparableHost(host string) string {
-	host = strings.ToLower(strings.TrimSpace(host))
-	host = strings.TrimSuffix(host, ".")
-	return strings.TrimPrefix(host, "www.")
-}
-
-func sameRegistrableDomain(hostA, hostB string) bool {
-	normalisedA := normaliseComparableHost(hostA)
-	normalisedB := normaliseComparableHost(hostB)
-	if normalisedA == "" || normalisedB == "" {
-		return false
-	}
-
-	rootA, errA := publicsuffix.EffectiveTLDPlusOne(normalisedA)
-	rootB, errB := publicsuffix.EffectiveTLDPlusOne(normalisedB)
-	if errA != nil || errB != nil {
-		return normalisedA == normalisedB
-	}
-
-	return rootA == rootB
-}
-
-func sameHostWithWWWEquivalence(hostA, hostB string) bool {
-	return normaliseComparableHost(hostA) == normaliseComparableHost(hostB)
-}
-
-// isLinkAllowedForTask determines whether a discovered hostname should be queued.
-func isLinkAllowedForTask(discoveredHost string, task *Task) bool {
-	if task == nil {
-		return false
-	}
-
-	if task.AllowCrossSubdomainLinks {
-		return sameRegistrableDomain(discoveredHost, task.DomainName)
-	}
-
-	if task.Host != "" {
-		return sameHostWithWWWEquivalence(discoveredHost, task.Host)
-	}
-
-	return sameHostWithWWWEquivalence(discoveredHost, task.DomainName)
-}
-
-// updateTaskPriorities updates the priority scores for tasks of linked pages
-func (wp *WorkerPool) updateTaskPriorities(ctx context.Context, jobID string, domainID int, newPriority float64, paths []string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-
-	if skip, wait := wp.shouldThrottlePriorityUpdate(jobID, newPriority); skip {
-		log.Debug().
-			Str("job_id", jobID).
-			Float64("priority", newPriority).
-			Dur("cooldown_remaining", wait).
-			Msg("Debounced priority update")
-		return nil
-	}
-
-	uniquePaths := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, p := range paths {
-		if _, exists := seen[p]; exists {
-			continue
-		}
-		seen[p] = struct{}{}
-		uniquePaths = append(uniquePaths, p)
-	}
-
-	var rowsAffected int64
-	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// Update priorities using GREATEST of structural priority and traffic score
-		// Join through jobs to get organisation_id for page_analytics lookup
-		result, err := tx.ExecContext(ctx, `
-			UPDATE tasks t
-			SET priority_score = GREATEST(
-				t.priority_score,
-				$1,
-				COALESCE(pa.traffic_score, 0)
-			)
-			FROM pages p
-			JOIN jobs j ON j.id = $2
-			LEFT JOIN page_analytics pa ON pa.organisation_id = j.organisation_id
-				AND pa.domain_id = p.domain_id
-				AND pa.path = p.path
-			WHERE t.page_id = p.id
-			AND t.job_id = $2
-			AND p.domain_id = $3
-			AND p.path = ANY($4)
-			AND (
-				t.priority_score < $1
-				OR t.priority_score < COALESCE(pa.traffic_score, 0)
-			)
-		`, newPriority, jobID, domainID, pq.Array(uniquePaths))
-
-		if err != nil {
-			return err
-		}
-
-		rowsAffected, err = result.RowsAffected()
-		return err
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to update task priorities: %w", err)
-	}
-
-	if rowsAffected > 0 {
-		log.Debug().
-			Str("job_id", jobID).
-			Int64("tasks_updated", rowsAffected).
-			Float64("new_priority", newPriority).
-			Msg("Updated task priorities for discovered links")
-	} else {
-		log.Debug().
-			Str("job_id", jobID).
-			Float64("priority", newPriority).
-			Int("paths", len(uniquePaths)).
-			Msg("Priority update skipped (no lower-priority tasks found)")
-	}
-
-	return nil
-}
+// normaliseComparableHost, sameRegistrableDomain, sameHostWithWWWEquivalence,
+// and isLinkAllowedForTask have been moved to link_discovery.go.
 
 // evaluateJobPerformance checks if a job needs performance scaling while
 // respecting concurrency-derived capacity limits.

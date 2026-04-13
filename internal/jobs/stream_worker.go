@@ -23,6 +23,7 @@ type StreamWorkerDeps struct {
 	Executor     *TaskExecutor
 	BatchManager *db.BatchManager
 	DBQueue      DbQueueInterface
+	JobManager   JobManagerInterface
 	Logger       zerolog.Logger
 }
 
@@ -61,6 +62,7 @@ type StreamWorkerPool struct {
 	executor     *TaskExecutor
 	batchManager *db.BatchManager
 	dbQueue      DbQueueInterface
+	jobManager   JobManagerInterface
 	opts         StreamWorkerOpts
 	logger       zerolog.Logger
 
@@ -87,6 +89,7 @@ func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWo
 		executor:     deps.Executor,
 		batchManager: deps.BatchManager,
 		dbQueue:      deps.DBQueue,
+		jobManager:   deps.JobManager,
 		opts:         opts,
 		logger:       deps.Logger.With().Str("component", "stream_worker").Logger(),
 		jobInfoCache: make(map[string]*cachedJobInfo),
@@ -276,15 +279,44 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 }
 
 func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome *TaskOutcome) {
-	// TODO(stage2): Wire discovered link persistence and Redis scheduling.
-	// This requires extracting the link filtering/insertion logic from the
-	// old worker pool's processDiscoveredLinks into a reusable function,
-	// then calling EnqueueURLs + scheduler.ScheduleBatch here.
-	// Tracked as part of Stage 2 implementation.
-	swp.logger.Debug().
-		Str("task_id", outcome.Task.ID).
-		Int("link_count", len(outcome.DiscoveredLinks)).
-		Msg("discovered links pending persistence (Stage 2)")
+	if swp.jobManager == nil || len(outcome.DiscoveredLinks) == 0 {
+		return
+	}
+
+	// Build a Task with the fields ProcessDiscoveredLinks needs.
+	task := &Task{
+		ID:                       outcome.Task.ID,
+		JobID:                    outcome.Task.JobID,
+		Host:                     outcome.Task.Host,
+		Path:                     outcome.Task.Path,
+		PriorityScore:            outcome.Task.PriorityScore,
+		FindLinks:                true, // only called when links exist
+		AllowCrossSubdomainLinks: false,
+	}
+
+	// Enrich from job info cache.
+	info, err := swp.loadJobInfo(ctx, outcome.Task.JobID)
+	if err != nil {
+		swp.logger.Error().Err(err).Str("job_id", outcome.Task.JobID).Msg("failed to load job info for link discovery")
+		return
+	}
+	task.DomainID = info.DomainID
+	task.DomainName = info.DomainName
+	task.AllowCrossSubdomainLinks = info.AllowCrossSubdomainLinks
+
+	sourceURL := ConstructTaskURL(outcome.Task.Path, outcome.Task.Host, info.DomainName)
+	if outcome.CrawlResult != nil && outcome.CrawlResult.URL != "" {
+		sourceURL = outcome.CrawlResult.URL
+	}
+
+	deps := LinkDiscoveryDeps{
+		DBQueue:     swp.dbQueue,
+		JobManager:  swp.jobManager,
+		Logger:      swp.logger,
+		MinPriority: linkDiscoveryMinPriorityFromEnv(),
+	}
+
+	ProcessDiscoveredLinks(ctx, deps, task, outcome.DiscoveredLinks, sourceURL, info.RobotsRules)
 }
 
 // --- reclaim loop ---
