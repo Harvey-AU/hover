@@ -360,6 +360,10 @@ func (swp *StreamWorkerPool) reclaimStaleMessages(ctx context.Context) {
 			if _, err := swp.counters.Decrement(ctx, jobID); err != nil {
 				swp.logger.Warn().Err(err).Msg("counter decrement on dead-letter failed")
 			}
+			// Release domain pacer inflight slot.
+			if err := swp.pacer.Release(ctx, msg.Host, jobID, false, false); err != nil {
+				swp.logger.Warn().Err(err).Str("domain", msg.Host).Msg("pacer release on dead-letter failed")
+			}
 
 			// Mark as failed in Postgres.
 			dbTask := &db.Task{

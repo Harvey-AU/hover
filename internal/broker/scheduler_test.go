@@ -116,10 +116,16 @@ func TestReschedule(t *testing.T) {
 	err = s.Reschedule(ctx, "j1", entry.Member(), future)
 	require.NoError(t, err)
 
-	// Should no longer be due.
+	// Should no longer be due at the old time.
 	due, err = s.DueItems(ctx, "j1", now, 10)
 	require.NoError(t, err)
 	assert.Len(t, due, 0)
+
+	// Should be due at the rescheduled time.
+	due, err = s.DueItems(ctx, "j1", future, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, "t1", due[0].TaskID)
 }
 
 func TestParseScheduleEntry_RoundTrip(t *testing.T) {
@@ -148,4 +154,8 @@ func TestParseScheduleEntry_RoundTrip(t *testing.T) {
 	assert.Equal(t, entry.RetryCount, parsed.RetryCount)
 	assert.Equal(t, entry.SourceType, parsed.SourceType)
 	assert.Equal(t, entry.SourceURL, parsed.SourceURL)
+
+	// Verify RunAt was reconstructed from the score.
+	expectedRunAt := time.UnixMilli(int64(1234567890.0))
+	assert.Equal(t, expectedRunAt, parsed.RunAt)
 }

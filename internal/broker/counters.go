@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
 )
@@ -166,9 +167,25 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		}
 		defer stmt.Close()
 
+		jobIDs := make([]string, 0, len(counts))
 		for jobID, count := range counts {
 			if _, err := stmt.ExecContext(ctx, count, jobID); err != nil {
 				return fmt.Errorf("update job %s: %w", jobID, err)
+			}
+			jobIDs = append(jobIDs, jobID)
+		}
+
+		// Zero out any active jobs whose counters are no longer tracked
+		// (they finished between sync intervals).
+		if len(jobIDs) > 0 {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE jobs SET running_tasks = 0
+				 WHERE running_tasks > 0
+				   AND status IN ('running', 'pending')
+				   AND id != ALL($1)`,
+				pq.Array(jobIDs),
+			); err != nil {
+				return fmt.Errorf("zero stale running_tasks: %w", err)
 			}
 		}
 
