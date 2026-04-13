@@ -321,6 +321,20 @@ func TestPerformCacheValidationReturnsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestPerformCacheValidationReturnsSkipSentinelWhenNotNeeded(t *testing.T) {
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                "https://example.com",
+		CacheStatus:        "HIT",
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	if !errors.Is(err, errCacheValidationSkipped) {
+		t.Fatalf("Expected cache validation skip sentinel, got %v", err)
+	}
+}
+
 func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
 	res := &CrawlResult{
 		StatusCode: http.StatusNotFound,

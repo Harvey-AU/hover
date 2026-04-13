@@ -663,6 +663,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 
 // performCacheValidation handles cache warming logic if cache miss is detected
 var errSoftCacheValidationFailure = errors.New("cache validation failed")
+var errCacheValidationSkipped = errors.New("cache validation skipped")
 
 func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) error {
 	ensureRequestDiagnostics(res)
@@ -678,7 +679,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Str("url", targetURL).
 			Str("cache_status", res.CacheStatus).
 			Msg("No cache warming needed - cache already available or not cacheable")
-		return nil
+		return errCacheValidationSkipped
 	}
 
 	// Apply randomized delay between 500-1000ms to avoid hammering origins
@@ -1117,16 +1118,20 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 	if allowCacheValidation {
 		cacheValidationStart := time.Now()
 		if err := c.performCacheValidation(ctx, targetURL, res); err != nil {
-			cacheValidationDuration := time.Since(cacheValidationStart)
-			observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
-				Phase:    "cache_validation",
-				Outcome:  classifyCrawlerOutcome(err),
-				Duration: cacheValidationDuration,
-			})
-			res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
-			if !errors.Is(err, errSoftCacheValidationFailure) {
-				res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
-				return res, err
+			if errors.Is(err, errCacheValidationSkipped) {
+				res.RequestDiagnostics.Timings.CacheValidationMS = time.Since(cacheValidationStart).Milliseconds()
+			} else {
+				cacheValidationDuration := time.Since(cacheValidationStart)
+				observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+					Phase:    "cache_validation",
+					Outcome:  classifyCrawlerOutcome(err),
+					Duration: cacheValidationDuration,
+				})
+				res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
+				if !errors.Is(err, errSoftCacheValidationFailure) {
+					res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
+					return res, err
+				}
 			}
 		}
 		if res.RequestDiagnostics.Timings.CacheValidationMS == 0 {
