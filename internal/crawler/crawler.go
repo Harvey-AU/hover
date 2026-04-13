@@ -834,7 +834,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.SecondPerformance = &secondResult.Performance
 
 			// Calculate improvement ratio for pattern analysis
-			improvementRatio := float64(res.ResponseTime) / float64(res.SecondResponseTime)
+			improvementRatio := float64(0)
+			improvementRatioValid := res.SecondResponseTime > 0
+			if improvementRatioValid {
+				improvementRatio = float64(res.ResponseTime) / float64(res.SecondResponseTime)
+			}
 
 			log.Debug().
 				Str("url", targetURL).
@@ -844,6 +848,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				Int64("second_response_time", res.SecondResponseTime).
 				Int("initial_delay_ms", jitteredDelay).
 				Float64("improvement_ratio", improvementRatio).
+				Bool("improvement_ratio_valid", improvementRatioValid).
 				Bool("cache_hit_before_second", cacheHit).
 				Msg("Cache warming analysis - pattern data")
 		}
