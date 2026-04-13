@@ -332,6 +332,56 @@ func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
 	}
 }
 
+func TestClassifyProbeOutcomeTreatsHTTPFailureAsError(t *testing.T) {
+	probe := ProbeDiagnostics{
+		Response: &ResponseMetadata{StatusCode: http.StatusBadGateway},
+	}
+
+	outcome := classifyProbeOutcome(nil, probe)
+	if outcome != "error" {
+		t.Fatalf("Expected probe HTTP failure to be classified as error, got %s", outcome)
+	}
+}
+
+func TestWarmURLReturnsErrorWhenSecondaryRequestFails(t *testing.T) {
+	var getCount atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			count := getCount.Add(1)
+			if count == 1 {
+				w.Header().Set("CF-Cache-Status", "MISS")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("warming"))
+				return
+			}
+
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("secondary failed"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err == nil {
+		t.Fatal("Expected secondary request failure to surface as an error")
+	}
+	if result == nil || result.RequestDiagnostics == nil || result.RequestDiagnostics.Secondary == nil {
+		t.Fatal("Expected secondary diagnostics to be captured even when secondary request fails")
+	}
+	if result.RequestDiagnostics.Timings == nil || result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+		t.Fatal("Expected secondary request timing to be recorded on failure")
+	}
+}
+
 func TestCheckCacheStatusCapturesDiagnostics(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodHead {

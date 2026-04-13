@@ -733,7 +733,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		}
 		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
 			Phase:    "cache_probe",
-			Outcome:  classifyCrawlerOutcome(err),
+			Outcome:  classifyProbeOutcome(err, probe),
 			Duration: probeDuration,
 		})
 
@@ -805,14 +805,13 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				Str("url", targetURL).
 				Dur("secondary_duration_ms", secondDuration).
 				Msg("Second request failed, but first request succeeded")
-			// Don't return error - first request was successful
 		}
-		if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Timings != nil {
+		if secondResult != nil && secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Timings != nil {
 			res.RequestDiagnostics.Timings.SecondaryRequestMS = secondResult.RequestDiagnostics.Timings.SecondaryRequestMS
 		} else {
 			res.RequestDiagnostics.Timings.SecondaryRequestMS = secondDuration.Milliseconds()
 		}
-		if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
+		if secondResult != nil && secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
 			secondary := *secondResult.RequestDiagnostics.Primary
 			if secondary.Request != nil {
 				requestCopy := *secondary.Request
@@ -821,7 +820,10 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			}
 			res.RequestDiagnostics.Secondary = &secondary
 		}
-		if err == nil {
+		if err != nil {
+			return fmt.Errorf("secondary request failed: %w", err)
+		}
+		if secondResult != nil {
 			res.SecondResponseTime = secondResult.ResponseTime
 			res.SecondCacheStatus = secondResult.CacheStatus
 			res.SecondContentLength = secondResult.ContentLength
@@ -974,6 +976,16 @@ func classifyCrawlerOutcome(err error) string {
 
 func errorsIsContextDone(err error) bool {
 	return err == context.Canceled || err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "context canceled")
+}
+
+func classifyProbeOutcome(err error, probe ProbeDiagnostics) string {
+	if err != nil {
+		return classifyCrawlerOutcome(err)
+	}
+	if probe.Response != nil && probe.Response.StatusCode >= 400 {
+		return "error"
+	}
+	return "success"
 }
 
 func ensureRequestDiagnostics(res *CrawlResult) {
