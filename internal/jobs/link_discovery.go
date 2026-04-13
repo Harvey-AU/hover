@@ -29,6 +29,11 @@ type LinkDiscoveryDeps struct {
 // Priority updates are NOT performed here — the caller is responsible for
 // running updateTaskPriorities (or equivalent) after this function returns.
 func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *Task, links map[string][]string, sourceURL string, robotsRules *crawler.RobotsRules) {
+	if deps.JobManager == nil {
+		deps.Logger.Warn().Str("task_id", task.ID).Msg("JobManager is nil; skipping link discovery")
+		return
+	}
+
 	log.Debug().
 		Str("task_id", task.ID).
 		Int("total_links_found", len(links["header"])+len(links["footer"])+len(links["body"])).

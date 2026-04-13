@@ -578,10 +578,15 @@ func (swp *StreamWorkerPool) CanDispatch(ctx context.Context, jobID string) (boo
 		return false, err
 	}
 
+	concurrency := info.Concurrency
+	if concurrency <= 0 {
+		concurrency = fallbackJobConcurrency // 20, same as API default
+	}
+
 	running, err := swp.counters.Get(ctx, jobID)
 	if err != nil {
 		return false, err
 	}
 
-	return running < int64(info.Concurrency), nil
+	return running < int64(concurrency), nil
 }

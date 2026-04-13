@@ -145,8 +145,12 @@ func (rc *RunningCounters) StartDBSync(ctx context.Context, interval time.Durati
 // running_tasks column using the provided *sql.DB.
 func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 	return func(ctx context.Context, counts map[string]int64) error {
+		// When counts is empty all jobs have finished — reset any stale
+		// positive running_tasks left in Postgres.
 		if len(counts) == 0 {
-			return nil
+			_, err := sqlDB.ExecContext(ctx,
+				`UPDATE jobs SET running_tasks = 0 WHERE running_tasks > 0 AND status IN ('running', 'pending')`)
+			return err
 		}
 
 		tx, err := sqlDB.BeginTx(ctx, nil)
