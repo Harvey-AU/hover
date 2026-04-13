@@ -40,8 +40,8 @@ On merge, CI will:
 
 - Cache-validation cancellation now propagates correctly; redundant validation
   skipped for secondary requests
-- Secondary request failures are surfaced and timings recorded;
-  division-by-zero guarded in improvement ratio
+- Secondary request failures are surfaced and timings recorded; division-by-zero
+  guarded in improvement ratio
 
 ## Full changelog history
 
