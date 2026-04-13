@@ -978,7 +978,15 @@ func classifyCrawlerOutcome(err error) string {
 }
 
 func errorsIsContextDone(err error) bool {
-	return err == context.Canceled || err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "context canceled")
+	if err == nil {
+		return false
+	}
+
+	errorStr := strings.ToLower(err.Error())
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		strings.Contains(errorStr, "context deadline exceeded") ||
+		strings.Contains(errorStr, "context canceled")
 }
 
 func classifyProbeOutcome(err error, probe ProbeDiagnostics) string {
@@ -1022,10 +1030,14 @@ func applyPhaseTiming(res *CrawlResult, phase string, duration time.Duration) {
 	}
 	ensureRequestDiagnostics(res)
 	switch phase {
+	case "primary_request":
+		res.RequestDiagnostics.Timings.PrimaryRequestMS = duration.Milliseconds()
 	case "secondary_request":
 		res.RequestDiagnostics.Timings.SecondaryRequestMS = duration.Milliseconds()
 	default:
-		res.RequestDiagnostics.Timings.PrimaryRequestMS = duration.Milliseconds()
+		log.Warn().
+			Str("phase", phase).
+			Msg("Skipping timing assignment for unexpected crawler phase")
 	}
 }
 

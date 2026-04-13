@@ -3,6 +3,7 @@ package crawler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -329,6 +330,31 @@ func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
 	err := metricErrForRequestPhase(nil, res)
 	if err == nil {
 		t.Fatal("Expected HTTP failure to be treated as an error for telemetry")
+	}
+}
+
+func TestErrorsIsContextDoneDetectsWrappedContextErrors(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
+	if !errorsIsContextDone(err) {
+		t.Fatal("Expected wrapped context deadline exceeded to be detected")
+	}
+}
+
+func TestApplyPhaseTimingIgnoresUnexpectedPhase(t *testing.T) {
+	result := &CrawlResult{
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	applyPhaseTiming(result, "unexpected_phase", 5*time.Millisecond)
+
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected request diagnostics timings to be initialised")
+	}
+	if result.RequestDiagnostics.Timings.PrimaryRequestMS != 0 {
+		t.Fatalf("Expected unexpected phase not to overwrite primary timing, got %d", result.RequestDiagnostics.Timings.PrimaryRequestMS)
+	}
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS != 0 {
+		t.Fatalf("Expected unexpected phase not to overwrite secondary timing, got %d", result.RequestDiagnostics.Timings.SecondaryRequestMS)
 	}
 }
 
