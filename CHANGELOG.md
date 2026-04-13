@@ -30,7 +30,7 @@ On merge, CI will:
 
 ### Added
 
-- Per‑phase timing added to request diagnostics (primary, cache‑validation,
+- Per-phase timing added to request diagnostics (primary, cache-validation,
   secondary, total)
 - New crawler phase and worker task outcome metrics capturing phase, outcome,
   reason and duration
@@ -38,10 +38,10 @@ On merge, CI will:
 
 ### Fixed
 
-- Cache‑validation cancellation now propagates correctly; redundant validation
+- Cache-validation cancellation now propagates correctly; redundant validation
   skipped for secondary requests
 - Secondary request failures are surfaced and timings recorded;
-  division‑by‑zero guarded in improvement ratio
+  division-by-zero guarded in improvement ratio
 
 ## Full changelog history
 
