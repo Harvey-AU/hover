@@ -2053,6 +2053,27 @@ func (wp *WorkerPool) prepareTaskForProcessing(ctx context.Context, task *db.Tas
 }
 
 func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
+	var (
+		outcomeRecorded bool
+		processStart    time.Time
+		processCtx      context.Context
+		processTaskRef  *db.Task
+	)
+
+	defer func() {
+		if outcomeRecorded || processTaskRef == nil || processStart.IsZero() {
+			return
+		}
+
+		outcome, reason := wp.classifyTaskOutcome(processTaskRef, err)
+		observability.RecordWorkerTaskOutcome(processCtx, observability.WorkerTaskOutcomeMetrics{
+			JobID:    processTaskRef.JobID,
+			Outcome:  outcome,
+			Reason:   reason,
+			Duration: time.Since(processStart),
+		})
+	}()
+
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
@@ -2100,7 +2121,9 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			Str("url", constructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName)).
 			Msg("Starting claimed task processing")
 
-		processStart := time.Now()
+		processCtx = taskCtx
+		processTaskRef = task
+		processStart = time.Now()
 		result, err := wp.processTask(taskCtx, jobsTask)
 		processDuration := time.Since(processStart)
 		if errors.Is(err, ErrDomainDelay) {
@@ -2110,6 +2133,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				Reason:   "domain_window",
 				Duration: processDuration,
 			})
+			outcomeRecorded = true
 			// Domain rate-limit window not elapsed — requeue as waiting without
 			// incrementing RetryCount or recording a failure. The worker is free
 			// to immediately claim a task from a different domain.
@@ -2147,6 +2171,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				Reason:   reason,
 				Duration: processDuration,
 			})
+			outcomeRecorded = true
 			return wp.handleTaskError(ctx, task, result, err)
 		} else {
 			observability.RecordWorkerTaskOutcome(taskCtx, observability.WorkerTaskOutcomeMetrics{
@@ -2155,6 +2180,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				Reason:   "ok",
 				Duration: processDuration,
 			})
+			outcomeRecorded = true
 			return wp.handleTaskSuccess(ctx, task, result)
 		}
 	}

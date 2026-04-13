@@ -670,12 +670,12 @@ func RecordWorkerTask(ctx context.Context, metrics WorkerTaskMetrics) {
 			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
 	}
 
-	if metrics.QueueWait > 0 && workerTaskQueueWait != nil {
+	if workerTaskQueueWait != nil {
 		workerTaskQueueWait.Record(ctx, float64(metrics.QueueWait.Milliseconds()),
 			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
 	}
 
-	if metrics.TotalDuration > 0 && workerTaskTotalDuration != nil {
+	if workerTaskTotalDuration != nil {
 		workerTaskTotalDuration.Record(ctx, float64(metrics.TotalDuration.Milliseconds()),
 			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
 	}
@@ -696,7 +696,7 @@ func RecordWorkerTaskOutcome(ctx context.Context, metrics WorkerTaskOutcomeMetri
 		attrs = append(attrs, attribute.String("job.id", metrics.JobID))
 	}
 
-	if metrics.Duration > 0 && workerTaskOutcomeDuration != nil {
+	if workerTaskOutcomeDuration != nil {
 		workerTaskOutcomeDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
 			metric.WithAttributes(attrs...))
 	}
@@ -713,7 +713,7 @@ func RecordCrawlerPhase(ctx context.Context, metrics CrawlerPhaseMetrics) {
 		attribute.String("crawler.outcome", metrics.Outcome),
 	}
 
-	if metrics.Duration > 0 && crawlerPhaseDuration != nil {
+	if crawlerPhaseDuration != nil {
 		crawlerPhaseDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
 			metric.WithAttributes(attrs...))
 	}

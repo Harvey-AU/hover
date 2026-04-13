@@ -244,6 +244,7 @@ func TestWarmURLSecondaryRequestDoesNotRecurseIntoCacheValidation(t *testing.T) 
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
 			getCount.Add(1)
+			time.Sleep(2 * time.Millisecond)
 			w.Header().Set("CF-Cache-Status", "MISS")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("still warming"))

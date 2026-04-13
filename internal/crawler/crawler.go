@@ -811,24 +811,23 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				Dur("secondary_duration_ms", secondDuration).
 				Msg("Second request failed, but first request succeeded")
 			// Don't return error - first request was successful
-		} else {
+		}
+		res.RequestDiagnostics.Timings.SecondaryRequestMS = secondDuration.Milliseconds()
+		if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
+			secondary := *secondResult.RequestDiagnostics.Primary
+			if secondary.Request != nil {
+				requestCopy := *secondary.Request
+				requestCopy.Provenance = "secondary"
+				secondary.Request = &requestCopy
+			}
+			res.RequestDiagnostics.Secondary = &secondary
+		}
+		if err == nil {
 			res.SecondResponseTime = secondResult.ResponseTime
 			res.SecondCacheStatus = secondResult.CacheStatus
 			res.SecondContentLength = secondResult.ContentLength
 			res.SecondHeaders = secondResult.Headers
 			res.SecondPerformance = &secondResult.Performance
-			if secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Primary != nil {
-				secondary := *secondResult.RequestDiagnostics.Primary
-				if secondary.Request != nil {
-					requestCopy := *secondary.Request
-					requestCopy.Provenance = "secondary"
-					secondary.Request = &requestCopy
-				}
-				if res.RequestDiagnostics != nil {
-					res.RequestDiagnostics.Secondary = &secondary
-				}
-			}
-			res.RequestDiagnostics.Timings.SecondaryRequestMS = secondDuration.Milliseconds()
 
 			// Calculate improvement ratio for pattern analysis
 			improvementRatio := float64(res.ResponseTime) / float64(res.SecondResponseTime)
