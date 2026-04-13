@@ -234,6 +234,48 @@ func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
 	}
 }
 
+func TestWarmURLSecondaryRequestDoesNotRecurseIntoCacheValidation(t *testing.T) {
+	var getCount atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			getCount.Add(1)
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("still warming"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if got := getCount.Load(); got != 2 {
+		t.Fatalf("Expected exactly 2 GET requests (primary + secondary), got %d", got)
+	}
+
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected request timings to be populated")
+	}
+
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+		t.Fatal("Expected secondary request timing to be recorded")
+	}
+
+	if result.SecondCacheStatus != "MISS" {
+		t.Fatalf("Expected secondary cache status MISS, got %s", result.SecondCacheStatus)
+	}
+}
+
 func TestCheckCacheStatusCapturesDiagnostics(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodHead {

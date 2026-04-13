@@ -60,14 +60,19 @@ var (
 	workerConcurrentTasks  metric.Int64UpDownCounter
 	workerConcurrencyLimit metric.Int64Gauge
 
-	workerTaskQueueWait     metric.Float64Histogram
-	workerTaskTotalDuration metric.Float64Histogram
+	workerTaskQueueWait       metric.Float64Histogram
+	workerTaskTotalDuration   metric.Float64Histogram
+	workerTaskOutcomeDuration metric.Float64Histogram
+	workerTaskOutcomeTotal    metric.Int64Counter
 
 	workerTaskClaimLatency metric.Float64Histogram
 
 	workerTaskRetryCounter   metric.Int64Counter
 	workerTaskFailureCounter metric.Int64Counter
 	workerTaskWaitingCounter metric.Int64Counter
+
+	crawlerPhaseDuration metric.Float64Histogram
+	crawlerPhaseTotal    metric.Int64Counter
 
 	jobRunningTasksGauge     metric.Int64Gauge
 	jobConcurrencyLimitGauge metric.Int64Gauge
@@ -204,6 +209,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 	initOnce.Do(func() {
 		workerTracer = tracerProvider.Tracer("hover/worker")
 		_ = initWorkerInstruments(meterProvider)
+		_ = initCrawlerInstruments(meterProvider)
 		_ = initJobInstruments(meterProvider)
 		_ = initDBPoolInstruments(meterProvider)
 	})
@@ -350,6 +356,23 @@ func initWorkerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return err
 	}
 
+	workerTaskOutcomeDuration, err = meter.Float64Histogram(
+		"bee.worker.task.outcome_duration_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Task processing duration grouped by outcome and reason"),
+	)
+	if err != nil {
+		return err
+	}
+
+	workerTaskOutcomeTotal, err = meter.Int64Counter(
+		"bee.worker.task.outcomes_total",
+		metric.WithDescription("Counts task processing outcomes grouped by outcome and reason"),
+	)
+	if err != nil {
+		return err
+	}
+
 	workerTaskClaimLatency, err = meter.Float64Histogram(
 		"bee.worker.task.claim_latency_ms",
 		metric.WithUnit("ms"),
@@ -433,6 +456,30 @@ func initJobInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	jobInfoCacheSizeGauge, err = meter.Int64Gauge(
 		"bee.jobs.cache_size",
 		metric.WithDescription("Current job info cache size"),
+	)
+	return err
+}
+
+func initCrawlerInstruments(meterProvider *sdkmetric.MeterProvider) error {
+	if meterProvider == nil {
+		return nil
+	}
+
+	meter := meterProvider.Meter("hover/crawler")
+
+	var err error
+	crawlerPhaseDuration, err = meter.Float64Histogram(
+		"bee.crawler.phase.duration_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Duration of crawler phases grouped by phase and outcome"),
+	)
+	if err != nil {
+		return err
+	}
+
+	crawlerPhaseTotal, err = meter.Int64Counter(
+		"bee.crawler.phase.total",
+		metric.WithDescription("Counts crawler phase executions grouped by phase and outcome"),
 	)
 	return err
 }
@@ -585,6 +632,19 @@ type WorkerTaskMetrics struct {
 	TotalDuration time.Duration
 }
 
+type WorkerTaskOutcomeMetrics struct {
+	JobID    string
+	Outcome  string
+	Reason   string
+	Duration time.Duration
+}
+
+type CrawlerPhaseMetrics struct {
+	Phase    string
+	Outcome  string
+	Duration time.Duration
+}
+
 // StartWorkerTaskSpan starts a span for an individual worker task.
 func StartWorkerTaskSpan(ctx context.Context, info WorkerTaskSpanInfo) (context.Context, trace.Span) {
 	t := workerTracer
@@ -623,6 +683,43 @@ func RecordWorkerTask(ctx context.Context, metrics WorkerTaskMetrics) {
 	if workerTaskTotal != nil {
 		workerTaskTotal.Add(ctx, 1,
 			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
+	}
+}
+
+// RecordWorkerTaskOutcome emits task processing duration grouped by outcome.
+func RecordWorkerTaskOutcome(ctx context.Context, metrics WorkerTaskOutcomeMetrics) {
+	attrs := []attribute.KeyValue{
+		attribute.String("task.outcome", metrics.Outcome),
+		attribute.String("task.reason", metrics.Reason),
+	}
+	if metrics.JobID != "" {
+		attrs = append(attrs, attribute.String("job.id", metrics.JobID))
+	}
+
+	if metrics.Duration > 0 && workerTaskOutcomeDuration != nil {
+		workerTaskOutcomeDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
+			metric.WithAttributes(attrs...))
+	}
+
+	if workerTaskOutcomeTotal != nil {
+		workerTaskOutcomeTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+}
+
+// RecordCrawlerPhase emits duration and count metrics for a crawler phase.
+func RecordCrawlerPhase(ctx context.Context, metrics CrawlerPhaseMetrics) {
+	attrs := []attribute.KeyValue{
+		attribute.String("crawler.phase", metrics.Phase),
+		attribute.String("crawler.outcome", metrics.Outcome),
+	}
+
+	if metrics.Duration > 0 && crawlerPhaseDuration != nil {
+		crawlerPhaseDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
+			metric.WithAttributes(attrs...))
+	}
+
+	if crawlerPhaseTotal != nil {
+		crawlerPhaseTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly/v2"
 	"github.com/rs/zerolog/log"
@@ -661,8 +662,15 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 
 // performCacheValidation handles cache warming logic if cache miss is detected
 func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) error {
+	ensureRequestDiagnostics(res)
+
 	// Only perform cache warming if we got a MISS or EXPIRED
 	if !shouldMakeSecondRequest(res.CacheStatus) {
+		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+			Phase:    "cache_validation_skip",
+			Outcome:  "not_needed",
+			Duration: 0,
+		})
 		log.Debug().
 			Str("url", targetURL).
 			Str("cache_status", res.CacheStatus).
@@ -704,7 +712,9 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 	cacheHit := false
 
 	for i := range maxChecks {
+		probeStart := time.Now()
 		probe, err := c.CheckCacheStatus(ctx, targetURL)
+		probeDuration := time.Since(probeStart)
 		probe.Attempt = i + 1
 		probe.DelayMS = delayBeforeAttempt
 		cacheStatus := ""
@@ -721,6 +731,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		if res.RequestDiagnostics != nil {
 			res.RequestDiagnostics.Probes = append(res.RequestDiagnostics.Probes, probe)
 		}
+		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+			Phase:    "cache_probe",
+			Outcome:  classifyCrawlerOutcome(err),
+			Duration: probeDuration,
+		})
 
 		if err != nil {
 			log.Warn().
@@ -781,11 +796,19 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 
 	if cacheHit {
 		// Perform second request to measure cached response time
+		secondStart := time.Now()
 		secondResult, err := c.makeSecondRequest(ctx, targetURL)
+		secondDuration := time.Since(secondStart)
+		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+			Phase:    "secondary_request",
+			Outcome:  classifyCrawlerOutcome(err),
+			Duration: secondDuration,
+		})
 		if err != nil {
 			log.Debug().
 				Err(err).
 				Str("url", targetURL).
+				Dur("secondary_duration_ms", secondDuration).
 				Msg("Second request failed, but first request succeeded")
 			// Don't return error - first request was successful
 		} else {
@@ -805,6 +828,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 					res.RequestDiagnostics.Secondary = &secondary
 				}
 			}
+			res.RequestDiagnostics.Timings.SecondaryRequestMS = secondDuration.Milliseconds()
 
 			// Calculate improvement ratio for pattern analysis
 			improvementRatio := float64(res.ResponseTime) / float64(res.SecondResponseTime)
@@ -940,13 +964,33 @@ func executeCollyRequest(ctx context.Context, collyClone *colly.Collector, targe
 	}
 }
 
-// WarmURL performs a crawl of the specified URL and returns the result.
-// It respects context cancellation, enforces timeout, and treats non-2xx statuses as errors.
-func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool) (*CrawlResult, error) {
+func classifyCrawlerOutcome(err error) string {
+	if err == nil {
+		return "success"
+	}
+	if errorsIsContextDone(err) {
+		return "cancelled"
+	}
+	return "error"
+}
+
+func errorsIsContextDone(err error) bool {
+	return err == context.Canceled || err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "context deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "context canceled")
+}
+
+func ensureRequestDiagnostics(res *CrawlResult) {
+	if res.RequestDiagnostics == nil {
+		res.RequestDiagnostics = &RequestDiagnostics{}
+	}
+	if res.RequestDiagnostics.Timings == nil {
+		res.RequestDiagnostics.Timings = &RequestStageTimings{}
+	}
+}
+
+func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool, allowCacheValidation bool) (*CrawlResult, error) {
 	// Validate the crawl request (with SSRF protection unless skipped for tests)
 	_, err := validateCrawlRequest(ctx, targetURL, c.config.SkipSSRFCheck)
 	if err != nil {
-		// Create error result - caller (WarmURL) is responsible for CrawlResult construction
 		res := &CrawlResult{URL: targetURL, Timestamp: time.Now().Unix(), Error: err.Error()}
 		return res, err
 	}
@@ -958,34 +1002,39 @@ func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool)
 		Links:              make(map[string][]string),
 		RequestDiagnostics: &RequestDiagnostics{},
 	}
+	ensureRequestDiagnostics(res)
 
 	log.Debug().
 		Str("url", targetURL).
 		Bool("find_links", findLinks).
+		Bool("cache_validation_enabled", allowCacheValidation).
 		Msg("Starting URL warming with Colly")
 
-	// Use Colly for everything - single request handles cache warming and link extraction
 	collyClone := c.colly.Clone()
-
-	// Set up link extraction
 	setupLinkExtraction(collyClone)
 
-	// Set up timing and result collection
 	collyClone.OnRequest(func(r *colly.Request) {
 		r.Ctx.Put("result", res)
 		r.Ctx.Put("start_time", start)
 		r.Ctx.Put("find_links", findLinks)
 	})
 
-	// Set up response and error handlers
 	c.setupResponseHandlers(collyClone, res, start, targetURL)
 
-	// Execute the HTTP request
-	if err := executeCollyRequest(ctx, collyClone, targetURL, res); err != nil {
+	primaryStart := time.Now()
+	err = executeCollyRequest(ctx, collyClone, targetURL, res)
+	primaryDuration := time.Since(primaryStart)
+	observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+		Phase:    "primary_request",
+		Outcome:  classifyCrawlerOutcome(err),
+		Duration: primaryDuration,
+	})
+	res.RequestDiagnostics.Timings.PrimaryRequestMS = primaryDuration.Milliseconds()
+	if err != nil {
+		res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
 		return res, err
 	}
 
-	// Log results and return error if needed
 	if res.Error != "" {
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			log.Debug().
@@ -1001,15 +1050,52 @@ func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool)
 				Dur("duration_ms", time.Duration(res.ResponseTime)*time.Millisecond).
 				Msg("URL warming failed")
 		}
+		res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
 		return res, fmt.Errorf("%s", res.Error)
 	}
 
-	// Perform cache validation and warming
-	if err := c.performCacheValidation(ctx, targetURL, res); err != nil {
-		return res, err
+	if allowCacheValidation {
+		cacheValidationStart := time.Now()
+		if err := c.performCacheValidation(ctx, targetURL, res); err != nil {
+			cacheValidationDuration := time.Since(cacheValidationStart)
+			observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+				Phase:    "cache_validation",
+				Outcome:  classifyCrawlerOutcome(err),
+				Duration: cacheValidationDuration,
+			})
+			res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
+			res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
+			return res, err
+		}
+		cacheValidationDuration := time.Since(cacheValidationStart)
+		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+			Phase:    "cache_validation",
+			Outcome:  "success",
+			Duration: cacheValidationDuration,
+		})
+		res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
 	}
 
+	res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
+	log.Debug().
+		Str("url", targetURL).
+		Bool("cache_validation_enabled", allowCacheValidation).
+		Int64("primary_request_ms", res.RequestDiagnostics.Timings.PrimaryRequestMS).
+		Int64("cache_validation_ms", res.RequestDiagnostics.Timings.CacheValidationMS).
+		Int64("secondary_request_ms", res.RequestDiagnostics.Timings.SecondaryRequestMS).
+		Int64("total_ms", res.RequestDiagnostics.Timings.TotalMS).
+		Int("probe_attempts", len(res.RequestDiagnostics.Probes)).
+		Str("cache_status", res.CacheStatus).
+		Str("secondary_cache_status", res.SecondCacheStatus).
+		Msg("Crawler phase summary")
+
 	return res, nil
+}
+
+// WarmURL performs a crawl of the specified URL and returns the result.
+// It respects context cancellation, enforces timeout, and treats non-2xx statuses as errors.
+func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool) (*CrawlResult, error) {
+	return c.warmURL(ctx, targetURL, findLinks, true)
 }
 
 // shouldMakeSecondRequest determines if we should make a second request for cache warming
@@ -1027,8 +1113,7 @@ func shouldMakeSecondRequest(cacheStatus string) bool {
 // makeSecondRequest performs a second request to verify cache warming
 // Reuses the main WarmURL logic but disables link extraction
 func (c *Crawler) makeSecondRequest(ctx context.Context, targetURL string) (*CrawlResult, error) {
-	// Reuse the main WarmURL method but disable link extraction
-	return c.WarmURL(ctx, targetURL, false)
+	return c.warmURL(ctx, targetURL, false, false)
 }
 
 func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (ProbeDiagnostics, error) {

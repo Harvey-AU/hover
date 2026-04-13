@@ -2100,8 +2100,16 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			Str("url", constructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName)).
 			Msg("Starting claimed task processing")
 
+		processStart := time.Now()
 		result, err := wp.processTask(taskCtx, jobsTask)
+		processDuration := time.Since(processStart)
 		if errors.Is(err, ErrDomainDelay) {
+			observability.RecordWorkerTaskOutcome(taskCtx, observability.WorkerTaskOutcomeMetrics{
+				JobID:    task.JobID,
+				Outcome:  "domain_delay_requeue",
+				Reason:   "domain_window",
+				Duration: processDuration,
+			})
 			// Domain rate-limit window not elapsed — requeue as waiting without
 			// incrementing RetryCount or recording a failure. The worker is free
 			// to immediately claim a task from a different domain.
@@ -2132,8 +2140,21 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			return nil
 		}
 		if err != nil {
+			outcome, reason := wp.classifyTaskOutcome(task, err)
+			observability.RecordWorkerTaskOutcome(taskCtx, observability.WorkerTaskOutcomeMetrics{
+				JobID:    task.JobID,
+				Outcome:  outcome,
+				Reason:   reason,
+				Duration: processDuration,
+			})
 			return wp.handleTaskError(ctx, task, result, err)
 		} else {
+			observability.RecordWorkerTaskOutcome(taskCtx, observability.WorkerTaskOutcomeMetrics{
+				JobID:    task.JobID,
+				Outcome:  "success",
+				Reason:   "ok",
+				Duration: processDuration,
+			})
 			return wp.handleTaskSuccess(ctx, task, result)
 		}
 	}
@@ -5206,6 +5227,15 @@ func isRetryableError(err error) bool {
 	return networkErrors || serverErrors
 }
 
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errorStr := strings.ToLower(err.Error())
+	return strings.Contains(errorStr, "timeout") || strings.Contains(errorStr, "deadline exceeded")
+}
+
 // isBlockingError checks if an error indicates we're being blocked
 func isBlockingError(err error) bool {
 	if err == nil {
@@ -5222,6 +5252,40 @@ func isBlockingError(err error) bool {
 		strings.Contains(errorStr, "rate limit") ||
 		strings.Contains(errorStr, "503") ||
 		strings.Contains(errorStr, "service unavailable")
+}
+
+func (wp *WorkerPool) classifyTaskOutcome(task *db.Task, taskErr error) (string, string) {
+	if taskErr == nil {
+		return "success", "ok"
+	}
+
+	if errors.Is(taskErr, ErrDomainDelay) {
+		return "domain_delay_requeue", "domain_window"
+	}
+
+	if isBlockingError(taskErr) {
+		maxRetries := defaultDomainLimiterConfig().MaxBlockingRetries
+		if wp.domainLimiter != nil {
+			maxRetries = wp.domainLimiter.cfg.MaxBlockingRetries
+		}
+		if task != nil && task.RetryCount < maxRetries {
+			return "retry_scheduled", "blocking"
+		}
+		return "failed", "blocking_exhausted"
+	}
+
+	if isRetryableError(taskErr) {
+		reason := "retryable"
+		if isTimeoutError(taskErr) {
+			reason = "timeout"
+		}
+		if task != nil && task.RetryCount < MaxTaskRetries {
+			return "retry_scheduled", reason
+		}
+		return "failed", reason + "_exhausted"
+	}
+
+	return "failed", "non_retryable"
 }
 
 var statusCodePattern = regexp.MustCompile(`\b(\d{3})\b`)
