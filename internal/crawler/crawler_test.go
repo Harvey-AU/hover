@@ -338,6 +338,39 @@ func TestPerformCacheValidationReturnsSkipSentinelWhenNotNeeded(t *testing.T) {
 	}
 }
 
+func TestPerformCacheValidationReturnsUnprocessedOnSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("warming"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                ts.URL,
+		CacheStatus:        "MISS",
+		ResponseTime:       100,
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	processed, err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	if err != nil {
+		t.Fatalf("Expected successful cache validation, got %v", err)
+	}
+	if processed {
+		t.Fatal("Expected successful cache validation to allow caller success telemetry")
+	}
+}
+
 func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
 	res := &CrawlResult{
 		StatusCode: http.StatusNotFound,

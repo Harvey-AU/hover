@@ -860,7 +860,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Msg("Cache status did not transition to HIT; skipping second request")
 	}
 
-	return true, nil
+	return false, nil
 }
 
 // setupLinkExtraction configures Colly HTML handler for link extraction and categorization
