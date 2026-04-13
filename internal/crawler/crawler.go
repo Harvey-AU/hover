@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -661,6 +662,8 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 }
 
 // performCacheValidation handles cache warming logic if cache miss is detected
+var errSoftCacheValidationFailure = errors.New("cache validation failed")
+
 func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) error {
 	ensureRequestDiagnostics(res)
 
@@ -821,7 +824,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.RequestDiagnostics.Secondary = &secondary
 		}
 		if err != nil {
-			return fmt.Errorf("secondary request failed: %w", err)
+			return fmt.Errorf("%w: secondary request failed: %w", errSoftCacheValidationFailure, err)
 		}
 		if secondResult != nil {
 			res.SecondResponseTime = secondResult.ResponseTime
@@ -1104,16 +1107,20 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 				Duration: cacheValidationDuration,
 			})
 			res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
-			res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
-			return res, err
+			if !errors.Is(err, errSoftCacheValidationFailure) {
+				res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
+				return res, err
+			}
 		}
-		cacheValidationDuration := time.Since(cacheValidationStart)
-		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
-			Phase:    "cache_validation",
-			Outcome:  "success",
-			Duration: cacheValidationDuration,
-		})
-		res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
+		if res.RequestDiagnostics.Timings.CacheValidationMS == 0 {
+			cacheValidationDuration := time.Since(cacheValidationStart)
+			observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
+				Phase:    "cache_validation",
+				Outcome:  "success",
+				Duration: cacheValidationDuration,
+			})
+			res.RequestDiagnostics.Timings.CacheValidationMS = cacheValidationDuration.Milliseconds()
+		}
 	}
 
 	res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()

@@ -343,7 +343,7 @@ func TestClassifyProbeOutcomeTreatsHTTPFailureAsError(t *testing.T) {
 	}
 }
 
-func TestWarmURLReturnsErrorWhenSecondaryRequestFails(t *testing.T) {
+func TestWarmURLPreservesSuccessWhenSecondaryRequestFails(t *testing.T) {
 	var getCount atomic.Int32
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -371,14 +371,17 @@ func TestWarmURLReturnsErrorWhenSecondaryRequestFails(t *testing.T) {
 
 	crawler := New(testConfig())
 	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
-	if err == nil {
-		t.Fatal("Expected secondary request failure to surface as an error")
+	if err != nil {
+		t.Fatalf("Expected primary success to be preserved, got %v", err)
 	}
 	if result == nil || result.RequestDiagnostics == nil || result.RequestDiagnostics.Secondary == nil {
 		t.Fatal("Expected secondary diagnostics to be captured even when secondary request fails")
 	}
 	if result.RequestDiagnostics.Timings == nil || result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
 		t.Fatal("Expected secondary request timing to be recorded on failure")
+	}
+	if result.SecondResponseTime != 0 {
+		t.Fatalf("Expected secondary response fields to remain unset on failure, got %d", result.SecondResponseTime)
 	}
 }
 
