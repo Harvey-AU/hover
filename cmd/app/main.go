@@ -580,50 +580,55 @@ func main() {
 	// Create database queue for operations
 	dbQueue := db.NewDbQueue(queueDB)
 
-	// --- Redis scheduler (tasks are dispatched via Redis, consumed by the worker service) ---
+	// --- Redis scheduler (optional — tasks are dispatched via Redis, consumed by the worker service) ---
 	redisCfg := broker.ConfigFromEnv()
-	redisClient, err := broker.NewClient(redisCfg, log.Logger)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create Redis client")
-	}
-	defer redisClient.Close()
-
-	if err := redisClient.Ping(context.Background()); err != nil {
-		log.Fatal().Err(err).Msg("failed to ping Redis")
-	}
-	log.Info().Msg("connected to Redis")
-
-	scheduler := broker.NewScheduler(redisClient, log.Logger)
 
 	// Create job manager (no local worker pool — tasks are consumed by the worker service)
 	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 
-	// Wire callback: when tasks are inserted into Postgres, schedule them into Redis
-	jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
-		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
-		for _, e := range entries {
-			if e.Status == "skipped" {
-				continue
-			}
-			schedEntries = append(schedEntries, broker.ScheduleEntry{
-				TaskID:     e.TaskID,
-				JobID:      jobID,
-				PageID:     e.PageID,
-				Host:       e.Host,
-				Path:       e.Path,
-				Priority:   e.Priority,
-				RetryCount: e.RetryCount,
-				SourceType: e.SourceType,
-				SourceURL:  e.SourceURL,
-				RunAt:      time.Now(),
-			})
+	if redisCfg.URL != "" {
+		redisClient, err := broker.NewClient(redisCfg, log.Logger)
+		if err != nil {
+			log.Fatal().Err(err).Msg("failed to create Redis client")
 		}
-		if len(schedEntries) > 0 {
-			if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
-				log.Error().Err(err).Str("job_id", jobID).Int("count", len(schedEntries)).
-					Msg("failed to schedule tasks into Redis")
+		defer redisClient.Close()
+
+		if err := redisClient.Ping(context.Background()); err != nil {
+			log.Fatal().Err(err).Msg("failed to ping Redis")
+		}
+		log.Info().Msg("connected to Redis")
+
+		scheduler := broker.NewScheduler(redisClient, log.Logger)
+
+		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis
+		jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
+			schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
+			for _, e := range entries {
+				if e.Status == "skipped" {
+					continue
+				}
+				schedEntries = append(schedEntries, broker.ScheduleEntry{
+					TaskID:     e.TaskID,
+					JobID:      jobID,
+					PageID:     e.PageID,
+					Host:       e.Host,
+					Path:       e.Path,
+					Priority:   e.Priority,
+					RetryCount: e.RetryCount,
+					SourceType: e.SourceType,
+					SourceURL:  e.SourceURL,
+					RunAt:      time.Now(),
+				})
+			}
+			if len(schedEntries) > 0 {
+				if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
+					log.Error().Err(err).Str("job_id", jobID).Int("count", len(schedEntries)).
+						Msg("failed to schedule tasks into Redis")
+				}
 			}
 		}
+	} else {
+		log.Warn().Msg("REDIS_URL not set — task dispatch to Redis is disabled; API will still create tasks in Postgres")
 	}
 
 	// Create notification service with Slack channel
