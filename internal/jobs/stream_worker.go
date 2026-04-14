@@ -208,9 +208,9 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 	task, err := swp.buildTask(ctx, msg)
 	if err != nil {
 		logger.Error().Err(err).Msg("failed to build task from stream message")
-		// ACK to prevent infinite redelivery of unprocessable messages.
-		_ = swp.consumer.Ack(ctx, msg.JobID, msg.MessageID)
-		_, _ = swp.counters.Decrement(ctx, msg.JobID)
+		// Do NOT ACK — buildTask failures are typically transient (DB
+		// timeouts, connection errors). Leaving the message in the PEL
+		// lets XAUTOCLAIM redeliver it after the idle threshold.
 		return
 	}
 

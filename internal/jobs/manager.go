@@ -337,14 +337,17 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			return fmt.Errorf("failed to upsert domain host for root path: %w", err)
 		}
 
-		// Enqueue the root URL with its page ID
+		// Enqueue the root URL with its page ID.
+		// Root/homepage tasks get priority 1.0 so downstream link discovery
+		// (which multiplies by 0.9) produces non-zero child priorities.
+		const rootPriority = 1.0
 		taskID = uuid.New().String()
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (
 				id, job_id, page_id, host, path, status, created_at, retry_count,
-				source_type, source_url
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "")
+				source_type, source_url, priority_score
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "", rootPriority)
 
 		if err != nil {
 			return fmt.Errorf("failed to enqueue task for root path: %w", err)
@@ -367,7 +370,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			Host:       job.Domain,
 			Path:       rootPath,
 			Status:     "pending",
-			Priority:   0,
+			Priority:   1.0,
 			SourceType: "manual",
 		}})
 	}

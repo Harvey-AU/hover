@@ -35,16 +35,19 @@ type JobInfo struct {
 }
 
 // IsRateLimitError checks whether an error indicates rate limiting (429, 403,
-// 503, or common rate-limit messages).
+// 503, or common rate-limit messages). This intentionally matches a broader set
+// than isBlockingError in executor.go: isBlockingError drives retry/backoff
+// decisions while IsRateLimitError drives domain pacer state updates.
 func IsRateLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "429") ||
-		strings.Contains(strings.ToLower(err.Error()), "too many requests") ||
-		strings.Contains(strings.ToLower(err.Error()), "rate limit") ||
-		strings.Contains(strings.ToLower(err.Error()), "403") ||
-		strings.Contains(strings.ToLower(err.Error()), "503")
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "429") ||
+		strings.Contains(lower, "too many requests") ||
+		strings.Contains(lower, "rate limit") ||
+		strings.Contains(lower, "403") ||
+		strings.Contains(lower, "503")
 }
 
 // applyCrawlDelay sleeps for the task's robots.txt crawl delay. Crawl delay is
