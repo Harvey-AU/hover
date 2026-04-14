@@ -39,6 +39,7 @@ the TOML `[env]` section. If it grants access to anything, it is a secret.
 | `GNH_HEALTH_PROBE_INTERVAL_SECONDS`   | Worker health probe interval                                    | disabled              |
 | `GNH_WORKER_IDLE_THRESHOLD`           | Idle threshold before scale-down                                | disabled              |
 | `GNH_WORKER_SCALE_COOLDOWN_SECONDS`   | Minimum time between scale-downs                                | `15`                  |
+| `GNH_CRAWLER_MAX_CONCURRENCY`         | Shared crawler parallel request cap                             | `10`                  |
 | `GNH_RUNNING_TASK_BATCH_SIZE`         | Batch size for task DB updates                                  | `32`                  |
 | `GNH_RUNNING_TASK_FLUSH_INTERVAL_MS`  | Batch flush interval                                            | `1000`                |
 | `GNH_RATE_LIMIT_BASE_DELAY_MS`        | Initial crawl request delay                                     | `500`                 |
