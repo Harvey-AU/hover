@@ -17,6 +17,7 @@ import (
 	"runtime/trace"
 
 	"github.com/Harvey-AU/hover/internal/api"
+	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
@@ -579,64 +580,51 @@ func main() {
 	// Create database queue for operations
 	dbQueue := db.NewDbQueue(queueDB)
 
-	// Create a worker pool for task processing
-	// Configure worker count based on environment to prevent resource exhaustion
-	var jobWorkers int
-	switch appEnv {
-	case "production":
-		jobWorkers = 30 // Production: sized to stay under Supabase pool limits while keeping queue saturated
-	case "staging":
-		jobWorkers = 10 // Preview/staging: moderate throughput for PR testing
-	default:
-		jobWorkers = 5 // Development: minimal for local testing
+	// --- Redis scheduler (tasks are dispatched via Redis, consumed by the worker service) ---
+	redisCfg := broker.ConfigFromEnv()
+	redisClient, err := broker.NewClient(redisCfg, log.Logger)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create Redis client")
 	}
+	defer redisClient.Close()
 
-	// Configure worker concurrency (how many tasks each worker handles simultaneously)
-	workerConcurrency := getEnvInt("WORKER_CONCURRENCY", 1)
-	if workerConcurrency < 1 {
-		workerConcurrency = 1
-	} else if workerConcurrency > 20 {
-		workerConcurrency = 20
+	if err := redisClient.Ping(context.Background()); err != nil {
+		log.Fatal().Err(err).Msg("failed to ping Redis")
 	}
+	log.Info().Msg("connected to Redis")
 
-	// Keep staging worker capacity aligned with queue DB pool limits to reduce
-	// recurring queue-pressure alerts from brief capacity spikes.
-	if appEnv == "staging" {
-		reservedConnections := max(getEnvInt("DB_POOL_RESERVED_CONNECTIONS", 4), 0)
+	scheduler := broker.NewScheduler(redisClient, log.Logger)
 
-		if cfg := queueDB.GetConfig(); cfg != nil && cfg.MaxOpenConns > 0 {
-			availablePoolSlots := max(cfg.MaxOpenConns-reservedConnections, 1)
+	// Create job manager (no local worker pool — tasks are consumed by the worker service)
+	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 
-			safeWorkers := max(availablePoolSlots/workerConcurrency, 1)
-
-			if safeWorkers < jobWorkers {
-				log.Warn().
-					Int("configured_workers", jobWorkers).
-					Int("capped_workers", safeWorkers).
-					Int("db_max_open", cfg.MaxOpenConns).
-					Int("reserved_connections", reservedConnections).
-					Int("worker_concurrency", workerConcurrency).
-					Msg("Capping staging workers to fit database pool capacity")
-				jobWorkers = safeWorkers
+	// Wire callback: when tasks are inserted into Postgres, schedule them into Redis
+	jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
+		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Status == "skipped" {
+				continue
+			}
+			schedEntries = append(schedEntries, broker.ScheduleEntry{
+				TaskID:     e.TaskID,
+				JobID:      jobID,
+				PageID:     e.PageID,
+				Host:       e.Host,
+				Path:       e.Path,
+				Priority:   e.Priority,
+				RetryCount: e.RetryCount,
+				SourceType: e.SourceType,
+				SourceURL:  e.SourceURL,
+				RunAt:      time.Now(),
+			})
+		}
+		if len(schedEntries) > 0 {
+			if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
+				log.Error().Err(err).Str("job_id", jobID).Int("count", len(schedEntries)).
+					Msg("failed to schedule tasks into Redis")
 			}
 		}
 	}
-
-	totalCapacity := jobWorkers * workerConcurrency
-	log.Info().
-		Int("workers", jobWorkers).
-		Int("concurrency_per_worker", workerConcurrency).
-		Int("total_capacity", totalCapacity).
-		Str("environment", appEnv).
-		Msg("Configuring worker pool")
-
-	workerPool := jobs.NewWorkerPool(pgDB.GetDB(), dbQueue, cr, jobWorkers, workerConcurrency, pgDB.GetConfig())
-
-	// Create job manager
-	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr, workerPool)
-
-	// Set the job manager in the worker pool for duplicate checking
-	workerPool.SetJobManager(jobsManager)
 
 	// Create notification service with Slack channel
 	notificationService := notifications.NewService(pgDB)
@@ -771,14 +759,8 @@ func main() {
 		close(done)
 	}()
 
-	// Start the worker pool once the HTTP server goroutine is running
-	workerPool.Start(context.Background())
-	// Defer worker pool stop - will execute BEFORE database close due to defer LIFO order
-	defer func() {
-		log.Info().Msg("Stopping worker pool (waiting for in-flight tasks to complete)")
-		workerPool.Stop()
-		log.Info().Msg("Worker pool stopped - all tasks completed and batches flushed")
-	}()
+	// Note: no local worker pool — task execution is handled by the dedicated
+	// worker service (cmd/worker). The API server only schedules tasks into Redis.
 
 	// Start background health monitoring with cancellable context
 	backgroundWG.Add(1)
@@ -829,26 +811,6 @@ func getEnvWithDefault(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-// getEnvInt retrieves an environment variable as an integer or returns a default value if not set or invalid
-func getEnvInt(key string, defaultValue int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	var result int
-	if _, err := fmt.Sscanf(value, "%d", &result); err != nil {
-		log.Warn().
-			Str("key", key).
-			Str("value", value).
-			Int("default", defaultValue).
-			Msg("Invalid integer in environment variable, using default")
-		return defaultValue
-	}
-
-	return result
 }
 
 func parseOTLPHeaders(raw string) map[string]string {

@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -391,8 +389,6 @@ func ConstructTaskURL(path, host, domainName string) string {
 
 // Error classification — unchanged from worker.go.
 
-var errStatusCodePattern = regexp.MustCompile(`\b(\d{3})\b`)
-
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
@@ -427,39 +423,6 @@ func isBlockingError(err error) bool {
 		strings.Contains(errorStr, "rate limit") ||
 		strings.Contains(errorStr, "503") ||
 		strings.Contains(errorStr, "service unavailable")
-}
-
-func isClientOrRedirectError(err error) bool {
-	if err == nil {
-		return false
-	}
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "crawler error") {
-		keywords := []string{
-			"not found", "bad request", "unauthorized", "forbidden",
-			"gone", "method not allowed", "temporary redirect",
-			"permanent redirect", "moved permanently", "see other",
-		}
-		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
-				return true
-			}
-		}
-	}
-	matches := errStatusCodePattern.FindAllStringSubmatch(lower, -1)
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		code, err := strconv.Atoi(match[1])
-		if err != nil {
-			continue
-		}
-		if code >= 400 && code < 500 {
-			return true
-		}
-	}
-	return false
 }
 
 // IsRateLimitError is exported for use by the stream worker when

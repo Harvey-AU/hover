@@ -17,13 +17,9 @@ type CrawlerInterface interface {
 	GetUserAgent() string
 }
 
-// DbQueueInterface defines the database queue operations needed by WorkerPool
+// DbQueueInterface defines the database queue operations needed by the job system.
 type DbQueueInterface interface {
-	GetNextTask(ctx context.Context, jobID string) (*db.Task, error)
 	UpdateTaskStatus(ctx context.Context, task *db.Task) error
-	DecrementRunningTasks(ctx context.Context, jobID string) error
-	DecrementRunningTasksBy(ctx context.Context, jobID string, count int) error
-	IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error
 	Execute(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteControl(ctx context.Context, fn func(*sql.Tx) error) error
 	ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error

@@ -143,7 +143,7 @@ func main() {
 	defer batchManager.Stop()
 
 	// --- job manager (for EnqueueJobURLs + OnTasksEnqueued callback) ---
-	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr, nil)
+	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 	jobManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
 		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
 		for _, e := range entries {

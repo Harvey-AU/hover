@@ -522,10 +522,8 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 			}
 		}
 
-		// Waiting→pending promotion is handled by DecrementRunningTasksBy, which runs
-		// outside the batch transaction after running_tasks is actually decremented.
-		// Promoting here used stale running_tasks values and caused lock contention
-		// inside an already long-held transaction.
+		// Running task counters and waiting→pending promotion are handled by the
+		// Redis broker (counters + scheduler), not the batch manager.
 
 		return nil
 	})
@@ -774,7 +772,7 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 	}
 
 	// Single UPDATE statement using unnest to batch update all tasks
-	// Note: running_tasks counter is decremented immediately via DecrementRunningTasks(), not here
+	// Note: running_tasks counter is managed by Redis broker counters, not here
 	query := `
 		UPDATE tasks
 		SET status = 'completed',

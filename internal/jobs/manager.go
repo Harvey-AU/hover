@@ -73,10 +73,8 @@ type JobManager struct {
 	dbQueue DbQueueProvider
 	crawler CrawlerInterface
 
-	workerPool *WorkerPool
-
 	// OnTasksEnqueued is called after successful Postgres task insertion.
-	// Set by the worker service to schedule tasks into Redis.
+	// Set by the API server or worker service to schedule tasks into Redis.
 	OnTasksEnqueued TaskScheduleCallback
 
 	// Map to track which pages have been processed for each job
@@ -87,13 +85,12 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new job manager
-func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface, workerPool *WorkerPool) *JobManager {
+func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
 	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
 		db:             db,
 		dbQueue:        dbQueue,
 		crawler:        crawler,
-		workerPool:     workerPool,
 		processedPages: make(map[string]struct{}),
 		sitemapSem:     make(chan struct{}, sitemapConcurrency),
 	}
@@ -413,10 +410,7 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 			return
 		}
 
-		// Notify workers immediately that new tasks are available
-		if jm.workerPool != nil {
-			jm.workerPool.NotifyNewTasks()
-		}
+		// Note: task notification is handled via OnTasksEnqueued callback (Redis scheduling)
 	}()
 
 	return nil
@@ -432,15 +426,11 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 	normalisedDomain := util.NormaliseDomain(options.Domain)
 
 	if options.Concurrency <= 0 {
-		defaultConcurrency := fallbackJobConcurrency
-		if jm.workerPool != nil && jm.workerPool.maxWorkers > 0 {
-			defaultConcurrency = jm.workerPool.maxWorkers
-		}
 		log.Info().
 			Str("domain", normalisedDomain).
-			Int("default_concurrency", defaultConcurrency).
-			Msg("Concurrency not specified; using worker pool maximum")
-		options.Concurrency = defaultConcurrency
+			Int("default_concurrency", fallbackJobConcurrency).
+			Msg("Concurrency not specified; using default")
+		options.Concurrency = fallbackJobConcurrency
 	}
 
 	// Handle any existing active jobs for the same domain and user/organisation
@@ -681,11 +671,6 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 		sentry.CaptureException(err)
 		log.Error().Err(err).Str("job_id", job.ID).Msg("Failed to cancel job")
 		return fmt.Errorf("failed to cancel job: %w", err)
-	}
-
-	// Remove job from worker pool
-	if jm.workerPool != nil {
-		jm.workerPool.RemoveJob(job.ID)
 	}
 
 	// Clear processed pages for this job
@@ -1288,8 +1273,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 				firstBatchDone = true
 				if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 					log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to open job after first batch")
-				} else if jm.workerPool != nil {
-					jm.workerPool.NotifyNewTasks()
 				}
 			}
 
@@ -1305,9 +1288,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 				log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after all batches failed")
 				return
 			}
-			if jm.workerPool != nil {
-				jm.workerPool.NotifyNewTasks()
-			}
 		}
 	} else {
 		if err := jm.enqueueFallbackURL(ctx, jobID, domain); err != nil {
@@ -1317,9 +1297,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 			log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after fallback URL")
 			return
-		}
-		if jm.workerPool != nil {
-			jm.workerPool.NotifyNewTasks()
 		}
 	}
 }
