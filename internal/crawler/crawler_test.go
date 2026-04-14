@@ -2,6 +2,8 @@ package crawler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -231,6 +233,231 @@ func TestWarmURLCapturesProbeAndSecondaryDiagnostics(t *testing.T) {
 	}
 	if secondary.Cache.NormalisedStatus != "HIT" {
 		t.Fatalf("Expected secondary cache status HIT, got %s", secondary.Cache.NormalisedStatus)
+	}
+}
+
+func TestWarmURLSecondaryRequestDoesNotRecurseIntoCacheValidation(t *testing.T) {
+	var getCount atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			getCount.Add(1)
+			time.Sleep(2 * time.Millisecond)
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("still warming"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if got := getCount.Load(); got != 2 {
+		t.Fatalf("Expected exactly 2 GET requests (primary + secondary), got %d", got)
+	}
+
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected request timings to be populated")
+	}
+
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+		t.Fatal("Expected secondary request timing to be recorded")
+	}
+
+	if result.SecondCacheStatus != "MISS" {
+		t.Fatalf("Expected secondary cache status MISS, got %s", result.SecondCacheStatus)
+	}
+}
+
+func TestMakeSecondRequestUsesSecondaryTimingBucket(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Millisecond)
+		w.Header().Set("CF-Cache-Status", "HIT")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("secondary request"))
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.makeSecondRequest(context.Background(), ts.URL)
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected secondary request timings to be populated")
+	}
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS == 0 {
+		t.Fatal("Expected secondary timing to be recorded")
+	}
+	if result.RequestDiagnostics.Timings.PrimaryRequestMS != 0 {
+		t.Fatalf("Expected primary timing bucket to remain empty, got %d", result.RequestDiagnostics.Timings.PrimaryRequestMS)
+	}
+}
+
+func TestPerformCacheValidationReturnsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                "https://example.com",
+		CacheStatus:        "MISS",
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	_, err := crawler.performCacheValidation(ctx, result.URL, result)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Expected context cancellation error, got %v", err)
+	}
+}
+
+func TestPerformCacheValidationReturnsSkipSentinelWhenNotNeeded(t *testing.T) {
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                "https://example.com",
+		CacheStatus:        "HIT",
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	processed, err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	if !processed {
+		t.Fatal("Expected cache validation skip to mark validation as processed")
+	}
+	if !errors.Is(err, errCacheValidationSkipped) {
+		t.Fatalf("Expected cache validation skip sentinel, got %v", err)
+	}
+}
+
+func TestPerformCacheValidationReturnsUnprocessedOnSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("warming"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result := &CrawlResult{
+		URL:                ts.URL,
+		CacheStatus:        "MISS",
+		ResponseTime:       100,
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	processed, err := crawler.performCacheValidation(context.Background(), result.URL, result)
+	if err != nil {
+		t.Fatalf("Expected successful cache validation, got %v", err)
+	}
+	if processed {
+		t.Fatal("Expected successful cache validation to allow caller success telemetry")
+	}
+}
+
+func TestMetricErrForRequestPhaseTreatsHTTPFailureAsError(t *testing.T) {
+	res := &CrawlResult{
+		StatusCode: http.StatusNotFound,
+		Error:      "non-success status code: 404",
+	}
+
+	err := metricErrForRequestPhase(nil, res)
+	if err == nil {
+		t.Fatal("Expected HTTP failure to be treated as an error for telemetry")
+	}
+}
+
+func TestErrorsIsContextDoneDetectsWrappedContextErrors(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", context.DeadlineExceeded)
+	if !errorsIsContextDone(err) {
+		t.Fatal("Expected wrapped context deadline exceeded to be detected")
+	}
+}
+
+func TestApplyPhaseTimingIgnoresUnexpectedPhase(t *testing.T) {
+	result := &CrawlResult{
+		RequestDiagnostics: &RequestDiagnostics{},
+	}
+
+	applyPhaseTiming(result, "unexpected_phase", 5*time.Millisecond)
+
+	if result.RequestDiagnostics == nil || result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected request diagnostics timings to be initialised")
+	}
+	if result.RequestDiagnostics.Timings.PrimaryRequestMS != 0 {
+		t.Fatalf("Expected unexpected phase not to overwrite primary timing, got %d", result.RequestDiagnostics.Timings.PrimaryRequestMS)
+	}
+	if result.RequestDiagnostics.Timings.SecondaryRequestMS != 0 {
+		t.Fatalf("Expected unexpected phase not to overwrite secondary timing, got %d", result.RequestDiagnostics.Timings.SecondaryRequestMS)
+	}
+}
+
+func TestClassifyProbeOutcomeTreatsHTTPFailureAsError(t *testing.T) {
+	probe := ProbeDiagnostics{
+		Response: &ResponseMetadata{StatusCode: http.StatusBadGateway},
+	}
+
+	outcome := classifyProbeOutcome(nil, probe)
+	if outcome != "error" {
+		t.Fatalf("Expected probe HTTP failure to be classified as error, got %s", outcome)
+	}
+}
+
+func TestWarmURLPreservesSuccessWhenSecondaryRequestFails(t *testing.T) {
+	var getCount atomic.Int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.Header().Set("CF-Cache-Status", "HIT")
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			count := getCount.Add(1)
+			if count == 1 {
+				w.Header().Set("CF-Cache-Status", "MISS")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("warming"))
+				return
+			}
+
+			w.Header().Set("CF-Cache-Status", "MISS")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("secondary failed"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ts.Close()
+
+	crawler := New(testConfig())
+	result, err := crawler.WarmURL(context.Background(), ts.URL, false)
+	if err != nil {
+		t.Fatalf("Expected primary success to be preserved, got %v", err)
+	}
+	if result == nil || result.RequestDiagnostics == nil || result.RequestDiagnostics.Secondary == nil {
+		t.Fatal("Expected secondary diagnostics to be captured even when secondary request fails")
+	}
+	if result.RequestDiagnostics.Timings == nil {
+		t.Fatal("Expected secondary request timing to be recorded on failure")
+	}
+	if result.SecondResponseTime != 0 {
+		t.Fatalf("Expected secondary response fields to remain unset on failure, got %d", result.SecondResponseTime)
 	}
 }
 

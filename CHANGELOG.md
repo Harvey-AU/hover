@@ -32,6 +32,23 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.32.6] – 2026-04-13
+
+### Added
+
+- Per-phase timing added to request diagnostics (primary, cache-validation,
+  secondary, total)
+- New crawler phase and worker task outcome metrics capturing phase, outcome,
+  reason and duration
+- Crawler emits a final summary of phase timings, probe counts and cache status
+
+### Fixed
+
+- Cache-validation cancellation now propagates correctly; redundant validation
+  skipped for secondary requests
+- Secondary request failures are surfaced and timings recorded; division-by-zero
+  guarded in improvement ratio
+
 ## [0.32.5] – 2026-04-12
 
 ### Fixed

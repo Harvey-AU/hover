@@ -56,6 +56,27 @@ func applyCrawlDelay(task *Task) {
 	}
 }
 
+// classifyTaskOutcome maps a task processing result into an (outcome, reason)
+// pair for telemetry. Ported from the old WorkerPool.classifyTaskOutcome.
+func classifyTaskOutcome(o *TaskOutcome) (string, string) {
+	if o.Success {
+		return "success", "ok"
+	}
+
+	if o.RateLimited {
+		if o.Retry != nil && o.Retry.ShouldRetry {
+			return "retry_scheduled", "blocking"
+		}
+		return "failed", "blocking_exhausted"
+	}
+
+	if o.Retry != nil && o.Retry.ShouldRetry {
+		return "retry_scheduled", "retryable"
+	}
+
+	return "failed", "non_retryable"
+}
+
 // linkDiscoveryMinPriorityFromEnv reads the minimum priority threshold for
 // discovered links from the GNH_LINK_DISCOVERY_MIN_PRIORITY env var.
 func linkDiscoveryMinPriorityFromEnv() float64 {

@@ -215,9 +215,20 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 	}
 
 	// Execute the crawl.
+	processStart := time.Now()
 	taskCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	outcome := swp.executor.Execute(taskCtx, task)
 	cancel()
+	processDuration := time.Since(processStart)
+
+	// Record task outcome telemetry.
+	outcomeLabel, reason := classifyTaskOutcome(outcome)
+	observability.RecordWorkerTaskOutcome(ctx, observability.WorkerTaskOutcomeMetrics{
+		JobID:    msg.JobID,
+		Outcome:  outcomeLabel,
+		Reason:   reason,
+		Duration: processDuration,
+	})
 
 	// Act on the outcome.
 	swp.handleOutcome(ctx, msg, outcome)

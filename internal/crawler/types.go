@@ -114,6 +114,15 @@ type RequestDiagnostics struct {
 	Primary   *RequestAttemptDiagnostics `json:"primary,omitempty"`
 	Probes    []ProbeDiagnostics         `json:"probes,omitempty"`
 	Secondary *RequestAttemptDiagnostics `json:"secondary,omitempty"`
+	Timings   *RequestStageTimings       `json:"timings,omitempty"`
+}
+
+// RequestStageTimings stores aggregate duration for each crawl phase.
+type RequestStageTimings struct {
+	PrimaryRequestMS   int64 `json:"primary_request_ms,omitempty"`
+	CacheValidationMS  int64 `json:"cache_validation_ms,omitempty"`
+	SecondaryRequestMS int64 `json:"secondary_request_ms,omitempty"`
+	TotalMS            int64 `json:"total_ms,omitempty"`
 }
 
 // CrawlOptions defines configuration options for a crawl operation
