@@ -26,9 +26,50 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:minor]
 
-_Add unreleased changes here._
+### Added
+
+- Redis broker system for task dispatch — API server schedules tasks into Redis
+  ZSETs, dedicated worker service (`cmd/worker`) consumes via Redis Streams
+- `internal/broker/` package: Scheduler, DomainPacer, RunningCounters, Consumer,
+  Dispatcher with per-domain rate limiting and adaptive backoff
+- `StreamWorkerPool` and `TaskExecutor` in `internal/jobs/` for worker-side task
+  processing with batch result persistence
+- Dedicated worker binary (`cmd/worker/main.go`) with its own `fly.worker.toml`
+  deployment config
+- Task outcome telemetry (outcome label, reason, duration) via
+  `observability.RecordWorkerTaskOutcome`
+- Redis is optional for the API server — graceful degradation when `REDIS_URL`
+  is not set (tasks stay in Postgres, dispatch disabled)
+
+### Changed
+
+- API server (`cmd/app`) no longer runs a local worker pool; task execution is
+  handled exclusively by the worker service
+- `NewJobManager` simplified from 4 parameters to 3 (worker pool removed)
+- Manual root task INSERT now includes `priority_score = 1.0` so link discovery
+  produces non-zero child priorities
+- Reduced `DB_MAX_OPEN_CONNS` from 125 to 60 in `fly.toml` (API no longer runs
+  workers)
+
+### Removed
+
+- `internal/jobs/worker.go` (~5,000 LOC) — old DB-polling worker pool
+- `internal/jobs/domain_limiter.go` — replaced by `internal/broker/pacer.go`
+- `cmd/test_jobs/main.go` — legacy test binary
+- Dead DB queue functions: `GetNextTask`, `IncrementRunningTasksBy`,
+  `DecrementRunningTasksBy`, `promoteWaitingTasksBatch`
+- ~15 old worker pool environment variables from `fly.toml`
+
+### Fixed
+
+- `IsRateLimitError` now caches the lowercased error string instead of calling
+  `strings.ToLower` five times per invocation
+- `buildTask` error path in `StreamWorkerPool` no longer ACKs on transient DB
+  failures — messages stay in the PEL for XAUTOCLAIM redelivery
+- `.env.example` Redis TLS config inconsistency (plain `redis://` URL paired
+  with `REDIS_TLS_ENABLED=true`)
 
 ## Full changelog history
 
