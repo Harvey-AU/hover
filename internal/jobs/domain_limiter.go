@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 )
 
 // DomainLimiterConfig controls adaptive throttling behaviour.
@@ -118,9 +117,7 @@ type DomainPermit struct {
 
 func newDomainLimiter(dbQueue DbQueueInterface) *DomainLimiter {
 	cfg := defaultDomainLimiterConfig()
-	log.Info().
-		Float64("robots_delay_multiplier", cfg.RobotsDelayMultiplier).
-		Msg("Domain limiter initialised")
+	jobsLog.Info("Domain limiter initialised", "robots_delay_multiplier", cfg.RobotsDelayMultiplier)
 	return &DomainLimiter{
 		cfg:     cfg,
 		dbQueue: dbQueue,
@@ -514,27 +511,27 @@ func (dl *DomainLimiter) release(domain string, jobID string, success bool, rate
 	state.mu.Unlock()
 
 	if adaptiveChanged {
-		log.Info().
-			Str("domain", domain).
-			Int("adaptive_delay_seconds", adaptiveSeconds).
-			Int("previous_delay_seconds", int(oldAdaptive/time.Second)).
-			Int("error_streak", errorStreak).
-			Int("success_streak", successStreak).
-			Msg("Updated domain adaptive delay")
+		jobsLog.Info("Updated domain adaptive delay",
+			"domain", domain,
+			"adaptive_delay_seconds", adaptiveSeconds,
+			"previous_delay_seconds", int(oldAdaptive/time.Second),
+			"error_streak", errorStreak,
+			"success_streak", successStreak,
+		)
 	}
 	if floorChanged {
-		log.Debug().
-			Str("domain", domain).
-			Int("delay_floor_seconds", floorSeconds).
-			Int("previous_floor_seconds", int(oldFloor/time.Second)).
-			Msg("Updated domain delay floor")
+		jobsLog.Debug("Updated domain delay floor",
+			"domain", domain,
+			"delay_floor_seconds", floorSeconds,
+			"previous_floor_seconds", int(oldFloor/time.Second),
+		)
 	}
 
 	if shouldPersist {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := dl.persistDomain(ctx, domain, adaptiveSeconds, floorSeconds); err != nil {
-			log.Warn().Err(err).Str("domain", domain).Msg("Failed to persist adaptive delay")
+			jobsLog.Warn("Failed to persist adaptive delay", "error", err, "domain", domain)
 		}
 	}
 }

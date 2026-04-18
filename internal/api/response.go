@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // SuccessResponse represents a standardised success response
@@ -24,10 +22,7 @@ func WriteJSON(w http.ResponseWriter, r *http.Request, data any, status int) {
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Error().
-			Err(err).
-			Str("request_id", requestID).
-			Msg("Failed to encode JSON response")
+		loggerWithRequest(r).Error("Failed to encode JSON response", "error", err, "request_id", requestID)
 	}
 }
 

@@ -15,7 +15,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // Webflow OAuth credentials loaded from environment variables
@@ -60,7 +59,7 @@ func (h *Handler) InitiateWebflowOAuth(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -72,13 +71,13 @@ func (h *Handler) InitiateWebflowOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if getWebflowClientID() == "" {
-		logger.Error().Msg("WEBFLOW_CLIENT_ID not configured")
+		logger.Error("WEBFLOW_CLIENT_ID not configured")
 		InternalError(w, r, fmt.Errorf("webflow integration not configured"))
 		return
 	}
 
 	if getOAuthStateSecret() == "" {
-		logger.Error().Msg("SUPABASE_JWT_SECRET not configured for OAuth state signing")
+		logger.Error("SUPABASE_JWT_SECRET not configured for OAuth state signing")
 		InternalError(w, r, fmt.Errorf("webflow integration not configured"))
 		return
 	}
@@ -86,7 +85,7 @@ func (h *Handler) InitiateWebflowOAuth(w http.ResponseWriter, r *http.Request) {
 	// Sign state with JWT Secret
 	state, err := h.generateOAuthState(userClaims.UserID, orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to generate OAuth state")
+		logger.Error("Failed to generate OAuth state", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -121,7 +120,7 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	errParam := r.URL.Query().Get("error")
 
 	if errParam != "" {
-		logger.Warn().Str("error", errParam).Msg("Webflow OAuth denied")
+		logger.Warn("Webflow OAuth denied", "error", errParam)
 		h.redirectToSettingsWithError(w, r, "Webflow", "Webflow connection was cancelled", "auto-crawl", "webflow")
 		return
 	}
@@ -134,7 +133,7 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// Validate state
 	state, err := h.validateOAuthState(stateParam)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Invalid OAuth state")
+		logger.Warn("Invalid OAuth state", "error", err)
 		h.redirectToSettingsWithError(w, r, "Webflow", "Invalid or expired state", "auto-crawl", "webflow")
 		return
 	}
@@ -142,7 +141,7 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// Exchange code for access token
 	tokenResp, err := h.exchangeWebflowCode(code)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to exchange Webflow OAuth code")
+		logger.Error("Failed to exchange Webflow OAuth code", "error", err)
 		h.redirectToSettingsWithError(w, r, "Webflow", "Failed to connect to Webflow", "auto-crawl", "webflow")
 		return
 	}
@@ -151,7 +150,7 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	authInfo, err := h.fetchWebflowAuthInfo(r.Context(), tokenResp.AccessToken)
 	if err != nil {
 		// Log but don't fail - we can still create the connection with empty values
-		logger.Warn().Err(err).Msg("Failed to fetch Webflow auth info, proceeding with empty values")
+		logger.Warn("Failed to fetch Webflow auth info, proceeding with empty values", "error", err)
 	}
 
 	// Extract user and workspace info
@@ -178,17 +177,17 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.DB.CreateWebflowConnection(r.Context(), conn); err != nil {
-		logger.Error().Err(err).Msg("Failed to save Webflow connection")
+		logger.Error("Failed to save Webflow connection", "error", err)
 		h.redirectToSettingsWithError(w, r, "Webflow", "Failed to save connection", "auto-crawl", "webflow")
 		return
 	}
 
 	// Store access token in Supabase Vault
 	if err := h.DB.StoreWebflowToken(r.Context(), conn.ID, tokenResp.AccessToken); err != nil {
-		logger.Error().Err(err).Msg("Failed to store access token in vault")
+		logger.Error("Failed to store access token in vault", "error", err)
 		// Clean up the orphan connection since we can't use it without the token
 		if delErr := h.DB.DeleteWebflowConnection(r.Context(), conn.ID, state.OrgID); delErr != nil {
-			logger.Error().Err(delErr).Msg("Failed to clean up orphan connection after token storage failure")
+			logger.Error("Failed to clean up orphan connection after token storage failure", "error", delErr)
 		}
 		h.redirectToSettingsWithError(w, r, "Webflow", "Failed to secure connection", "auto-crawl", "webflow")
 		return
@@ -203,22 +202,18 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 			CreatedBy:      &state.UserID,
 		}
 		if err := h.DB.UpsertPlatformOrgMapping(r.Context(), mapping); err != nil {
-			logger.Error().Err(err).Msg("Failed to store Webflow workspace mapping")
+			logger.Error("Failed to store Webflow workspace mapping", "error", err)
 			h.redirectToSettingsWithError(w, r, "Webflow", "Failed to save Webflow workspace mapping", "auto-crawl", "webflow")
 			return
 		}
 	} else {
-		logger.Warn().Str("organisation_id", state.OrgID).Msg("Webflow connection saved without workspace ID; webhook callbacks may fail until workspace is available")
+		logger.Warn("Webflow connection saved without workspace ID; webhook callbacks may fail until workspace is available", "organisation_id", state.OrgID)
 	}
 
 	// Note: Webhooks are now registered per-site via the site settings UI
 	// instead of bulk registration during OAuth
 
-	logger.Info().
-		Str("organisation_id", state.OrgID).
-		Str("webflow_workspace_id", workspaceID).
-		Str("webflow_user_id", authedUserID).
-		Msg("Webflow connection established")
+	logger.Info("Webflow connection established", "organisation_id", state.OrgID, "webflow_workspace_id", workspaceID, "webflow_user_id", authedUserID)
 
 	// Redirect to settings with success + setup flag to open site configuration
 	h.redirectToSettingsWithSetup(w, r, "Webflow", "Webflow Connection", conn.ID, "auto-crawl", "webflow")
@@ -348,7 +343,7 @@ func (h *Handler) fetchWebflowAuthInfo(ctx context.Context, token string) (*Webf
 	if len(authInfo.WorkspaceIDs) == 0 {
 		sites, err := h.fetchWebflowSites(ctx, token)
 		if err != nil {
-			log.Warn().Err(err).Msg("Failed to fetch Webflow sites for workspace ID fallback")
+			apiLog.Warn("Failed to fetch Webflow sites for workspace ID fallback", "error", err)
 		} else {
 			seen := map[string]struct{}{}
 			for _, site := range sites {
@@ -363,7 +358,7 @@ func (h *Handler) fetchWebflowAuthInfo(ctx context.Context, token string) (*Webf
 				authInfo.WorkspaceIDs = append(authInfo.WorkspaceIDs, wid)
 			}
 			if len(authInfo.WorkspaceIDs) > 0 {
-				log.Info().Strs("workspace_ids", authInfo.WorkspaceIDs).Msg("Resolved workspace IDs from Webflow sites API fallback")
+				apiLog.Info("Resolved workspace IDs from Webflow sites API fallback", "workspace_ids", authInfo.WorkspaceIDs)
 			}
 		}
 	}
@@ -371,7 +366,7 @@ func (h *Handler) fetchWebflowAuthInfo(ctx context.Context, token string) (*Webf
 	// Fetch user info from authorized_by endpoint
 	userInfo, err := h.fetchWebflowUserInfo(ctx, client, token)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to fetch Webflow user info")
+		apiLog.Warn("Failed to fetch Webflow user info", "error", err)
 	} else {
 		authInfo.UserEmail = userInfo.Email
 		authInfo.UserFirstName = userInfo.FirstName
@@ -510,7 +505,7 @@ func (h *Handler) listWebflowConnections(w http.ResponseWriter, r *http.Request)
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -523,7 +518,7 @@ func (h *Handler) listWebflowConnections(w http.ResponseWriter, r *http.Request)
 
 	connections, err := h.DB.ListWebflowConnections(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list Webflow connections")
+		logger.Error("Failed to list Webflow connections", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -553,7 +548,7 @@ func (h *Handler) deleteWebflowConnection(w http.ResponseWriter, r *http.Request
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -570,12 +565,12 @@ func (h *Handler) deleteWebflowConnection(w http.ResponseWriter, r *http.Request
 			NotFound(w, r, "Webflow connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to delete Webflow connection")
+		logger.Error("Failed to delete Webflow connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().Str("connection_id", connectionID).Msg("Webflow connection deleted")
+	logger.Info("Webflow connection deleted", "connection_id", connectionID)
 	WriteNoContent(w, r)
 }
 

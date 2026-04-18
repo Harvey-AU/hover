@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
 )
 
 // ErrWebflowConnectionNotFound is returned when a webflow connection is not found
@@ -49,7 +48,7 @@ func (db *DB) CreateWebflowConnection(ctx context.Context, conn *WebflowConnecti
 		conn.InstallingUserID, conn.CreatedAt, conn.UpdatedAt,
 	).Scan(&conn.ID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", conn.OrganisationID).Str("authed_user_id", conn.AuthedUserID).Msg("Failed to create webflow connection")
+		dbLog.Error("Failed to create webflow connection", "error", err, "organisation_id", conn.OrganisationID, "authed_user_id", conn.AuthedUserID)
 		return fmt.Errorf("failed to create webflow connection: %w", err)
 	}
 
@@ -62,7 +61,7 @@ func (db *DB) StoreWebflowToken(ctx context.Context, connectionID, token string)
 
 	// Function returns secret name but we don't need it - just scan to consume the result
 	if err := db.client.QueryRowContext(ctx, query, connectionID, token).Scan(new(string)); err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to store webflow token in vault")
+		dbLog.Error("Failed to store webflow token in vault", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to store webflow token: %w", err)
 	}
 
@@ -76,7 +75,7 @@ func (db *DB) GetWebflowToken(ctx context.Context, connectionID string) (string,
 	var token sql.NullString
 	err := db.client.QueryRowContext(ctx, query, connectionID).Scan(&token)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get webflow token from vault")
+		dbLog.Error("Failed to get webflow token from vault", "error", err, "connection_id", connectionID)
 		return "", fmt.Errorf("failed to get webflow token: %w", err)
 	}
 
@@ -109,7 +108,7 @@ func (db *DB) GetWebflowConnection(ctx context.Context, connectionID string) (*W
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWebflowConnectionNotFound
 		}
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get webflow connection")
+		dbLog.Error("Failed to get webflow connection", "error", err, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to get webflow connection: %w", err)
 	}
 
@@ -145,7 +144,7 @@ func (db *DB) ListWebflowConnections(ctx context.Context, organisationID string)
 
 	rows, err := db.client.QueryContext(ctx, query, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to list webflow connections")
+		dbLog.Error("Failed to list webflow connections", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to list webflow connections: %w", err)
 	}
 	defer rows.Close()
@@ -161,7 +160,7 @@ func (db *DB) ListWebflowConnections(ctx context.Context, organisationID string)
 			&conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan webflow connection row")
+			dbLog.Error("Failed to scan webflow connection row", "error", err)
 			return nil, fmt.Errorf("failed to scan webflow connection: %w", err)
 		}
 
@@ -200,7 +199,7 @@ func (db *DB) DeleteWebflowConnection(ctx context.Context, connectionID, organis
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to delete webflow connection")
+		dbLog.Error("Failed to delete webflow connection", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete webflow connection: %w", err)
 	}
 

@@ -6,7 +6,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/rs/zerolog/log"
 )
 
 // RetryConfig holds configuration for connection retry behaviour
@@ -50,10 +49,9 @@ func InitFromEnvWithRetryConfig(ctx context.Context, retryConfig RetryConfig) (*
 		if err == nil {
 			// Success!
 			if attempt > 1 {
-				log.Info().
-					Int("attempts", attempt).
-					Dur("elapsed", time.Since(startTime)).
-					Msg("Database connection established after retries")
+				dbLog.Info("Database connection established after retries",
+					"attempts", attempt,
+					"elapsed", time.Since(startTime))
 			}
 			return db, nil
 		}
@@ -63,10 +61,9 @@ func InitFromEnvWithRetryConfig(ctx context.Context, retryConfig RetryConfig) (*
 		// Check if error is retryable
 		if !isRetryableError(err) {
 			// Configuration or authentication errors - fail fast
-			log.Error().
-				Err(err).
-				Int("attempt", attempt).
-				Msg("Database connection failed with non-retryable error")
+			dbLog.Error("Database connection failed with non-retryable error",
+				"error", err,
+				"attempt", attempt)
 			return nil, fmt.Errorf("database connection failed: %w", err)
 		}
 
@@ -76,12 +73,11 @@ func InitFromEnvWithRetryConfig(ctx context.Context, retryConfig RetryConfig) (*
 		}
 
 		// Log retry attempt
-		log.Warn().
-			Err(err).
-			Int("attempt", attempt).
-			Int("max_attempts", retryConfig.MaxAttempts).
-			Dur("retry_in", backoff).
-			Msg("Database connection failed, retrying...")
+		dbLog.Warn("Database connection failed, retrying...",
+			"error", err,
+			"attempt", attempt,
+			"max_attempts", retryConfig.MaxAttempts,
+			"retry_in", backoff)
 
 		// Wait before retry (respecting context cancellation)
 		select {
@@ -102,10 +98,9 @@ func InitFromEnvWithRetryConfig(ctx context.Context, retryConfig RetryConfig) (*
 	}
 
 	// All retries exhausted
-	log.Error().
-		Err(lastErr).
-		Int("max_attempts", retryConfig.MaxAttempts).
-		Msg("Database connection failed after all retry attempts")
+	dbLog.Error("Database connection failed after all retry attempts",
+		"error", lastErr,
+		"max_attempts", retryConfig.MaxAttempts)
 
 	return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", retryConfig.MaxAttempts, lastErr)
 }
@@ -124,10 +119,9 @@ func WaitForDatabase(ctx context.Context, maxWait time.Duration) (*DB, error) {
 		Jitter:          true,
 	}
 
-	log.Info().
-		Dur("max_wait", maxWait).
-		Int("max_attempts", config.MaxAttempts).
-		Msg("Waiting for database to become available...")
+	dbLog.Info("Waiting for database to become available...",
+		"max_wait", maxWait,
+		"max_attempts", config.MaxAttempts)
 
 	return InitFromEnvWithRetryConfig(waitCtx, config)
 }
@@ -146,11 +140,10 @@ func InitFromURLWithSuffixRetry(ctx context.Context, databaseURL string, appEnv 
 		if err == nil {
 			// Success!
 			if attempt > 1 {
-				log.Info().
-					Str("suffix", appNameSuffix).
-					Int("attempts", attempt).
-					Dur("elapsed", time.Since(startTime)).
-					Msg("Database connection established after retries")
+				dbLog.Info("Database connection established after retries",
+					"suffix", appNameSuffix,
+					"attempts", attempt,
+					"elapsed", time.Since(startTime))
 			}
 			return db, nil
 		}
@@ -160,11 +153,10 @@ func InitFromURLWithSuffixRetry(ctx context.Context, databaseURL string, appEnv 
 		// Check if error is retryable
 		if !isRetryableError(err) {
 			// Configuration or authentication errors - fail fast
-			log.Error().
-				Err(err).
-				Str("suffix", appNameSuffix).
-				Int("attempt", attempt).
-				Msg("Database connection failed with non-retryable error")
+			dbLog.Error("Database connection failed with non-retryable error",
+				"error", err,
+				"suffix", appNameSuffix,
+				"attempt", attempt)
 			return nil, fmt.Errorf("database connection failed: %w", err)
 		}
 
@@ -174,13 +166,12 @@ func InitFromURLWithSuffixRetry(ctx context.Context, databaseURL string, appEnv 
 		}
 
 		// Log retry attempt
-		log.Warn().
-			Err(err).
-			Str("suffix", appNameSuffix).
-			Int("attempt", attempt).
-			Int("max_attempts", config.MaxAttempts).
-			Dur("retry_in", backoff).
-			Msg("Database connection failed, retrying...")
+		dbLog.Warn("Database connection failed, retrying...",
+			"error", err,
+			"suffix", appNameSuffix,
+			"attempt", attempt,
+			"max_attempts", config.MaxAttempts,
+			"retry_in", backoff)
 
 		// Wait before retry (respecting context cancellation)
 		select {
@@ -201,11 +192,10 @@ func InitFromURLWithSuffixRetry(ctx context.Context, databaseURL string, appEnv 
 	}
 
 	// All retries exhausted
-	log.Error().
-		Err(lastErr).
-		Str("suffix", appNameSuffix).
-		Int("max_attempts", config.MaxAttempts).
-		Msg("Database connection failed after all retry attempts")
+	dbLog.Error("Database connection failed after all retry attempts",
+		"error", lastErr,
+		"suffix", appNameSuffix,
+		"max_attempts", config.MaxAttempts)
 
 	return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", config.MaxAttempts, lastErr)
 }

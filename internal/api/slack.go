@@ -191,7 +191,7 @@ func (h *Handler) initiateSlackOAuth(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -203,13 +203,13 @@ func (h *Handler) initiateSlackOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if getSlackClientID() == "" {
-		logger.Error().Msg("SLACK_CLIENT_ID not configured")
+		logger.Error("SLACK_CLIENT_ID not configured")
 		InternalError(w, r, fmt.Errorf("slack integration not configured"))
 		return
 	}
 
 	if getSlackStateSecret() == "" {
-		logger.Error().Msg("SUPABASE_JWT_SECRET not configured for OAuth state signing")
+		logger.Error("SUPABASE_JWT_SECRET not configured for OAuth state signing")
 		InternalError(w, r, fmt.Errorf("slack integration not configured"))
 		return
 	}
@@ -217,7 +217,7 @@ func (h *Handler) initiateSlackOAuth(w http.ResponseWriter, r *http.Request) {
 	// Generate state token
 	state, err := h.generateOAuthState(userClaims.UserID, orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to generate OAuth state")
+		logger.Error("Failed to generate OAuth state", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -240,7 +240,7 @@ func (h *Handler) handleSlackOAuthCallback(w http.ResponseWriter, r *http.Reques
 
 	// Check for error from Slack
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		logger.Warn().Str("error", errParam).Msg("Slack OAuth denied")
+		logger.Warn("Slack OAuth denied", "error", errParam)
 		h.redirectToSettingsWithError(w, r, "Slack", "Slack connection was cancelled", "notifications", "slack")
 		return
 	}
@@ -256,7 +256,7 @@ func (h *Handler) handleSlackOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// Validate state
 	state, err := h.validateOAuthState(stateParam)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Invalid OAuth state")
+		logger.Warn("Invalid OAuth state", "error", err)
 		h.redirectToSettingsWithError(w, r, "Slack", "Invalid or expired state", "notifications", "slack")
 		return
 	}
@@ -271,7 +271,7 @@ func (h *Handler) handleSlackOAuthCallback(w http.ResponseWriter, r *http.Reques
 		getSlackRedirectURI(),
 	)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to exchange OAuth code")
+		logger.Error("Failed to exchange OAuth code", "error", err)
 		h.redirectToSettingsWithError(w, r, "Slack", "Failed to connect to Slack", "notifications", "slack")
 		return
 	}
@@ -290,23 +290,23 @@ func (h *Handler) handleSlackOAuthCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.DB.CreateSlackConnection(r.Context(), conn); err != nil {
-		logger.Error().Err(err).Msg("Failed to save Slack connection")
+		logger.Error("Failed to save Slack connection", "error", err)
 		h.redirectToSettingsWithError(w, r, "Slack", "Failed to save connection", "notifications", "slack")
 		return
 	}
 
 	// Store access token in Supabase Vault
 	if err := h.DB.StoreSlackToken(r.Context(), conn.ID, resp.AccessToken); err != nil {
-		logger.Error().Err(err).Msg("Failed to store access token in vault")
+		logger.Error("Failed to store access token in vault", "error", err)
 		h.redirectToSettingsWithError(w, r, "Slack", "Failed to secure connection", "notifications", "slack")
 		return
 	}
 
-	logger.Info().
-		Str("workspace_id", resp.Team.ID).
-		Str("workspace_name", resp.Team.Name).
-		Str("organisation_id", state.OrgID).
-		Msg("Slack workspace connected")
+	logger.Info("Slack workspace connected",
+		"workspace_id", resp.Team.ID,
+		"workspace_name", resp.Team.Name,
+		"organisation_id", state.OrgID,
+	)
 
 	// Redirect to settings with success (includes connection ID for auto-linking)
 	h.redirectToSettingsWithSuccess(w, r, "Slack", resp.Team.Name, conn.ID, "notifications", "slack")
@@ -324,7 +324,7 @@ func (h *Handler) listSlackConnections(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -337,7 +337,7 @@ func (h *Handler) listSlackConnections(w http.ResponseWriter, r *http.Request) {
 
 	connections, err := h.DB.ListSlackConnections(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list Slack connections")
+		logger.Error("Failed to list Slack connections", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -367,7 +367,7 @@ func (h *Handler) getSlackConnection(w http.ResponseWriter, r *http.Request, con
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -379,7 +379,7 @@ func (h *Handler) getSlackConnection(w http.ResponseWriter, r *http.Request, con
 			NotFound(w, r, "Slack connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to get Slack connection")
+		logger.Error("Failed to get Slack connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -430,7 +430,7 @@ func (h *Handler) deleteSlackConnection(w http.ResponseWriter, r *http.Request, 
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -447,12 +447,12 @@ func (h *Handler) deleteSlackConnection(w http.ResponseWriter, r *http.Request, 
 			NotFound(w, r, "Slack connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to delete Slack connection")
+		logger.Error("Failed to delete Slack connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().Str("connection_id", connectionID).Msg("Slack connection deleted")
+	logger.Info("Slack connection deleted", "connection_id", connectionID)
 	WriteNoContent(w, r)
 }
 
@@ -470,7 +470,7 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -483,7 +483,7 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 			NotFound(w, r, "Slack connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to get Slack connection")
+		logger.Error("Failed to get Slack connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -499,7 +499,7 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 	var req SlackLinkUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		// Log but continue - body is optional
-		logger.Debug().Err(err).Msg("Failed to decode link-user request body")
+		logger.Debug("Failed to decode link-user request body", "error", err)
 	}
 
 	slackUserID := req.SlackUserID
@@ -511,7 +511,7 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 	if slackUserID == "" && userClaims.Email != "" {
 		token, err := h.DB.GetSlackToken(r.Context(), connectionID)
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to get Slack token for user lookup")
+			logger.Error("Failed to get Slack token for user lookup", "error", err)
 			InternalError(w, r, err)
 			return
 		}
@@ -520,12 +520,12 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 		client := slack.New(token, slack.OptionHTTPClient(httpClient))
 		slackUser, err := client.GetUserByEmail(userClaims.Email)
 		if err != nil {
-			logger.Warn().Err(err).Msg("Could not find Slack user by email")
+			logger.Warn("Could not find Slack user by email", "error", err)
 			BadRequest(w, r, "Could not find your Slack user. Make sure your email matches your Slack account.")
 			return
 		}
 		slackUserID = slackUser.ID
-		logger.Info().Str("slack_user_id", slackUserID).Msg("Found Slack user by email lookup")
+		logger.Info("Found Slack user by email lookup", "slack_user_id", slackUserID)
 	}
 
 	if slackUserID == "" {
@@ -545,16 +545,16 @@ func (h *Handler) linkSlackUser(w http.ResponseWriter, r *http.Request, connecti
 	}
 
 	if err := h.DB.CreateSlackUserLink(r.Context(), link); err != nil {
-		logger.Error().Err(err).Msg("Failed to create Slack user link")
+		logger.Error("Failed to create Slack user link", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().
-		Str("user_id", userClaims.UserID).
-		Str("slack_user_id", slackUserID).
-		Str("connection_id", connectionID).
-		Msg("Slack user linked")
+	logger.Info("Slack user linked",
+		"user_id", userClaims.UserID,
+		"slack_user_id", slackUserID,
+		"connection_id", connectionID,
+	)
 
 	WriteCreated(w, r, SlackUserLinkResponse{
 		ID:              link.ID,
@@ -580,12 +580,12 @@ func (h *Handler) unlinkSlackUser(w http.ResponseWriter, r *http.Request, connec
 			NotFound(w, r, "User link not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to delete Slack user link")
+		logger.Error("Failed to delete Slack user link", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().Str("user_id", userClaims.UserID).Str("connection_id", connectionID).Msg("Slack user unlinked")
+	logger.Info("Slack user unlinked", "user_id", userClaims.UserID, "connection_id", connectionID)
 	WriteNoContent(w, r)
 }
 
@@ -611,7 +611,7 @@ func (h *Handler) updateSlackUserNotifications(w http.ResponseWriter, r *http.Re
 			NotFound(w, r, "User link not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to update notification preferences")
+		logger.Error("Failed to update notification preferences", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -631,7 +631,7 @@ func (h *Handler) listSlackWorkspaceUsers(w http.ResponseWriter, r *http.Request
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -643,7 +643,7 @@ func (h *Handler) listSlackWorkspaceUsers(w http.ResponseWriter, r *http.Request
 			NotFound(w, r, "Slack connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to get Slack connection")
+		logger.Error("Failed to get Slack connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -656,7 +656,7 @@ func (h *Handler) listSlackWorkspaceUsers(w http.ResponseWriter, r *http.Request
 	// Get token from Vault
 	token, err := h.DB.GetSlackToken(r.Context(), connectionID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get access token from vault")
+		logger.Error("Failed to get access token from vault", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -673,7 +673,7 @@ func (h *Handler) listSlackWorkspaceUsers(w http.ResponseWriter, r *http.Request
 			break
 		}
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to fetch Slack users")
+			logger.Error("Failed to fetch Slack users", "error", err)
 			InternalError(w, r, fmt.Errorf("failed to fetch Slack users: %w", err))
 			return
 		}

@@ -11,11 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/MicahParks/keyfunc/v3"
-	"github.com/getsentry/sentry-go"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/rs/zerolog/log"
 )
+
+var authLog = logging.Component("auth")
 
 // AuthClient defines the interface for authentication operations
 type AuthClient interface {
@@ -88,7 +89,7 @@ func AuthMiddlewareWithClient(authClient AuthClient) func(http.Handler) http.Han
 			// Validate the JWT
 			claims, err := authClient.ValidateToken(r.Context(), tokenString)
 			if err != nil {
-				log.Warn().Err(err).Str("token_prefix", tokenString[:min(10, len(tokenString))]).Msg("JWT validation failed")
+				authLog.Warn("JWT validation failed", "error", err, "token_prefix", tokenString[:min(10, len(tokenString))])
 
 				// Determine specific error type and capture critical errors in Sentry
 				errorMsg := "Invalid authentication token"
@@ -100,12 +101,12 @@ func AuthMiddlewareWithClient(authClient AuthClient) func(http.Handler) http.Han
 				} else if strings.Contains(err.Error(), "signature") {
 					errorMsg = "Invalid token signature"
 					// Capture invalid signatures - potential security issue
-					sentry.CaptureException(err)
+					authLog.Error("Invalid token signature", "error", err)
 				} else if strings.Contains(err.Error(), "JWKS") || strings.Contains(err.Error(), "jwks") || strings.Contains(err.Error(), "certs") || strings.Contains(err.Error(), "keyfunc") {
 					errorMsg = "Authentication service misconfigured"
 					statusCode = http.StatusInternalServerError
 					// Capture service misconfigurations - critical system error
-					sentry.CaptureException(err)
+					authLog.Error("Authentication service misconfigured", "error", err)
 				}
 
 				writeAuthError(w, r, errorMsg, statusCode)
@@ -159,7 +160,7 @@ func getJWKS() (keyfunc.Keyfunc, error) {
 			RefreshInterval: 10 * time.Minute,
 			RefreshErrorHandlerFunc: func(url string) func(ctx context.Context, err error) {
 				return func(ctx context.Context, err error) {
-					log.Error().Err(err).Str("jwks_url", url).Msg("JWKS refresh failed")
+					authLog.Error("JWKS refresh failed", "error", err, "jwks_url", url)
 				}
 			},
 		}
@@ -290,7 +291,7 @@ func OptionalAuthMiddleware(next http.Handler) http.Handler {
 				r = r.WithContext(ctx)
 			} else {
 				// Token is invalid but we continue without auth
-				log.Warn().Err(err).Msg("Invalid JWT token in optional auth")
+				authLog.Warn("Invalid JWT token in optional auth", "error", err)
 			}
 		}
 
@@ -321,7 +322,7 @@ func writeAuthError(w http.ResponseWriter, r *http.Request, message string, stat
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Error().Err(err).Msg("Failed to encode unauthorised response")
+		authLog.Error("Failed to encode unauthorised response", "error", err)
 	}
 }
 

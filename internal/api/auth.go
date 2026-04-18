@@ -10,8 +10,6 @@ import (
 
 	emailverifier "github.com/AfterShip/email-verifier"
 	"github.com/Harvey-AU/hover/internal/auth"
-	"github.com/getsentry/sentry-go"
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -102,7 +100,7 @@ func (h *Handler) AuthRegister(w http.ResponseWriter, r *http.Request) {
 	if orgName == "" {
 		result, err := verifier.Verify(req.Email)
 		if err != nil {
-			logger.Warn().Err(err).Msg("Email verifier failed")
+			logger.Warn("Email verifier failed", "error", err)
 		} else if !result.Free {
 			// Not a free provider, so use the domain name
 			if emailParts := strings.Split(req.Email, "@"); len(emailParts) == 2 {
@@ -129,8 +127,7 @@ func (h *Handler) AuthRegister(w http.ResponseWriter, r *http.Request) {
 	// Create user with organisation automatically
 	user, org, err := h.DB.CreateUser(req.UserID, req.Email, firstName, lastName, fullName, orgName)
 	if err != nil {
-		sentry.CaptureException(err)
-		logger.Error().Err(err).Str("user_id", req.UserID).Msg("Failed to create user with organisation")
+		logger.Error("Failed to create user with organisation", "error", err, "user_id", req.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -213,8 +210,7 @@ func (h *Handler) getAuthProfile(w http.ResponseWriter, r *http.Request) {
 	// Auto-create user if they don't exist
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, claimsFullName)
 	if err != nil {
-		sentry.CaptureException(err)
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -240,7 +236,7 @@ func (h *Handler) getAuthProfile(w http.ResponseWriter, r *http.Request) {
 		!sameNameValue(user.FullName, fullName)
 	if shouldSyncNames {
 		if err := h.DB.UpdateUserNames(userClaims.UserID, firstName, lastName, fullName); err != nil {
-			logger.Warn().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to sync user names from claims")
+			logger.Warn("Failed to sync user names from claims", "error", err, "user_id", userClaims.UserID)
 		} else {
 			user.FirstName = firstName
 			user.LastName = lastName
@@ -268,7 +264,7 @@ func (h *Handler) getAuthProfile(w http.ResponseWriter, r *http.Request) {
 	if user.OrganisationID != nil {
 		org, err := h.DB.GetOrganisation(*user.OrganisationID)
 		if err != nil {
-			logger.Warn().Err(err).Str("organisation_id", *user.OrganisationID).Msg("Failed to get organisation")
+			logger.Warn("Failed to get organisation", "error", err, "organisation_id", *user.OrganisationID)
 		} else {
 			orgResp := OrganisationResponse{
 				ID:        org.ID,
@@ -377,15 +373,15 @@ func nameFieldsFromClaims(userClaims *auth.UserClaims) (*string, *string, *strin
 
 	firstName, err := normaliseNamePart(readName("given_name", "first_name"), 80)
 	if err != nil {
-		log.Debug().Err(err).Msg("Ignoring oversized first name claim")
+		apiLog.Debug("Ignoring oversized first name claim", "error", err)
 	}
 	lastName, err := normaliseNamePart(readName("family_name", "last_name"), 80)
 	if err != nil {
-		log.Debug().Err(err).Msg("Ignoring oversized last name claim")
+		apiLog.Debug("Ignoring oversized last name claim", "error", err)
 	}
 	fullName, err := normaliseNamePart(readName("full_name", "name"), 120)
 	if err != nil {
-		log.Debug().Err(err).Msg("Ignoring oversized full name claim")
+		apiLog.Debug("Ignoring oversized full name claim", "error", err)
 	}
 
 	firstName, lastName, fullName = fillMissingNameParts(firstName, lastName, fullName)

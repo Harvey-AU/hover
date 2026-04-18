@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+var webflowSettingsLog = logging.Component("db")
 
 // ErrWebflowSiteSettingNotFound is returned when a site setting is not found
 var ErrWebflowSiteSettingNotFound = errors.New("webflow site setting not found")
@@ -101,10 +103,10 @@ func (db *DB) CreateOrUpdateSiteSetting(ctx context.Context, setting *WebflowSit
 	).Scan(&setting.ID, &setting.CreatedAt, &setting.UpdatedAt)
 
 	if err != nil {
-		log.Error().Err(err).
-			Str("organisation_id", setting.OrganisationID).
-			Str("webflow_site_id", setting.WebflowSiteID).
-			Msg("Failed to create/update webflow site setting")
+		dbLog.Error("Failed to create/update webflow site setting",
+			"error", err,
+			"organisation_id", setting.OrganisationID,
+			"webflow_site_id", setting.WebflowSiteID)
 		return fmt.Errorf("failed to create/update webflow site setting: %w", err)
 	}
 
@@ -135,10 +137,10 @@ func (db *DB) GetSiteSetting(ctx context.Context, organisationID, webflowSiteID 
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWebflowSiteSettingNotFound
 		}
-		log.Error().Err(err).
-			Str("organisation_id", organisationID).
-			Str("webflow_site_id", webflowSiteID).
-			Msg("Failed to get webflow site setting")
+		dbLog.Error("Failed to get webflow site setting",
+			"error", err,
+			"organisation_id", organisationID,
+			"webflow_site_id", webflowSiteID)
 		return nil, fmt.Errorf("failed to get webflow site setting: %w", err)
 	}
 
@@ -171,7 +173,7 @@ func (db *DB) GetSiteSettingByID(ctx context.Context, id string) (*WebflowSiteSe
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrWebflowSiteSettingNotFound
 		}
-		log.Error().Err(err).Str("id", id).Msg("Failed to get webflow site setting by ID")
+		dbLog.Error("Failed to get webflow site setting by ID", "error", err, "id", id)
 		return nil, fmt.Errorf("failed to get webflow site setting: %w", err)
 	}
 
@@ -227,7 +229,7 @@ func (db *DB) ListSiteSettingsByConnection(ctx context.Context, connectionID str
 func (db *DB) querySiteSettings(ctx context.Context, query string, arg string) ([]*WebflowSiteSetting, error) {
 	rows, err := db.client.QueryContext(ctx, query, arg)
 	if err != nil {
-		log.Error().Err(err).Str("arg", arg).Msg("Failed to query webflow site settings")
+		dbLog.Error("Failed to query webflow site settings", "error", err, "arg", arg)
 		return nil, fmt.Errorf("failed to query webflow site settings: %w", err)
 	}
 	defer rows.Close()
@@ -245,7 +247,7 @@ func (db *DB) querySiteSettings(ctx context.Context, query string, arg string) (
 			&webhookID, &webhookRegisteredAt, &schedulerID, &setting.CreatedAt, &setting.UpdatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan webflow site setting row")
+			dbLog.Error("Failed to scan webflow site setting row", "error", err)
 			return nil, fmt.Errorf("failed to scan webflow site setting: %w", err)
 		}
 
@@ -284,10 +286,10 @@ func (db *DB) UpdateSiteSchedule(ctx context.Context, organisationID, webflowSit
 
 	result, err := db.client.ExecContext(ctx, query, organisationID, webflowSiteID, scheduleHours, schedulerIDNull)
 	if err != nil {
-		log.Error().Err(err).
-			Str("organisation_id", organisationID).
-			Str("webflow_site_id", webflowSiteID).
-			Msg("Failed to update site schedule")
+		dbLog.Error("Failed to update site schedule",
+			"error", err,
+			"organisation_id", organisationID,
+			"webflow_site_id", webflowSiteID)
 		return fmt.Errorf("failed to update site schedule: %w", err)
 	}
 
@@ -324,10 +326,7 @@ func (db *DB) UpdateSiteAutoPublish(ctx context.Context, organisationID, webflow
 
 	result, err := db.client.ExecContext(ctx, query, organisationID, webflowSiteID, enabled, webhookIDNull, webhookRegisteredAt)
 	if err != nil {
-		log.Error().Err(err).
-			Str("organisation_id", organisationID).
-			Str("webflow_site_id", webflowSiteID).
-			Msg("Failed to update site auto-publish")
+		webflowSettingsLog.Error("Failed to update site auto-publish", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
 		return fmt.Errorf("failed to update site auto-publish: %w", err)
 	}
 
@@ -352,10 +351,7 @@ func (db *DB) DeleteSiteSetting(ctx context.Context, organisationID, webflowSite
 
 	result, err := db.client.ExecContext(ctx, query, organisationID, webflowSiteID)
 	if err != nil {
-		log.Error().Err(err).
-			Str("organisation_id", organisationID).
-			Str("webflow_site_id", webflowSiteID).
-			Msg("Failed to delete webflow site setting")
+		webflowSettingsLog.Error("Failed to delete webflow site setting", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
 		return fmt.Errorf("failed to delete webflow site setting: %w", err)
 	}
 
@@ -381,9 +377,7 @@ func (db *DB) DeleteSiteSettingsByConnection(ctx context.Context, connectionID s
 
 	_, err := db.client.ExecContext(ctx, query, connectionID)
 	if err != nil {
-		log.Error().Err(err).
-			Str("connection_id", connectionID).
-			Msg("Failed to delete webflow site settings by connection")
+		webflowSettingsLog.Error("Failed to delete webflow site settings by connection", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete webflow site settings: %w", err)
 	}
 

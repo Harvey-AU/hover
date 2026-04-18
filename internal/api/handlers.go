@@ -19,7 +19,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/loops"
-	"github.com/rs/zerolog/log"
 )
 
 // Version is the current API version (can be set via ldflags at build time)
@@ -31,7 +30,7 @@ func buildConfigSnippet() ([]byte, error) {
 	if authURL == "" {
 		legacyURL := strings.TrimSuffix(os.Getenv("SUPABASE_URL"), "/")
 		if legacyURL != "" {
-			log.Warn().Msg("SUPABASE_AUTH_URL missing; using legacy SUPABASE_URL fallback")
+			apiLog.Warn("SUPABASE_AUTH_URL missing; using legacy SUPABASE_URL fallback")
 			authURL = legacyURL
 		}
 	}
@@ -49,7 +48,7 @@ func buildConfigSnippet() ([]byte, error) {
 	if key == "" {
 		legacyKey := os.Getenv("SUPABASE_ANON_KEY")
 		if legacyKey != "" {
-			log.Warn().Msg("SUPABASE_PUBLISHABLE_KEY missing; using legacy SUPABASE_ANON_KEY fallback")
+			apiLog.Warn("SUPABASE_PUBLISHABLE_KEY missing; using legacy SUPABASE_ANON_KEY fallback")
 			key = legacyKey
 		}
 	}
@@ -64,7 +63,7 @@ func buildConfigSnippet() ([]byte, error) {
 		}
 	}
 	if !validKey {
-		log.Warn().Msg("SUPABASE_PUBLISHABLE_KEY has unexpected format; proceeding anyway")
+		apiLog.Warn("SUPABASE_PUBLISHABLE_KEY has unexpected format; proceeding anyway")
 	}
 	config := map[string]any{
 		"supabaseUrl":     authURL,
@@ -77,9 +76,7 @@ func buildConfigSnippet() ([]byte, error) {
 		if enabled, err := strconv.ParseBool(raw); err == nil {
 			config["enableTurnstile"] = enabled
 		} else {
-			log.Warn().
-				Str("value", raw).
-				Msg("invalid GNH_ENABLE_TURNSTILE value; falling back to default")
+			apiLog.Warn("invalid GNH_ENABLE_TURNSTILE value; falling back to default", "value", raw)
 		}
 	} else {
 		// Default: enable Turnstile only in production unless explicitly overridden
@@ -401,7 +398,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", `attachment; filename="trace.out"`)
 		if _, err := io.Copy(w, f); err != nil {
-			logger.Error().Err(err).Msg("Failed to copy trace file")
+			logger.Error("Failed to copy trace file", "error", err)
 		}
 	}))
 
@@ -629,7 +626,7 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	snippet, err := buildConfigSnippet()
 	if err != nil {
-		log.Error().Err(err).Msg("supabase config missing")
+		apiLog.Error("supabase config missing", "error", err)
 		message := "Supabase config unavailable"
 		if os.Getenv("APP_ENV") != "production" {
 			message = fmt.Sprintf("%s: %v", message, err)
@@ -638,7 +635,7 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := w.Write(snippet); err != nil {
-		log.Error().Err(err).Msg("failed to write config.js")
+		apiLog.Error("failed to write config.js", "error", err)
 	}
 }
 
@@ -745,14 +742,14 @@ func calculateDateRange(dateRange, timezone string) (*time.Time, *time.Time) {
 
 	// Check if timezone needs aliasing
 	if canonical, exists := timezoneAliases[timezone]; exists {
-		log.Debug().Str("original", timezone).Str("canonical", canonical).Msg("Mapping timezone alias")
+		apiLog.Debug("Mapping timezone alias", "original", timezone, "canonical", canonical)
 		timezone = canonical
 	}
 
 	// Load timezone location, fall back to UTC if invalid
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Warn().Err(err).Str("timezone", timezone).Msg("Invalid timezone in calculateDateRange, falling back to UTC")
+		apiLog.Warn("Invalid timezone in calculateDateRange, falling back to UTC", "error", err, "timezone", timezone)
 		loc = time.UTC
 	}
 
@@ -946,7 +943,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	// Org-scoped: /v1/webhooks/webflow/workspaces/WORKSPACE_ID
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[3] == "" {
-		logger.Warn().Str("path", r.URL.Path).Msg("Webflow webhook missing identifier in URL")
+		logger.Warn("Webflow webhook missing identifier in URL", "path", r.URL.Path)
 		BadRequest(w, r, "Webhook identifier required in URL path")
 		return
 	}
@@ -956,7 +953,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ""
 	if isWorkspaceWebhook {
 		if len(pathParts) < 5 || pathParts[4] == "" {
-			logger.Warn().Str("path", r.URL.Path).Msg("Webflow webhook missing workspace ID in URL")
+			logger.Warn("Webflow webhook missing workspace ID in URL", "path", r.URL.Path)
 			BadRequest(w, r, "Webflow workspace ID required in URL path")
 			return
 		}
@@ -968,7 +965,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	// Parse webhook payload
 	var payload WebflowWebhookPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		logger.Warn().Err(err).Msg("Failed to parse Webflow webhook payload")
+		logger.Warn("Failed to parse Webflow webhook payload", "error", err)
 		BadRequest(w, r, "Invalid webhook payload")
 		return
 	}
@@ -978,18 +975,18 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	if isWorkspaceWebhook {
 		mapping, err := h.DB.GetPlatformOrgMapping(r.Context(), "webflow", workspaceID)
 		if err != nil {
-			logger.Warn().Err(err).Str("workspace_id", workspaceID).Msg("Failed to resolve Webflow workspace mapping")
+			logger.Warn("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
 			NotFound(w, r, "Invalid Webflow workspace")
 			return
 		}
 		if mapping.CreatedBy == nil || *mapping.CreatedBy == "" {
-			logger.Error().Str("workspace_id", workspaceID).Msg("Webflow mapping missing creator user")
+			logger.Error("Webflow mapping missing creator user", "workspace_id", workspaceID)
 			InternalError(w, r, fmt.Errorf("webflow mapping missing creator"))
 			return
 		}
 		user, err = h.DB.GetUser(*mapping.CreatedBy)
 		if err != nil {
-			logger.Error().Err(err).Str("user_id", *mapping.CreatedBy).Msg("Failed to load Webflow mapping creator")
+			logger.Error("Failed to load Webflow mapping creator", "error", err, "user_id", *mapping.CreatedBy)
 			InternalError(w, r, fmt.Errorf("failed to load mapping creator: %w", err))
 			return
 		}
@@ -999,7 +996,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		var err error
 		user, err = h.DB.GetUserByWebhookToken(webhookToken)
 		if err != nil {
-			logger.Warn().Err(err).Msg("Failed to get user by webhook token")
+			logger.Warn("Failed to get user by webhook token", "error", err)
 			// Return 404 to avoid leaking information about valid tokens
 			NotFound(w, r, "Invalid webhook token")
 			return
@@ -1008,16 +1005,16 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log webhook received
-	logger.Info().
-		Str("user_id", user.ID).
-		Str("trigger_type", payload.TriggerType).
-		Str("published_by", payload.Payload.PublishedBy.DisplayName).
-		Strs("domains", payload.Payload.Domains).
-		Msg("Webflow webhook received")
+	logger.Info("Webflow webhook received",
+		"user_id", user.ID,
+		"trigger_type", payload.TriggerType,
+		"published_by", payload.Payload.PublishedBy.DisplayName,
+		"domains", payload.Payload.Domains,
+	)
 
 	// Validate it's a site publish event
 	if payload.TriggerType != "site_publish" {
-		logger.Warn().Str("trigger_type", payload.TriggerType).Msg("Ignoring non-site-publish webhook")
+		logger.Warn("Ignoring non-site-publish webhook", "trigger_type", payload.TriggerType)
 		WriteSuccess(w, r, nil, "Webhook received but ignored (not site_publish)")
 		return
 	}
@@ -1028,37 +1025,37 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, db.ErrWebflowSiteSettingNotFound) {
 				// Site not configured - expected scenario, ignore webhook
-				logger.Warn().
-					Str("site_id", payload.SiteID).
-					Str("organisation_id", orgID).
-					Msg("Site not configured for auto-publish, ignoring webhook")
+				logger.Warn("Site not configured for auto-publish, ignoring webhook",
+					"site_id", payload.SiteID,
+					"organisation_id", orgID,
+				)
 				WriteSuccess(w, r, nil, "Webhook received but site not configured for auto-publish")
 				return
 			}
 			// Unexpected database error - return 500 so Webflow can retry
-			logger.Error().Err(err).Str("site_id", payload.SiteID).Msg("Failed to check site settings")
+			logger.Error("Failed to check site settings", "error", err, "site_id", payload.SiteID)
 			InternalError(w, r, err)
 			return
 		}
 
 		if !siteSetting.AutoPublishEnabled {
-			logger.Info().
-				Str("site_id", payload.SiteID).
-				Str("organisation_id", orgID).
-				Msg("Auto-publish disabled for site, ignoring webhook")
+			logger.Info("Auto-publish disabled for site, ignoring webhook",
+				"site_id", payload.SiteID,
+				"organisation_id", orgID,
+			)
 			WriteSuccess(w, r, nil, "Webhook received but auto-publish disabled for this site")
 			return
 		}
 
-		logger.Debug().
-			Str("site_id", payload.SiteID).
-			Bool("auto_publish_enabled", siteSetting.AutoPublishEnabled).
-			Msg("Site auto-publish check passed")
+		logger.Debug("Site auto-publish check passed",
+			"site_id", payload.SiteID,
+			"auto_publish_enabled", siteSetting.AutoPublishEnabled,
+		)
 	}
 
 	// Validate domains are provided
 	if len(payload.Payload.Domains) == 0 {
-		logger.Warn().Msg("Webflow webhook missing domains")
+		logger.Warn("Webflow webhook missing domains")
 		BadRequest(w, r, "Domains are required")
 		return
 	}
@@ -1109,23 +1106,24 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := h.createJobFromRequest(r.Context(), &userForJob, req, logger)
 	if err != nil {
-		logger.Error().Err(err).
-			Str("user_id", user.ID).
-			Str("domain", selectedDomain).
-			Msg("Failed to create job from webhook")
+		logger.Error("Failed to create job from webhook",
+			"error", err,
+			"user_id", user.ID,
+			"domain", selectedDomain,
+		)
 		InternalError(w, r, err)
 		return
 	}
 
 	// Job processing starts automatically via worker pool when CreateJob adds it
 
-	logger.Info().
-		Str("job_id", job.ID).
-		Str("user_id", user.ID).
-		Str("org_id", orgID).
-		Str("domain", selectedDomain).
-		Str("selected_from", strings.Join(payload.Payload.Domains, ", ")).
-		Msg("Successfully created and started job from Webflow webhook")
+	logger.Info("Successfully created and started job from Webflow webhook",
+		"job_id", job.ID,
+		"user_id", user.ID,
+		"org_id", orgID,
+		"domain", selectedDomain,
+		"selected_from", strings.Join(payload.Payload.Domains, ", "),
+	)
 
 	WriteSuccess(w, r, map[string]any{
 		"job_id":  job.ID,

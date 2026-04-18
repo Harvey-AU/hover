@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"github.com/rs/zerolog/log"
 )
 
 // ErrGoogleConnectionNotFound is returned when a Google Analytics connection is not found
@@ -86,7 +85,7 @@ func (db *DB) CreateGoogleConnection(ctx context.Context, conn *GoogleAnalyticsC
 		conn.Status, pq.Array(conn.DomainIDs), conn.CreatedAt, conn.UpdatedAt,
 	).Scan(&conn.ID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", conn.OrganisationID).Str("ga4_property_id", conn.GA4PropertyID).Msg("Failed to create Google Analytics connection")
+		dbLog.Error("Failed to create Google Analytics connection", "error", err, "organisation_id", conn.OrganisationID, "ga4_property_id", conn.GA4PropertyID)
 		return fmt.Errorf("failed to create Google Analytics connection: %w", err)
 	}
 
@@ -99,7 +98,7 @@ func (db *DB) StoreGoogleToken(ctx context.Context, connectionID, refreshToken s
 
 	// Function returns secret name but we don't need it - just scan to consume the result
 	if err := db.client.QueryRowContext(ctx, query, connectionID, refreshToken).Scan(new(string)); err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to store Google token in vault")
+		dbLog.Error("Failed to store Google token in vault", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to store Google token: %w", err)
 	}
 
@@ -113,7 +112,7 @@ func (db *DB) GetGoogleToken(ctx context.Context, connectionID string) (string, 
 	var token sql.NullString
 	err := db.client.QueryRowContext(ctx, query, connectionID).Scan(&token)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get Google token from vault")
+		dbLog.Error("Failed to get Google token from vault", "error", err, "connection_id", connectionID)
 		return "", fmt.Errorf("failed to get Google token: %w", err)
 	}
 
@@ -147,7 +146,7 @@ func (db *DB) GetGoogleConnection(ctx context.Context, connectionID string) (*Go
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrGoogleConnectionNotFound
 		}
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get Google Analytics connection")
+		dbLog.Error("Failed to get Google Analytics connection", "error", err, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to get Google Analytics connection: %w", err)
 	}
 
@@ -201,12 +200,12 @@ func (db *DB) ListGoogleConnections(ctx context.Context, organisationID string) 
 
 	rows, err := db.client.QueryContext(ctx, query, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to list Google Analytics connections")
+		dbLog.Error("Failed to list Google Analytics connections", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to list Google Analytics connections: %w", err)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			log.Error().Err(closeErr).Str("organisation_id", organisationID).Msg("Failed to close rows")
+			dbLog.Error("Failed to close rows", "error", closeErr, "organisation_id", organisationID)
 		}
 	}()
 
@@ -222,7 +221,7 @@ func (db *DB) ListGoogleConnections(ctx context.Context, organisationID string) 
 			&status, &conn.DomainIDs, &lastSyncedAt, &conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to scan Google Analytics connection row")
+			dbLog.Error("Failed to scan Google Analytics connection row", "error", err, "organisation_id", organisationID)
 			return nil, fmt.Errorf("failed to scan Google Analytics connection: %w", err)
 		}
 
@@ -279,7 +278,7 @@ func (db *DB) DeleteGoogleConnection(ctx context.Context, connectionID, organisa
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to delete Google Analytics connection")
+		dbLog.Error("Failed to delete Google Analytics connection", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete Google Analytics connection: %w", err)
 	}
 
@@ -309,7 +308,7 @@ func (db *DB) UpdateGoogleConnectionStatus(ctx context.Context, connectionID, or
 
 	result, err := db.client.ExecContext(ctx, query, status, connectionID, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Str("status", status).Msg("Failed to update Google Analytics connection status")
+		dbLog.Error("Failed to update Google Analytics connection status", "error", err, "connection_id", connectionID, "status", status)
 		return fmt.Errorf("failed to update Google Analytics connection status: %w", err)
 	}
 
@@ -351,10 +350,10 @@ func (db *DB) GetActiveGAConnectionForOrganisation(ctx context.Context, orgID st
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No active connection is not an error - just means no GA4 integration
-			log.Debug().Str("organisation_id", orgID).Msg("No active GA4 connection found for organisation")
+			dbLog.Debug("No active GA4 connection found for organisation", "organisation_id", orgID)
 			return nil, nil
 		}
-		log.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to get active Google Analytics connection")
+		dbLog.Error("Failed to get active Google Analytics connection", "error", err, "organisation_id", orgID)
 		return nil, fmt.Errorf("failed to get active Google Analytics connection: %w", err)
 	}
 
@@ -420,17 +419,15 @@ func (db *DB) GetActiveGAConnectionForDomain(ctx context.Context, organisationID
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No active connection for this domain is not an error
-			log.Debug().
-				Str("organisation_id", organisationID).
-				Int("domain_id", domainID).
-				Msg("No active GA4 connection found for domain")
+			dbLog.Debug("No active GA4 connection found for domain",
+				"organisation_id", organisationID,
+				"domain_id", domainID)
 			return nil, nil
 		}
-		log.Error().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Msg("Failed to get active Google Analytics connection for domain")
+		dbLog.Error("Failed to get active Google Analytics connection for domain",
+			"error", err,
+			"organisation_id", organisationID,
+			"domain_id", domainID)
 		return nil, fmt.Errorf("failed to get GA connection for domain: %w", err)
 	}
 
@@ -479,7 +476,7 @@ func (db *DB) UpdateConnectionLastSync(ctx context.Context, connectionID string)
 
 	result, err := db.client.ExecContext(ctx, query, connectionID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to update connection last sync timestamp")
+		dbLog.Error("Failed to update connection last sync timestamp", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to update connection last sync: %w", err)
 	}
 
@@ -492,7 +489,7 @@ func (db *DB) UpdateConnectionLastSync(ctx context.Context, connectionID string)
 		return ErrGoogleConnectionNotFound
 	}
 
-	log.Debug().Str("connection_id", connectionID).Msg("Updated connection last sync timestamp")
+	dbLog.Debug("Updated connection last sync timestamp", "connection_id", connectionID)
 	return nil
 }
 
@@ -540,11 +537,10 @@ func (db *DB) MarkConnectionInactive(ctx context.Context, connectionID, reason s
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, reason)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Str("connection_id", connectionID).
-			Str("reason", reason).
-			Msg("Failed to mark connection as inactive")
+		dbLog.Error("Failed to mark connection as inactive",
+			"error", err,
+			"connection_id", connectionID,
+			"reason", reason)
 		return fmt.Errorf("failed to mark connection inactive: %w", err)
 	}
 
@@ -557,11 +553,10 @@ func (db *DB) MarkConnectionInactive(ctx context.Context, connectionID, reason s
 		return ErrGoogleConnectionNotFound
 	}
 
-	log.Warn().
-		Str("connection_id", connectionID).
-		Str("reason", reason).
-		Str("next_action", "reauthorise_google_connection").
-		Msg("Marked Google Analytics connection as inactive")
+	dbLog.Warn("Marked Google Analytics connection as inactive",
+		"connection_id", connectionID,
+		"reason", reason,
+		"next_action", "reauthorise_google_connection")
 
 	return nil
 }
@@ -592,10 +587,10 @@ func (db *DB) UpsertGA4Account(ctx context.Context, account *GoogleAnalyticsAcco
 		account.CreatedAt, account.UpdatedAt,
 	).Scan(&account.ID)
 	if err != nil {
-		log.Error().Err(err).
-			Str("organisation_id", account.OrganisationID).
-			Str("google_account_id", account.GoogleAccountID).
-			Msg("Failed to upsert Google Analytics account")
+		dbLog.Error("Failed to upsert Google Analytics account",
+			"error", err,
+			"organisation_id", account.OrganisationID,
+			"google_account_id", account.GoogleAccountID)
 		return fmt.Errorf("failed to upsert Google Analytics account: %w", err)
 	}
 
@@ -615,12 +610,12 @@ func (db *DB) ListGA4Accounts(ctx context.Context, organisationID string) ([]*Go
 
 	rows, err := db.client.QueryContext(ctx, query, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to list Google Analytics accounts")
+		dbLog.Error("Failed to list Google Analytics accounts", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to list Google Analytics accounts: %w", err)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			log.Error().Err(closeErr).Str("organisation_id", organisationID).Msg("Failed to close rows")
+			dbLog.Error("Failed to close rows", "error", closeErr, "organisation_id", organisationID)
 		}
 	}()
 
@@ -635,7 +630,7 @@ func (db *DB) ListGA4Accounts(ctx context.Context, organisationID string) ([]*Go
 			&acc.CreatedAt, &acc.UpdatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to scan Google Analytics account row")
+			dbLog.Error("Failed to scan Google Analytics account row", "error", err, "organisation_id", organisationID)
 			return nil, fmt.Errorf("failed to scan Google Analytics account: %w", err)
 		}
 
@@ -687,7 +682,7 @@ func (db *DB) GetGA4Account(ctx context.Context, accountID string) (*GoogleAnaly
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrGoogleAccountNotFound
 		}
-		log.Error().Err(err).Str("account_id", accountID).Msg("Failed to get Google Analytics account")
+		dbLog.Error("Failed to get Google Analytics account", "error", err, "account_id", accountID)
 		return nil, fmt.Errorf("failed to get Google Analytics account: %w", err)
 	}
 
@@ -732,10 +727,10 @@ func (db *DB) GetGA4AccountByGoogleID(ctx context.Context, organisationID, googl
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrGoogleAccountNotFound
 		}
-		log.Error().Err(err).
-			Str("organisation_id", organisationID).
-			Str("google_account_id", googleAccountID).
-			Msg("Failed to get Google Analytics account by Google ID")
+		dbLog.Error("Failed to get Google Analytics account by Google ID",
+			"error", err,
+			"organisation_id", organisationID,
+			"google_account_id", googleAccountID)
 		return nil, fmt.Errorf("failed to get Google Analytics account: %w", err)
 	}
 
@@ -765,7 +760,7 @@ func (db *DB) StoreGA4AccountToken(ctx context.Context, accountID, refreshToken 
 	query := `SELECT store_ga_account_token($1::uuid, $2)`
 
 	if err := db.client.QueryRowContext(ctx, query, accountID, refreshToken).Scan(new(string)); err != nil {
-		log.Error().Err(err).Str("account_id", accountID).Msg("Failed to store GA account token in vault")
+		dbLog.Error("Failed to store GA account token in vault", "error", err, "account_id", accountID)
 		return fmt.Errorf("failed to store GA account token: %w", err)
 	}
 
@@ -779,7 +774,7 @@ func (db *DB) GetGA4AccountToken(ctx context.Context, accountID string) (string,
 	var token sql.NullString
 	err := db.client.QueryRowContext(ctx, query, accountID).Scan(&token)
 	if err != nil {
-		log.Error().Err(err).Str("account_id", accountID).Msg("Failed to get GA account token from vault")
+		dbLog.Error("Failed to get GA account token from vault", "error", err, "account_id", accountID)
 		return "", fmt.Errorf("failed to get GA account token: %w", err)
 	}
 
@@ -816,7 +811,7 @@ func (db *DB) GetGA4AccountWithToken(ctx context.Context, organisationID string)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrGoogleAccountNotFound
 		}
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to get GA4 account with token")
+		dbLog.Error("Failed to get GA4 account with token", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to get GA4 account with token: %w", err)
 	}
 
@@ -866,7 +861,7 @@ func (db *DB) GetGAConnectionWithToken(ctx context.Context, organisationID strin
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrGoogleConnectionNotFound
 		}
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to get GA4 connection with token")
+		dbLog.Error("Failed to get GA4 connection with token", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to get GA4 connection with token: %w", err)
 	}
 

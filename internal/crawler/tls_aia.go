@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 )
 
 // aiaTransport wraps an http.RoundTripper and, on TLS certificate
@@ -103,7 +102,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 	}
 
 	if isPrivateHost(host) {
-		log.Debug().Str("host", host).Msg("AIA: rejecting private/internal host")
+		crawlerLog.Debug("AIA: rejecting private/internal host", "host", host)
 		return false
 	}
 
@@ -125,7 +124,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 
 	resp, err := inspectClient.Head("https://" + host) //nolint:gosec // G107: host validated by isPrivateHost and ssrfSafeDialContext
 	if err != nil {
-		log.Debug().Err(err).Str("host", host).Msg("AIA: failed to connect for cert inspection")
+		crawlerLog.Debug("AIA: failed to connect for cert inspection", "error", err, "host", host)
 		return false
 	}
 	defer resp.Body.Close()
@@ -136,7 +135,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 
 	leaf := resp.TLS.PeerCertificates[0]
 	if len(leaf.IssuingCertificateURL) == 0 {
-		log.Debug().Str("host", host).Msg("AIA: leaf cert has no IssuingCertificateURL")
+		crawlerLog.Debug("AIA: leaf cert has no IssuingCertificateURL", "host", host)
 		return false
 	}
 
@@ -158,15 +157,11 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		// Accept only intermediate CAs — skip non-CA certs and self-signed
 		// (root) certs so we never treat a fetched cert as a trust anchor.
 		if !cert.IsCA || !cert.BasicConstraintsValid {
-			log.Debug().
-				Str("subject", cert.Subject.CommonName).
-				Msg("AIA: skipping non-CA certificate")
+			crawlerLog.Debug("AIA: skipping non-CA certificate", "subject", cert.Subject.CommonName)
 			continue
 		}
 		if cert.Subject.String() == cert.Issuer.String() {
-			log.Debug().
-				Str("subject", cert.Subject.CommonName).
-				Msg("AIA: skipping self-signed certificate")
+			crawlerLog.Debug("AIA: skipping self-signed certificate", "subject", cert.Subject.CommonName)
 			continue
 		}
 
@@ -175,10 +170,10 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		t.cache[aiaURL] = true
 		t.mu.Unlock()
 
-		log.Info().
-			Str("subject", cert.Subject.CommonName).
-			Str("issuer", cert.Issuer.CommonName).
-			Msg("AIA: fetched missing intermediate certificate")
+		crawlerLog.Info("AIA: fetched missing intermediate certificate",
+			"subject", cert.Subject.CommonName,
+			"issuer", cert.Issuer.CommonName,
+		)
 		installed = true
 	}
 
@@ -189,11 +184,11 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 func fetchCertFromURL(rawURL string) *x509.Certificate {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		log.Debug().Str("host", parsed.Host).Msg("AIA: rejecting non-HTTP(S) URL")
+		crawlerLog.Debug("AIA: rejecting non-HTTP(S) URL", "host", parsed.Host)
 		return nil
 	}
 	if isPrivateHost(parsed.Host) {
-		log.Debug().Str("host", parsed.Host).Msg("AIA: rejecting AIA URL targeting private host")
+		crawlerLog.Debug("AIA: rejecting AIA URL targeting private host", "host", parsed.Host)
 		return nil
 	}
 
@@ -219,7 +214,7 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 	}
 	resp, err := client.Get(rawURL) //nolint:gosec // G107: URL validated by ssrfSafeDialContext at connect time
 	if err != nil {
-		log.Debug().Err(err).Str("host", parsed.Host).Msg("AIA: failed to fetch intermediate")
+		crawlerLog.Debug("AIA: failed to fetch intermediate", "error", err, "host", parsed.Host)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -235,7 +230,7 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 		// Fallback: try parsing as multiple certs (PEM bundle)
 		certs, pemErr := x509.ParseCertificates(body)
 		if pemErr != nil || len(certs) == 0 {
-			log.Debug().Err(err).Str("host", parsed.Host).Msg("AIA: failed to parse certificate")
+			crawlerLog.Debug("AIA: failed to parse certificate", "error", err, "host", parsed.Host)
 			return nil
 		}
 		cert = certs[0]

@@ -59,13 +59,13 @@ func (h *Handler) createDomain(w http.ResponseWriter, r *http.Request) {
 	// Get or create domain ID (no job creation)
 	domainID, err := h.DB.GetOrCreateDomainID(r.Context(), normalisedDomain)
 	if err != nil {
-		logger.Error().Err(err).Str("domain", normalisedDomain).Msg("Failed to get or create domain")
+		logger.Error("Failed to get or create domain", "error", err, "domain", normalisedDomain)
 		InternalError(w, r, err)
 		return
 	}
 
 	if err := h.DB.UpsertOrganisationDomain(r.Context(), orgID, domainID); err != nil {
-		logger.Error().Err(err).Str("organisation_id", orgID).Int("domain_id", domainID).Msg("Failed to associate domain with organisation")
+		logger.Error("Failed to associate domain with organisation", "error", err, "organisation_id", orgID, "domain_id", domainID)
 		InternalError(w, r, err)
 		return
 	}

@@ -10,8 +10,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // contextKey is used for storing values in request context
@@ -37,13 +35,13 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 
 		// Log the incoming request (skip health checks to reduce noise)
 		if r.URL.Path != "/health" {
-			log.Info().
-				Str("request_id", requestID).
-				Str("method", r.Method).
-				Str("path", r.URL.Path).
-				Str("remote_addr", r.RemoteAddr).
-				Str("user_agent", r.UserAgent()).
-				Msg("Incoming request")
+			apiLog.Info("Incoming request",
+				"request_id", requestID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+			)
 		}
 
 		next.ServeHTTP(w, r)
@@ -94,13 +92,13 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		// Log the completed request (skip health checks to reduce noise)
 		if r.URL.Path != "/health" {
-			log.Info().
-				Str("request_id", requestID).
-				Str("method", r.Method).
-				Str("path", r.URL.Path).
-				Int("status", wrapper.statusCode).
-				Dur("duration", duration).
-				Msg("Request completed")
+			apiLog.Info("Request completed",
+				"request_id", requestID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", wrapper.statusCode,
+				"duration", duration,
+			)
 		}
 	})
 }
@@ -118,32 +116,26 @@ type responseWrapper struct {
 func (rw *responseWrapper) WriteHeader(code int) {
 	if rw.wroteHeader {
 		// Duplicate WriteHeader call detected - log with stack trace
-		// Only capture expensive stack trace if WARN level is enabled
-		evt := log.Warn().
-			Str("request_id", rw.requestID).
-			Str("method", rw.requestMethod).
-			Str("path", rw.requestPath).
-			Int("previous_code", rw.statusCode).
-			Int("attempted_code", code)
-
-		// Conditionally capture stack trace only when this event will be logged
-		if evt.Enabled() {
-			evt = evt.Str("stack_trace", string(debug.Stack()))
-		}
-
-		evt.Msg("DIAGNOSTIC: Blocked duplicate WriteHeader call")
+		apiLog.Warn("DIAGNOSTIC: Blocked duplicate WriteHeader call",
+			"request_id", rw.requestID,
+			"method", rw.requestMethod,
+			"path", rw.requestPath,
+			"previous_code", rw.statusCode,
+			"attempted_code", code,
+			"stack_trace", string(debug.Stack()),
+		)
 		return
 	}
 
 	// Log the first WriteHeader call for diagnostic purposes
 	// Only log for non-health-check paths to reduce noise
 	if rw.requestPath != "/health" {
-		log.Debug().
-			Str("request_id", rw.requestID).
-			Str("method", rw.requestMethod).
-			Str("path", rw.requestPath).
-			Int("status_code", code).
-			Msg("DIAGNOSTIC: WriteHeader called")
+		apiLog.Debug("DIAGNOSTIC: WriteHeader called",
+			"request_id", rw.requestID,
+			"method", rw.requestMethod,
+			"path", rw.requestPath,
+			"status_code", code,
+		)
 	}
 
 	rw.statusCode = code
