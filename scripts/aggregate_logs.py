@@ -36,7 +36,7 @@ def _empty_minute():
 
 
 def _empty_totals():
-    return {"total_lines": 0, "failed_to_parse": 0}
+    return {"total_lines": 0, "failed_to_parse": 0, "warn_error_counts": defaultdict(int)}
 
 
 def load_data(log_dir):
@@ -63,6 +63,7 @@ def load_data(log_dir):
             totals = {
                 "total_lines": saved.get("total_lines", 0),
                 "failed_to_parse": saved.get("failed_to_parse", 0),
+                "warn_error_counts": defaultdict(int, saved.get("warn_error_counts", {})),
             }
             processed_files = saved.get("processed_files", [])
             return by_minute, totals, processed_files
@@ -80,6 +81,7 @@ def save_data(log_dir, by_minute, totals, processed_files):
         "processed_files": sorted(processed_files),
         "total_lines": totals["total_lines"],
         "failed_to_parse": totals["failed_to_parse"],
+        "warn_error_counts": dict(totals["warn_error_counts"]),
         "by_minute": {
             minute: {
                 "samples": bucket["samples"],
@@ -91,8 +93,10 @@ def save_data(log_dir, by_minute, totals, processed_files):
         },
     }
     data_file = log_dir / DATA_FILE_NAME
-    with open(data_file, "w") as f:
+    tmp_file = log_dir / f"{DATA_FILE_NAME}.tmp"
+    with open(tmp_file, "w") as f:
         json.dump(data, f, separators=(",", ":"))
+    tmp_file.replace(data_file)
 
 
 def process_json_file(json_file, by_minute, totals):
@@ -130,6 +134,8 @@ def process_json_file(json_file, by_minute, totals):
         # Parsing succeeded — commit atomically.
         totals["total_lines"] += file_total_lines
         totals["failed_to_parse"] += file_failed
+        for event, count in data.get("warn_error_counts", {}).items():
+            totals["warn_error_counts"][event] += count
         for minute_key, bucket in staged.items():
             by_minute[minute_key]["samples"] += bucket["samples"]
             for level, count in bucket["level_counts"].items():
@@ -235,19 +241,14 @@ def write_summary(summary_path, by_minute, totals, new_files_count):
         for event, count in sorted(event_totals.items(), key=lambda x: -x[1])[:30]:
             f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
 
-        warn_and_error = [
-            (e, c)
-            for e, c in event_totals.items()
-            if any(
-                kw in e.lower()
-                for kw in ("error", "fail", "warn", "timeout", "panic", "killed")
-            )
-        ]
+        warn_and_error = sorted(
+            totals["warn_error_counts"].items(), key=lambda x: -x[1]
+        )
         if warn_and_error:
             f.write("\n## Errors & Warnings\n\n")
             f.write("| Count | Event |\n")
             f.write("|-------|-------|\n")
-            for event, count in sorted(warn_and_error, key=lambda x: -x[1])[:20]:
+            for event, count in warn_and_error[:20]:
                 f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
 
 

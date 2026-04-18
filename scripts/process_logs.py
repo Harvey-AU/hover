@@ -78,6 +78,7 @@ def _strip_component_prefix(message: str, component: str) -> str:
 def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[str, Any]:
     level_counts: Dict[str, Counter] = defaultdict(Counter)
     event_counts: Dict[str, Counter] = defaultdict(Counter)  # "component: message" keys
+    warn_error_counts: Counter = Counter()  # global "component: message" at warn/error level
     component_counts: Dict[str, Counter] = defaultdict(Counter)
 
     total = 0
@@ -104,7 +105,10 @@ def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[st
 
             raw_msg = str(record.get("msg") or record.get("message") or "<no message>")
             message = _strip_component_prefix(raw_msg, component)
-            event_counts[minute][f"{component}: {message}"] += 1
+            event = f"{component}: {message}"
+            event_counts[minute][event] += 1
+            if level in ("warn", "error"):
+                warn_error_counts[event] += 1
 
             if flat_csv_path is not None:
                 extras = {k: v for k, v in record.items() if k not in _CORE_FIELDS}
@@ -144,6 +148,7 @@ def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[st
         "level_counts": {minute: dict(counter) for minute, counter in level_counts.items()},
         "component_counts": {minute: dict(counter) for minute, counter in component_counts.items()},
         "event_counts": event_summary,
+        "warn_error_counts": dict(warn_error_counts),
     }
 
 
