@@ -11,8 +11,8 @@ prometheus.remote_write "grafana_cloud" {
     url = "https://prometheus-prod-41-prod-au-southeast-1.grafana.net/api/prom/push"
 
     basic_auth {
-      username = env("GRAFANA_CLOUD_USER")
-      password = env("GRAFANA_CLOUD_API_KEY")
+      username = sys.env("GRAFANA_CLOUD_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
     }
 
     remote_timeout = "2m"
@@ -23,11 +23,11 @@ prometheus.remote_write "grafana_cloud" {
       max_backoff          = "30s"
       max_samples_per_send = 500
     }
+  }
 
-    wal {
-      truncate_frequency = "1h"
-      min_keepalive_time = "5m"
-      max_keepalive_time = "1h"
-    }
+  wal {
+    truncate_frequency = "1h"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "1h"
   }
 }

@@ -1,5 +1,5 @@
 # Alloy metrics agent
-FROM grafana/alloy:latest AS alloy
+FROM grafana/alloy:v1.15.1@sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d AS alloy
 
 # Build stage
 FROM golang:1.26.1-alpine AS builder
