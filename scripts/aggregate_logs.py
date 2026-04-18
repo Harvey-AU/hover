@@ -102,14 +102,17 @@ def process_json_file(json_file, by_minute, totals):
             data = json.load(f)
 
         meta = data.get("meta", {})
-        totals["total_lines"] += meta.get("total_lines", 0)
-        totals["failed_to_parse"] += meta.get("failed_to_parse", 0)
+        file_total_lines = meta.get("total_lines", 0)
+        file_failed = meta.get("failed_to_parse", 0)
+
+        # Stage all changes locally so a mid-parse error leaves no partial state.
+        staged: dict = defaultdict(_empty_minute)
 
         for ts, levels in data.get("level_counts", {}).items():
             minute_key = ts[:16]
-            by_minute[minute_key]["samples"] += 1
+            staged[minute_key]["samples"] += 1
             for level, count in levels.items():
-                by_minute[minute_key]["level_counts"][level] += count
+                staged[minute_key]["level_counts"][level] += count
 
         # event_counts: list of {"event": "component: message", "count": N}
         for ts, events in data.get("event_counts", {}).items():
@@ -117,11 +120,23 @@ def process_json_file(json_file, by_minute, totals):
             for item in events:
                 event = item.get("event", "unknown")
                 count = item.get("count", 0)
-                by_minute[minute_key]["event_counts"][event] += count
+                staged[minute_key]["event_counts"][event] += count
 
         for ts, components in data.get("component_counts", {}).items():
             minute_key = ts[:16]
             for component, count in components.items():
+                staged[minute_key]["component_counts"][component] += count
+
+        # Parsing succeeded — commit atomically.
+        totals["total_lines"] += file_total_lines
+        totals["failed_to_parse"] += file_failed
+        for minute_key, bucket in staged.items():
+            by_minute[minute_key]["samples"] += bucket["samples"]
+            for level, count in bucket["level_counts"].items():
+                by_minute[minute_key]["level_counts"][level] += count
+            for event, count in bucket["event_counts"].items():
+                by_minute[minute_key]["event_counts"][event] += count
+            for component, count in bucket["component_counts"].items():
                 by_minute[minute_key]["component_counts"][component] += count
 
         return True
@@ -280,8 +295,7 @@ def aggregate_logs(log_dir, incremental=True):
     write_components_csv(components_csv_path, by_minute)
     write_summary(summary_path, by_minute, totals, success)
 
-    if incremental:
-        save_data(log_path, by_minute, totals, processed_set)
+    save_data(log_path, by_minute, totals, processed_set)
 
     print("\nOutputs:")
     print(f"  {csv_path}")
