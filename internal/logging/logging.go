@@ -148,7 +148,7 @@ func (l *Logger) ErrorContext(ctx context.Context, msg string, args ...any) {
 // Fatal logs at error level, captures to Sentry, flushes, and exits.
 func (l *Logger) Fatal(msg string, args ...any) {
 	l.base().Error(l.prefix(msg), l.withSentryAttrs(msg, args)...)
-	sentry.Flush(2 * time.Second)
+	sentry.Flush(5 * time.Second)
 	os.Exit(1)
 }
 
@@ -183,14 +183,15 @@ func (h *fanoutHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *fanoutHandler) Handle(ctx context.Context, record slog.Record) error {
+	var firstErr error
 	for _, hh := range h.handlers {
 		if hh.Enabled(ctx, record.Level) {
-			if err := hh.Handle(ctx, record.Clone()); err != nil {
-				return err
+			if err := hh.Handle(ctx, record.Clone()); err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (h *fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

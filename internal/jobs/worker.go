@@ -4920,7 +4920,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			}
 		} else {
 			workerLog.Error("Failed to marshal headers",
-				"error", err, "task_id", task.ID, "headers", result.Headers)
+				"error", err, "task_id", task.ID, "headers_len", len(result.Headers))
 		}
 	}
 

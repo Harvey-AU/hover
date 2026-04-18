@@ -40,7 +40,7 @@ def save_state(log_dir, state):
     with open(state_file, 'w') as f:
         json.dump(state, f, indent=2)
 
-def load_existing_data(csv_path, messages_csv_path):
+def load_existing_data(csv_path, messages_csv_path, components_csv_path):
     """Load existing CSV data into memory."""
     by_minute = defaultdict(lambda: {
         'level_counts': defaultdict(int),
@@ -83,6 +83,21 @@ def load_existing_data(csv_path, messages_csv_path):
                             by_minute[timestamp]['message_counts'][message] = count
         except Exception as e:
             print(f"Warning: Could not load existing messages CSV: {e}", file=sys.stderr)
+
+    # Load component counts from components_per_minute.csv
+    if components_csv_path.exists():
+        try:
+            import csv
+            with open(components_csv_path) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    timestamp = row.pop('timestamp')
+                    for component, count_str in row.items():
+                        count = int(count_str)
+                        if count > 0:
+                            by_minute[timestamp]['component_counts'][component] = count
+        except Exception as e:
+            print(f"Warning: Could not load existing components CSV: {e}", file=sys.stderr)
 
     return by_minute
 
@@ -307,7 +322,7 @@ def aggregate_logs(log_dir, incremental=True):
 
     # Load existing data if incremental
     messages_csv_path = log_path / "messages_per_minute.csv"
-    by_minute = load_existing_data(csv_path, messages_csv_path) if incremental else defaultdict(lambda: {
+    by_minute = load_existing_data(csv_path, messages_csv_path, components_csv_path) if incremental else defaultdict(lambda: {
         'level_counts': defaultdict(int),
         'message_counts': defaultdict(int),
         'component_counts': defaultdict(int),

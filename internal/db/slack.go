@@ -169,7 +169,7 @@ func (db *DB) ListSlackConnections(ctx context.Context, organisationID string) (
 			&conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan slack connection row", "error", err, "org_id", conn.OrganisationID)
+			dbLog.Error("Failed to scan slack connection row", "error", err, "organisation_id", organisationID)
 			return nil, fmt.Errorf("failed to scan slack connection: %w", err)
 		}
 

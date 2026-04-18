@@ -213,7 +213,7 @@ func (h *Handler) HandleWebflowOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// Note: Webhooks are now registered per-site via the site settings UI
 	// instead of bulk registration during OAuth
 
-	logger.Info("Webflow connection established", "organisation_id", state.OrgID, "webflow_workspace_id", workspaceID, "webflow_user_id", authedUserID)
+	logger.Info("Webflow connection established", "organisation_id", state.OrgID, "webflow_workspace_id", workspaceID)
 
 	// Redirect to settings with success + setup flag to open site configuration
 	h.redirectToSettingsWithSetup(w, r, "Webflow", "Webflow Connection", conn.ID, "auto-crawl", "webflow")
