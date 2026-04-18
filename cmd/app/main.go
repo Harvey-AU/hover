@@ -38,14 +38,6 @@ const (
 	healthCheckInterval     = 5 * time.Minute
 )
 
-// bump
-// minInt returns the smaller of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // startJobScheduler starts background service to create jobs from schedulers
 // It respects context cancellation for graceful shutdown
