@@ -116,11 +116,12 @@ def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[st
                     "extras": json.dumps(extras, separators=(",", ":")) if extras else "",
                 })
 
-    if flat_csv_path is not None and flat_rows:
+    if flat_csv_path is not None:
         with flat_csv_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=["timestamp", "level", "component", "message", "extras"])
             writer.writeheader()
-            writer.writerows(flat_rows)
+            if flat_rows:
+                writer.writerows(flat_rows)
 
     event_summary: Dict[str, Any] = {}
     for minute, counter in event_counts.items():

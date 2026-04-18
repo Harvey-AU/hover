@@ -129,11 +129,11 @@ def process_json_file(json_file, by_minute):
             for level, count in levels.items():
                 by_minute[minute_key]["level_counts"][level] += count
 
-        # Add file-level totals to the first minute bucket to avoid double-counting.
-        if file_minutes:
-            first_minute = min(file_minutes)
-            by_minute[first_minute]["total_lines"] += total_lines
-            by_minute[first_minute]["failed_to_parse"] += failed_to_parse
+        # Add file-level totals to the first minute bucket (or a sentinel if the
+        # file produced no parseable records) to avoid double-counting.
+        anchor = min(file_minutes) if file_minutes else "_unparseable"
+        by_minute[anchor]["total_lines"] += total_lines
+        by_minute[anchor]["failed_to_parse"] += failed_to_parse
 
         # event_counts: list of {"event": "component: message", "count": N}
         for ts, events in data.get("event_counts", {}).items():
@@ -308,7 +308,7 @@ def aggregate_logs(log_dir, incremental=True):
     write_time_series(csv_path, by_minute)
     write_events_csv(events_csv_path, by_minute, top_n=50)
     write_components_csv(components_csv_path, by_minute)
-    write_summary(summary_path, by_minute, len(new_files))
+    write_summary(summary_path, by_minute, success)
 
     if incremental:
         state["processed_files"] = sorted(processed_set)
