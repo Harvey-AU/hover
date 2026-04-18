@@ -49,9 +49,20 @@ def _iter_records(lines: Iterable[str]) -> Iterable[Tuple[Dict[str, Any], str]]:
         yield data, line
 
 
+import re
+
+_COMPONENT_PREFIX_RE = re.compile(r"^\[([^\]]+)\]\s*")
+
+
+def _strip_component_prefix(message: str) -> str:
+    """Remove the [component] prefix added by the logging library."""
+    return _COMPONENT_PREFIX_RE.sub("", message)
+
+
 def summarise_logs(raw_path: Path) -> Dict[str, Any]:
     level_counts: Dict[str, Counter] = defaultdict(Counter)
     message_counts: Dict[str, Counter] = defaultdict(Counter)
+    component_counts: Dict[str, Counter] = defaultdict(Counter)
 
     total = 0
     parsed = 0
@@ -70,7 +81,12 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
             level = str(record.get("level", "unknown"))
             level_counts[minute][level] += 1
 
-            message = str(record.get("message", "<no message>"))
+            component = str(record.get("component", "unknown"))
+            component_counts[minute][component] += 1
+
+            # Strip [component] prefix before counting to avoid duplicate groups.
+            raw_msg = str(record.get("msg", record.get("message", "<no message>")))
+            message = _strip_component_prefix(raw_msg)
             message_counts[minute][message] += 1
 
     message_summary: Dict[str, Any] = {}
@@ -93,6 +109,7 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
             "generated_at": now.isoformat(),
         },
         "level_counts": {minute: dict(counter) for minute, counter in level_counts.items()},
+        "component_counts": {minute: dict(counter) for minute, counter in component_counts.items()},
         "message_counts": message_summary,
     }
 
@@ -116,10 +133,19 @@ def main() -> int:
     output_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
     meta = summary["meta"]
+    # Report total unique components seen across all minutes.
+    all_components: Counter = Counter()
+    for c in summary["component_counts"].values():
+        all_components.update(c)
+    component_summary = ", ".join(
+        f"{k}:{v}" for k, v in sorted(all_components.items(), key=lambda x: -x[1])
+    )
     print(
         f"Processed {meta['parsed']}/{meta['total_lines']} lines from {raw_path.name};"
         f" summary written to {output_path.name}"
     )
+    if component_summary:
+        print(f"Components: {component_summary}")
 
     return 0
 

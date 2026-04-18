@@ -45,6 +45,7 @@ def load_existing_data(csv_path, messages_csv_path):
     by_minute = defaultdict(lambda: {
         'level_counts': defaultdict(int),
         'message_counts': defaultdict(int),
+        'component_counts': defaultdict(int),
         'samples': 0,
         'total_lines': 0,
         'failed_to_parse': 0
@@ -117,6 +118,12 @@ def process_json_file(json_file, by_minute, all_messages):
                 by_minute[minute_key]['message_counts'][message] += count
                 all_messages[message] += count
 
+        # Process component counts (new field from slog migration)
+        for timestamp, components in data.get('component_counts', {}).items():
+            minute_key = timestamp[:16]
+            for component, count in components.items():
+                by_minute[minute_key]['component_counts'][component] += count
+
         return True
     except Exception as e:
         print(f"Error processing {json_file}: {e}", file=sys.stderr)
@@ -162,6 +169,21 @@ def write_messages_csv(csv_path, by_minute, top_n=20):
             data = by_minute[minute]
             counts = [str(data['message_counts'].get(msg, 0)) for msg in top_message_names]
             f.write(f"{minute}," + ",".join(counts) + "\n")
+
+def write_components_csv(csv_path, by_minute):
+    """Write per-minute component log volume to CSV."""
+    # Collect all component names seen across all minutes.
+    all_components: set = set()
+    for data in by_minute.values():
+        all_components.update(data['component_counts'].keys())
+    components = sorted(all_components)
+
+    with open(csv_path, 'w') as f:
+        f.write("timestamp," + ",".join(components) + "\n")
+        for minute in sorted(by_minute.keys()):
+            counts = [str(by_minute[minute]['component_counts'].get(c, 0)) for c in components]
+            f.write(f"{minute}," + ",".join(counts) + "\n")
+
 
 def write_summary(summary_path, by_minute, all_messages, new_files_count):
     """Write markdown summary."""
@@ -210,6 +232,21 @@ def write_summary(summary_path, by_minute, all_messages, new_files_count):
             escaped_msg = msg[:70].replace('|', '\\|')
             f.write(f"| {count:,} | {escaped_msg} |\n")
 
+        # Log volume by component
+        f.write("\n## Log Volume by Component\n\n")
+        all_component_totals: dict = defaultdict(int)
+        for data in by_minute.values():
+            for component, count in data['component_counts'].items():
+                all_component_totals[component] += count
+
+        if all_component_totals:
+            f.write("| Component | Total Logs |\n")
+            f.write("|-----------|------------|\n")
+            for component, count in sorted(all_component_totals.items(), key=lambda x: -x[1]):
+                f.write(f"| {component} | {count:,} |\n")
+        else:
+            f.write("_No component data — logs may predate slog migration._\n")
+
         # Critical patterns
         f.write("\n## Critical Patterns\n\n")
 
@@ -249,6 +286,7 @@ def aggregate_logs(log_dir, incremental=True):
         return False
 
     csv_path = log_path / "time_series.csv"
+    components_csv_path = log_path / "components_per_minute.csv"
     summary_path = log_path / "summary.md"
 
     # Load state
@@ -272,6 +310,7 @@ def aggregate_logs(log_dir, incremental=True):
     by_minute = load_existing_data(csv_path, messages_csv_path) if incremental else defaultdict(lambda: {
         'level_counts': defaultdict(int),
         'message_counts': defaultdict(int),
+        'component_counts': defaultdict(int),
         'samples': 0,
         'total_lines': 0,
         'failed_to_parse': 0
@@ -329,6 +368,7 @@ def aggregate_logs(log_dir, incremental=True):
     # Write outputs
     write_csv(csv_path, by_minute)
     write_messages_csv(messages_csv_path, by_minute, top_n=50)
+    write_components_csv(components_csv_path, by_minute)
     write_summary(summary_path, by_minute, all_messages, len(new_files))
 
     # Save state
@@ -339,6 +379,7 @@ def aggregate_logs(log_dir, incremental=True):
     print(f"\nOutputs written:")
     print(f"  CSV: {csv_path}")
     print(f"  Messages CSV: {messages_csv_path}")
+    print(f"  Components CSV: {components_csv_path}")
     print(f"  Summary: {summary_path}")
 
     return True
