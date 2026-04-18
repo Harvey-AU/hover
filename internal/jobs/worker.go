@@ -1284,9 +1284,10 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 				"error", err,
 				"domain", jobInfo.DomainName,
 			)
-			// Only capture to Sentry if it's not a 404 (which is normal)
+			// Warn (not Error) for non-404 failures — transient site/network issues
+			// are non-actionable and shouldn't generate Sentry noise.
 			if !strings.Contains(err.Error(), "404") {
-				workerLog.Error("Failed to parse robots.txt", "error", err, "domain", jobInfo.DomainName)
+				workerLog.Warn("Failed to parse robots.txt", "error", err, "domain", jobInfo.DomainName)
 			}
 			jobInfo.RobotsRules = &crawler.RobotsRules{} // Empty rules = no restrictions
 		} else {
@@ -2062,7 +2063,8 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			if hub := sentry.CurrentHub(); hub != nil {
 				hub.Recover(r)
 			}
-			workerLog.Error("Recovered from panic in processNextTask",
+			// NoCapture: hub.Recover above already sent this panic to Sentry.
+			workerLog.ErrorContext(logging.NoCapture(ctx), "Recovered from panic in processNextTask",
 				"panic", fmt.Sprintf("%v", r),
 				"stack", string(stack),
 			)

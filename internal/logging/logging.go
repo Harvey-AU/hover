@@ -33,10 +33,14 @@ const (
 	noCaptureKey contextKey = iota
 )
 
-// NoCapture returns a context that suppresses Sentry capture for the next
-// log call. Use for expected errors like 404s or client-side validation.
+// NoCapture returns a derived context that suppresses Sentry capture for any
+// ErrorContext call made with it. The suppression persists for the lifetime of
+// the derived context — construct it inline so the scope is limited to one call:
 //
 //	log.ErrorContext(logging.NoCapture(ctx), "expected 404", "url", url, "error", err)
+//
+// Do not store the derived context and reuse it, or all subsequent error log
+// calls on that context will also be silently dropped from Sentry.
 func NoCapture(ctx context.Context) context.Context {
 	return context.WithValue(ctx, noCaptureKey, true)
 }
