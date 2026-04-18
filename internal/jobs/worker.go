@@ -2060,11 +2060,7 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
 			recoveredErr := fmt.Errorf("panic in processNextTask: %v", r)
-			if hub := sentry.CurrentHub(); hub != nil {
-				hub.Recover(r)
-			}
-			// NoCapture: hub.Recover above already sent this panic to Sentry.
-			workerLog.ErrorContext(logging.NoCapture(ctx), "Recovered from panic in processNextTask",
+			workerLog.ErrorContext(ctx, "Recovered from panic in processNextTask",
 				"panic", fmt.Sprintf("%v", r),
 				"stack", string(stack),
 			)
@@ -5139,12 +5135,11 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 		if !rateLimited {
 			rateLimited = IsRateLimitError(err)
 		}
-		workerLog.Debug("Crawler failed", "error", err, "task_id", task.ID, "rate_limited", rateLimited, "status_code", func() int {
-			if result != nil {
-				return result.StatusCode
-			}
-			return 0
-		}())
+		statusCode := 0
+		if result != nil {
+			statusCode = result.StatusCode
+		}
+		workerLog.Debug("Crawler failed", "error", err, "task_id", task.ID, "rate_limited", rateLimited, "status_code", statusCode)
 		permit.Release(false, rateLimited)
 		released = true
 		return result, fmt.Errorf("crawler error: %w", err)

@@ -8,6 +8,7 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"regexp"
@@ -360,6 +361,7 @@ func ParseLevel(s string) slog.Level {
 	case "error", "fatal", "panic":
 		return slog.LevelError
 	default:
+		fmt.Fprintf(os.Stderr, "logging: unrecognised log level %q, defaulting to warn\n", s)
 		return slog.LevelWarn
 	}
 }
