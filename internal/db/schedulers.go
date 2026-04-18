@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
 )
 
 // ErrSchedulerNotFound is returned when a scheduler is not found

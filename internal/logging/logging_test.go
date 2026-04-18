@@ -39,11 +39,11 @@ func setupTestSentry(t *testing.T) {
 // transportMock is a no-op Sentry transport for testing.
 type transportMock struct{}
 
-func (t *transportMock) Flush(_ time.Duration) bool                { return true }
-func (t *transportMock) FlushWithContext(_ context.Context) bool   { return true }
-func (t *transportMock) Configure(_ sentry.ClientOptions)          {}
-func (t *transportMock) SendEvent(_ *sentry.Event)                 {}
-func (t *transportMock) Close()                                    {}
+func (t *transportMock) Flush(_ time.Duration) bool              { return true }
+func (t *transportMock) FlushWithContext(_ context.Context) bool { return true }
+func (t *transportMock) Configure(_ sentry.ClientOptions)        {}
+func (t *transportMock) SendEvent(_ *sentry.Event)               {}
+func (t *transportMock) Close()                                  {}
 
 func TestComponent(t *testing.T) {
 	l := Component("worker")

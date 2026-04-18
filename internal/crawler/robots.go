@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 )
 
 // RobotsRules contains parsed robots.txt rules for a domain

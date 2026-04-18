@@ -2135,8 +2135,8 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 				"task_id", task.ID,
 				"domain", jobsTask.DomainName,
 			)
-				// Brief pause so the worker does not immediately spin back to the DB
-				// when all pending tasks belong to rate-limited domains.
+			// Brief pause so the worker does not immediately spin back to the DB
+			// when all pending tasks belong to rate-limited domains.
 			select {
 			case <-time.After(domainDelayPauseFromEnv()):
 			case <-ctx.Done():

@@ -70,7 +70,7 @@ func main() {
 	workerPool.Start(context.Background())
 	defer workerPool.Stop()
 
-	startupLog.Info("Worker pool started with "+strconv.Itoa(jobWorkers)+" workers")
+	startupLog.Info("Worker pool started with " + strconv.Itoa(jobWorkers) + " workers")
 
 	// Create a test job
 	jobManager := jobs.NewJobManager(database.GetDB(), dbQueue, crawler, workerPool)

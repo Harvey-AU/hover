@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
 )
 
 // ErrWebflowConnectionNotFound is returned when a webflow connection is not found

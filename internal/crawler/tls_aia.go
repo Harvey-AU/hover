@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // aiaTransport wraps an http.RoundTripper and, on TLS certificate

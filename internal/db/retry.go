@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"time"
-
 )
 
 // RetryConfig holds configuration for connection retry behaviour

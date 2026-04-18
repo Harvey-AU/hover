@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // DomainLimiterConfig controls adaptive throttling behaviour.

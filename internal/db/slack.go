@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
 )
 
 // ErrSlackConnectionNotFound is returned when a slack connection is not found
