@@ -49,14 +49,12 @@ def _iter_records(lines: Iterable[str]) -> Iterable[Tuple[Dict[str, Any], str]]:
         yield data, line
 
 
-import re
-
-_COMPONENT_PREFIX_RE = re.compile(r"^\[([^\]]+)\]\s*")
-
-
-def _strip_component_prefix(message: str) -> str:
-    """Remove the [component] prefix added by the logging library."""
-    return _COMPONENT_PREFIX_RE.sub("", message)
+def _strip_component_prefix(message: str, component: str) -> str:
+    """Remove the [component] prefix only when it matches the known component."""
+    if not component or component == "unknown":
+        return message
+    prefix = f"[{component}]"
+    return message[len(prefix):].lstrip() if message.startswith(prefix) else message
 
 
 def summarise_logs(raw_path: Path) -> Dict[str, Any]:
@@ -78,15 +76,15 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
             parsed += 1
             minute = _normalise_timestamp(record)
 
-            level = str(record.get("level", "unknown")).lower()
+            level = str(record.get("level") or "unknown").lower()
             level_counts[minute][level] += 1
 
-            component = str(record.get("component", "unknown"))
+            component = str(record.get("component") or "unknown")
             component_counts[minute][component] += 1
 
             # Strip [component] prefix before counting to avoid duplicate groups.
-            raw_msg = str(record.get("msg", record.get("message", "<no message>")))
-            message = _strip_component_prefix(raw_msg)
+            raw_msg = str(record.get("msg") or record.get("message") or "<no message>")
+            message = _strip_component_prefix(raw_msg, component)
             message_counts[minute][message] += 1
 
     message_summary: Dict[str, Any] = {}
