@@ -775,7 +775,7 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 	probeInterval := probeIntervalFromEnv()
 	runningTaskBatchSize := runningTaskBatchSizeFromEnv()
 	runningTaskFlushInterval := runningTaskFlushIntervalFromEnv()
-	runningTaskBuffer := max(numWorkers*workerConcurrency*2, 64)
+	runningTaskBuffer := max(maxWorkers*workerConcurrency*2, 64)
 	waitingRecoveryInterval := waitingRecoveryIntervalFromEnv()
 	linkDiscoveryMinPriority := linkDiscoveryMinPriorityFromEnv()
 
