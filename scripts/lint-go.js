@@ -1,6 +1,19 @@
 #!/usr/bin/env node
-// Run golangci-lint if available. Cross-platform (Mac + Windows).
+// Run golangci-lint only when Go files are staged. Cross-platform (Mac + Windows).
 const { spawnSync } = require("child_process");
+
+// Check for staged Go files first — skip entirely if none.
+const staged = spawnSync(
+  "git",
+  ["diff", "--cached", "--name-only", "--", "*.go"],
+  {
+    encoding: "utf8",
+    shell: false,
+  }
+);
+if (!staged.stdout || !staged.stdout.trim()) {
+  process.exit(0);
+}
 
 const check = spawnSync("golangci-lint", ["--version"], {
   stdio: "ignore",

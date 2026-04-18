@@ -295,7 +295,7 @@ func (db *DB) ListSlackUserLinksForConnection(ctx context.Context, connectionID 
 			&link.DMNotifications, &link.CreatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan slack user link row", "error", err)
+			dbLog.Error("Failed to scan slack user link row", "error", err, "connection_id", connectionID)
 			return nil, fmt.Errorf("failed to scan slack user link: %w", err)
 		}
 		links = append(links, link)
@@ -388,7 +388,7 @@ func (db *DB) GetEnabledUserLinksForConnection(ctx context.Context, connectionID
 			&link.DMNotifications, &link.CreatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan enabled slack user link row", "error", err)
+			dbLog.Error("Failed to scan enabled slack user link row", "error", err, "connection_id", connectionID)
 			return nil, fmt.Errorf("failed to scan enabled slack user link: %w", err)
 		}
 		links = append(links, link)
