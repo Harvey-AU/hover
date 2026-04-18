@@ -106,11 +106,12 @@ def process_json_file(json_file, by_minute, totals):
             data = json.load(f)
 
         meta = data.get("meta", {})
-        file_total_lines = meta.get("total_lines", 0)
-        file_failed = meta.get("failed_to_parse", 0)
+        file_total_lines = int(meta.get("total_lines", 0))
+        file_failed = int(meta.get("failed_to_parse", 0))
 
         # Stage all changes locally so a mid-parse error leaves no partial state.
         staged: dict = defaultdict(_empty_minute)
+        staged_warn_error: dict = defaultdict(int)
 
         for ts, levels in data.get("level_counts", {}).items():
             minute_key = ts[:16]
@@ -131,10 +132,13 @@ def process_json_file(json_file, by_minute, totals):
             for component, count in components.items():
                 staged[minute_key]["component_counts"][component] += count
 
+        for event, count in data.get("warn_error_counts", {}).items():
+            staged_warn_error[event] += int(count)
+
         # Parsing succeeded — commit atomically.
         totals["total_lines"] += file_total_lines
         totals["failed_to_parse"] += file_failed
-        for event, count in data.get("warn_error_counts", {}).items():
+        for event, count in staged_warn_error.items():
             totals["warn_error_counts"][event] += count
         for minute_key, bucket in staged.items():
             by_minute[minute_key]["samples"] += bucket["samples"]
