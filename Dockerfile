@@ -1,3 +1,6 @@
+# Alloy metrics agent
+FROM grafana/alloy:latest AS alloy
+
 # Build stage
 FROM golang:1.26.1-alpine AS builder
 
@@ -26,8 +29,16 @@ WORKDIR /app
 # Install ca-certificates for HTTPS
 RUN apk --no-cache add ca-certificates
 
-# Copy binary from builder
+# Copy Go binary
 COPY --from=builder /app/main .
+
+# Copy Alloy binary and config
+COPY --from=alloy /bin/alloy /usr/local/bin/alloy
+COPY alloy.river .
+
+# Copy startup script
+COPY scripts/start.sh .
+RUN chmod +x start.sh /usr/local/bin/alloy
 
 # Copy static files
 COPY --from=builder /app/dashboard.html .
@@ -54,5 +65,5 @@ EXPOSE 8080
 # Switch to non-root user
 USER appuser
 
-# Run the binary
-CMD ["sh", "-c", "ulimit -n 65536 2>/dev/null || ulimit -n $(ulimit -Hn) 2>/dev/null; echo \"fd soft limit: $(ulimit -n)\"; exec ./main"]
+# Run app + Alloy sidecar
+CMD ["./start.sh"]

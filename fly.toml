@@ -93,7 +93,7 @@ primary_region = 'syd'
       Content-Type = "text/plain"
 
 [processes]
-  app = "./main"
+  app = "./start.sh"
 
 [[vm]]
   memory = '8gb'
