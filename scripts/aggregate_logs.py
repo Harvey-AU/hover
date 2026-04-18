@@ -195,14 +195,12 @@ def write_components_csv(csv_path, by_minute):
     all_components = sorted(
         {c for data in by_minute.values() for c in data["component_counts"]}
     )
-    with open(csv_path, "w") as f:
-        f.write("timestamp," + ",".join(all_components) + "\n")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", *all_components])
         for minute in sorted(by_minute.keys()):
-            counts = [
-                str(by_minute[minute]["component_counts"].get(c, 0))
-                for c in all_components
-            ]
-            f.write(f"{minute}," + ",".join(counts) + "\n")
+            counts = [by_minute[minute]["component_counts"].get(c, 0) for c in all_components]
+            writer.writerow([minute, *counts])
 
 
 def write_summary(summary_path, by_minute, new_files_count):

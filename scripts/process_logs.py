@@ -20,7 +20,7 @@ _CORE_FIELDS = {"time", "timestamp", "@timestamp", "ts", "created_at", "level", 
 def _normalise_timestamp(record: Dict[str, Any]) -> str:
     """Return an ISO minute string (YYYY-MM-DDTHH:MM) for a log record."""
     for key in ("time", "timestamp", "@timestamp", "ts", "created_at"):
-        if key in record and record[key]:
+        if record.get(key):
             raw = str(record[key])
             break
     else:
