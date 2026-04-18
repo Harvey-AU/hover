@@ -27,7 +27,9 @@ RUN adduser -D -g '' appuser
 WORKDIR /app
 
 # Install ca-certificates for HTTPS; gcompat provides glibc compat for Alloy sidecar
-RUN apk --no-cache add ca-certificates gcompat
+RUN apk --no-cache add \
+  ca-certificates=20250911-r0 \
+  gcompat=1.1.0-r4
 
 # Copy Go binary
 COPY --from=builder /app/main .
