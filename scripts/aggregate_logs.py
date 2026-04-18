@@ -122,13 +122,21 @@ def process_json_file(json_file, by_minute):
         total_lines = meta.get("total_lines", 0)
         failed_to_parse = meta.get("failed_to_parse", 0)
 
+        # Track which minute keys this file contributes to, then add
+        # file-level totals once per file (not once per minute key).
+        file_minutes: set = set()
         for ts, levels in data.get("level_counts", {}).items():
             minute_key = ts[:16]
+            file_minutes.add(minute_key)
             by_minute[minute_key]["samples"] += 1
-            by_minute[minute_key]["total_lines"] += total_lines
-            by_minute[minute_key]["failed_to_parse"] += failed_to_parse
             for level, count in levels.items():
                 by_minute[minute_key]["level_counts"][level] += count
+
+        # Distribute file totals evenly across the minutes it spans.
+        if file_minutes:
+            first_minute = min(file_minutes)
+            by_minute[first_minute]["total_lines"] += total_lines
+            by_minute[first_minute]["failed_to_parse"] += failed_to_parse
 
         # event_counts: list of {"event": "component: message", "count": N}
         for ts, events in data.get("event_counts", {}).items():
@@ -244,14 +252,8 @@ def write_summary(summary_path, by_minute, new_files_count):
         f.write("| Count | Event |\n")
         f.write("|-------|-------|\n")
         for event, count in sorted(event_totals.items(), key=lambda x: -x[1])[:30]:
-            f.write(f"| {count:,} | {event[:80].replace('|', chr(124))} |\n")
+            f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
 
-        # Errors and warnings
-        error_events = {
-            e: c
-            for e, c in event_totals.items()
-            if e.split(": ", 1)[0] if ": " in e else False
-        }
         warn_and_error = [
             (e, c)
             for e, c in event_totals.items()
@@ -265,7 +267,7 @@ def write_summary(summary_path, by_minute, new_files_count):
             f.write("| Count | Event |\n")
             f.write("|-------|-------|\n")
             for event, count in sorted(warn_and_error, key=lambda x: -x[1])[:20]:
-                f.write(f"| {count:,} | {event[:80].replace('|', chr(124))} |\n")
+                f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
 
 
 def aggregate_logs(log_dir, incremental=True):

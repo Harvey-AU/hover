@@ -124,9 +124,9 @@ def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[st
 
     event_summary: Dict[str, Any] = {}
     for minute, counter in event_counts.items():
-        top = counter.most_common(20)
         event_summary[minute] = [
-            {"event": event, "count": count} for event, count in top
+            {"event": event, "count": count}
+            for event, count in sorted(counter.items(), key=lambda x: -x[1])
         ]
 
     melbourne_tz = ZoneInfo("Australia/Melbourne")
