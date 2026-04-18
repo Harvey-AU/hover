@@ -57,6 +57,9 @@ jobs:
             op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
           OTEL_EXPORTER_OTLP_HEADERS:
             op://Good Native/hover-runtime/OTEL_EXPORTER_OTLP_HEADERS
+          GRAFANA_CLOUD_USER: op://Good Native/hover-runtime/GRAFANA_CLOUD_USER
+          GRAFANA_CLOUD_API_KEY:
+            op://Good Native/hover-runtime/GRAFANA_CLOUD_API_KEY
           # Archive (R2 cold storage)
           ARCHIVE_ACCESS_KEY_ID:
             op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
@@ -82,6 +85,8 @@ jobs:
             ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
             ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
             ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
             --stage
 
       - run: flyctl deploy --remote-only
