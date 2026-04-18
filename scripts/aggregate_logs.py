@@ -22,26 +22,8 @@ from collections import defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-STATE_FILE_NAME = ".aggregate_state.json"
-
-
-def load_state(log_dir):
-    state_file = log_dir / STATE_FILE_NAME
-    if state_file.exists():
-        try:
-            with open(state_file) as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load state file: {e}", file=sys.stderr)
-    return {"processed_files": [], "last_update": None}
-
-
-def save_state(log_dir, state):
-    state_file = log_dir / STATE_FILE_NAME
-    melbourne_tz = ZoneInfo("Australia/Melbourne")
-    state["last_update"] = datetime.now(melbourne_tz).isoformat()
-    with open(state_file, "w") as f:
-        json.dump(state, f, indent=2)
+# Lossless state persisted between incremental runs.
+DATA_FILE_NAME = ".aggregate_data.json"
 
 
 def _empty_minute():
@@ -50,90 +32,84 @@ def _empty_minute():
         "event_counts": defaultdict(int),  # "component: message" -> count
         "component_counts": defaultdict(int),
         "samples": 0,
-        "total_lines": 0,
-        "failed_to_parse": 0,
     }
 
 
-def load_existing_data(csv_path, events_csv_path, components_csv_path):
-    """Restore aggregated state from existing CSVs for incremental runs."""
-    by_minute = defaultdict(_empty_minute)
+def _empty_totals():
+    return {"total_lines": 0, "failed_to_parse": 0}
 
-    # Level counts from time_series.csv
-    if csv_path.exists():
+
+def load_data(log_dir):
+    """Load full aggregate state from the lossless JSON data file."""
+    data_file = log_dir / DATA_FILE_NAME
+    if data_file.exists():
         try:
-            with open(csv_path) as f:
-                next(f)  # skip header
-                for line in f:
-                    parts = line.strip().split(",")
-                    if len(parts) >= 5:
-                        ts = parts[0]
-                        by_minute[ts]["level_counts"]["debug"] = int(parts[1])
-                        by_minute[ts]["level_counts"]["info"] = int(parts[2])
-                        by_minute[ts]["level_counts"]["warn"] = int(parts[3])
-                        by_minute[ts]["level_counts"]["error"] = int(parts[4])
-        except (OSError, ValueError) as e:
-            print(f"Warning: Could not load time_series.csv: {e}", file=sys.stderr)
+            with open(data_file) as f:
+                saved = json.load(f)
 
-    # Event counts from events_per_minute.csv
-    if events_csv_path.exists():
-        try:
-            with open(events_csv_path) as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    ts = row.pop("timestamp")
-                    for event, count_str in row.items():
-                        count = int(count_str)
-                        if count > 0:
-                            by_minute[ts]["event_counts"][event] = count
-        except (OSError, csv.Error, ValueError) as e:
-            print(f"Warning: Could not load events_per_minute.csv: {e}", file=sys.stderr)
+            by_minute = defaultdict(_empty_minute)
+            for minute, bucket in saved.get("by_minute", {}).items():
+                by_minute[minute]["samples"] = bucket.get("samples", 0)
+                by_minute[minute]["level_counts"] = defaultdict(
+                    int, bucket.get("level_counts", {})
+                )
+                by_minute[minute]["event_counts"] = defaultdict(
+                    int, bucket.get("event_counts", {})
+                )
+                by_minute[minute]["component_counts"] = defaultdict(
+                    int, bucket.get("component_counts", {})
+                )
 
-    # Component counts from components_per_minute.csv
-    if components_csv_path.exists():
-        try:
-            with open(components_csv_path) as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    ts = row.pop("timestamp")
-                    for component, count_str in row.items():
-                        count = int(count_str)
-                        if count > 0:
-                            by_minute[ts]["component_counts"][component] = count
-        except (OSError, csv.Error, ValueError) as e:
-            print(
-                f"Warning: Could not load components_per_minute.csv: {e}",
-                file=sys.stderr,
-            )
+            totals = {
+                "total_lines": saved.get("total_lines", 0),
+                "failed_to_parse": saved.get("failed_to_parse", 0),
+            }
+            processed_files = saved.get("processed_files", [])
+            return by_minute, totals, processed_files
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
+            print(f"Warning: Could not load data file: {e}", file=sys.stderr)
 
-    return by_minute
+    return defaultdict(_empty_minute), _empty_totals(), []
 
 
-def process_json_file(json_file, by_minute):
+def save_data(log_dir, by_minute, totals, processed_files):
+    """Persist full aggregate state to the lossless JSON data file."""
+    melbourne_tz = ZoneInfo("Australia/Melbourne")
+    data = {
+        "last_update": datetime.now(melbourne_tz).isoformat(),
+        "processed_files": sorted(processed_files),
+        "total_lines": totals["total_lines"],
+        "failed_to_parse": totals["failed_to_parse"],
+        "by_minute": {
+            minute: {
+                "samples": bucket["samples"],
+                "level_counts": dict(bucket["level_counts"]),
+                "event_counts": dict(bucket["event_counts"]),
+                "component_counts": dict(bucket["component_counts"]),
+            }
+            for minute, bucket in by_minute.items()
+        },
+    }
+    data_file = log_dir / DATA_FILE_NAME
+    with open(data_file, "w") as f:
+        json.dump(data, f, separators=(",", ":"))
+
+
+def process_json_file(json_file, by_minute, totals):
     """Merge a single iteration JSON into the running aggregation."""
     try:
         with open(json_file) as f:
             data = json.load(f)
 
         meta = data.get("meta", {})
-        total_lines = meta.get("total_lines", 0)
-        failed_to_parse = meta.get("failed_to_parse", 0)
+        totals["total_lines"] += meta.get("total_lines", 0)
+        totals["failed_to_parse"] += meta.get("failed_to_parse", 0)
 
-        # Track which minute keys this file contributes to, then add
-        # file-level totals once per file (not once per minute key).
-        file_minutes: set = set()
         for ts, levels in data.get("level_counts", {}).items():
             minute_key = ts[:16]
-            file_minutes.add(minute_key)
             by_minute[minute_key]["samples"] += 1
             for level, count in levels.items():
                 by_minute[minute_key]["level_counts"][level] += count
-
-        # Add file-level totals to the first minute bucket (or a sentinel if the
-        # file produced no parseable records) to avoid double-counting.
-        anchor = min(file_minutes) if file_minutes else "_unparseable"
-        by_minute[anchor]["total_lines"] += total_lines
-        by_minute[anchor]["failed_to_parse"] += failed_to_parse
 
         # event_counts: list of {"event": "component: message", "count": N}
         for ts, events in data.get("event_counts", {}).items():
@@ -174,10 +150,9 @@ def write_events_csv(csv_path, by_minute, top_n=50):
 
     Columns are the top-N events by total count across all minutes.
     """
-    # Tally global totals to pick the top-N columns.
     totals = defaultdict(int)
-    for data in by_minute.values():
-        for event, count in data["event_counts"].items():
+    for bucket in by_minute.values():
+        for event, count in bucket["event_counts"].items():
             totals[event] += count
 
     top_events = [e for e, _ in sorted(totals.items(), key=lambda x: -x[1])[:top_n]]
@@ -193,7 +168,7 @@ def write_events_csv(csv_path, by_minute, top_n=50):
 def write_components_csv(csv_path, by_minute):
     """timestamp | component | component | ..."""
     all_components = sorted(
-        {c for data in by_minute.values() for c in data["component_counts"]}
+        {c for bucket in by_minute.values() for c in bucket["component_counts"]}
     )
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -203,44 +178,42 @@ def write_components_csv(csv_path, by_minute):
             writer.writerow([minute, *counts])
 
 
-def write_summary(summary_path, by_minute, new_files_count):
+def write_summary(summary_path, by_minute, totals, new_files_count):
     melbourne_tz = ZoneInfo("Australia/Melbourne")
     now = datetime.now(melbourne_tz)
 
-    total_lines = sum(m["total_lines"] for m in by_minute.values())
-    total_failed = sum(m["failed_to_parse"] for m in by_minute.values())
+    total_lines = totals["total_lines"]
+    total_failed = totals["failed_to_parse"]
 
-    # Global event totals for top-20 list.
     event_totals = defaultdict(int)
-    for data in by_minute.values():
-        for event, count in data["event_counts"].items():
+    for bucket in by_minute.values():
+        for event, count in bucket["event_counts"].items():
             event_totals[event] += count
+
+    # Time range excludes any non-timestamp sentinel keys (defensive).
+    ts_keys = sorted(by_minute.keys())
 
     with open(summary_path, "w") as f:
         f.write("# Log Aggregation Summary\n\n")
         f.write(f"**Generated:** {now.isoformat()}\n\n")
         f.write(f"**New files processed:** {new_files_count}\n\n")
-        if by_minute:
-            f.write(
-                f"**Time range:** {min(by_minute.keys())} to {max(by_minute.keys())}\n\n"
-            )
+        if ts_keys:
+            f.write(f"**Time range:** {ts_keys[0]} to {ts_keys[-1]}\n\n")
         f.write(f"- Total log lines: **{total_lines:,}**\n")
         f.write(
             f"- Parse success rate: **{100 * (1 - total_failed / max(total_lines, 1)):.1f}%**\n\n"
         )
 
-        # Level counts over time
         f.write("## Log Levels by Minute\n\n")
         f.write("| Timestamp | Debug | Info | Warn | Error |\n")
         f.write("|-----------|-------|------|------|-------|\n")
-        for minute in sorted(by_minute.keys())[-30:]:
+        for minute in ts_keys[-30:]:
             levels = by_minute[minute]["level_counts"]
             f.write(
                 f"| {minute} | {levels.get('debug', 0)} | {levels.get('info', 0)} |"
                 f" {levels.get('warn', 0)} | {levels.get('error', 0)} |\n"
             )
 
-        # Top events
         f.write("\n## Top 30 Events\n\n")
         f.write("| Count | Event |\n")
         f.write("|-------|-------|\n")
@@ -274,8 +247,11 @@ def aggregate_logs(log_dir, incremental=True):
     components_csv_path = log_path / "components_per_minute.csv"
     summary_path = log_path / "summary.md"
 
-    state = load_state(log_path) if incremental else {"processed_files": []}
-    processed_set = set(state["processed_files"])
+    if incremental:
+        by_minute, totals, processed_list = load_data(log_path)
+        processed_set = set(processed_list)
+    else:
+        by_minute, totals, processed_set = defaultdict(_empty_minute), _empty_totals(), set()
 
     all_json_files = sorted(f for f in log_path.glob("*.json") if not f.name.startswith("."))
     new_files = [f for f in all_json_files if f.name not in processed_set]
@@ -288,16 +264,10 @@ def aggregate_logs(log_dir, incremental=True):
             print(f"No JSON files found in {log_dir}")
             return False
 
-    by_minute = (
-        load_existing_data(csv_path, events_csv_path, components_csv_path)
-        if incremental
-        else defaultdict(_empty_minute)
-    )
-
     print(f"Processing {len(new_files)} new files...")
     success = 0
     for json_file in new_files:
-        if process_json_file(json_file, by_minute):
+        if process_json_file(json_file, by_minute, totals):
             processed_set.add(json_file.name)
             success += 1
             if success % 10 == 0:
@@ -308,11 +278,10 @@ def aggregate_logs(log_dir, incremental=True):
     write_time_series(csv_path, by_minute)
     write_events_csv(events_csv_path, by_minute, top_n=50)
     write_components_csv(components_csv_path, by_minute)
-    write_summary(summary_path, by_minute, success)
+    write_summary(summary_path, by_minute, totals, success)
 
     if incremental:
-        state["processed_files"] = sorted(processed_set)
-        save_state(log_path, state)
+        save_data(log_path, by_minute, totals, processed_set)
 
     print("\nOutputs:")
     print(f"  {csv_path}")
