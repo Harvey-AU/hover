@@ -16,7 +16,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/loops"
 	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // OrganisationsHandler handles GET and POST /v1/organisations
@@ -217,11 +216,7 @@ func (h *Handler) UsageHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info().
-		Str("organisation_id", orgID).
-		Int("daily_used", stats.DailyUsed).
-		Int("daily_limit", stats.DailyLimit).
-		Msg("Usage statistics retrieved")
+	logger.Info("Usage statistics retrieved", "organisation_id", orgID, "daily_used", stats.DailyUsed, "daily_limit", stats.DailyLimit)
 
 	WriteSuccess(w, r, map[string]any{
 		"usage": stats,
@@ -266,9 +261,7 @@ func (h *Handler) PlansHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logger.Info().
-		Int("plan_count", len(publicPlans)).
-		Msg("Plans retrieved")
+	logger.Info("Plans retrieved", "plan_count", len(publicPlans))
 
 	WriteSuccess(w, r, map[string]any{
 		"plans": publicPlans,
@@ -627,12 +620,12 @@ func (h *Handler) OrganisationInviteAcceptHandler(w http.ResponseWriter, r *http
 	activeOrganisationError := ""
 	if err := h.DB.SetActiveOrganisation(userClaims.UserID, acceptedInvite.OrganisationID); err != nil {
 		activeOrganisationError = err.Error()
-		logger.Warn().
-			Err(err).
-			Int("attempt", 1).
-			Str("user_id", userClaims.UserID).
-			Str("organisation_id", acceptedInvite.OrganisationID).
-			Msg("Initial set active organisation failed after invite acceptance")
+		logger.Warn("Initial set active organisation failed after invite acceptance",
+			"error", err,
+			"attempt", 1,
+			"user_id", userClaims.UserID,
+			"organisation_id", acceptedInvite.OrganisationID,
+		)
 
 		userID := userClaims.UserID
 		orgID := acceptedInvite.OrganisationID
@@ -645,29 +638,29 @@ func (h *Handler) OrganisationInviteAcceptHandler(w http.ResponseWriter, r *http
 			for retryAttempt, backoff := range retryBackoffs {
 				time.Sleep(backoff)
 				if retryErr := h.DB.SetActiveOrganisation(userID, orgID); retryErr != nil {
-					logger.Warn().
-						Err(retryErr).
-						Int("attempt", retryAttempt+2).
-						Int("max_attempts", len(retryBackoffs)+1).
-						Str("user_id", userID).
-						Str("organisation_id", orgID).
-						Msg("Background retry failed setting active organisation after invite acceptance")
+					logger.Warn("Background retry failed setting active organisation after invite acceptance",
+						"error", retryErr,
+						"attempt", retryAttempt+2,
+						"max_attempts", len(retryBackoffs)+1,
+						"user_id", userID,
+						"organisation_id", orgID,
+					)
 					continue
 				}
 
-				logger.Info().
-					Int("attempt", retryAttempt+2).
-					Str("user_id", userID).
-					Str("organisation_id", orgID).
-					Msg("Background retry set active organisation after invite acceptance")
+				logger.Info("Background retry set active organisation after invite acceptance",
+					"attempt", retryAttempt+2,
+					"user_id", userID,
+					"organisation_id", orgID,
+				)
 				return
 			}
 
-			logger.Warn().
-				Str("user_id", userID).
-				Str("organisation_id", orgID).
-				Int("attempts", len(retryBackoffs)+1).
-				Msg("All attempts failed setting active organisation after invite acceptance")
+			logger.Warn("All attempts failed setting active organisation after invite acceptance",
+				"user_id", userID,
+				"organisation_id", orgID,
+				"attempts", len(retryBackoffs)+1,
+			)
 		}()
 	} else {
 		activeOrganisationSet = true
@@ -939,7 +932,7 @@ func (h *Handler) createOrganisationInvite(w http.ResponseWriter, r *http.Reques
 			emailDelivery = "skipped"
 			responseMsg = "Invite created but email delivery is not configured in this environment"
 		} else {
-			logger.Error().Err(loopsErr).Msg("Failed to send invite via Loops")
+			logger.Error("Failed to send invite via Loops", "error", loopsErr)
 			emailDelivery = "failed"
 			responseMsg = "Invite created but email delivery failed — the user can log in and accept manually"
 		}
@@ -984,7 +977,7 @@ var errLoopsNotConfigured = errors.New("loops client not configured")
 // Returns errLoopsNotConfigured if the Loops client is not configured.
 func (h *Handler) sendInviteViaLoops(ctx context.Context, email string, vars map[string]any) error {
 	if h.Loops == nil {
-		log.Warn().Msg("Loops client not configured; skipping invite email")
+		apiLog.Warn("Loops client not configured; skipping invite email")
 		return errLoopsNotConfigured
 	}
 

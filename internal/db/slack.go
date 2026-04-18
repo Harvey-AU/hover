@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // ErrSlackConnectionNotFound is returned when a slack connection is not found
@@ -60,7 +58,7 @@ func (db *DB) CreateSlackConnection(ctx context.Context, conn *SlackConnection) 
 		conn.BotUserID, conn.InstallingUserID, conn.CreatedAt, conn.UpdatedAt,
 	).Scan(&conn.ID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", conn.OrganisationID).Str("workspace_id", conn.WorkspaceID).Msg("Failed to create slack connection")
+		dbLog.Error("Failed to create slack connection", "error", err, "organisation_id", conn.OrganisationID, "workspace_id", conn.WorkspaceID)
 		return fmt.Errorf("failed to create slack connection: %w", err)
 	}
 
@@ -73,7 +71,7 @@ func (db *DB) StoreSlackToken(ctx context.Context, connectionID, token string) e
 
 	// Function returns secret name but we don't need it - just scan to consume the result
 	if err := db.client.QueryRowContext(ctx, query, connectionID, token).Scan(new(string)); err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to store slack token in vault")
+		dbLog.Error("Failed to store slack token in vault", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to store slack token: %w", err)
 	}
 
@@ -87,7 +85,7 @@ func (db *DB) GetSlackToken(ctx context.Context, connectionID string) (string, e
 	var token sql.NullString
 	err := db.client.QueryRowContext(ctx, query, connectionID).Scan(&token)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get slack token from vault")
+		dbLog.Error("Failed to get slack token from vault", "error", err, "connection_id", connectionID)
 		return "", fmt.Errorf("failed to get slack token: %w", err)
 	}
 
@@ -121,7 +119,7 @@ func (db *DB) GetSlackConnection(ctx context.Context, connectionID string) (*Sla
 		if err == sql.ErrNoRows {
 			return nil, ErrSlackConnectionNotFound
 		}
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get slack connection")
+		dbLog.Error("Failed to get slack connection", "error", err, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to get slack connection: %w", err)
 	}
 
@@ -154,7 +152,7 @@ func (db *DB) ListSlackConnections(ctx context.Context, organisationID string) (
 
 	rows, err := db.client.QueryContext(ctx, query, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to list slack connections")
+		dbLog.Error("Failed to list slack connections", "error", err, "organisation_id", organisationID)
 		return nil, fmt.Errorf("failed to list slack connections: %w", err)
 	}
 	defer rows.Close()
@@ -171,7 +169,7 @@ func (db *DB) ListSlackConnections(ctx context.Context, organisationID string) (
 			&conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan slack connection row")
+			dbLog.Error("Failed to scan slack connection row", "error", err, "organisation_id", organisationID)
 			return nil, fmt.Errorf("failed to scan slack connection: %w", err)
 		}
 
@@ -207,7 +205,7 @@ func (db *DB) DeleteSlackConnection(ctx context.Context, connectionID, organisat
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, organisationID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to delete slack connection")
+		dbLog.Error("Failed to delete slack connection", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete slack connection: %w", err)
 	}
 
@@ -241,7 +239,7 @@ func (db *DB) CreateSlackUserLink(ctx context.Context, link *SlackUserLink) erro
 		link.DMNotifications, link.CreatedAt,
 	).Scan(&link.ID)
 	if err != nil {
-		log.Error().Err(err).Str("user_id", link.UserID).Str("slack_connection_id", link.SlackConnectionID).Msg("Failed to create slack user link")
+		dbLog.Error("Failed to create slack user link", "error", err, "user_id", link.UserID, "connection_id", link.SlackConnectionID)
 		return fmt.Errorf("failed to create slack user link: %w", err)
 	}
 
@@ -266,7 +264,7 @@ func (db *DB) GetSlackUserLink(ctx context.Context, userID, connectionID string)
 		if err == sql.ErrNoRows {
 			return nil, ErrSlackUserLinkNotFound
 		}
-		log.Error().Err(err).Str("user_id", userID).Str("connection_id", connectionID).Msg("Failed to get slack user link")
+		dbLog.Error("Failed to get slack user link", "error", err, "user_id", userID, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to get slack user link: %w", err)
 	}
 
@@ -284,7 +282,7 @@ func (db *DB) ListSlackUserLinksForConnection(ctx context.Context, connectionID 
 
 	rows, err := db.client.QueryContext(ctx, query, connectionID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to list slack user links")
+		dbLog.Error("Failed to list slack user links", "error", err, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to list slack user links: %w", err)
 	}
 	defer rows.Close()
@@ -297,7 +295,7 @@ func (db *DB) ListSlackUserLinksForConnection(ctx context.Context, connectionID 
 			&link.DMNotifications, &link.CreatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan slack user link row")
+			dbLog.Error("Failed to scan slack user link row", "error", err, "connection_id", connectionID)
 			return nil, fmt.Errorf("failed to scan slack user link: %w", err)
 		}
 		links = append(links, link)
@@ -320,7 +318,7 @@ func (db *DB) UpdateSlackUserLinkNotifications(ctx context.Context, userID, conn
 
 	result, err := db.client.ExecContext(ctx, query, userID, connectionID, dmNotifications)
 	if err != nil {
-		log.Error().Err(err).Str("user_id", userID).Str("connection_id", connectionID).Msg("Failed to update slack user link notifications")
+		dbLog.Error("Failed to update slack user link notifications", "error", err, "user_id", userID, "connection_id", connectionID)
 		return fmt.Errorf("failed to update slack user link notifications: %w", err)
 	}
 
@@ -345,7 +343,7 @@ func (db *DB) DeleteSlackUserLink(ctx context.Context, userID, connectionID stri
 
 	result, err := db.client.ExecContext(ctx, query, userID, connectionID)
 	if err != nil {
-		log.Error().Err(err).Str("user_id", userID).Str("connection_id", connectionID).Msg("Failed to delete slack user link")
+		dbLog.Error("Failed to delete slack user link", "error", err, "user_id", userID, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete slack user link: %w", err)
 	}
 
@@ -377,7 +375,7 @@ func (db *DB) GetEnabledUserLinksForConnection(ctx context.Context, connectionID
 
 	rows, err := db.client.QueryContext(ctx, query, connectionID)
 	if err != nil {
-		log.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to list enabled slack user links")
+		dbLog.Error("Failed to list enabled slack user links", "error", err, "connection_id", connectionID)
 		return nil, fmt.Errorf("failed to list enabled slack user links: %w", err)
 	}
 	defer rows.Close()
@@ -390,7 +388,7 @@ func (db *DB) GetEnabledUserLinksForConnection(ctx context.Context, connectionID
 			&link.DMNotifications, &link.CreatedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan enabled slack user link row")
+			dbLog.Error("Failed to scan enabled slack user link row", "error", err, "connection_id", connectionID)
 			return nil, fmt.Errorf("failed to scan enabled slack user link: %w", err)
 		}
 		links = append(links, link)

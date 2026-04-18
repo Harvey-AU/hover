@@ -3,17 +3,17 @@ package main
 import (
 	"context"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
+
+var startupLog = logging.Component("startup")
 
 /**
  * Job Queue Test Utility
@@ -33,25 +33,24 @@ import (
 
 func main() {
 	// Set up logging
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	logging.Setup(logging.ParseLevel("info"), "production")
 
 	// Load environment variables
 	if err := godotenv.Load(); err != nil {
-		log.Fatal().Err(err).Msg("Error loading .env file")
+		startupLog.Fatal("Error loading .env file", "error", err)
 	}
 
 	// Get database details from environment
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Fatal().Msg("DATABASE_URL must be set")
+		startupLog.Fatal("DATABASE_URL must be set")
 	}
 
 	// Connect to database
-	log.Info().Msg("Connecting to PostgreSQL database...")
+	startupLog.Info("Connecting to PostgreSQL database...")
 	database, err := db.InitFromEnv()
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
+		startupLog.Fatal("Failed to connect to database", "error", err)
 	}
 	defer database.Close()
 
@@ -70,7 +69,7 @@ func main() {
 	workerPool.Start(context.Background())
 	defer workerPool.Stop()
 
-	log.Info().Msg("Worker pool started with " + strconv.Itoa(jobWorkers) + " workers")
+	startupLog.Info("Worker pool started", "worker_count", jobWorkers)
 
 	// Create a test job
 	jobManager := jobs.NewJobManager(database.GetDB(), dbQueue, crawler, workerPool)
@@ -88,15 +87,15 @@ func main() {
 	// Submit the job to the queue
 	job, err := jobManager.CreateJob(context.Background(), jobOptions)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create job")
+		startupLog.Fatal("Failed to create job", "error", err)
 	}
 
-	log.Info().Str("job_id", job.ID).Msg("Created test job")
+	startupLog.Info("Created test job", "job_id", job.ID)
 
 	// Add the job to the worker pool - it will automatically start processing pending tasks
 	workerPool.AddJob(job.ID, jobOptions)
 
-	log.Info().Str("job_id", job.ID).Msg("Added job to worker pool, monitoring progress...")
+	startupLog.Info("Added job to worker pool, monitoring progress...", "job_id", job.ID)
 
 	// Monitor job progress
 	for {
@@ -104,25 +103,25 @@ func main() {
 
 		job, err := jobManager.GetJobStatus(context.Background(), job.ID)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to get job status")
+			startupLog.Error("Failed to get job status", "error", err)
 			continue
 		}
 
-		log.Info().
-			Str("status", string(job.Status)).
-			Float64("progress", job.Progress).
-			Int("completed", job.CompletedTasks).
-			Int("failed", job.FailedTasks).
-			Int("total", job.TotalTasks).
-			Msg("Job progress")
+		startupLog.Info("Job progress",
+			"status", string(job.Status),
+			"progress", job.Progress,
+			"completed", job.CompletedTasks,
+			"failed", job.FailedTasks,
+			"total", job.TotalTasks,
+		)
 
 		if job.Status == jobs.JobStatusCompleted || job.Status == jobs.JobStatusFailed {
-			log.Info().Str("final_status", string(job.Status)).Msg("Job finished")
+			startupLog.Info("Job finished", "final_status", string(job.Status))
 			break
 		}
 
 		if job.Status == jobs.JobStatusRunning && job.Progress >= 100.0 {
-			log.Info().Msg("Job complete")
+			startupLog.Info("Job complete")
 			break
 		}
 	}

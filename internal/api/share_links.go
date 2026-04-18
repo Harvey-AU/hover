@@ -56,13 +56,13 @@ func (h *Handler) createJobShareLink(w http.ResponseWriter, r *http.Request, job
 
 	if err != nil {
 		if isUndefinedRelationError(err, "job_share_links") {
-			logger.Warn().Err(err).Msg("Share link table missing, feature disabled")
+			logger.Warn("Share link table missing, feature disabled", "error", err)
 			ServiceUnavailable(w, r, "Share links are not available yet")
 			return
 		}
 
 		if !errors.Is(err, sql.ErrNoRows) {
-			logger.Error().Err(err).Msg("Failed to query existing share links")
+			logger.Error("Failed to query existing share links", "error", err)
 			InternalError(w, r, err)
 			return
 		}
@@ -73,7 +73,7 @@ func (h *Handler) createJobShareLink(w http.ResponseWriter, r *http.Request, job
 	for range maxAttempts {
 		candidate, genErr := generateShareToken()
 		if genErr != nil {
-			logger.Error().Err(genErr).Msg("Failed to generate share token")
+			logger.Error("Failed to generate share token", "error", genErr)
 			InternalError(w, r, genErr)
 			return
 		}
@@ -88,7 +88,7 @@ func (h *Handler) createJobShareLink(w http.ResponseWriter, r *http.Request, job
 		}
 
 		if isUndefinedRelationError(insertErr, "job_share_links") {
-			logger.Warn().Err(insertErr).Msg("Share link table missing during insert")
+			logger.Warn("Share link table missing during insert", "error", insertErr)
 			ServiceUnavailable(w, r, "Share links are not available yet")
 			return
 		}
@@ -97,13 +97,13 @@ func (h *Handler) createJobShareLink(w http.ResponseWriter, r *http.Request, job
 			continue
 		}
 
-		logger.Error().Err(insertErr).Msg("Failed to insert share link")
+		logger.Error("Failed to insert share link", "error", insertErr)
 		InternalError(w, r, insertErr)
 		return
 	}
 
 	if token == "" {
-		logger.Error().Msg("exhausted attempts to generate unique share token")
+		logger.Error("exhausted attempts to generate unique share token")
 		InternalError(w, r, errors.New("failed to generate share token"))
 		return
 	}
@@ -135,7 +135,7 @@ func (h *Handler) getJobShareLink(w http.ResponseWriter, r *http.Request, jobID 
     `, jobID).Scan(&token)
 	if err != nil {
 		if isUndefinedRelationError(err, "job_share_links") {
-			logger.Warn().Err(err).Msg("Share link table missing during fetch")
+			logger.Warn("Share link table missing during fetch", "error", err)
 			ServiceUnavailable(w, r, "Share links are not available yet")
 			return
 		}
@@ -148,7 +148,7 @@ func (h *Handler) getJobShareLink(w http.ResponseWriter, r *http.Request, jobID 
 			return
 		}
 
-		logger.Error().Err(err).Msg("Failed to fetch share link")
+		logger.Error("Failed to fetch share link", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -176,11 +176,11 @@ func (h *Handler) revokeJobShareLink(w http.ResponseWriter, r *http.Request, job
     `, jobID, token)
 	if err != nil {
 		if isUndefinedRelationError(err, "job_share_links") {
-			logger.Warn().Err(err).Msg("Share link table missing during revoke")
+			logger.Warn("Share link table missing during revoke", "error", err)
 			ServiceUnavailable(w, r, "Share links are not available yet")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to revoke share link")
+		logger.Error("Failed to revoke share link", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -269,7 +269,7 @@ func (h *Handler) getSharedJobTasks(w http.ResponseWriter, r *http.Request, toke
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to count shared tasks")
+		logger.Error("Failed to count shared tasks", "error", err)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -279,7 +279,7 @@ func (h *Handler) getSharedJobTasks(w http.ResponseWriter, r *http.Request, toke
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to get shared tasks")
+		logger.Error("Failed to get shared tasks", "error", err)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -287,7 +287,7 @@ func (h *Handler) getSharedJobTasks(w http.ResponseWriter, r *http.Request, toke
 
 	tasks, err := formatTasksFromRows(rows)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to format shared tasks")
+		logger.Error("Failed to format shared tasks", "error", err)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -333,7 +333,7 @@ func (h *Handler) handleShareLinkError(w http.ResponseWriter, r *http.Request, e
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Msg("Share link error")
+		logger.Error("Share link error", "error", err)
 		InternalError(w, r, err)
 	}
 }

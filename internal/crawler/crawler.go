@@ -16,11 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gocolly/colly/v2"
-	"github.com/rs/zerolog/log"
 )
+
+var crawlerLog = logging.Component("crawler")
 
 // normaliseCacheStatus converts CDN-specific cache status strings to standard values.
 // Covers top 10 CDNs representing ~90% of web traffic (verified Dec 2025):
@@ -354,7 +356,7 @@ func New(config *Config, id ...string) *Crawler {
 		Delay:       baseDelay,
 		RandomDelay: time.Second - baseDelay,
 	}); err != nil {
-		log.Error().Err(err).Msg("Failed to set crawler limits")
+		crawlerLog.Error("Failed to set crawler limits", "error", err)
 	}
 
 	// Create metrics map for this crawler instance
@@ -405,9 +407,7 @@ func New(config *Config, id ...string) *Crawler {
 			r.Headers.Set("Referer", fmt.Sprintf("https://%s/", r.URL.Host))
 		}
 
-		log.Debug().
-			Str("url", r.URL.String()).
-			Msg("Crawler sending request")
+		crawlerLog.Debug("Crawler sending request", "url", r.URL.String())
 	})
 
 	// Note: OnHTML handler will be registered on the clone in WarmURL to ensure proper context access
@@ -488,10 +488,7 @@ func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.
 		// Check all resolved IPs for private/local addresses
 		for _, ip := range ips {
 			if isPrivateOrLocalIP(ip) {
-				log.Warn().
-					Str("host", host).
-					Str("ip", ip.String()).
-					Msg("SSRF protection: blocked connection to private/local IP")
+				crawlerLog.Warn("SSRF protection: blocked connection to private/local IP", "host", host, "ip", ip.String())
 				return nil, fmt.Errorf("blocked connection to private/local IP: %s resolves to %s", host, ip.String())
 			}
 		}
@@ -575,15 +572,15 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		cfConnectingIP := r.Headers.Get("CF-Connecting-IP")
 		cfVisitor := r.Headers.Get("CF-Visitor")
 
-		log.Debug().
-			Str("url", r.Request.URL.String()).
-			Str("cf_cache_status", cfCacheStatus).
-			Str("cf_ray", cfRay).
-			Str("cf_datacenter", cfDatacenter).
-			Str("cf_connecting_ip", cfConnectingIP).
-			Str("cf_visitor", cfVisitor).
-			Int64("response_time_ms", result.ResponseTime).
-			Msg("Cloudflare headers analysis")
+		crawlerLog.Debug("Cloudflare headers analysis",
+			"url", r.Request.URL.String(),
+			"cf_cache_status", cfCacheStatus,
+			"cf_ray", cfRay,
+			"cf_datacenter", cfDatacenter,
+			"cf_connecting_ip", cfConnectingIP,
+			"cf_visitor", cfVisitor,
+			"response_time_ms", result.ResponseTime,
+		)
 
 		cacheMeta := buildCacheMetadata(result.Headers)
 		result.CacheStatus = cacheMeta.NormalisedStatus
@@ -653,11 +650,11 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 			result.Performance,
 		)
 
-		log.Debug().
-			Err(err).
-			Str("url", targetURL).
-			Dur("duration_ms", time.Duration(result.ResponseTime)*time.Millisecond).
-			Msg("URL warming failed")
+		crawlerLog.Debug("URL warming failed",
+			"error", err,
+			"url", targetURL,
+			"duration_ms", time.Duration(result.ResponseTime)*time.Millisecond,
+		)
 	})
 }
 
@@ -675,10 +672,10 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			Outcome:  "not_needed",
 			Duration: 0,
 		})
-		log.Debug().
-			Str("url", targetURL).
-			Str("cache_status", res.CacheStatus).
-			Msg("No cache warming needed - cache already available or not cacheable")
+		crawlerLog.Debug("No cache warming needed - cache already available or not cacheable",
+			"url", targetURL,
+			"cache_status", res.CacheStatus,
+		)
 		return true, errCacheValidationSkipped
 	}
 
@@ -692,12 +689,12 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 	}
 	jitteredDelay := 500 + randomInt
 
-	log.Debug().
-		Str("url", targetURL).
-		Str("cache_status", res.CacheStatus).
-		Int64("initial_response_time", res.ResponseTime).
-		Int("calculated_delay_ms", jitteredDelay).
-		Msg("Cache MISS detected, applying jittered delay before cache validation")
+	crawlerLog.Debug("Cache MISS detected, applying jittered delay before cache validation",
+		"url", targetURL,
+		"cache_status", res.CacheStatus,
+		"initial_response_time", res.ResponseTime,
+		"calculated_delay_ms", jitteredDelay,
+	)
 
 	// Wait for initial delay to allow CDN to process and cache
 	select {
@@ -705,7 +702,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		// Continue with cache check loop
 	case <-ctx.Done():
 		// Context cancelled during wait
-		log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during initial delay")
+		crawlerLog.Debug("Cache warming cancelled during initial delay", "url", targetURL)
 		return true, ctx.Err()
 	}
 
@@ -742,17 +739,17 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		})
 
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("url", targetURL).
-				Int("check_attempt", i+1).
-				Msg("Failed to check cache status")
+			crawlerLog.Warn("Failed to check cache status",
+				"error", err,
+				"url", targetURL,
+				"check_attempt", i+1,
+			)
 		} else {
-			log.Debug().
-				Str("url", targetURL).
-				Str("cache_status", cacheStatus).
-				Int("check_attempt", i+1).
-				Msg("Cache status check")
+			crawlerLog.Debug("Cache status check",
+				"url", targetURL,
+				"cache_status", cacheStatus,
+				"check_attempt", i+1,
+			)
 
 			// If cache is now HIT, we can proceed with second request
 			if cacheStatus == "HIT" || cacheStatus == "STALE" || cacheStatus == "REVALIDATED" {
@@ -762,11 +759,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 
 			// If CDN indicates the response will not be cached, skip further checks
 			if !shouldMakeSecondRequest(cacheStatus) {
-				log.Debug().
-					Str("url", targetURL).
-					Str("cache_status", cacheStatus).
-					Int("check_attempt", i+1).
-					Msg("Cache status indicates resource will not warm; skipping additional checks")
+				crawlerLog.Debug("Cache status indicates resource will not warm; skipping additional checks",
+					"url", targetURL,
+					"cache_status", cacheStatus,
+					"check_attempt", i+1,
+				)
 				break
 			}
 		}
@@ -778,7 +775,7 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				delayBeforeAttempt = nextCheckDelay
 				// Continue to next check
 			case <-ctx.Done():
-				log.Debug().Str("url", targetURL).Msg("Cache warming cancelled during check loop")
+				crawlerLog.Debug("Cache warming cancelled during check loop", "url", targetURL)
 				return true, ctx.Err()
 			}
 			// Increase delay for the next iteration
@@ -788,14 +785,12 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 
 	// Log whether cache became available
 	if cacheHit {
-		log.Debug().
-			Str("url", targetURL).
-			Msg("Cache is now available, proceeding with second request")
+		crawlerLog.Debug("Cache is now available, proceeding with second request", "url", targetURL)
 	} else {
-		log.Debug().
-			Str("url", targetURL).
-			Int("max_checks", maxChecks).
-			Msg("Cache did not become available after maximum checks")
+		crawlerLog.Debug("Cache did not become available after maximum checks",
+			"url", targetURL,
+			"max_checks", maxChecks,
+		)
 	}
 
 	if cacheHit {
@@ -804,11 +799,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		secondResult, err := c.makeSecondRequest(ctx, targetURL)
 		secondDuration := time.Since(secondStart)
 		if err != nil {
-			log.Debug().
-				Err(err).
-				Str("url", targetURL).
-				Dur("secondary_duration_ms", secondDuration).
-				Msg("Second request failed, but first request succeeded")
+			crawlerLog.Debug("Second request failed, but first request succeeded",
+				"error", err,
+				"url", targetURL,
+				"secondary_duration_ms", secondDuration,
+			)
 		}
 		if secondResult != nil && secondResult.RequestDiagnostics != nil && secondResult.RequestDiagnostics.Timings != nil {
 			res.RequestDiagnostics.Timings.SecondaryRequestMS = secondResult.RequestDiagnostics.Timings.SecondaryRequestMS
@@ -841,23 +836,23 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				improvementRatio = float64(res.ResponseTime) / float64(res.SecondResponseTime)
 			}
 
-			log.Debug().
-				Str("url", targetURL).
-				Str("first_cache_status", res.CacheStatus).
-				Str("second_cache_status", res.SecondCacheStatus).
-				Int64("first_response_time", res.ResponseTime).
-				Int64("second_response_time", res.SecondResponseTime).
-				Int("initial_delay_ms", jitteredDelay).
-				Float64("improvement_ratio", improvementRatio).
-				Bool("improvement_ratio_valid", improvementRatioValid).
-				Bool("cache_hit_before_second", cacheHit).
-				Msg("Cache warming analysis - pattern data")
+			crawlerLog.Debug("Cache warming analysis - pattern data",
+				"url", targetURL,
+				"first_cache_status", res.CacheStatus,
+				"second_cache_status", res.SecondCacheStatus,
+				"first_response_time", res.ResponseTime,
+				"second_response_time", res.SecondResponseTime,
+				"initial_delay_ms", jitteredDelay,
+				"improvement_ratio", improvementRatio,
+				"improvement_ratio_valid", improvementRatioValid,
+				"cache_hit_before_second", cacheHit,
+			)
 		}
 	} else {
-		log.Debug().
-			Str("url", targetURL).
-			Str("cache_status", res.CacheStatus).
-			Msg("Cache status did not transition to HIT; skipping second request")
+		crawlerLog.Debug("Cache status did not transition to HIT; skipping second request",
+			"url", targetURL,
+			"cache_status", res.CacheStatus,
+		)
 	}
 
 	return false, nil
@@ -869,22 +864,18 @@ func setupLinkExtraction(collyClone *colly.Collector) {
 		// Check if link extraction is enabled for this request
 		findLinksVal := e.Request.Ctx.GetAny("find_links")
 		if findLinksVal == nil {
-			log.Debug().
-				Str("url", e.Request.URL.String()).
-				Msg("find_links not set in context - defaulting to enabled")
+			crawlerLog.Debug("find_links not set in context - defaulting to enabled", "url", e.Request.URL.String())
 		} else if findLinks, ok := findLinksVal.(bool); ok && !findLinks {
-			log.Debug().
-				Str("url", e.Request.URL.String()).
-				Bool("find_links", findLinks).
-				Msg("Link extraction disabled for this request")
+			crawlerLog.Debug("Link extraction disabled for this request",
+				"url", e.Request.URL.String(),
+				"find_links", findLinks,
+			)
 			return
 		}
 
 		result, ok := e.Request.Ctx.GetAny("result").(*CrawlResult)
 		if !ok {
-			log.Debug().
-				Str("url", e.Request.URL.String()).
-				Msg("No result context - not collecting links")
+			crawlerLog.Debug("No result context - not collecting links", "url", e.Request.URL.String())
 			return
 		}
 
@@ -923,12 +914,12 @@ func setupLinkExtraction(collyClone *colly.Collector) {
 		// Extract remaining links as "body"
 		extractLinks(e.DOM, "body")
 
-		log.Debug().
-			Str("url", e.Request.URL.String()).
-			Int("header_links", len(result.Links["header"])).
-			Int("footer_links", len(result.Links["footer"])).
-			Int("body_links", len(result.Links["body"])).
-			Msg("Categorized links from page")
+		crawlerLog.Debug("Categorized links from page",
+			"url", e.Request.URL.String(),
+			"header_links", len(result.Links["header"]),
+			"footer_links", len(result.Links["footer"]),
+			"body_links", len(result.Links["body"]),
+		)
 	})
 }
 
@@ -956,19 +947,13 @@ func executeCollyRequest(ctx context.Context, collyClone *colly.Collector, targe
 	case err := <-done:
 		if err != nil {
 			res.Error = err.Error()
-			log.Debug().
-				Err(err).
-				Str("url", targetURL).
-				Msg("Colly visit failed")
+			crawlerLog.Debug("Colly visit failed", "error", err, "url", targetURL)
 			return err
 		}
 		return nil
 	case <-ctx.Done():
 		res.Error = ctx.Err().Error()
-		log.Debug().
-			Err(ctx.Err()).
-			Str("url", targetURL).
-			Msg("URL warming cancelled due to context timeout")
+		crawlerLog.Debug("URL warming cancelled due to context timeout", "error", ctx.Err(), "url", targetURL)
 		return ctx.Err()
 	}
 }
@@ -1041,9 +1026,7 @@ func applyPhaseTiming(res *CrawlResult, phase string, duration time.Duration) {
 	case "secondary_request":
 		res.RequestDiagnostics.Timings.SecondaryRequestMS = duration.Milliseconds()
 	default:
-		log.Warn().
-			Str("phase", phase).
-			Msg("Skipping timing assignment for unexpected crawler phase")
+		crawlerLog.Warn("Skipping timing assignment for unexpected crawler phase", "phase", phase)
 	}
 }
 
@@ -1064,11 +1047,11 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 	}
 	ensureRequestDiagnostics(res)
 
-	log.Debug().
-		Str("url", targetURL).
-		Bool("find_links", findLinks).
-		Bool("cache_validation_enabled", allowCacheValidation).
-		Msg("Starting URL warming with Colly")
+	crawlerLog.Debug("Starting URL warming with Colly",
+		"url", targetURL,
+		"find_links", findLinks,
+		"cache_validation_enabled", allowCacheValidation,
+	)
 
 	collyClone := c.colly.Clone()
 	setupLinkExtraction(collyClone)
@@ -1098,18 +1081,18 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 
 	if res.Error != "" {
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			log.Debug().
-				Int("status", res.StatusCode).
-				Str("url", targetURL).
-				Str("error", res.Error).
-				Dur("duration_ms", time.Duration(res.ResponseTime)*time.Millisecond).
-				Msg("URL warming returned non-success status")
+			crawlerLog.Debug("URL warming returned non-success status",
+				"status", res.StatusCode,
+				"url", targetURL,
+				"error", res.Error,
+				"duration_ms", time.Duration(res.ResponseTime)*time.Millisecond,
+			)
 		} else {
-			log.Debug().
-				Str("url", targetURL).
-				Str("error", res.Error).
-				Dur("duration_ms", time.Duration(res.ResponseTime)*time.Millisecond).
-				Msg("URL warming failed")
+			crawlerLog.Debug("URL warming failed",
+				"url", targetURL,
+				"error", res.Error,
+				"duration_ms", time.Duration(res.ResponseTime)*time.Millisecond,
+			)
 		}
 		res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
 		return res, fmt.Errorf("%s", res.Error)
@@ -1147,17 +1130,17 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 	}
 
 	res.RequestDiagnostics.Timings.TotalMS = time.Since(start).Milliseconds()
-	log.Debug().
-		Str("url", targetURL).
-		Bool("cache_validation_enabled", allowCacheValidation).
-		Int64("primary_request_ms", res.RequestDiagnostics.Timings.PrimaryRequestMS).
-		Int64("cache_validation_ms", res.RequestDiagnostics.Timings.CacheValidationMS).
-		Int64("secondary_request_ms", res.RequestDiagnostics.Timings.SecondaryRequestMS).
-		Int64("total_ms", res.RequestDiagnostics.Timings.TotalMS).
-		Int("probe_attempts", len(res.RequestDiagnostics.Probes)).
-		Str("cache_status", res.CacheStatus).
-		Str("secondary_cache_status", res.SecondCacheStatus).
-		Msg("Crawler phase summary")
+	crawlerLog.Debug("Crawler phase summary",
+		"url", targetURL,
+		"cache_validation_enabled", allowCacheValidation,
+		"primary_request_ms", res.RequestDiagnostics.Timings.PrimaryRequestMS,
+		"cache_validation_ms", res.RequestDiagnostics.Timings.CacheValidationMS,
+		"secondary_request_ms", res.RequestDiagnostics.Timings.SecondaryRequestMS,
+		"total_ms", res.RequestDiagnostics.Timings.TotalMS,
+		"probe_attempts", len(res.RequestDiagnostics.Probes),
+		"cache_status", res.CacheStatus,
+		"secondary_cache_status", res.SecondCacheStatus,
+	)
 
 	return res, nil
 }

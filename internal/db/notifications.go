@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+var notificationsLog = logging.Component("db")
 
 // NotificationType defines the types of notifications
 type NotificationType string
@@ -99,7 +101,7 @@ func (db *DB) GetNotification(ctx context.Context, notificationID string) (*Noti
 	}
 	if dataJSON != nil {
 		if err := json.Unmarshal(dataJSON, &n.Data); err != nil {
-			log.Warn().Err(err).Str("notification_id", notificationID).Msg("Failed to unmarshal notification data")
+			notificationsLog.Warn("Failed to unmarshal notification data", "error", err, "notification_id", notificationID)
 		}
 	}
 
@@ -182,7 +184,7 @@ func (db *DB) ListNotifications(ctx context.Context, organisationID string, limi
 		if dataJSON != nil {
 			n.Data = make(map[string]any)
 			if err := json.Unmarshal(dataJSON, &n.Data); err != nil {
-				log.Warn().Err(err).Str("notification_id", n.ID).Msg("Failed to unmarshal notification data")
+				notificationsLog.Warn("Failed to unmarshal notification data", "error", err, "notification_id", n.ID)
 			}
 		}
 
@@ -293,7 +295,7 @@ func (db *DB) GetPendingSlackNotifications(ctx context.Context, limit int) ([]*N
 		if dataJSON != nil {
 			n.Data = make(map[string]any)
 			if err := json.Unmarshal(dataJSON, &n.Data); err != nil {
-				log.Warn().Err(err).Str("notification_id", n.ID).Msg("Failed to unmarshal notification data")
+				notificationsLog.Warn("Failed to unmarshal notification data", "error", err, "notification_id", n.ID)
 			}
 		}
 

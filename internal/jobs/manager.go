@@ -15,11 +15,13 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
+
+var jobsLog = logging.Component("jobs")
 
 // DbQueueProvider defines the interface for database operations
 type DbQueueProvider interface {
@@ -125,33 +127,26 @@ func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, use
 
 	if err == nil && existingJobID != "" {
 		// Found an existing active job for the same domain and user/organisation
-		logEvent := log.Info().
-			Str("existing_job_id", existingJobID).
-			Str("existing_job_status", existingJobStatus).
-			Str("domain", domain)
-
+		args := []any{
+			"existing_job_id", existingJobID,
+			"existing_job_status", existingJobStatus,
+			"domain", domain,
+		}
 		if existingOrgID.Valid {
-			logEvent = logEvent.Str("organisation_id", existingOrgID.String)
+			args = append(args, "organisation_id", existingOrgID.String)
 		}
 		if existingUserID.Valid {
-			logEvent = logEvent.Str("user_id", existingUserID.String)
+			args = append(args, "user_id", existingUserID.String)
 		}
-
-		logEvent.Msg("Found existing active job for domain, cancelling it")
+		jobsLog.Info("Found existing active job for domain, cancelling it", args...)
 
 		if err := jm.CancelJob(ctx, existingJobID); err != nil {
-			log.Error().
-				Err(err).
-				Str("job_id", existingJobID).
-				Msg("Failed to cancel existing job")
+			jobsLog.Error("Failed to cancel existing job", "error", err, "job_id", existingJobID)
 			// Continue with new job creation even if cancellation fails
 		}
 	} else if err != nil && err != sql.ErrNoRows {
 		// Log query error but continue with job creation
-		log.Warn().
-			Err(err).
-			Str("domain", domain).
-			Msg("Error checking for existing jobs")
+		jobsLog.Warn("Error checking for existing jobs", "error", err, "domain", domain)
 	}
 
 	return nil // Always return nil to continue with job creation
@@ -235,10 +230,7 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 		// Use DiscoverSitemapsAndRobots which already includes parsing
 		discoveryResult, err := jm.crawler.DiscoverSitemapsAndRobots(ctx, normalisedDomain)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("domain", normalisedDomain).
-				Msg("Failed to fetch robots.txt for manual URL")
+			jobsLog.Error("Failed to fetch robots.txt for manual URL", "error", err, "domain", normalisedDomain)
 
 			// Update job with error
 			if updateErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
@@ -249,7 +241,7 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 				`, JobStatusFailed, fmt.Sprintf("Failed to fetch robots.txt: %v", err), time.Now().UTC(), job.ID)
 				return err
 			}); updateErr != nil {
-				log.Error().Err(updateErr).Str("job_id", job.ID).Msg("Failed to update job status")
+				jobsLog.Error("Failed to update job status", "error", updateErr, "job_id", job.ID)
 			}
 			return nil, fmt.Errorf("failed to fetch robots.txt: %w", err)
 		}
@@ -265,11 +257,8 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 
 	// Check if root path is allowed by robots.txt
 	if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, rootPath) {
-		log.Warn().
-			Str("job_id", job.ID).
-			Str("domain", normalisedDomain).
-			Str("path", rootPath).
-			Msg("Root path is disallowed by robots.txt, job cannot proceed")
+		jobsLog.Warn("Root path is disallowed by robots.txt, job cannot proceed",
+			"job_id", job.ID, "domain", normalisedDomain, "path", rootPath)
 
 		// Update job with error
 		if updateErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
@@ -280,7 +269,7 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 			`, JobStatusFailed, "Root path (/) is disallowed by robots.txt", time.Now().UTC(), job.ID)
 			return err
 		}); updateErr != nil {
-			log.Error().Err(updateErr).Str("job_id", job.ID).Msg("Failed to update job status")
+			jobsLog.Error("Failed to update job status", "error", updateErr, "job_id", job.ID)
 		}
 		return nil, fmt.Errorf("root path is disallowed by robots.txt")
 	}
@@ -330,14 +319,11 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 	})
 
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to create and enqueue root URL")
+		jobsLog.Error("Failed to create and enqueue root URL", "error", err)
 		return err
 	}
 
-	log.Info().
-		Str("job_id", job.ID).
-		Str("domain", job.Domain).
-		Msg("Added root URL to job queue")
+	jobsLog.Info("Added root URL to job queue", "job_id", job.ID, "domain", job.Domain)
 
 	return nil
 }
@@ -362,13 +348,13 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 		rootPath := "/"
 		_, err := jm.validateRootURLAccess(backgroundCtx, job, normalisedDomain, rootPath)
 		if err != nil {
-			log.Error().Err(err).Str("job_id", job.ID).Msg("Failed to validate root URL access")
+			jobsLog.Error("Failed to validate root URL access", "error", err, "job_id", job.ID)
 			return // Error already logged and job updated by validateRootURLAccess
 		}
 
 		// Create page and task records for the root URL
 		if err := jm.createManualRootTask(backgroundCtx, job, domainID, rootPath); err != nil {
-			log.Error().Err(err).Str("job_id", job.ID).Msg("Failed to create manual root task")
+			jobsLog.Error("Failed to create manual root task", "error", err, "job_id", job.ID)
 			return
 		}
 
@@ -395,10 +381,8 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 		if jm.workerPool != nil && jm.workerPool.maxWorkers > 0 {
 			defaultConcurrency = jm.workerPool.maxWorkers
 		}
-		log.Info().
-			Str("domain", normalisedDomain).
-			Int("default_concurrency", defaultConcurrency).
-			Msg("Concurrency not specified; using worker pool maximum")
+		jobsLog.Info("Concurrency not specified; using worker pool maximum",
+			"domain", normalisedDomain, "default_concurrency", defaultConcurrency)
 		options.Concurrency = defaultConcurrency
 	}
 
@@ -415,17 +399,16 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 	if err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		sentry.CaptureException(err)
 		return nil, err
 	}
 
-	log.Info().
-		Str("job_id", job.ID).
-		Str("domain", job.Domain).
-		Bool("use_sitemap", options.UseSitemap).
-		Bool("find_links", options.FindLinks).
-		Int("max_pages", options.MaxPages).
-		Msg("Created new job")
+	jobsLog.Info("Created new job",
+		"job_id", job.ID,
+		"domain", job.Domain,
+		"use_sitemap", options.UseSitemap,
+		"find_links", options.FindLinks,
+		"max_pages", options.MaxPages,
+	)
 
 	// Setup URL discovery (sitemap or manual root URL)
 	if err := jm.setupJobURLDiscovery(ctx, job, options, domainID, normalisedDomain); err != nil {
@@ -492,19 +475,16 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 
 	// If all pages were already processed, just return success
 	if len(filteredPages) == 0 {
-		log.Debug().
-			Str("job_id", jobID).
-			Int("skipped_urls", len(pages)).
-			Msg("All URLs already processed, skipping")
+		jobsLog.Debug("All URLs already processed, skipping", "job_id", jobID, "skipped_urls", len(pages))
 		return nil
 	}
 
-	log.Debug().
-		Str("job_id", jobID).
-		Int("total_urls", len(pages)).
-		Int("new_urls", len(filteredPages)).
-		Int("skipped_urls", len(pages)-len(filteredPages)).
-		Msg("Enqueueing filtered URLs")
+	jobsLog.Debug("Enqueueing filtered URLs",
+		"job_id", jobID,
+		"total_urls", len(pages),
+		"new_urls", len(filteredPages),
+		"skipped_urls", len(pages)-len(filteredPages),
+	)
 
 	// Use the filtered lists to enqueue only new pages
 	err := jm.dbQueue.EnqueueURLs(ctx, jobID, filteredPages, sourceType, sourceURL)
@@ -517,11 +497,8 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 			jm.markPageProcessed(jobID, page.ID)
 		}
 	} else {
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Int("url_count", len(filteredPages)).
-			Msg("Failed to enqueue URLs, not marking pages as processed")
+		jobsLog.Error("Failed to enqueue URLs, not marking pages as processed",
+			"error", err, "job_id", jobID, "url_count", len(filteredPages))
 	}
 
 	return err
@@ -539,7 +516,6 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		sentry.CaptureException(err)
 		return fmt.Errorf("failed to get job: %w", err)
 	}
 
@@ -578,8 +554,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	if err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		sentry.CaptureException(err)
-		log.Error().Err(err).Str("job_id", job.ID).Msg("Failed to cancel job")
+		jobsLog.Error("Failed to cancel job", "error", err, "job_id", job.ID)
 		return fmt.Errorf("failed to cancel job: %w", err)
 	}
 
@@ -591,10 +566,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
 
-	log.Debug().
-		Str("job_id", job.ID).
-		Str("domain", job.Domain).
-		Msg("Cancelled job")
+	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 
 	return nil
 }
@@ -685,7 +657,7 @@ func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 func (jm *JobManager) GetJobStatus(ctx context.Context, jobID string) (*Job, error) {
 	// First cleanup any stuck jobs using dbQueue
 	if err := jm.dbQueue.CleanupStuckJobs(ctx); err != nil {
-		log.Error().Err(err).Msg("Failed to cleanup stuck jobs during status check")
+		jobsLog.Error("Failed to cleanup stuck jobs during status check", "error", err)
 		// Don't return error, continue with status check
 	}
 
@@ -720,10 +692,7 @@ func (jm *JobManager) discoverAndParseSitemaps(ctx context.Context, domain strin
 	// Discover sitemaps and robots.txt rules for the domain
 	discoveryResult, err := sitemapCrawler.DiscoverSitemapsAndRobots(ctx, domain)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Str("domain", domain).
-			Msg("Failed to discover sitemaps and robots rules")
+		jobsLog.Error("Failed to discover sitemaps and robots rules", "error", err, "domain", domain)
 		return []string{}, &crawler.RobotsRules{}, err
 	}
 
@@ -731,31 +700,20 @@ func (jm *JobManager) discoverAndParseSitemaps(ctx context.Context, domain strin
 	robotsRules := discoveryResult.RobotsRules
 
 	// Log discovered sitemaps
-	log.Info().
-		Str("domain", domain).
-		Int("sitemap_count", len(sitemaps)).
-		Msg("Sitemaps discovered")
+	jobsLog.Info("Sitemaps discovered", "domain", domain, "sitemap_count", len(sitemaps))
 
 	// Process each sitemap to extract URLs
 	var urls []string
 	for _, sitemapURL := range sitemaps {
-		log.Info().
-			Str("sitemap_url", sitemapURL).
-			Msg("Processing sitemap")
+		jobsLog.Info("Processing sitemap", "sitemap_url", sitemapURL)
 
 		sitemapURLs, err := sitemapCrawler.ParseSitemap(ctx, sitemapURL)
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("sitemap_url", sitemapURL).
-				Msg("Error parsing sitemap")
+			jobsLog.Warn("Error parsing sitemap", "error", err, "sitemap_url", sitemapURL)
 			continue
 		}
 
-		log.Info().
-			Str("sitemap_url", sitemapURL).
-			Int("url_count", len(sitemapURLs)).
-			Msg("Parsed URLs from sitemap")
+		jobsLog.Info("Parsed URLs from sitemap", "sitemap_url", sitemapURL, "url_count", len(sitemapURLs))
 
 		urls = append(urls, sitemapURLs...)
 	}
@@ -783,18 +741,15 @@ func (jm *JobManager) filterURLsAgainstRobots(urls []string, robotsRules *crawle
 				if crawler.IsPathAllowed(robotsRules, path) {
 					allowedURLs = append(allowedURLs, urlStr)
 				} else {
-					log.Debug().
-						Str("url", urlStr).
-						Str("path", path).
-						Msg("URL blocked by robots.txt")
+					jobsLog.Debug("URL blocked by robots.txt", "url", urlStr, "path", path)
 				}
 			}
 		}
-		log.Info().
-			Int("original_count", len(filteredURLs)).
-			Int("allowed_count", len(allowedURLs)).
-			Int("blocked_count", len(filteredURLs)-len(allowedURLs)).
-			Msg("Filtered URLs against robots.txt rules")
+		jobsLog.Info("Filtered URLs against robots.txt rules",
+			"original_count", len(filteredURLs),
+			"allowed_count", len(allowedURLs),
+			"blocked_count", len(filteredURLs)-len(allowedURLs),
+		)
 		return allowedURLs
 	}
 
@@ -836,9 +791,7 @@ func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain strin
 		// Set homepage priority to 1.000
 		if paths[i] == "/" {
 			pagesWithPriority[i].Priority = 1.000
-			log.Info().
-				Str("job_id", jobID).
-				Msg("Set homepage priority to 1.000")
+			jobsLog.Info("Set homepage priority to 1.000", "job_id", jobID)
 		}
 	}
 
@@ -848,22 +801,15 @@ func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain strin
 		return fmt.Errorf("failed to enqueue URLs: %w", err)
 	}
 
-	log.Info().
-		Str("job_id", jobID).
-		Str("domain", domain).
-		Int("url_count", len(urls)).
-		Str("source_type", sourceType).
-		Msg("Added URLs to job queue")
+	jobsLog.Info("Added URLs to job queue",
+		"job_id", jobID, "domain", domain, "url_count", len(urls), "source_type", sourceType)
 
 	// Recalculate job statistics after bulk operation
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `SELECT recalculate_job_stats($1)`, jobID)
 		return err
 	}); err != nil {
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Msg("Failed to recalculate job stats")
+		jobsLog.Error("Failed to recalculate job stats", "error", err, "job_id", jobID)
 	}
 
 	return nil
@@ -883,16 +829,9 @@ func (jm *JobManager) updateDomainCrawlDelay(ctx context.Context, domain string,
 		`, crawlDelay, domain)
 		return err
 	}); err != nil {
-		log.Error().
-			Err(err).
-			Str("domain", domain).
-			Int("crawl_delay", crawlDelay).
-			Msg("Failed to update domain with crawl delay")
+		jobsLog.Error("Failed to update domain with crawl delay", "error", err, "domain", domain, "crawl_delay", crawlDelay)
 	} else {
-		log.Info().
-			Str("domain", domain).
-			Int("crawl_delay", crawlDelay).
-			Msg("Updated domain with crawl delay from robots.txt")
+		jobsLog.Info("Updated domain with crawl delay from robots.txt", "domain", domain, "crawl_delay", crawlDelay)
 	}
 }
 
@@ -979,37 +918,28 @@ func (jm *JobManager) updateJobWithError(ctx context.Context, jobID, errorMessag
 		`, errorMessage, jobID)
 		return err
 	}); updateErr != nil {
-		log.Error().Err(updateErr).Str("job_id", jobID).Msg("Failed to update job with error message")
+		jobsLog.Error("Failed to update job with error message", "error", updateErr, "job_id", jobID)
 	}
 }
 
 // enqueueFallbackURL creates and enqueues a fallback root URL when no sitemap URLs are found
 func (jm *JobManager) enqueueFallbackURL(ctx context.Context, jobID, domain string) error {
-	log.Info().
-		Str("job_id", jobID).
-		Str("domain", domain).
-		Msg("No URLs found in sitemap, falling back to root page")
+	jobsLog.Info("No URLs found in sitemap, falling back to root page", "job_id", jobID, "domain", domain)
 
 	// Create fallback root URL
 	rootURL := fmt.Sprintf("https://%s/", domain)
 	fallbackURLs := []string{rootURL}
 
 	if err := jm.enqueueURLsForJob(ctx, jobID, domain, fallbackURLs, "fallback"); err != nil {
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Str("domain", domain).
-			Msg("Failed to enqueue fallback root URL")
+		jobsLog.Error("Failed to enqueue fallback root URL", "error", err, "job_id", jobID, "domain", domain)
 
 		// Update job with error
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to create fallback task: %v", err))
 		return err
 	}
 
-	log.Info().
-		Str("job_id", jobID).
-		Str("domain", domain).
-		Msg("Created fallback root page task - job will proceed with link discovery")
+	jobsLog.Info("Created fallback root page task - job will proceed with link discovery",
+		"job_id", jobID, "domain", domain)
 
 	return nil
 }
@@ -1018,20 +948,11 @@ func (jm *JobManager) enqueueFallbackURL(ctx context.Context, jobID, domain stri
 func (jm *JobManager) enqueueSitemapURLs(ctx context.Context, jobID, domain string, urls []string) error {
 	// Log URLs for debugging
 	for i, url := range urls {
-		log.Debug().
-			Str("job_id", jobID).
-			Str("domain", domain).
-			Int("index", i).
-			Str("url", url).
-			Msg("URL from sitemap")
+		jobsLog.Debug("URL from sitemap", "job_id", jobID, "domain", domain, "index", i, "url", url)
 	}
 
 	if err := jm.enqueueURLsForJob(ctx, jobID, domain, urls, "sitemap"); err != nil {
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Str("domain", domain).
-			Msg("Failed to enqueue sitemap URLs")
+		jobsLog.Error("Failed to enqueue sitemap URLs", "error", err, "job_id", jobID, "domain", domain)
 		return err
 	}
 
@@ -1042,10 +963,7 @@ func (jm *JobManager) enqueueSitemapURLs(ctx context.Context, jobID, domain stri
 func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, includePaths, excludePaths []string) {
 	// Guard against nil dependencies (e.g., in test environments)
 	if jm.crawler == nil || jm.dbQueue == nil || jm.db == nil {
-		log.Warn().
-			Str("job_id", jobID).
-			Str("domain", domain).
-			Msg("Skipping sitemap processing due to missing dependencies")
+		jobsLog.Warn("Skipping sitemap processing due to missing dependencies", "job_id", jobID, "domain", domain)
 		return
 	}
 
@@ -1074,25 +992,18 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		}
 		return nil
 	}); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Msg("Aborting sitemap processing: failed to enter initialising")
+		jobsLog.Warn("Aborting sitemap processing: failed to enter initialising", "error", err, "job_id", jobID)
 		return
 	}
 
-	log.Info().
-		Str("job_id", jobID).
-		Str("domain", domain).
-		Msg("Starting sitemap processing")
+	jobsLog.Info("Starting sitemap processing", "job_id", jobID, "domain", domain)
 
 	// Step 1: Discover and parse sitemaps
 	urls, robotsRules, err := jm.discoverAndParseSitemaps(ctx, domain)
 	if err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Str("domain", domain).
-			Msg("Failed to discover sitemaps")
+		jobsLog.Error("Failed to discover sitemaps", "error", err, "job_id", jobID, "domain", domain)
 
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to discover sitemaps: %v", err))
 		// Ensure job exits initialising state on error
@@ -1103,7 +1014,7 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			`, JobStatusFailed, time.Now().UTC(), jobID, JobStatusInitialising, JobStatusPending)
 			return err
 		}); markErr != nil {
-			log.Warn().Err(markErr).Str("job_id", jobID).Msg("Failed to mark job as failed after sitemap error")
+			jobsLog.Warn("Failed to mark job as failed after sitemap error", "error", markErr, "job_id", jobID)
 		}
 		return
 	}
@@ -1121,7 +1032,7 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		`, len(urls), jobID)
 		return err
 	}); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Int("sitemap_tasks_found", len(urls)).Msg("Failed to record sitemap_tasks_found")
+		jobsLog.Warn("Failed to record sitemap_tasks_found", "error", err, "job_id", jobID, "sitemap_tasks_found", len(urls))
 	}
 
 	// Step 5: Enqueue URLs in batches or create fallback
@@ -1136,13 +1047,13 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		batchDelay := sitemapBatchDelay()
 		totalBatches := (len(urls) + batchSize - 1) / batchSize
 
-		log.Info().
-			Str("job_id", jobID).
-			Int("total_urls", len(urls)).
-			Int("batch_size", batchSize).
-			Int("total_batches", totalBatches).
-			Dur("batch_delay_ms", batchDelay).
-			Msg("Enqueueing sitemap URLs in batches")
+		jobsLog.Info("Enqueueing sitemap URLs in batches",
+			"job_id", jobID,
+			"total_urls", len(urls),
+			"batch_size", batchSize,
+			"total_batches", totalBatches,
+			"batch_delay_ms", batchDelay,
+		)
 
 		firstBatchDone := false
 
@@ -1155,31 +1066,28 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			case jm.sitemapSem <- struct{}{}:
 			case <-ctx.Done():
 				jm.clearInitialisingAfterSitemapCancel(jobID, batchNum)
-				log.Warn().Err(ctx.Err()).Str("job_id", jobID).Int("batch_number", batchNum).Msg("Stopped waiting for sitemap insert slot")
+				jobsLog.Warn("Stopped waiting for sitemap insert slot", "error", ctx.Err(), "job_id", jobID, "batch_number", batchNum)
 				return
 			}
 
 			err := jm.enqueueSitemapURLs(ctx, jobID, domain, batch)
 			<-jm.sitemapSem
 			if err != nil {
-				log.Warn().
-					Err(err).
-					Str("job_id", jobID).
-					Int("batch_number", batchNum).
-					Int("batch_start", i).
-					Int("batch_size", len(batch)).
-					Msg("Failed to enqueue URL batch, continuing with next batch")
+				jobsLog.Warn("Failed to enqueue URL batch, continuing with next batch",
+					"error", err, "job_id", jobID, "batch_number", batchNum,
+					"batch_start", i, "batch_size", len(batch),
+				)
 				// Continue to next batch even if one fails
 				continue
 			}
 
-			log.Info().
-				Str("job_id", jobID).
-				Int("batch_number", batchNum).
-				Int("total_batches", totalBatches).
-				Int("urls_enqueued", end).
-				Int("total_urls", len(urls)).
-				Msg("Enqueued URL batch")
+			jobsLog.Info("Enqueued URL batch",
+				"job_id", jobID,
+				"batch_number", batchNum,
+				"total_batches", totalBatches,
+				"urls_enqueued", end,
+				"total_urls", len(urls),
+			)
 
 			// After the first successful batch, open the job for workers immediately.
 			// Remaining batches continue inserting in the background while workers
@@ -1187,7 +1095,7 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			if !firstBatchDone {
 				firstBatchDone = true
 				if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
-					log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to open job after first batch")
+					jobsLog.Warn("Failed to open job after first batch", "error", err, "job_id", jobID)
 				} else if jm.workerPool != nil {
 					jm.workerPool.NotifyNewTasks()
 				}
@@ -1202,7 +1110,8 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		// If every batch failed, still exit initialising so the job doesn't get stuck.
 		if !firstBatchDone {
 			if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
-				log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after all batches failed")
+				jobsLog.Warn("Failed to transition job from initialising to pending after all batches failed",
+					"error", err, "job_id", jobID)
 				return
 			}
 			if jm.workerPool != nil {
@@ -1215,7 +1124,8 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		}
 		// Fallback URL enqueued — open the job for workers.
 		if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
-			log.Warn().Err(err).Str("job_id", jobID).Msg("Failed to transition job from initialising to pending after fallback URL")
+			jobsLog.Warn("Failed to transition job from initialising to pending after fallback URL",
+				"error", err, "job_id", jobID)
 			return
 		}
 		if jm.workerPool != nil {
@@ -1237,11 +1147,8 @@ func (jm *JobManager) clearInitialisingAfterSitemapCancel(jobID string, batchNum
 			`, JobStatusPending, jobID, JobStatusInitialising)
 			return err
 		}); err != nil {
-			log.Warn().
-				Err(err).
-				Str("job_id", jobID).
-				Int("batch_number", batchNum).
-				Msg("Failed to clear initialising state after sitemap cancellation")
+			jobsLog.Warn("Failed to clear initialising state after sitemap cancellation",
+				"error", err, "job_id", jobID, "batch_number", batchNum)
 		}
 	}()
 }
@@ -1307,9 +1214,9 @@ func sitemapInsertConcurrency() int {
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_CONCURRENCY")); val != "" {
 		n, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Err(err).Msg("Invalid GNH_SITEMAP_CONCURRENCY — using default")
+			jobsLog.Warn("Invalid GNH_SITEMAP_CONCURRENCY — using default", "GNH_SITEMAP_CONCURRENCY", val, "error", err)
 		} else if n <= 0 {
-			log.Warn().Str("GNH_SITEMAP_CONCURRENCY", val).Msg("GNH_SITEMAP_CONCURRENCY must be positive — using default")
+			jobsLog.Warn("GNH_SITEMAP_CONCURRENCY must be positive — using default", "GNH_SITEMAP_CONCURRENCY", val)
 		} else {
 			return n
 		}
@@ -1324,9 +1231,9 @@ func sitemapBatchSize() int {
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_SIZE")); val != "" {
 		n, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_SIZE — using default")
+			jobsLog.Warn("Invalid GNH_SITEMAP_BATCH_SIZE — using default", "GNH_SITEMAP_BATCH_SIZE", val, "error", err)
 		} else if n <= 0 {
-			log.Warn().Str("GNH_SITEMAP_BATCH_SIZE", val).Msg("GNH_SITEMAP_BATCH_SIZE must be positive — using default")
+			jobsLog.Warn("GNH_SITEMAP_BATCH_SIZE must be positive — using default", "GNH_SITEMAP_BATCH_SIZE", val)
 		} else {
 			return n
 		}
@@ -1341,9 +1248,9 @@ func sitemapBatchDelay() time.Duration {
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_DELAY_MS")); val != "" {
 		n, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Err(err).Msg("Invalid GNH_SITEMAP_BATCH_DELAY_MS — using default")
+			jobsLog.Warn("Invalid GNH_SITEMAP_BATCH_DELAY_MS — using default", "GNH_SITEMAP_BATCH_DELAY_MS", val, "error", err)
 		} else if n < 0 {
-			log.Warn().Str("GNH_SITEMAP_BATCH_DELAY_MS", val).Msg("GNH_SITEMAP_BATCH_DELAY_MS must be non-negative — using default")
+			jobsLog.Warn("GNH_SITEMAP_BATCH_DELAY_MS must be non-negative — using default", "GNH_SITEMAP_BATCH_DELAY_MS", val)
 		} else {
 			return time.Duration(n) * time.Millisecond
 		}

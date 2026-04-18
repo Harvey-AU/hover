@@ -79,7 +79,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get user claims
 	userClaims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		logger.Warn().Msg("Failed to get user claims")
+		logger.Warn("Failed to get user claims")
 		Unauthorised(w, r, "Authentication required")
 		return
 	}
@@ -87,7 +87,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get user and organisation
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Warn().Err(err).Msg("User not found")
+		logger.Warn("User not found", "error", err)
 		Unauthorised(w, r, "User not found")
 		return
 	}
@@ -113,7 +113,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get notifications
 	notifications, total, err := h.DB.ListNotifications(r.Context(), orgID, limit, offset, unreadOnly)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list notifications")
+		logger.Error("Failed to list notifications", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -121,7 +121,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get unread count
 	unreadCount, err := h.DB.GetUnreadNotificationCount(r.Context(), orgID)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to get unread count")
+		logger.Warn("Failed to get unread count", "error", err)
 		unreadCount = 0
 	}
 
@@ -138,7 +138,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error().Err(err).Msg("Failed to encode notifications response")
+		logger.Error("Failed to encode notifications response", "error", err)
 	}
 }
 
@@ -166,7 +166,7 @@ func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, n
 			NotFound(w, r, "Notification not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to mark notification read")
+		logger.Error("Failed to mark notification read", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -194,7 +194,7 @@ func (h *Handler) markAllNotificationsRead(w http.ResponseWriter, r *http.Reques
 
 	// Mark all as read
 	if err := h.DB.MarkAllNotificationsRead(r.Context(), orgID); err != nil {
-		logger.Error().Err(err).Msg("Failed to mark all notifications read")
+		logger.Error("Failed to mark all notifications read", "error", err)
 		InternalError(w, r, err)
 		return
 	}

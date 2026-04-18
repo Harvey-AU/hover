@@ -8,9 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/getsentry/sentry-go"
-	"github.com/rs/zerolog/log"
 )
 
 // Default tuning constants for the pressure controller.
@@ -85,12 +82,11 @@ func newPressureController(maxLimit int) *PressureController {
 	// Ensure a valid deadband. If env vars collapse or invert the band, log and
 	// fall back to defaults so the controller behaves predictably.
 	if lowMark >= highMark {
-		log.Warn().
-			Float64("low_mark", lowMark).
-			Float64("high_mark", highMark).
-			Float64("default_low", pressureLowMarkDefaultMs).
-			Float64("default_high", pressureHighMarkDefaultMs).
-			Msg("GNH_PRESSURE_LOW_MARK_MS >= GNH_PRESSURE_HIGH_MARK_MS — falling back to defaults")
+		dbLog.Warn("GNH_PRESSURE_LOW_MARK_MS >= GNH_PRESSURE_HIGH_MARK_MS — falling back to defaults",
+			"low_mark", lowMark,
+			"high_mark", highMark,
+			"default_low", pressureLowMarkDefaultMs,
+			"default_high", pressureHighMarkDefaultMs)
 		lowMark = pressureLowMarkDefaultMs
 		highMark = pressureHighMarkDefaultMs
 	}
@@ -99,10 +95,9 @@ func newPressureController(maxLimit int) *PressureController {
 	// to maxLimit to avoid an unresolvable inconsistency where we can never shed.
 	minLimit := parsePressureInt32("GNH_PRESSURE_MIN_LIMIT", pressureMinLimitDefault)
 	if safeMax < minLimit {
-		log.Warn().
-			Int32("max_limit", safeMax).
-			Int32("min_limit_default", minLimit).
-			Msg("DB_QUEUE_MAX_CONCURRENCY smaller than pressure floor — clamping floor to max")
+		dbLog.Warn("DB_QUEUE_MAX_CONCURRENCY smaller than pressure floor — clamping floor to max",
+			"max_limit", safeMax,
+			"min_limit_default", minLimit)
 		minLimit = safeMax
 	}
 	if minLimit < 1 {
@@ -111,25 +106,21 @@ func newPressureController(maxLimit int) *PressureController {
 
 	initial := parsePressureInt32("GNH_PRESSURE_INITIAL_LIMIT", safeMax)
 	if initial > safeMax {
-		log.Warn().
-			Int32("initial_limit", initial).
-			Int32("max_limit", safeMax).
-			Msg("GNH_PRESSURE_INITIAL_LIMIT exceeds queue cap — clamping to max")
+		dbLog.Warn("GNH_PRESSURE_INITIAL_LIMIT exceeds queue cap — clamping to max",
+			"initial_limit", initial,
+			"max_limit", safeMax)
 		initial = safeMax
 	}
 	if initial < minLimit {
-		log.Warn().
-			Int32("initial_limit", initial).
-			Int32("min_limit", minLimit).
-			Msg("GNH_PRESSURE_INITIAL_LIMIT below pressure floor — clamping to floor")
+		dbLog.Warn("GNH_PRESSURE_INITIAL_LIMIT below pressure floor — clamping to floor",
+			"initial_limit", initial,
+			"min_limit", minLimit)
 		initial = minLimit
 	}
 
 	stepDown := parsePressureInt32("GNH_PRESSURE_STEP_DOWN", pressureStepDownDefault)
 	if stepDown < 1 {
-		log.Warn().
-			Int32("step_down", stepDown).
-			Msg("GNH_PRESSURE_STEP_DOWN must be positive — using default")
+		dbLog.Warn("GNH_PRESSURE_STEP_DOWN must be positive — using default", "step_down", stepDown)
 		stepDown = pressureStepDownDefault
 	}
 
@@ -196,33 +187,20 @@ func (pc *PressureController) maybeAdjust() {
 		if pc.OnAdjust != nil {
 			pc.OnAdjust("down")
 		}
-		log.Warn().
-			Float64("exec_ema_ms", pc.ema).
-			Int32("limit_before", current).
-			Int32("limit_after", newLimit).
-			Int32("limit_ceiling", pc.maxLimit).
-			Msg("DB pressure high — reducing queue concurrency")
+		dbLog.Warn("DB pressure high — reducing queue concurrency",
+			"exec_ema_ms", pc.ema,
+			"limit_before", current,
+			"limit_after", newLimit,
+			"limit_ceiling", pc.maxLimit)
 		if newLimit == pc.minLimit {
-			log.Error().
-				Float64("exec_ema_ms", pc.ema).
-				Float64("ema_high_mark_ms", pc.highMark).
-				Int32("concurrency_slots", newLimit).
-				Int32("concurrency_floor", pc.minLimit).
-				Int32("concurrency_ceiling", pc.maxLimit).
-				Msg("DB pressure at floor — queue concurrency fully shed, Supabase severely overloaded")
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetLevel(sentry.LevelWarning)
-				scope.SetTag("event_type", "db_pressure")
-				scope.SetTag("state", "floor")
-				scope.SetContext("db_pressure", map[string]any{
-					"exec_ema_ms":         pc.ema,
-					"ema_high_mark_ms":    pc.highMark,
-					"concurrency_slots":   newLimit,
-					"concurrency_floor":   pc.minLimit,
-					"concurrency_ceiling": pc.maxLimit,
-				})
-				sentry.CaptureMessage("DB pressure at floor — queue concurrency fully shed")
-			})
+			dbLog.Error("DB pressure at floor — queue concurrency fully shed, Supabase severely overloaded",
+				"exec_ema_ms", pc.ema,
+				"ema_high_mark_ms", pc.highMark,
+				"concurrency_slots", newLimit,
+				"concurrency_floor", pc.minLimit,
+				"concurrency_ceiling", pc.maxLimit,
+				"event_type", "db_pressure",
+				"state", "floor")
 		}
 
 	case pc.ema < pc.lowMark && current < pc.maxLimit:
@@ -235,20 +213,18 @@ func (pc *PressureController) maybeAdjust() {
 		if pc.OnAdjust != nil {
 			pc.OnAdjust("up")
 		}
-		log.Info().
-			Float64("exec_ema_ms", pc.ema).
-			Int32("limit_before", current).
-			Int32("limit_after", newLimit).
-			Int32("limit_ceiling", pc.maxLimit).
-			Msg("DB pressure eased — restoring queue concurrency")
+		dbLog.Info("DB pressure eased — restoring queue concurrency",
+			"exec_ema_ms", pc.ema,
+			"limit_before", current,
+			"limit_after", newLimit,
+			"limit_ceiling", pc.maxLimit)
 		if newLimit == pc.maxLimit {
-			log.Info().
-				Float64("exec_ema_ms", pc.ema).
-				Float64("ema_low_mark_ms", pc.lowMark).
-				Int32("concurrency_slots", newLimit).
-				Int32("concurrency_floor", pc.minLimit).
-				Int32("concurrency_ceiling", pc.maxLimit).
-				Msg("DB pressure cleared — queue concurrency fully restored")
+			dbLog.Info("DB pressure cleared — queue concurrency fully restored",
+				"exec_ema_ms", pc.ema,
+				"ema_low_mark_ms", pc.lowMark,
+				"concurrency_slots", newLimit,
+				"concurrency_floor", pc.minLimit,
+				"concurrency_ceiling", pc.maxLimit)
 		}
 	}
 }
@@ -258,11 +234,10 @@ func parsePressureFloat(key string, fallback float64) float64 {
 		if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
 			return v
 		}
-		log.Debug().
-			Str("key", key).
-			Str("value", raw).
-			Float64("fallback", fallback).
-			Msg("Invalid pressure config value — using default")
+		dbLog.Debug("Invalid pressure config value — using default",
+			"key", key,
+			"value", raw,
+			"fallback", fallback)
 	}
 	return fallback
 }
@@ -273,11 +248,10 @@ func parsePressureInt32(key string, fallback int32) int32 {
 		if err == nil && v > 0 {
 			return int32(v)
 		}
-		log.Debug().
-			Str("key", key).
-			Str("value", raw).
-			Int32("fallback", fallback).
-			Msg("Invalid pressure config value — using default")
+		dbLog.Debug("Invalid pressure config value — using default",
+			"key", key,
+			"value", raw,
+			"fallback", fallback)
 	}
 	return fallback
 }

@@ -3,21 +3,20 @@ package api
 import (
 	"net/http"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+var apiLog = logging.Component("api")
 
 // loggerWithRequest returns a logger enriched with request context so that all
 // API logs include correlation identifiers without repeating boilerplate.
-func loggerWithRequest(r *http.Request) zerolog.Logger {
+func loggerWithRequest(r *http.Request) *logging.Logger {
 	if r == nil {
-		return log.With().Logger()
+		return apiLog
 	}
-
-	builder := log.With().
-		Str("request_id", GetRequestID(r)).
-		Str("method", r.Method).
-		Str("path", r.URL.Path)
-
-	return builder.Logger()
+	return apiLog.With(
+		"request_id", GetRequestID(r),
+		"method", r.Method,
+		"path", r.URL.Path,
+	)
 }
