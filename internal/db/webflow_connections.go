@@ -159,7 +159,7 @@ func (db *DB) ListWebflowConnections(ctx context.Context, organisationID string)
 			&conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan webflow connection row", "error", err)
+			dbLog.Error("Failed to scan webflow connection row", "error", err, "org_id", conn.OrganisationID)
 			return nil, fmt.Errorf("failed to scan webflow connection: %w", err)
 		}
 
@@ -198,7 +198,7 @@ func (db *DB) DeleteWebflowConnection(ctx context.Context, connectionID, organis
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, organisationID)
 	if err != nil {
-		dbLog.Error("Failed to delete webflow connection", "error", err, "connection_id", connectionID)
+		dbLog.Error("Failed to delete webflow connection", "error", err, "connection_id", connectionID, "org_id", organisationID)
 		return fmt.Errorf("failed to delete webflow connection: %w", err)
 	}
 

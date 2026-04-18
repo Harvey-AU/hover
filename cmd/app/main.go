@@ -404,11 +404,10 @@ func main() {
 		}()
 	}
 
-	setupLogging(config)
-
 	var err error
 
-	// Initialise Sentry for error tracking and performance monitoring
+	// Initialise Sentry before setupLogging so the fanout handler wires
+	// the Sentry client that already exists, not a nil one.
 	if config.SentryDSN != "" {
 		err := sentry.Init(sentry.ClientOptions{
 			Dsn:         config.SentryDSN,
@@ -433,6 +432,8 @@ func main() {
 	} else {
 		startupLog.Warn("Sentry DSN not configured, error tracking disabled")
 	}
+
+	setupLogging(config)
 
 	var (
 		obsProviders *observability.Providers

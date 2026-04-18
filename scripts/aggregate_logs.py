@@ -356,6 +356,12 @@ def aggregate_logs(log_dir, incremental=True):
                     by_minute[minute_key]['message_counts'][message] += count
                     all_messages[message] += count
 
+            # Process component counts
+            for timestamp, components in data.get('component_counts', {}).items():
+                minute_key = timestamp[:16]
+                for component, count in components.items():
+                    by_minute[minute_key]['component_counts'][component] += count
+
             processed_set.add(json_file.name)
             success_count += 1
             if success_count % 10 == 0:

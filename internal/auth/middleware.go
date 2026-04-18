@@ -89,7 +89,7 @@ func AuthMiddlewareWithClient(authClient AuthClient) func(http.Handler) http.Han
 			// Validate the JWT
 			claims, err := authClient.ValidateToken(r.Context(), tokenString)
 			if err != nil {
-				authLog.Warn("JWT validation failed", "error", err, "token_prefix", tokenString[:min(10, len(tokenString))])
+				authLog.Warn("JWT validation failed", "error", err, "token_length", len(tokenString))
 
 				// Determine specific error type and capture critical errors in Sentry
 				errorMsg := "Invalid authentication token"

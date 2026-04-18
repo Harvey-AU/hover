@@ -127,7 +127,7 @@ func (h *Handler) AuthRegister(w http.ResponseWriter, r *http.Request) {
 	// Create user with organisation automatically
 	user, org, err := h.DB.CreateUser(req.UserID, req.Email, firstName, lastName, fullName, orgName)
 	if err != nil {
-		logger.Error("Failed to create user with organisation", "error", err, "user_id", req.UserID)
+		logger.Error("Failed to create user with organisation", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -210,7 +210,7 @@ func (h *Handler) getAuthProfile(w http.ResponseWriter, r *http.Request) {
 	// Auto-create user if they don't exist
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, claimsFullName)
 	if err != nil {
-		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
+		logger.Error("Failed to get or create user", "error", err)
 		InternalError(w, r, err)
 		return
 	}

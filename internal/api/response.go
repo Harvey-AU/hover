@@ -16,13 +16,11 @@ type SuccessResponse struct {
 
 // WriteJSON writes a JSON response with the given status code
 func WriteJSON(w http.ResponseWriter, r *http.Request, data any, status int) {
-	requestID := GetRequestID(r)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		loggerWithRequest(r).Error("Failed to encode JSON response", "error", err, "request_id", requestID)
+		loggerWithRequest(r).Error("Failed to encode JSON response", "error", err)
 	}
 }
 

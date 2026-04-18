@@ -1531,15 +1531,16 @@ func (wp *WorkerPool) recordJobFailure(ctx context.Context, jobID, taskID string
 }
 
 func (wp *WorkerPool) markJobFailedDueToConsecutiveFailures(ctx context.Context, jobID string, streak int, lastErr error) {
-	message := fmt.Sprintf("Job failed after %d consecutive task failures", streak)
+	var lastErrStr string
 	if lastErr != nil {
-		message = fmt.Sprintf("%s (last error: %s)", message, lastErr.Error())
+		lastErrStr = lastErr.Error()
 	}
-
+	message := "Job failed due to consecutive task failures"
 	workerLog.Error(message,
 		"job_id", jobID,
 		"failure_streak", streak,
 		"threshold", wp.jobFailureThreshold,
+		"last_error", lastErrStr,
 	)
 
 	failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2060,8 +2061,6 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			recoveredErr := fmt.Errorf("panic in processNextTask: %v", r)
 			if hub := sentry.CurrentHub(); hub != nil {
 				hub.Recover(r)
-			} else {
-				sentry.CaptureException(recoveredErr)
 			}
 			workerLog.Error("Recovered from panic in processNextTask",
 				"panic", fmt.Sprintf("%v", r),
@@ -3793,7 +3792,7 @@ func (wp *WorkerPool) cleanupOrphanedTasks(ctx context.Context) error {
 	workerLog.Info("Orphaned task cleanup completed for job",
 		"job_id", targetJobID,
 		"tasks_cleaned", totalCleaned,
-		"duration_ms", cleanupDuration,
+		"duration_ms", cleanupDuration.Milliseconds(),
 	)
 
 	span.SetData("job_id", targetJobID)
@@ -4560,7 +4559,7 @@ func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.
 		}
 	} else {
 		workerLog.Error("Failed to marshal request diagnostics",
-			"error", err, "task_id", task.ID, "request_diagnostics", result.RequestDiagnostics)
+			"error", err, "task_id", task.ID)
 	}
 }
 
@@ -4935,7 +4934,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			}
 		} else {
 			workerLog.Error("Failed to marshal second headers",
-				"error", err, "task_id", task.ID, "second_headers", result.SecondHeaders)
+				"error", err, "task_id", task.ID)
 		}
 	}
 
@@ -4949,7 +4948,7 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			}
 		} else {
 			workerLog.Error("Failed to marshal cache check attempts",
-				"error", err, "task_id", task.ID, "cache_attempts", result.CacheCheckAttempts)
+				"error", err, "task_id", task.ID)
 		}
 	}
 

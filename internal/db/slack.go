@@ -169,7 +169,7 @@ func (db *DB) ListSlackConnections(ctx context.Context, organisationID string) (
 			&conn.CreatedAt, &conn.UpdatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan slack connection row", "error", err)
+			dbLog.Error("Failed to scan slack connection row", "error", err, "org_id", conn.OrganisationID)
 			return nil, fmt.Errorf("failed to scan slack connection: %w", err)
 		}
 
@@ -239,7 +239,7 @@ func (db *DB) CreateSlackUserLink(ctx context.Context, link *SlackUserLink) erro
 		link.DMNotifications, link.CreatedAt,
 	).Scan(&link.ID)
 	if err != nil {
-		dbLog.Error("Failed to create slack user link", "error", err, "user_id", link.UserID, "slack_connection_id", link.SlackConnectionID)
+		dbLog.Error("Failed to create slack user link", "error", err, "user_id", link.UserID, "connection_id", link.SlackConnectionID)
 		return fmt.Errorf("failed to create slack user link: %w", err)
 	}
 

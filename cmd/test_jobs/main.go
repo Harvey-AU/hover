@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/crawler"
@@ -70,7 +69,7 @@ func main() {
 	workerPool.Start(context.Background())
 	defer workerPool.Stop()
 
-	startupLog.Info("Worker pool started with " + strconv.Itoa(jobWorkers) + " workers")
+	startupLog.Info("Worker pool started", "worker_count", jobWorkers)
 
 	// Create a test job
 	jobManager := jobs.NewJobManager(database.GetDB(), dbQueue, crawler, workerPool)

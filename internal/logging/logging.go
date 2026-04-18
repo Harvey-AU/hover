@@ -70,76 +70,84 @@ func normaliseMessage(msg string) string {
 	return msg
 }
 
-// Logger is a component-scoped structured logger. It wraps slog and
-// automatically includes the component name as a tag on every message.
+// Logger is a component-scoped structured logger. It rebuilds the underlying
+// slog.Logger at emit time so it always picks up the current slog.Default()
+// (i.e., the fanout handler installed by Setup after sentry.Init).
 type Logger struct {
 	component string
-	slog      *slog.Logger
+	attrs     []any
 }
 
 // Component creates a component-scoped logger. The component name appears
 // as a structured field, a Sentry tag, and a human-readable prefix.
 func Component(name string) *Logger {
-	return &Logger{
-		component: name,
-		slog:      slog.Default().With("component", name),
-	}
+	return &Logger{component: name}
 }
 
 // With returns a new Logger that includes the given attributes on every
 // subsequent log call. Useful for adding request-scoped fields.
 func (l *Logger) With(args ...any) *Logger {
-	return &Logger{
-		component: l.component,
-		slog:      l.slog.With(args...),
+	newAttrs := make([]any, len(l.attrs)+len(args))
+	copy(newAttrs, l.attrs)
+	copy(newAttrs[len(l.attrs):], args)
+	return &Logger{component: l.component, attrs: newAttrs}
+}
+
+// base builds a concrete *slog.Logger from the current slog.Default().
+// Called at emit time so Setup's SetDefault is always picked up.
+func (l *Logger) base() *slog.Logger {
+	b := slog.Default().With("component", l.component)
+	if len(l.attrs) > 0 {
+		b = b.With(l.attrs...)
 	}
+	return b
 }
 
 // Debug logs at debug level (no Sentry capture).
 func (l *Logger) Debug(msg string, args ...any) {
-	l.slog.Debug(l.prefix(msg), args...)
+	l.base().Debug(l.prefix(msg), args...)
 }
 
 // DebugContext logs at debug level with a context.
 func (l *Logger) DebugContext(ctx context.Context, msg string, args ...any) {
-	l.slog.DebugContext(ctx, l.prefix(msg), args...)
+	l.base().DebugContext(ctx, l.prefix(msg), args...)
 }
 
 // Info logs at info level (no Sentry capture).
 func (l *Logger) Info(msg string, args ...any) {
-	l.slog.Info(l.prefix(msg), args...)
+	l.base().Info(l.prefix(msg), args...)
 }
 
 // InfoContext logs at info level with a context.
 func (l *Logger) InfoContext(ctx context.Context, msg string, args ...any) {
-	l.slog.InfoContext(ctx, l.prefix(msg), args...)
+	l.base().InfoContext(ctx, l.prefix(msg), args...)
 }
 
 // Warn logs at warn level (no Sentry capture by default).
 func (l *Logger) Warn(msg string, args ...any) {
-	l.slog.Warn(l.prefix(msg), args...)
+	l.base().Warn(l.prefix(msg), args...)
 }
 
 // WarnContext logs at warn level with a context.
 func (l *Logger) WarnContext(ctx context.Context, msg string, args ...any) {
-	l.slog.WarnContext(ctx, l.prefix(msg), args...)
+	l.base().WarnContext(ctx, l.prefix(msg), args...)
 }
 
 // Error logs at error level. Auto-captured to Sentry via the handler.
 // Tags and fingerprint are injected automatically.
 func (l *Logger) Error(msg string, args ...any) {
-	l.slog.Error(l.prefix(msg), l.withSentryAttrs(msg, args)...)
+	l.base().Error(l.prefix(msg), l.withSentryAttrs(msg, args)...)
 }
 
 // ErrorContext logs at error level with a context. Use NoCapture(ctx)
 // to suppress Sentry capture for expected errors.
 func (l *Logger) ErrorContext(ctx context.Context, msg string, args ...any) {
-	l.slog.ErrorContext(ctx, l.prefix(msg), l.withSentryAttrs(msg, args)...)
+	l.base().ErrorContext(ctx, l.prefix(msg), l.withSentryAttrs(msg, args)...)
 }
 
 // Fatal logs at error level, captures to Sentry, flushes, and exits.
 func (l *Logger) Fatal(msg string, args ...any) {
-	l.slog.Error(l.prefix(msg), l.withSentryAttrs(msg, args)...)
+	l.base().Error(l.prefix(msg), l.withSentryAttrs(msg, args)...)
 	sentry.Flush(2 * time.Second)
 	os.Exit(1)
 }
@@ -297,9 +305,11 @@ func processAttr(event *sentry.Event, a slog.Attr) {
 		}
 
 	default:
+		// All non-tag string attributes go to Extra, not Tags.
+		// Only attributes inside the explicit "tags" slog.Group are low-cardinality
+		// enough to be Sentry tags. Everything else (job IDs, domains, org IDs, etc.)
+		// would fragment the tag index.
 		switch a.Value.Kind() {
-		case slog.KindString:
-			event.Tags[a.Key] = a.Value.String()
 		case slog.KindGroup:
 			for _, ga := range a.Value.Group() {
 				event.Extra[a.Key+"."+ga.Key] = ga.Value.Any()

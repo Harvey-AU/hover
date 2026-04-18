@@ -53,9 +53,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error, status int, c
 	// Log the error with context - 4xx are client errors (debug), 5xx are server errors (error)
 	logger := loggerWithRequest(r)
 	if status >= 500 {
-		logger.Error("API error response", "error", err, "request_id", requestID, "status", status, "code", string(code))
+		logger.Error("API error response", "error", err, "status", status, "code", string(code))
 	} else {
-		logger.Debug("API client error response", "error", err, "request_id", requestID, "status", status, "code", string(code))
+		logger.Debug("API client error response", "error", err, "status", status, "code", string(code))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -79,9 +79,9 @@ func WriteErrorMessage(w http.ResponseWriter, r *http.Request, message string, s
 	// Log the error with context - 4xx are client errors (debug), 5xx are server errors (error)
 	logger := loggerWithRequest(r)
 	if status >= 500 {
-		logger.Error("API error response", "request_id", requestID, "status", status, "code", string(code), "message", message)
+		logger.Error("API error response", "status", status, "code", string(code), "message", message)
 	} else {
-		logger.Debug("API client error response", "request_id", requestID, "status", status, "code", string(code), "message", message)
+		logger.Debug("API client error response", "status", status, "code", string(code), "message", message)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

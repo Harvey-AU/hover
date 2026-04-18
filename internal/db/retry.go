@@ -49,7 +49,7 @@ func InitFromEnvWithRetryConfig(ctx context.Context, retryConfig RetryConfig) (*
 			// Success!
 			if attempt > 1 {
 				dbLog.Info("Database connection established after retries",
-					"attempts", attempt,
+					"attempt", attempt,
 					"elapsed", time.Since(startTime))
 			}
 			return db, nil
@@ -141,7 +141,7 @@ func InitFromURLWithSuffixRetry(ctx context.Context, databaseURL string, appEnv 
 			if attempt > 1 {
 				dbLog.Info("Database connection established after retries",
 					"suffix", appNameSuffix,
-					"attempts", attempt,
+					"attempt", attempt,
 					"elapsed", time.Since(startTime))
 			}
 			return db, nil

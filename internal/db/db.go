@@ -463,7 +463,7 @@ func InitFromEnv() (*DB, error) {
 		// Persist the augmented URL back to config for consistency
 		config.DatabaseURL = url
 
-		dbLog.Info("Opening PostgreSQL connection via DATABASE_URL", "connection_url", url)
+		dbLog.Info("Opening PostgreSQL connection via DATABASE_URL", "connection_url", redactURL(url))
 
 		client, err := sql.Open("pgx", url)
 		if err != nil {
@@ -982,4 +982,14 @@ func (db *DB) GetDomainsForOrganisation(ctx context.Context, organisationID stri
 	}
 
 	return domains, nil
+}
+
+// redactURL strips credentials from a connection URL before logging.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	u.User = nil
+	return u.String()
 }

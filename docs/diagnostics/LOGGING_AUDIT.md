@@ -1,5 +1,8 @@
 # Zerolog Call Site Audit
 
+> **Note:** Historical pre-migration snapshot. Reflects call sites before the
+> slog migration.
+
 Generated: 2026-04-11
 
 ## Summary

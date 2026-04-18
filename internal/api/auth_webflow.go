@@ -59,7 +59,7 @@ func (h *Handler) InitiateWebflowOAuth(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
+		logger.Error("Failed to get or create user", "error", err)
 		InternalError(w, r, err)
 		return
 	}

@@ -234,8 +234,12 @@ func TestComponentConverterTags(t *testing.T) {
 	if event.Tags["component"] != "worker" {
 		t.Errorf("expected tag component=worker, got %q", event.Tags["component"])
 	}
-	if event.Tags["job_id"] != "abc-123" {
-		t.Errorf("expected tag job_id=abc-123, got %q", event.Tags["job_id"])
+	// job_id is high-cardinality — should go to Extra, not Tags.
+	if v, ok := event.Extra["job_id"]; !ok || v != "abc-123" {
+		t.Errorf("expected extra job_id=abc-123, got %v", event.Extra["job_id"])
+	}
+	if _, inTags := event.Tags["job_id"]; inTags {
+		t.Error("job_id should not be in Tags (high-cardinality)")
 	}
 	if len(event.Fingerprint) != 2 || event.Fingerprint[0] != "worker" || event.Fingerprint[1] != "task failed" {
 		t.Errorf("unexpected fingerprint: %v", event.Fingerprint)

@@ -6,11 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/Harvey-AU/hover/internal/logging"
 )
-
-var webflowSettingsLog = logging.Component("db")
 
 // ErrWebflowSiteSettingNotFound is returned when a site setting is not found
 var ErrWebflowSiteSettingNotFound = errors.New("webflow site setting not found")
@@ -326,7 +322,7 @@ func (db *DB) UpdateSiteAutoPublish(ctx context.Context, organisationID, webflow
 
 	result, err := db.client.ExecContext(ctx, query, organisationID, webflowSiteID, enabled, webhookIDNull, webhookRegisteredAt)
 	if err != nil {
-		webflowSettingsLog.Error("Failed to update site auto-publish", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
+		dbLog.Error("Failed to update site auto-publish", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
 		return fmt.Errorf("failed to update site auto-publish: %w", err)
 	}
 
@@ -351,7 +347,7 @@ func (db *DB) DeleteSiteSetting(ctx context.Context, organisationID, webflowSite
 
 	result, err := db.client.ExecContext(ctx, query, organisationID, webflowSiteID)
 	if err != nil {
-		webflowSettingsLog.Error("Failed to delete webflow site setting", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
+		dbLog.Error("Failed to delete webflow site setting", "error", err, "organisation_id", organisationID, "webflow_site_id", webflowSiteID)
 		return fmt.Errorf("failed to delete webflow site setting: %w", err)
 	}
 
@@ -377,7 +373,7 @@ func (db *DB) DeleteSiteSettingsByConnection(ctx context.Context, connectionID s
 
 	_, err := db.client.ExecContext(ctx, query, connectionID)
 	if err != nil {
-		webflowSettingsLog.Error("Failed to delete webflow site settings by connection", "error", err, "connection_id", connectionID)
+		dbLog.Error("Failed to delete webflow site settings by connection", "error", err, "connection_id", connectionID)
 		return fmt.Errorf("failed to delete webflow site settings: %w", err)
 	}
 
