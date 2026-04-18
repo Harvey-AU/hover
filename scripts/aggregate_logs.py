@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Aggregate JSON log summaries into time-series format.
-Supports incremental updates by tracking processed files.
+Aggregate JSON log summaries into time-series CSVs for agent debugging.
+
+Outputs:
+  time_series.csv         — timestamp | debug | info | warn | error
+  events_per_minute.csv   — timestamp | component: message | ...
+  summary.md              — human-readable overview
 
 Usage:
-    # One-time full aggregation
-    python3 scripts/aggregate_logs.py logs/20251105/0750_heavy-load-5jobs-per-3min/
-
-    # Watch mode - continuously process new files
-    python3 scripts/aggregate_logs.py logs/20251105/0750_heavy-load-5jobs-per-3min/ --watch
+    python3 scripts/aggregate_logs.py logs/20251105/0750_run/
+    python3 scripts/aggregate_logs.py logs/20251105/0750_run/ --watch
+    python3 scripts/aggregate_logs.py logs/20251105/0750_run/ --full
 """
 
 import json
@@ -21,8 +23,8 @@ from zoneinfo import ZoneInfo
 
 STATE_FILE_NAME = ".aggregate_state.json"
 
+
 def load_state(log_dir):
-    """Load processing state (which files have been processed)."""
     state_file = log_dir / STATE_FILE_NAME
     if state_file.exists():
         try:
@@ -30,286 +32,257 @@ def load_state(log_dir):
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load state file: {e}", file=sys.stderr)
-    return {'processed_files': [], 'last_update': None}
+    return {"processed_files": [], "last_update": None}
+
 
 def save_state(log_dir, state):
-    """Save processing state."""
     state_file = log_dir / STATE_FILE_NAME
     melbourne_tz = ZoneInfo("Australia/Melbourne")
-    state['last_update'] = datetime.now(melbourne_tz).isoformat()
-    with open(state_file, 'w') as f:
+    state["last_update"] = datetime.now(melbourne_tz).isoformat()
+    with open(state_file, "w") as f:
         json.dump(state, f, indent=2)
 
-def load_existing_data(csv_path, messages_csv_path, components_csv_path):
-    """Load existing CSV data into memory."""
-    by_minute = defaultdict(lambda: {
-        'level_counts': defaultdict(int),
-        'message_counts': defaultdict(int),
-        'component_counts': defaultdict(int),
-        'samples': 0,
-        'total_lines': 0,
-        'failed_to_parse': 0
-    })
 
-    # Load level counts from time_series.csv
+def _empty_minute():
+    return {
+        "level_counts": defaultdict(int),
+        "event_counts": defaultdict(int),  # "component: message" -> count
+        "component_counts": defaultdict(int),
+        "samples": 0,
+        "total_lines": 0,
+        "failed_to_parse": 0,
+    }
+
+
+def load_existing_data(csv_path, events_csv_path, components_csv_path):
+    """Restore aggregated state from existing CSVs for incremental runs."""
+    by_minute = defaultdict(_empty_minute)
+
+    # Level counts from time_series.csv
     if csv_path.exists():
         try:
             with open(csv_path) as f:
-                next(f)  # Skip header
+                next(f)  # skip header
                 for line in f:
-                    parts = line.strip().split(',')
-                    if len(parts) >= 7:
-                        timestamp = parts[0]
-                        by_minute[timestamp]['samples'] = int(parts[1])
-                        by_minute[timestamp]['total_lines'] = int(parts[2])
-                        by_minute[timestamp]['level_counts']['info'] = int(parts[3])
-                        by_minute[timestamp]['level_counts']['warn'] = int(parts[4])
-                        by_minute[timestamp]['level_counts']['error'] = int(parts[5])
-                        by_minute[timestamp]['level_counts']['debug'] = int(parts[6])
+                    parts = line.strip().split(",")
+                    if len(parts) >= 5:
+                        ts = parts[0]
+                        by_minute[ts]["level_counts"]["debug"] = int(parts[1])
+                        by_minute[ts]["level_counts"]["info"] = int(parts[2])
+                        by_minute[ts]["level_counts"]["warn"] = int(parts[3])
+                        by_minute[ts]["level_counts"]["error"] = int(parts[4])
         except Exception as e:
-            print(f"Warning: Could not load existing CSV: {e}", file=sys.stderr)
+            print(f"Warning: Could not load time_series.csv: {e}", file=sys.stderr)
 
-    # Load message counts from messages_per_minute.csv
-    if messages_csv_path.exists():
+    # Event counts from events_per_minute.csv
+    if events_csv_path.exists():
         try:
             import csv
-            with open(messages_csv_path) as f:
+
+            with open(events_csv_path) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    timestamp = row.pop('timestamp')
-                    for message, count_str in row.items():
+                    ts = row.pop("timestamp")
+                    for event, count_str in row.items():
                         count = int(count_str)
                         if count > 0:
-                            by_minute[timestamp]['message_counts'][message] = count
+                            by_minute[ts]["event_counts"][event] = count
         except Exception as e:
-            print(f"Warning: Could not load existing messages CSV: {e}", file=sys.stderr)
+            print(f"Warning: Could not load events_per_minute.csv: {e}", file=sys.stderr)
 
-    # Load component counts from components_per_minute.csv
+    # Component counts from components_per_minute.csv
     if components_csv_path.exists():
         try:
             import csv
+
             with open(components_csv_path) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    timestamp = row.pop('timestamp')
+                    ts = row.pop("timestamp")
                     for component, count_str in row.items():
                         count = int(count_str)
                         if count > 0:
-                            by_minute[timestamp]['component_counts'][component] = count
+                            by_minute[ts]["component_counts"][component] = count
         except Exception as e:
-            print(f"Warning: Could not load existing components CSV: {e}", file=sys.stderr)
+            print(
+                f"Warning: Could not load components_per_minute.csv: {e}",
+                file=sys.stderr,
+            )
 
     return by_minute
 
-def process_json_file(json_file, by_minute, all_messages):
-    """Process a single JSON file and update aggregation data."""
+
+def process_json_file(json_file, by_minute):
+    """Merge a single iteration JSON into the running aggregation."""
     try:
         with open(json_file) as f:
             data = json.load(f)
 
-        # Extract metadata
-        meta = data.get('meta', {})
-        total_lines = meta.get('total_lines', 0)
-        failed_to_parse = meta.get('failed_to_parse', 0)
+        meta = data.get("meta", {})
+        total_lines = meta.get("total_lines", 0)
+        failed_to_parse = meta.get("failed_to_parse", 0)
 
-        # Process level counts
-        for timestamp, levels in data.get('level_counts', {}).items():
-            minute_key = timestamp[:16]  # YYYY-MM-DDTHH:MM
-
-            by_minute[minute_key]['samples'] += 1
-            by_minute[minute_key]['total_lines'] += total_lines
-            by_minute[minute_key]['failed_to_parse'] += failed_to_parse
-
+        for ts, levels in data.get("level_counts", {}).items():
+            minute_key = ts[:16]
+            by_minute[minute_key]["samples"] += 1
+            by_minute[minute_key]["total_lines"] += total_lines
+            by_minute[minute_key]["failed_to_parse"] += failed_to_parse
             for level, count in levels.items():
-                by_minute[minute_key]['level_counts'][level] += count
+                by_minute[minute_key]["level_counts"][level] += count
 
-        # Process message counts
-        for timestamp, messages in data.get('message_counts', {}).items():
-            minute_key = timestamp[:16]
+        # event_counts: list of {"event": "component: message", "count": N}
+        for ts, events in data.get("event_counts", {}).items():
+            minute_key = ts[:16]
+            for item in events:
+                event = item.get("event", "unknown")
+                count = item.get("count", 0)
+                by_minute[minute_key]["event_counts"][event] += count
 
-            for msg_data in messages:
-                message = msg_data.get('message', 'unknown')
-                count = msg_data.get('count', 0)
-                by_minute[minute_key]['message_counts'][message] += count
-                all_messages[message] += count
-
-        # Process component counts (new field from slog migration)
-        for timestamp, components in data.get('component_counts', {}).items():
-            minute_key = timestamp[:16]
+        for ts, components in data.get("component_counts", {}).items():
+            minute_key = ts[:16]
             for component, count in components.items():
-                by_minute[minute_key]['component_counts'][component] += count
+                by_minute[minute_key]["component_counts"][component] += count
 
         return True
     except Exception as e:
         print(f"Error processing {json_file}: {e}", file=sys.stderr)
         return False
 
-def write_csv(csv_path, by_minute):
-    """Write aggregated data to CSV."""
-    with open(csv_path, 'w') as f:
-        f.write("timestamp,samples,total_lines,info,warn,error,debug\n")
+
+def write_time_series(csv_path, by_minute):
+    """timestamp | debug | info | warn | error"""
+    with open(csv_path, "w") as f:
+        f.write("timestamp,debug,info,warn,error\n")
         for minute in sorted(by_minute.keys()):
-            data = by_minute[minute]
-            levels = data['level_counts']
-            f.write(f"{minute},{data['samples']},{data['total_lines']},"
-                   f"{levels.get('info', 0)},{levels.get('warn', 0)},"
-                   f"{levels.get('error', 0)},{levels.get('debug', 0)}\n")
+            levels = by_minute[minute]["level_counts"]
+            f.write(
+                f"{minute},"
+                f"{levels.get('debug', 0)},"
+                f"{levels.get('info', 0)},"
+                f"{levels.get('warn', 0)},"
+                f"{levels.get('error', 0)}\n"
+            )
 
-def write_messages_csv(csv_path, by_minute, top_n=20):
-    """Write messages per minute to CSV.
 
-    Args:
-        csv_path: Path to write the CSV file
-        by_minute: Dictionary of minute data with message_counts
-        top_n: Number of top messages to include as columns (default: 20)
+def write_events_csv(csv_path, by_minute, top_n=50):
+    """timestamp | component: message | component: message | ...
+
+    Columns are the top-N events by total count across all minutes.
     """
-    # Collect all messages and their total counts
-    all_message_totals = defaultdict(int)
+    # Tally global totals to pick the top-N columns.
+    totals = defaultdict(int)
     for data in by_minute.values():
-        for message, count in data['message_counts'].items():
-            all_message_totals[message] += count
+        for event, count in data["event_counts"].items():
+            totals[event] += count
 
-    # Get top N messages by total count
-    top_messages = sorted(all_message_totals.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    top_message_names = [msg for msg, _ in top_messages]
+    top_events = [e for e, _ in sorted(totals.items(), key=lambda x: -x[1])[:top_n]]
 
-    # Write CSV
-    with open(csv_path, 'w') as f:
-        # Header: timestamp + message names
-        header = "timestamp," + ",".join(f'"{msg}"' for msg in top_message_names)
-        f.write(header + "\n")
+    import csv
 
-        # Data rows
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp"] + top_events)
         for minute in sorted(by_minute.keys()):
-            data = by_minute[minute]
-            counts = [str(data['message_counts'].get(msg, 0)) for msg in top_message_names]
-            f.write(f"{minute}," + ",".join(counts) + "\n")
+            counts = [by_minute[minute]["event_counts"].get(e, 0) for e in top_events]
+            writer.writerow([minute] + counts)
+
 
 def write_components_csv(csv_path, by_minute):
-    """Write per-minute component log volume to CSV."""
-    # Collect all component names seen across all minutes.
-    all_components: set = set()
-    for data in by_minute.values():
-        all_components.update(data['component_counts'].keys())
-    components = sorted(all_components)
-
-    with open(csv_path, 'w') as f:
-        f.write("timestamp," + ",".join(components) + "\n")
+    """timestamp | component | component | ..."""
+    all_components = sorted(
+        {c for data in by_minute.values() for c in data["component_counts"]}
+    )
+    with open(csv_path, "w") as f:
+        f.write("timestamp," + ",".join(all_components) + "\n")
         for minute in sorted(by_minute.keys()):
-            counts = [str(by_minute[minute]['component_counts'].get(c, 0)) for c in components]
+            counts = [
+                str(by_minute[minute]["component_counts"].get(c, 0))
+                for c in all_components
+            ]
             f.write(f"{minute}," + ",".join(counts) + "\n")
 
 
-def write_summary(summary_path, by_minute, all_messages, new_files_count):
-    """Write markdown summary."""
-    total_samples = sum(m['samples'] for m in by_minute.values())
-    total_lines = sum(m['total_lines'] for m in by_minute.values())
-    total_failed = sum(m['failed_to_parse'] for m in by_minute.values())
-
+def write_summary(summary_path, by_minute, new_files_count):
     melbourne_tz = ZoneInfo("Australia/Melbourne")
     now = datetime.now(melbourne_tz)
 
-    with open(summary_path, 'w') as f:
+    total_lines = sum(m["total_lines"] for m in by_minute.values())
+    total_failed = sum(m["failed_to_parse"] for m in by_minute.values())
+
+    # Global event totals for top-20 list.
+    event_totals = defaultdict(int)
+    for data in by_minute.values():
+        for event, count in data["event_counts"].items():
+            event_totals[event] += count
+
+    with open(summary_path, "w") as f:
         f.write("# Log Aggregation Summary\n\n")
         f.write(f"**Generated:** {now.isoformat()}\n\n")
         f.write(f"**New files processed:** {new_files_count}\n\n")
-
         if by_minute:
-            f.write(f"**Time range:** {min(by_minute.keys())} to {max(by_minute.keys())}\n\n")
-
-        f.write("## Overall Statistics\n\n")
-        f.write(f"- Total samples: **{total_samples}**\n")
+            f.write(
+                f"**Time range:** {min(by_minute.keys())} to {max(by_minute.keys())}\n\n"
+            )
         f.write(f"- Total log lines: **{total_lines:,}**\n")
-        f.write(f"- Failed to parse: **{total_failed}**\n")
-        f.write(f"- Parse success rate: **{100 * (1 - total_failed / max(total_lines, 1)):.1f}%**\n\n")
+        f.write(
+            f"- Parse success rate: **{100 * (1 - total_failed / max(total_lines, 1)):.1f}%**\n\n"
+        )
 
-        # Log levels by minute
-        f.write("## Log Levels by Minute (Last 20)\n\n")
-        f.write("| Timestamp | Samples | Lines | Info | Warn | Error | Debug |\n")
-        f.write("|-----------|---------|-------|------|------|-------|-------|\n")
+        # Level counts over time
+        f.write("## Log Levels by Minute\n\n")
+        f.write("| Timestamp | Debug | Info | Warn | Error |\n")
+        f.write("|-----------|-------|------|------|-------|\n")
+        for minute in sorted(by_minute.keys())[-30:]:
+            levels = by_minute[minute]["level_counts"]
+            f.write(
+                f"| {minute} | {levels.get('debug', 0)} | {levels.get('info', 0)} |"
+                f" {levels.get('warn', 0)} | {levels.get('error', 0)} |\n"
+            )
 
-        for minute in sorted(by_minute.keys())[-20:]:
-            data = by_minute[minute]
-            levels = data['level_counts']
-            f.write(f"| {minute} | {data['samples']} | {data['total_lines']} | "
-                   f"{levels.get('info', 0)} | {levels.get('warn', 0)} | "
-                   f"{levels.get('error', 0)} | {levels.get('debug', 0)} |\n")
+        # Top events
+        f.write("\n## Top 30 Events\n\n")
+        f.write("| Count | Event |\n")
+        f.write("|-------|-------|\n")
+        for event, count in sorted(event_totals.items(), key=lambda x: -x[1])[:30]:
+            f.write(f"| {count:,} | {event[:80].replace('|', chr(124))} |\n")
 
-        # Top messages
-        f.write("\n## Top 20 Messages (Overall)\n\n")
-        f.write("| Count | Message |\n")
-        f.write("|-------|----------|\n")
-
-        top_messages = sorted(all_messages.items(), key=lambda x: x[1], reverse=True)[:20]
-
-        for msg, count in top_messages:
-            # Escape pipe characters in messages for markdown tables
-            escaped_msg = msg[:70].replace('|', '\\|')
-            f.write(f"| {count:,} | {escaped_msg} |\n")
-
-        # Log volume by component
-        f.write("\n## Log Volume by Component\n\n")
-        all_component_totals: dict = defaultdict(int)
-        for data in by_minute.values():
-            for component, count in data['component_counts'].items():
-                all_component_totals[component] += count
-
-        if all_component_totals:
-            f.write("| Component | Total Logs |\n")
-            f.write("|-----------|------------|\n")
-            for component, count in sorted(all_component_totals.items(), key=lambda x: -x[1]):
-                f.write(f"| {component} | {count:,} |\n")
-        else:
-            f.write("_No component data — logs may predate slog migration._\n")
-
-        # Critical patterns
-        f.write("\n## Critical Patterns\n\n")
-
-        critical_keywords = [
-            'Emergency scale-down',
-            'error',
-            'failed',
-            'panic',
-            'crash',
-            'timeout',
-            'killed'
+        # Errors and warnings
+        error_events = {
+            e: c
+            for e, c in event_totals.items()
+            if e.split(": ", 1)[0] if ": " in e else False
+        }
+        warn_and_error = [
+            (e, c)
+            for e, c in event_totals.items()
+            if any(
+                kw in e.lower()
+                for kw in ("error", "fail", "warn", "timeout", "panic", "killed")
+            )
         ]
+        if warn_and_error:
+            f.write("\n## Errors & Warnings\n\n")
+            f.write("| Count | Event |\n")
+            f.write("|-------|-------|\n")
+            for event, count in sorted(warn_and_error, key=lambda x: -x[1])[:20]:
+                f.write(f"| {count:,} | {event[:80].replace('|', chr(124))} |\n")
 
-        critical_found = {}
-        for keyword in critical_keywords:
-            for msg, count in all_messages.items():
-                if keyword.lower() in msg.lower():
-                    if keyword not in critical_found:
-                        critical_found[keyword] = []
-                    critical_found[keyword].append((msg, count))
-
-        if critical_found:
-            for keyword, findings in critical_found.items():
-                f.write(f"\n### '{keyword}' patterns found:\n\n")
-                for msg, count in sorted(findings, key=lambda x: x[1], reverse=True)[:5]:
-                    escaped_msg = msg[:65].replace('|', '\\|')
-                    f.write(f"- **{count:,}x** {escaped_msg}\n")
-        else:
-            f.write("✅ No critical patterns detected\n")
 
 def aggregate_logs(log_dir, incremental=True):
-    """Aggregate JSON summaries, optionally in incremental mode."""
     log_path = Path(log_dir)
-
     if not log_path.exists():
         print(f"Error: Directory {log_dir} does not exist")
         return False
 
     csv_path = log_path / "time_series.csv"
+    events_csv_path = log_path / "events_per_minute.csv"
     components_csv_path = log_path / "components_per_minute.csv"
     summary_path = log_path / "summary.md"
 
-    # Load state
-    state = load_state(log_path) if incremental else {'processed_files': []}
-    processed_set = set(state['processed_files'])
+    state = load_state(log_path) if incremental else {"processed_files": []}
+    processed_set = set(state["processed_files"])
 
-    # Find JSON files
-    all_json_files = sorted(log_path.glob("*.json"))
+    all_json_files = sorted(f for f in log_path.glob("*.json") if not f.name.startswith("."))
     new_files = [f for f in all_json_files if f.name not in processed_set]
 
     if not new_files:
@@ -320,112 +293,58 @@ def aggregate_logs(log_dir, incremental=True):
             print(f"No JSON files found in {log_dir}")
             return False
 
-    # Load existing data if incremental
-    messages_csv_path = log_path / "messages_per_minute.csv"
-    by_minute = load_existing_data(csv_path, messages_csv_path, components_csv_path) if incremental else defaultdict(lambda: {
-        'level_counts': defaultdict(int),
-        'message_counts': defaultdict(int),
-        'component_counts': defaultdict(int),
-        'samples': 0,
-        'total_lines': 0,
-        'failed_to_parse': 0
-    })
+    by_minute = (
+        load_existing_data(csv_path, events_csv_path, components_csv_path)
+        if incremental
+        else defaultdict(_empty_minute)
+    )
 
-    all_messages = defaultdict(int)
-
-    # Rebuild all_messages from by_minute (for global totals in summary)
-    for data in by_minute.values():
-        for message, count in data['message_counts'].items():
-            all_messages[message] += count
-
-    # Process only new files (incremental)
     print(f"Processing {len(new_files)} new files...")
-    success_count = 0
+    success = 0
     for json_file in new_files:
-        try:
-            with open(json_file) as f:
-                data = json.load(f)
-
-            # Extract metadata
-            meta = data.get('meta', {})
-            total_lines = meta.get('total_lines', 0)
-            failed_to_parse = meta.get('failed_to_parse', 0)
-
-            # Process level counts
-            for timestamp, levels in data.get('level_counts', {}).items():
-                minute_key = timestamp[:16]
-
-                by_minute[minute_key]['samples'] += 1
-                by_minute[minute_key]['total_lines'] += total_lines
-                by_minute[minute_key]['failed_to_parse'] += failed_to_parse
-
-                for level, count in levels.items():
-                    by_minute[minute_key]['level_counts'][level] += count
-
-            # Process message counts
-            for timestamp, messages in data.get('message_counts', {}).items():
-                minute_key = timestamp[:16]
-                for msg_data in messages:
-                    message = msg_data.get('message', 'unknown')
-                    count = msg_data.get('count', 0)
-                    by_minute[minute_key]['message_counts'][message] += count
-                    all_messages[message] += count
-
-            # Process component counts
-            for timestamp, components in data.get('component_counts', {}).items():
-                minute_key = timestamp[:16]
-                for component, count in components.items():
-                    by_minute[minute_key]['component_counts'][component] += count
-
+        if process_json_file(json_file, by_minute):
             processed_set.add(json_file.name)
-            success_count += 1
-            if success_count % 10 == 0:
-                print(f"  Processed {success_count}/{len(new_files)} files...")
-        except Exception as e:
-            print(f"Error processing {json_file}: {e}", file=sys.stderr)
+            success += 1
+            if success % 10 == 0:
+                print(f"  {success}/{len(new_files)}...")
 
-    print(f"Successfully processed {success_count}/{len(new_files)} new files")
+    print(f"Successfully processed {success}/{len(new_files)} new files")
 
-    # Write outputs
-    write_csv(csv_path, by_minute)
-    write_messages_csv(messages_csv_path, by_minute, top_n=50)
+    write_time_series(csv_path, by_minute)
+    write_events_csv(events_csv_path, by_minute, top_n=50)
     write_components_csv(components_csv_path, by_minute)
-    write_summary(summary_path, by_minute, all_messages, len(new_files))
+    write_summary(summary_path, by_minute, len(new_files))
 
-    # Save state
     if incremental:
-        state['processed_files'] = sorted(list(processed_set))
+        state["processed_files"] = sorted(processed_set)
         save_state(log_path, state)
 
-    print(f"\nOutputs written:")
-    print(f"  CSV: {csv_path}")
-    print(f"  Messages CSV: {messages_csv_path}")
-    print(f"  Components CSV: {components_csv_path}")
-    print(f"  Summary: {summary_path}")
-
+    print(f"\nOutputs:")
+    print(f"  {csv_path}")
+    print(f"  {events_csv_path}")
+    print(f"  {components_csv_path}")
+    print(f"  {summary_path}")
     return True
 
-def watch_mode(log_dir, interval=10):
-    """Continuously watch for new files and process them."""
-    print(f"Watch mode: monitoring {log_dir} (checking every {interval}s)")
-    print("Press Ctrl+C to stop\n")
 
+def watch_mode(log_dir, interval=10):
+    print(f"Watch mode: {log_dir} (every {interval}s) — Ctrl+C to stop\n")
     try:
         while True:
             aggregate_logs(log_dir, incremental=True)
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("\n\nWatch mode stopped")
+        print("\nWatch mode stopped")
+
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Aggregate JSON log summaries')
-    parser.add_argument('log_dir', help='Directory containing JSON log files')
-    parser.add_argument('--watch', action='store_true', help='Watch mode: continuously process new files')
-    parser.add_argument('--interval', type=int, default=10, help='Check interval in watch mode (default: 10s)')
-    parser.add_argument('--full', action='store_true', help='Full reprocess (ignore state)')
-
+    parser = argparse.ArgumentParser(description="Aggregate JSON log summaries")
+    parser.add_argument("log_dir", help="Directory containing JSON log files")
+    parser.add_argument("--watch", action="store_true", help="Continuously process new files")
+    parser.add_argument("--interval", type=int, default=10, help="Check interval in watch mode (default: 10s)")
+    parser.add_argument("--full", action="store_true", help="Full reprocess (ignore state)")
     args = parser.parse_args()
 
     if args.watch:

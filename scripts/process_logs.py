@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-"""Utility to transform raw Fly.io logs into simple per-minute summaries."""
+"""Transform raw Fly.io logs into per-minute summaries and a flat line CSV."""
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from collections import Counter, defaultdict
@@ -12,10 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 from zoneinfo import ZoneInfo
 
+# Fields that are always extracted as dedicated columns in the flat CSV.
+_CORE_FIELDS = {"time", "timestamp", "@timestamp", "ts", "created_at", "level", "component", "msg", "message"}
+
 
 def _normalise_timestamp(record: Dict[str, Any]) -> str:
-    """Return an ISO minute string for a log record."""
-
+    """Return an ISO minute string (YYYY-MM-DDTHH:MM) for a log record."""
     for key in ("time", "timestamp", "@timestamp", "ts", "created_at"):
         if key in record and record[key]:
             raw = str(record[key])
@@ -24,14 +27,29 @@ def _normalise_timestamp(record: Dict[str, Any]) -> str:
         return "unknown"
 
     cleaned = raw.replace("Z", "+00:00")
-
     try:
         dt = datetime.fromisoformat(cleaned)
     except ValueError:
-        # Fallback: take first 16 characters (YYYY-MM-DDTHH:MM)
         return raw[:16] if len(raw) >= 16 else raw
 
     return dt.strftime("%Y-%m-%dT%H:%M")
+
+
+def _normalise_full_timestamp(record: Dict[str, Any]) -> str:
+    """Return a full ISO timestamp (seconds precision) for the flat CSV."""
+    for key in ("time", "timestamp", "@timestamp", "ts", "created_at"):
+        if key in record and record[key]:
+            raw = str(record[key])
+            break
+    else:
+        return ""
+
+    cleaned = raw.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(cleaned)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return raw[:19] if len(raw) >= 19 else raw
 
 
 def _iter_records(lines: Iterable[str]) -> Iterable[Tuple[Dict[str, Any], str]]:
@@ -57,17 +75,19 @@ def _strip_component_prefix(message: str, component: str) -> str:
     return message[len(prefix):].lstrip() if message.startswith(prefix) else message
 
 
-def summarise_logs(raw_path: Path) -> Dict[str, Any]:
+def summarise_logs(raw_path: Path, flat_csv_path: Path | None = None) -> Dict[str, Any]:
     level_counts: Dict[str, Counter] = defaultdict(Counter)
-    message_counts: Dict[str, Counter] = defaultdict(Counter)
+    event_counts: Dict[str, Counter] = defaultdict(Counter)  # "component: message" keys
     component_counts: Dict[str, Counter] = defaultdict(Counter)
 
     total = 0
     parsed = 0
     errors = 0
 
+    flat_rows = []
+
     with raw_path.open("r", encoding="utf-8", errors="ignore") as handle:
-        for record, original in _iter_records(handle):
+        for record, _original in _iter_records(handle):
             total += 1
             if record is None:
                 errors += 1
@@ -82,23 +102,37 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
             component = str(record.get("component") or "unknown")
             component_counts[minute][component] += 1
 
-            # Strip [component] prefix before counting to avoid duplicate groups.
             raw_msg = str(record.get("msg") or record.get("message") or "<no message>")
             message = _strip_component_prefix(raw_msg, component)
-            message_counts[minute][message] += 1
+            event_counts[minute][f"{component}: {message}"] += 1
 
-    message_summary: Dict[str, Any] = {}
-    for minute, counter in message_counts.items():
+            if flat_csv_path is not None:
+                extras = {k: v for k, v in record.items() if k not in _CORE_FIELDS}
+                flat_rows.append({
+                    "timestamp": _normalise_full_timestamp(record),
+                    "level": level,
+                    "component": component,
+                    "message": message,
+                    "extras": json.dumps(extras, separators=(",", ":")) if extras else "",
+                })
+
+    if flat_csv_path is not None and flat_rows:
+        with flat_csv_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["timestamp", "level", "component", "message", "extras"])
+            writer.writeheader()
+            writer.writerows(flat_rows)
+
+    event_summary: Dict[str, Any] = {}
+    for minute, counter in event_counts.items():
         top = counter.most_common(20)
-        message_summary[minute] = [
-            {"message": message, "count": count} for message, count in top
+        event_summary[minute] = [
+            {"event": event, "count": count} for event, count in top
         ]
 
-    # Generate timestamp in Melbourne timezone
     melbourne_tz = ZoneInfo("Australia/Melbourne")
     now = datetime.now(melbourne_tz)
 
-    summary = {
+    return {
         "meta": {
             "source": str(raw_path),
             "total_lines": total,
@@ -108,10 +142,8 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
         },
         "level_counts": {minute: dict(counter) for minute, counter in level_counts.items()},
         "component_counts": {minute: dict(counter) for minute, counter in component_counts.items()},
-        "message_counts": message_summary,
+        "event_counts": event_summary,
     }
-
-    return summary
 
 
 def main() -> int:
@@ -126,12 +158,13 @@ def main() -> int:
         print(f"Raw log file not found: {raw_path}", file=sys.stderr)
         return 1
 
-    summary = summarise_logs(raw_path)
+    # Flat CSV lives alongside the JSON summary, same name but .csv
+    flat_csv_path = output_path.with_suffix(".csv")
 
+    summary = summarise_logs(raw_path, flat_csv_path)
     output_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
     meta = summary["meta"]
-    # Report total unique components seen across all minutes.
     all_components: Counter = Counter()
     for c in summary["component_counts"].values():
         all_components.update(c)
