@@ -78,7 +78,7 @@ def summarise_logs(raw_path: Path) -> Dict[str, Any]:
             parsed += 1
             minute = _normalise_timestamp(record)
 
-            level = str(record.get("level", "unknown"))
+            level = str(record.get("level", "unknown")).lower()
             level_counts[minute][level] += 1
 
             component = str(record.get("component", "unknown"))
