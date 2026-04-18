@@ -38,7 +38,6 @@ const (
 	healthCheckInterval     = 5 * time.Minute
 )
 
-
 // startJobScheduler starts background service to create jobs from schedulers
 // It respects context cancellation for graceful shutdown
 // The WaitGroup must be marked Done when this function exits
