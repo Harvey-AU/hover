@@ -11,6 +11,11 @@ const staged = spawnSync(
     shell: false,
   }
 );
+// Fail closed: if git itself errored, don't silently skip linting.
+if (staged.error || staged.status !== 0) {
+  console.error(staged.stderr || "Error: failed to inspect staged Go files.");
+  process.exit(staged.status ?? 1);
+}
 if (!staged.stdout || !staged.stdout.trim()) {
   process.exit(0);
 }

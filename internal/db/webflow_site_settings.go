@@ -243,7 +243,7 @@ func (db *DB) querySiteSettings(ctx context.Context, query string, arg string) (
 			&webhookID, &webhookRegisteredAt, &schedulerID, &setting.CreatedAt, &setting.UpdatedAt,
 		)
 		if err != nil {
-			dbLog.Error("Failed to scan webflow site setting row", "error", err)
+			dbLog.Error("Failed to scan webflow site setting row", "error", err, "arg", arg)
 			return nil, fmt.Errorf("failed to scan webflow site setting: %w", err)
 		}
 

@@ -195,6 +195,8 @@ func TestSentryLevel(t *testing.T) {
 func TestLoggerOutputJSON(t *testing.T) {
 	var buf bytes.Buffer
 	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
 	slog.SetDefault(slog.New(handler))
 
 	l := Component("test")

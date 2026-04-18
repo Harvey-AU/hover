@@ -164,7 +164,7 @@ func (l *Logger) withSentryAttrs(msg string, args []any) []any {
 		slog.Group("tags",
 			slog.String("component", l.component),
 		),
-		slog.Any("fingerprint", []string{l.component, msg}),
+		slog.Any("fingerprint", []string{l.component, normaliseMessage(msg)}),
 	)
 }
 
