@@ -13,6 +13,7 @@ Usage:
     python3 scripts/aggregate_logs.py logs/20251105/0750_run/ --full
 """
 
+import csv
 import json
 import sys
 import time
@@ -71,14 +72,12 @@ def load_existing_data(csv_path, events_csv_path, components_csv_path):
                         by_minute[ts]["level_counts"]["info"] = int(parts[2])
                         by_minute[ts]["level_counts"]["warn"] = int(parts[3])
                         by_minute[ts]["level_counts"]["error"] = int(parts[4])
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"Warning: Could not load time_series.csv: {e}", file=sys.stderr)
 
     # Event counts from events_per_minute.csv
     if events_csv_path.exists():
         try:
-            import csv
-
             with open(events_csv_path) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
@@ -87,14 +86,12 @@ def load_existing_data(csv_path, events_csv_path, components_csv_path):
                         count = int(count_str)
                         if count > 0:
                             by_minute[ts]["event_counts"][event] = count
-        except Exception as e:
+        except (OSError, csv.Error, ValueError) as e:
             print(f"Warning: Could not load events_per_minute.csv: {e}", file=sys.stderr)
 
     # Component counts from components_per_minute.csv
     if components_csv_path.exists():
         try:
-            import csv
-
             with open(components_csv_path) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
@@ -103,7 +100,7 @@ def load_existing_data(csv_path, events_csv_path, components_csv_path):
                         count = int(count_str)
                         if count > 0:
                             by_minute[ts]["component_counts"][component] = count
-        except Exception as e:
+        except (OSError, csv.Error, ValueError) as e:
             print(
                 f"Warning: Could not load components_per_minute.csv: {e}",
                 file=sys.stderr,
@@ -132,7 +129,7 @@ def process_json_file(json_file, by_minute):
             for level, count in levels.items():
                 by_minute[minute_key]["level_counts"][level] += count
 
-        # Distribute file totals evenly across the minutes it spans.
+        # Add file-level totals to the first minute bucket to avoid double-counting.
         if file_minutes:
             first_minute = min(file_minutes)
             by_minute[first_minute]["total_lines"] += total_lines
@@ -185,14 +182,12 @@ def write_events_csv(csv_path, by_minute, top_n=50):
 
     top_events = [e for e, _ in sorted(totals.items(), key=lambda x: -x[1])[:top_n]]
 
-    import csv
-
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp"] + top_events)
+        writer.writerow(["timestamp", *top_events])
         for minute in sorted(by_minute.keys()):
             counts = [by_minute[minute]["event_counts"].get(e, 0) for e in top_events]
-            writer.writerow([minute] + counts)
+            writer.writerow([minute, *counts])
 
 
 def write_components_csv(csv_path, by_minute):
@@ -321,7 +316,7 @@ def aggregate_logs(log_dir, incremental=True):
         state["processed_files"] = sorted(processed_set)
         save_state(log_path, state)
 
-    print(f"\nOutputs:")
+    print("\nOutputs:")
     print(f"  {csv_path}")
     print(f"  {events_csv_path}")
     print(f"  {components_csv_path}")

@@ -38,7 +38,7 @@ def _normalise_timestamp(record: Dict[str, Any]) -> str:
 def _normalise_full_timestamp(record: Dict[str, Any]) -> str:
     """Return a full ISO timestamp (seconds precision) for the flat CSV."""
     for key in ("time", "timestamp", "@timestamp", "ts", "created_at"):
-        if key in record and record[key]:
+        if record.get(key):
             raw = str(record[key])
             break
     else:
