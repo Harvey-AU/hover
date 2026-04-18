@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/getsentry/sentry-go"
 	"github.com/lib/pq"
-	"github.com/rs/zerolog/log"
+
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+var batchLog = logging.Component("batch")
 
 var (
 	// MaxBatchSize is the maximum number of tasks to batch before forcing a flush
@@ -35,34 +37,34 @@ func init() {
 	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_CHANNEL_SIZE")); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_CHANNEL_SIZE override")
+			batchLog.Warn("Failed to parse GNH_BATCH_CHANNEL_SIZE override", "value", val)
 		} else {
 			if parsed < 500 {
-				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_CHANNEL_SIZE below minimum, using 500")
+				batchLog.Warn("GNH_BATCH_CHANNEL_SIZE below minimum, using 500", "requested", parsed)
 				parsed = 500
 			} else if parsed > 20000 {
-				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_CHANNEL_SIZE above maximum, using 20000")
+				batchLog.Warn("GNH_BATCH_CHANNEL_SIZE above maximum, using 20000", "requested", parsed)
 				parsed = 20000
 			}
 			BatchChannelSize = parsed
-			log.Info().Int("channel_size", parsed).Msg("GNH_BATCH_CHANNEL_SIZE override applied")
+			batchLog.Info("GNH_BATCH_CHANNEL_SIZE override applied", "channel_size", parsed)
 		}
 	}
 
 	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_MAX_INTERVAL_MS")); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
-			log.Warn().Str("value", val).Msg("Failed to parse GNH_BATCH_MAX_INTERVAL_MS override")
+			batchLog.Warn("Failed to parse GNH_BATCH_MAX_INTERVAL_MS override", "value", val)
 		} else {
 			if parsed < 100 {
-				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS below minimum, using 100ms")
+				batchLog.Warn("GNH_BATCH_MAX_INTERVAL_MS below minimum, using 100ms", "requested", parsed)
 				parsed = 100
 			} else if parsed > 10000 {
-				log.Warn().Int("requested", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS above maximum, using 10s")
+				batchLog.Warn("GNH_BATCH_MAX_INTERVAL_MS above maximum, using 10s", "requested", parsed)
 				parsed = 10000
 			}
 			MaxBatchInterval = time.Duration(parsed) * time.Millisecond
-			log.Info().Int("interval_ms", parsed).Msg("GNH_BATCH_MAX_INTERVAL_MS override applied")
+			batchLog.Info("GNH_BATCH_MAX_INTERVAL_MS override applied", "interval_ms", parsed)
 		}
 	}
 }
@@ -176,11 +178,11 @@ func NewBatchManager(queue QueueExecutor) *BatchManager {
 	bm.wg.Add(1)
 	go bm.processUpdateBatches()
 
-	log.Info().
-		Int("max_batch_size", MaxBatchSize).
-		Dur("max_batch_interval", MaxBatchInterval).
-		Int("channel_size", BatchChannelSize).
-		Msg("Batch manager started")
+	batchLog.Info("Batch manager started",
+		"max_batch_size", MaxBatchSize,
+		"max_batch_interval", MaxBatchInterval,
+		"channel_size", BatchChannelSize,
+	)
 
 	return bm
 }
@@ -206,12 +208,12 @@ func (bm *BatchManager) QueueTaskUpdate(task *Task) {
 		bm.overflowMu.Unlock()
 
 		if shouldLog {
-			log.Warn().
-				Str("task_id", task.ID).
-				Int("channel_depth", len(bm.updates)).
-				Int("channel_size", BatchChannelSize).
-				Int("overflow_depth", overflowDepth).
-				Msg("Update batch channel full, coalescing task update in overflow buffer")
+			batchLog.Warn("Update batch channel full, coalescing task update in overflow buffer",
+				"task_id", task.ID,
+				"channel_depth", len(bm.updates),
+				"channel_size", BatchChannelSize,
+				"overflow_depth", overflowDepth,
+			)
 		}
 	}
 }
@@ -263,11 +265,11 @@ func (bm *BatchManager) processUpdateBatches() {
 
 			if retryable {
 				// Infrastructure error - just log and retry, don't count towards poison pill threshold
-				log.Warn().
-					Err(err).
-					Int("batch_size", len(batch)).
-					Bool("retryable", true).
-					Msg("Batch flush failed due to infrastructure issue - will retry")
+				batchLog.Warn("Batch flush failed due to infrastructure issue - will retry",
+					"error", err,
+					"batch_size", len(batch),
+					"retryable", true,
+				)
 				// Keep batch in memory, try again on next flush interval
 				return
 			}
@@ -278,32 +280,34 @@ func (bm *BatchManager) processUpdateBatches() {
 			failCount := bm.consecutiveFails
 			bm.mu.Unlock()
 
-			log.Error().
-				Err(err).
-				Int("batch_size", len(batch)).
-				Int("consecutive_data_failures", failCount).
-				Bool("retryable", false).
-				Msg("Batch flush failed due to data error")
+			batchLog.Error("Batch flush failed due to data error",
+				"error", err,
+				"batch_size", len(batch),
+				"consecutive_data_failures", failCount,
+				"retryable", false,
+			)
 
 			// If we've had too many data errors, fall back to individual updates to isolate poison pill
 			if failCount >= MaxConsecutiveFailures {
-				// Capture to Sentry - this indicates data corruption blocking progress
-				sentry.CaptureException(fmt.Errorf("batch poison pill detected after %d consecutive data failures: %w", failCount, err))
+				batchLog.Error("Batch poison pill detected",
+					"error", err,
+					"consecutive_data_failures", failCount,
+				)
 
-				log.Warn().
-					Int("batch_size", len(batch)).
-					Msg("Max consecutive data failures reached - attempting individual updates to isolate poison pill")
+				batchLog.Warn("Max consecutive data failures reached - attempting individual updates to isolate poison pill",
+					"batch_size", len(batch),
+				)
 
 				// Create fresh bounded context for individual updates (flushCtx may be deadline-exceeded)
 				fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), 30*time.Second)
 				successCount, skippedCount := bm.flushIndividualUpdates(fallbackCtx, batch)
 				fallbackCancel()
 
-				log.Info().
-					Int("total", len(batch)).
-					Int("success", successCount).
-					Int("skipped", skippedCount).
-					Msg("Individual update fallback completed")
+				batchLog.Info("Individual update fallback completed",
+					"total", len(batch),
+					"success", successCount,
+					"skipped", skippedCount,
+				)
 
 				// Clear batch and reset failure counter after individual processing
 				batch = batch[:0]
@@ -371,20 +375,20 @@ func (bm *BatchManager) processUpdateBatches() {
 				lastErr = bm.flushTaskUpdates(shutdownCtx, batch)
 				cancel()
 				if lastErr == nil {
-					log.Info().
-						Int("batch_size", len(batch)).
-						Int("attempt", attempt+1).
-						Msg("Final batch flush successful on shutdown")
+					batchLog.Info("Final batch flush successful on shutdown",
+						"batch_size", len(batch),
+						"attempt", attempt+1,
+					)
 					batch = batch[:0]
 					break
 				}
 
-				log.Warn().
-					Err(lastErr).
-					Int("batch_size", len(batch)).
-					Int("attempt", attempt+1).
-					Int("max_attempts", MaxShutdownRetries).
-					Msg("Final batch flush failed - retrying")
+				batchLog.Warn("Final batch flush failed - retrying",
+					"error", lastErr,
+					"batch_size", len(batch),
+					"attempt", attempt+1,
+					"max_attempts", MaxShutdownRetries,
+				)
 
 				if attempt < MaxShutdownRetries-1 {
 					time.Sleep(ShutdownRetryDelay)
@@ -397,20 +401,18 @@ func (bm *BatchManager) processUpdateBatches() {
 
 				if retryable {
 					// Infrastructure failure - don't drop data, just log critical error
-					sentry.CaptureException(fmt.Errorf("database unavailable on shutdown, %d task updates in memory could not be persisted: %w", len(batch), lastErr))
-
-					log.Error().
-						Err(lastErr).
-						Int("batch_size", len(batch)).
-						Bool("retryable", true).
-						Msg("CRITICAL: Database unavailable on shutdown - task updates could not be persisted (will be retried on next startup if persistence implemented)")
+					batchLog.Error("CRITICAL: Database unavailable on shutdown - task updates could not be persisted",
+						"error", lastErr,
+						"batch_size", len(batch),
+						"retryable", true,
+					)
 				} else {
 					// Data error - try individual updates to isolate poison pill
-					log.Warn().
-						Err(lastErr).
-						Int("batch_size", len(batch)).
-						Bool("retryable", false).
-						Msg("Final batch flush failed due to data error - attempting individual updates to isolate poison pill")
+					batchLog.Warn("Final batch flush failed due to data error - attempting individual updates to isolate poison pill",
+						"error", lastErr,
+						"batch_size", len(batch),
+						"retryable", false,
+					)
 
 					// Create fresh bounded context for individual update fallback
 					fallbackCtx, fallbackCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -418,16 +420,13 @@ func (bm *BatchManager) processUpdateBatches() {
 					fallbackCancel()
 
 					if skippedCount > 0 {
-						// Capture to Sentry - data corruption caused permanent loss on shutdown
-						sentry.CaptureException(fmt.Errorf("shutdown with data errors: %d tasks with bad data could not be persisted", skippedCount))
-
-						log.Error().
-							Int("skipped", skippedCount).
-							Msg("CRITICAL: Some task updates with bad data could not be persisted on shutdown")
+						batchLog.Error("CRITICAL: Some task updates with bad data could not be persisted on shutdown",
+							"skipped", skippedCount,
+						)
 					} else {
-						log.Info().
-							Int("success", successCount).
-							Msg("All remaining task updates persisted via individual fallback")
+						batchLog.Info("All remaining task updates persisted via individual fallback",
+							"success", successCount,
+						)
 					}
 				}
 			}
@@ -473,10 +472,10 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 		case "waiting":
 			waitingTasks = append(waitingTasks, task)
 		default:
-			log.Warn().
-				Str("task_id", task.ID).
-				Str("status", task.Status).
-				Msg("Unexpected task status in batch, skipping")
+			batchLog.Warn("Unexpected task status in batch, skipping",
+				"task_id", task.ID,
+				"status", task.Status,
+			)
 		}
 	}
 
@@ -533,26 +532,26 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 	duration := time.Since(start)
 
 	if err != nil {
-		log.Error().
-			Err(err).
-			Int("total_tasks", len(updates)).
-			Int("completed", len(completedTasks)).
-			Int("failed", len(failedTasks)).
-			Int("skipped", len(skippedTasks)).
-			Int("pending", len(pendingTasks)).
-			Dur("duration_ms", duration).
-			Msg("Batch update failed")
+		batchLog.Error("Batch update failed",
+			"error", err,
+			"total_tasks", len(updates),
+			"completed", len(completedTasks),
+			"failed", len(failedTasks),
+			"skipped", len(skippedTasks),
+			"pending", len(pendingTasks),
+			"duration", duration,
+		)
 		return err
 	}
 
-	log.Debug().
-		Int("total_tasks", len(updates)).
-		Int("completed", len(completedTasks)).
-		Int("failed", len(failedTasks)).
-		Int("skipped", len(skippedTasks)).
-		Int("pending", len(pendingTasks)).
-		Dur("duration_ms", duration).
-		Msg("Batch update successful")
+	batchLog.Debug("Batch update successful",
+		"total_tasks", len(updates),
+		"completed", len(completedTasks),
+		"failed", len(failedTasks),
+		"skipped", len(skippedTasks),
+		"pending", len(pendingTasks),
+		"duration", duration,
+	)
 
 	return nil
 }
@@ -606,12 +605,7 @@ func incrementDailyUsageForTasks(txCtx context.Context, tx *sql.Tx, completedTas
 	for orgID, count := range orgCounts {
 		_, err := tx.ExecContext(txCtx, `SELECT increment_daily_usage($1, $2)`, orgID, count)
 		if err != nil {
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetLevel(sentry.LevelWarning)
-				scope.SetTag("org_id", orgID)
-				scope.SetExtra("pages", count)
-				sentry.CaptureException(fmt.Errorf("quota increment failed: %w", err))
-			})
+			batchLog.Error("Quota increment failed", "error", err, "org_id", orgID, "pages", count)
 			return fmt.Errorf("increment daily usage for org %s (%d pages): %w", orgID, count, err)
 		}
 	}
@@ -651,14 +645,12 @@ func (bm *BatchManager) flushIndividualUpdates(ctx context.Context, updates []*T
 		})
 
 		if err != nil {
-			// This is the poison pill - capture to Sentry and skip it
-			sentry.CaptureException(fmt.Errorf("poison pill task %s (status: %s) failed individual update: %w", update.Task.ID, update.Task.Status, err))
-
-			log.Error().
-				Err(err).
-				Str("task_id", update.Task.ID).
-				Str("status", update.Task.Status).
-				Msg("POISON PILL: Task update failed even in individual mode - skipping")
+			// This is the poison pill - auto-captured to Sentry via batchLog.Error
+			batchLog.Error("POISON PILL: Task update failed even in individual mode - skipping",
+				"error", err,
+				"task_id", update.Task.ID,
+				"status", update.Task.Status,
+			)
 			skippedCount++
 		} else {
 			successCount++
@@ -892,9 +884,7 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		return err
 	}
 
-	log.Debug().
-		Int("tasks_count", len(tasks)).
-		Msg("Batch updated completed tasks")
+	batchLog.Debug("Batch updated completed tasks", "tasks_count", len(tasks))
 
 	return nil
 }
@@ -957,9 +947,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 		return err
 	}
 
-	log.Debug().
-		Int("tasks_count", len(tasks)).
-		Msg("Batch updated failed tasks")
+	batchLog.Debug("Batch updated failed tasks", "tasks_count", len(tasks))
 
 	return nil
 }
@@ -1017,9 +1005,7 @@ func (bm *BatchManager) batchUpdateWaiting(ctx context.Context, tx *sql.Tx, task
 		return err
 	}
 
-	log.Debug().
-		Int("tasks_count", len(tasks)).
-		Msg("Batch updated waiting tasks")
+	batchLog.Debug("Batch updated waiting tasks", "tasks_count", len(tasks))
 
 	return nil
 }
@@ -1046,9 +1032,7 @@ func (bm *BatchManager) batchUpdateSkipped(ctx context.Context, tx *sql.Tx, task
 		return err
 	}
 
-	log.Debug().
-		Int("tasks_count", len(tasks)).
-		Msg("Batch updated skipped tasks")
+	batchLog.Debug("Batch updated skipped tasks", "tasks_count", len(tasks))
 
 	return nil
 }
@@ -1094,9 +1078,7 @@ func (bm *BatchManager) batchUpdatePending(ctx context.Context, tx *sql.Tx, task
 		return err
 	}
 
-	log.Debug().
-		Int("tasks_count", len(tasks)).
-		Msg("Batch updated pending tasks (retries)")
+	batchLog.Debug("Batch updated pending tasks (retries)", "tasks_count", len(tasks))
 
 	return nil
 }
@@ -1105,5 +1087,5 @@ func (bm *BatchManager) batchUpdatePending(ctx context.Context, tx *sql.Tx, task
 func (bm *BatchManager) Stop() {
 	close(bm.stopCh)
 	bm.wg.Wait()
-	log.Info().Msg("Batch manager stopped")
+	batchLog.Info("Batch manager stopped")
 }

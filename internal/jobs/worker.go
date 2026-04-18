@@ -28,6 +28,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/Harvey-AU/hover/internal/storage"
 	"github.com/Harvey-AU/hover/internal/techdetect"
@@ -35,8 +36,6 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/jackc/pgx/v5"
 	"github.com/lib/pq"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"golang.org/x/net/publicsuffix"
@@ -139,6 +138,8 @@ type discoveredLinkPersistRequest struct {
 // has not elapsed. The worker should requeue the task as waiting and immediately
 // pick a different task rather than blocking on the delay.
 var ErrDomainDelay = errors.New("domain rate limit delay")
+
+var workerLog = logging.Component("worker")
 
 // defaultDomainDelayPause is a short back-off applied after requeueing a domain-delayed
 // task. It prevents a tight DB claim loop when all pending tasks belong to
@@ -362,26 +363,22 @@ func (wp *WorkerPool) IdleWorkerCount() int {
 }
 
 func (wp *WorkerPool) logScalingDecision(decision, reason string, currentWorkers, targetWorkers int, metadata map[string]int) {
-	var event *zerolog.Event
-	if decision == "no_change" {
-		event = log.Debug()
-	} else {
-		event = log.Info()
+	args := []any{
+		"decision", decision,
+		"reason", reason,
+		"current_workers", currentWorkers,
+		"target_workers", targetWorkers,
+		"max_workers", wp.maxWorkers,
+		"active_jobs", wp.activeJobCount(),
 	}
-
-	event = event.
-		Str("decision", decision).
-		Str("reason", reason).
-		Int("current_workers", currentWorkers).
-		Int("target_workers", targetWorkers).
-		Int("max_workers", wp.maxWorkers).
-		Int("active_jobs", wp.activeJobCount())
-
 	for key, value := range metadata {
-		event = event.Int(key, value)
+		args = append(args, key, value)
 	}
-
-	event.Msg("Scaling evaluation completed")
+	if decision == "no_change" {
+		workerLog.Debug("Scaling evaluation completed", args...)
+	} else {
+		workerLog.Info("Scaling evaluation completed", args...)
+	}
 }
 
 func (wp *WorkerPool) recordWaitingTask(ctx context.Context, task *db.Task, reason WaitingReason) {
@@ -391,11 +388,11 @@ func (wp *WorkerPool) recordWaitingTask(ctx context.Context, task *db.Task, reas
 
 	observability.RecordTaskWaiting(ctx, task.JobID, string(reason), 1)
 
-	log.Debug().
-		Str("task_id", task.ID).
-		Str("job_id", task.JobID).
-		Str("waiting_reason", string(reason)).
-		Msg("Task transitioned to waiting state")
+	workerLog.Debug("Task transitioned to waiting state",
+		"task_id", task.ID,
+		"job_id", task.JobID,
+		"waiting_reason", string(reason),
+	)
 }
 
 func (wp *WorkerPool) fetchJobInfoFromDB(ctx context.Context, jobID string) (*JobInfo, error) {
@@ -850,10 +847,10 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 
 	// Initialise technology detector (non-fatal if it fails)
 	if detector, err := techdetect.New(); err != nil {
-		log.Warn().Err(err).Msg("Failed to initialise technology detector - tech detection disabled")
+		workerLog.Warn("Failed to initialise technology detector - tech detection disabled", "error", err)
 	} else {
 		wp.techDetector = detector
-		log.Info().Msg("Technology detector initialised")
+		workerLog.Info("Technology detector initialised")
 	}
 
 	// Initialise storage client for HTML uploads (non-fatal if not configured).
@@ -869,37 +866,38 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 		htmlQueueSize := htmlPersistQueueSizeFromEnv()
 		wp.taskHTMLWorkerCount = htmlPersistWorkersFromEnv()
 		wp.taskHTMLPersistCh = make(chan *taskHTMLPersistRequest, htmlQueueSize)
-		log.Info().Int("queue_size", htmlQueueSize).Int("workers", wp.taskHTMLWorkerCount).Msg("Storage client initialised for HTML uploads")
+		workerLog.Info("Storage client initialised for HTML uploads", "queue_size", htmlQueueSize, "workers", wp.taskHTMLWorkerCount)
 	} else {
-		log.Debug().Msg("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
+		workerLog.Debug("Storage client not configured - page HTML will not be stored (set SUPABASE_SERVICE_ROLE_KEY)")
 	}
 
 	// Initialise cold-storage archiver (gated by ARCHIVE_PROVIDER env var).
 	archiveCfg := archive.ConfigFromEnv()
 	switch {
 	case archiveCfg == nil:
-		log.Info().Msg("ARCHIVE: incomplete config or ARCHIVE_PROVIDER not set — archiving DISABLED")
+		workerLog.Info("ARCHIVE: incomplete config or ARCHIVE_PROVIDER not set — archiving DISABLED")
 	case wp.storageClient == nil:
-		log.Error().Msg("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
+		workerLog.Error("ARCHIVE: storage client not available (missing SUPABASE_SERVICE_ROLE_KEY?) — archiving DISABLED")
 	default:
 		provider, err := archive.ProviderFromEnv()
 		if err != nil {
-			log.Error().Err(err).Msg("ARCHIVE: failed to create provider — archiving DISABLED")
+			workerLog.Error("ARCHIVE: failed to create provider — archiving DISABLED", "error", err)
 		} else if provider == nil {
-			log.Warn().Msg("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
+			workerLog.Warn("ARCHIVE: provider env vars set but provider is nil — archiving DISABLED")
 		} else {
 			pingCtx, cancel := context.WithTimeout(context.Background(), archivePingTimeout)
 			err := provider.Ping(pingCtx, archiveCfg.Bucket)
 			cancel()
 			if err != nil {
-				log.Error().Err(err).
-					Str("provider", archiveCfg.Provider).
-					Str("bucket", archiveCfg.Bucket).
-					Msg("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED")
+				workerLog.Error("ARCHIVE: cannot reach cold-storage bucket — archiving DISABLED",
+					"error", err,
+					"provider", archiveCfg.Provider,
+					"bucket", archiveCfg.Bucket,
+				)
 			} else {
 				src := archive.NewTaskHTMLSource(wp.dbQueue, archiveCfg.RetentionJobs)
 				wp.archiver = archive.NewArchiver(provider, wp.storageClient, *archiveCfg, wp.dbQueue.MarkFullyArchivedJobs, src)
-				log.Info().Str("provider", archiveCfg.Provider).Str("bucket", archiveCfg.Bucket).Msg("ARCHIVE: scheduler initialised — archiving ENABLED")
+				workerLog.Info("ARCHIVE: scheduler initialised — archiving ENABLED", "provider", archiveCfg.Provider, "bucket", archiveCfg.Bucket)
 			}
 		}
 	}
@@ -910,22 +908,21 @@ func NewWorkerPool(sqlDB *sql.DB, dbQueue DbQueueInterface, crawler CrawlerInter
 			wp.listenForNotifications(context.Background())
 		})
 	} else {
-		log.Debug().Msg("Skipping LISTEN/NOTIFY setup: database config lacks connection details")
+		workerLog.Debug("Skipping LISTEN/NOTIFY setup: database config lacks connection details")
 	}
 
 	return wp
 }
 
 func (wp *WorkerPool) Start(ctx context.Context) {
-	log.Info().Int("workers", wp.numWorkers).Msg("Starting worker pool")
+	workerLog.Info("Starting worker pool", "workers", wp.numWorkers)
 
 	// Reconcile running_tasks counters before starting workers
 	// This prevents capacity leaks from deployments, crashes, or migration timing
 	reconcileCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := wp.reconcileRunningTaskCounters(reconcileCtx); err != nil {
-		sentry.CaptureException(err)
-		log.Error().Err(err).Msg("Failed to reconcile running_tasks counters - workers may be blocked")
+		workerLog.Error("Failed to reconcile running_tasks counters - workers may be blocked", "error", err)
 		// Continue startup even if reconciliation fails (logged for monitoring)
 	}
 
@@ -945,14 +942,12 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 
 	// Run initial cleanup
 	if err := wp.CleanupStuckJobs(ctx); err != nil {
-		sentry.CaptureException(err)
-		log.Error().Err(err).Msg("Failed to perform initial job cleanup")
+		workerLog.Error("Failed to perform initial job cleanup", "error", err)
 	}
 
 	// Recover jobs that were running before restart
 	if err := wp.recoverRunningJobs(ctx); err != nil {
-		sentry.CaptureException(err)
-		log.Error().Err(err).Msg("Failed to recover running jobs on startup")
+		workerLog.Error("Failed to recover running jobs on startup", "error", err)
 	}
 
 	wp.StartTaskMonitor(ctx)
@@ -979,7 +974,7 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 func (wp *WorkerPool) Stop() {
 	// Only stop once - use atomic compare-and-swap to ensure thread safety
 	if wp.stopping.CompareAndSwap(false, true) {
-		log.Debug().Msg("Stopping worker pool")
+		workerLog.Debug("Stopping worker pool")
 		close(wp.stopCh)
 		wp.wg.Wait()
 		wp.flushRunningTaskReleases(context.Background())
@@ -988,7 +983,7 @@ func (wp *WorkerPool) Stop() {
 		if wp.batchManager != nil {
 			wp.batchManager.Stop()
 		}
-		log.Debug().Msg("Worker pool stopped")
+		workerLog.Debug("Worker pool stopped")
 	}
 }
 
@@ -998,7 +993,7 @@ func (wp *WorkerPool) Stop() {
 // - Crash recovery (batch manager unable to flush)
 // - Migration backfill timing (tasks counted as running but completed before new code started)
 func (wp *WorkerPool) reconcileRunningTaskCounters(ctx context.Context) error {
-	log.Info().Msg("Reconciling running_tasks counters with actual task status")
+	workerLog.Info("Reconciling running_tasks counters with actual task status")
 
 	// Atomic query: Reset all running_tasks based on current task.status = 'running'
 	// Returns jobs that had mismatched counters for observability
@@ -1061,19 +1056,19 @@ func (wp *WorkerPool) reconcileRunningTaskCounters(ctx context.Context) error {
 		var oldValue, newValue, leaked int
 
 		if err := rows.Scan(&jobID, &oldValue, &newValue, &leaked); err != nil {
-			log.Warn().Err(err).Msg("Failed to scan reconciliation result")
+			workerLog.Warn("Failed to scan reconciliation result", "error", err)
 			continue
 		}
 
 		totalLeaked += leaked
 		jobsFixed++
 
-		log.Info().
-			Str("job_id", jobID).
-			Int("old_counter", oldValue).
-			Int("actual_running", newValue).
-			Int("leaked_tasks", leaked).
-			Msg("Reconciled running_tasks counter")
+		workerLog.Info("Reconciled running_tasks counter",
+			"job_id", jobID,
+			"old_counter", oldValue,
+			"actual_running", newValue,
+			"leaked_tasks", leaked,
+		)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1081,18 +1076,18 @@ func (wp *WorkerPool) reconcileRunningTaskCounters(ctx context.Context) error {
 	}
 
 	if totalLeaked > 0 {
-		log.Warn().
-			Int("total_leaked_tasks", totalLeaked).
-			Int("jobs_fixed", jobsFixed).
-			Msg("Running_tasks counters reconciled - capacity leak detected and fixed")
+		workerLog.Warn("Running_tasks counters reconciled - capacity leak detected and fixed",
+			"total_leaked_tasks", totalLeaked,
+			"jobs_fixed", jobsFixed,
+		)
 	} else {
-		log.Info().Msg("Running_tasks counters already accurate - no reconciliation needed")
+		workerLog.Info("Running_tasks counters already accurate - no reconciliation needed")
 	}
 
 	// Seed in-memory counters from DB so the Go-side concurrency gate is accurate
 	// immediately after reconciliation (before any tasks are claimed).
 	if err := wp.seedRunningTasksInMemFromDB(ctx); err != nil {
-		log.Warn().Err(err).Msg("Failed to seed in-memory running_tasks counters - concurrency gate may be loose until first claim")
+		workerLog.Warn("Failed to seed in-memory running_tasks counters - concurrency gate may be loose until first claim", "error", err)
 	}
 
 	return nil
@@ -1157,7 +1152,7 @@ func (wp *WorkerPool) rebalancePendingQueues(ctx context.Context) error {
 		runCtx = context.Background()
 	}
 
-	log.Debug().Msg("Rebalancing pending queues across running jobs")
+	workerLog.Debug("Rebalancing pending queues across running jobs")
 
 	// Get system-wide task status counts for observability
 	var totalPending, totalWaiting, totalRunning, totalCompleted, totalFailed int
@@ -1173,15 +1168,15 @@ func (wp *WorkerPool) rebalancePendingQueues(ctx context.Context) error {
 	`).Scan(&totalPending, &totalWaiting, &totalRunning, &totalCompleted, &totalFailed)
 
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to get system task status counts")
+		workerLog.Warn("Failed to get system task status counts", "error", err)
 	} else {
-		log.Info().
-			Int("pending", totalPending).
-			Int("waiting", totalWaiting).
-			Int("running", totalRunning).
-			Int("completed", totalCompleted).
-			Int("failed", totalFailed).
-			Msg("System task status counts")
+		workerLog.Info("System task status counts",
+			"pending", totalPending,
+			"waiting", totalWaiting,
+			"running", totalRunning,
+			"completed", totalCompleted,
+			"failed", totalFailed,
+		)
 	}
 
 	rows, err := wp.db.QueryContext(runCtx, pendingOverflowJobsQuery, pendingRebalanceJobLimit)
@@ -1204,7 +1199,7 @@ func (wp *WorkerPool) rebalancePendingQueues(ctx context.Context) error {
 	}
 
 	if len(overflowJobs) == 0 {
-		log.Debug().Msg("All pending queues within limits - no rebalancing needed")
+		workerLog.Debug("All pending queues within limits - no rebalancing needed")
 		return nil
 	}
 
@@ -1214,19 +1209,13 @@ func (wp *WorkerPool) rebalancePendingQueues(ctx context.Context) error {
 	for _, job := range overflowJobs {
 		result, err := wp.db.ExecContext(runCtx, rebalanceJobPendingQuery, job.id, job.cap)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("job_id", job.id).
-				Msg("Failed to demote excess pending tasks")
+			workerLog.Error("Failed to demote excess pending tasks", "error", err, "job_id", job.id)
 			continue
 		}
 
 		demoted, err := result.RowsAffected()
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("job_id", job.id).
-				Msg("Failed to read demoted row count")
+			workerLog.Warn("Failed to read demoted row count", "error", err, "job_id", job.id)
 			continue
 		}
 
@@ -1237,17 +1226,14 @@ func (wp *WorkerPool) rebalancePendingQueues(ctx context.Context) error {
 		totalDemoted += int(demoted)
 		correctedJobs++
 
-		log.Info().
-			Str("job_id", job.id).
-			Int64("demoted_count", demoted).
-			Msg("Demoted excess pending tasks to waiting")
+		workerLog.Info("Demoted excess pending tasks to waiting", "job_id", job.id, "demoted_count", demoted)
 	}
 
 	if totalDemoted > 0 {
-		log.Warn().
-			Int("total_demoted", totalDemoted).
-			Int("jobs_rebalanced", correctedJobs).
-			Msg("Pending queue overflow detected and corrected")
+		workerLog.Warn("Pending queue overflow detected and corrected",
+			"total_demoted", totalDemoted,
+			"jobs_rebalanced", correctedJobs,
+		)
 	}
 
 	return nil
@@ -1294,29 +1280,28 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 		// Parse robots.txt to get filtering rules
 		robotsRules, err := crawler.ParseRobotsTxt(ctx, jobInfo.DomainName, wp.crawler.GetUserAgent())
 		if err != nil {
-			log.Debug().
-				Err(err).
-				Str("domain", jobInfo.DomainName).
-				Msg("Failed to parse robots.txt, proceeding without restrictions")
+			workerLog.Debug("Failed to parse robots.txt, proceeding without restrictions",
+				"error", err,
+				"domain", jobInfo.DomainName,
+			)
 			// Only capture to Sentry if it's not a 404 (which is normal)
 			if !strings.Contains(err.Error(), "404") {
-				sentry.CaptureMessage(fmt.Sprintf("Failed to parse robots.txt for %s: %v", jobInfo.DomainName, err))
+				workerLog.Error("Failed to parse robots.txt", "error", err, "domain", jobInfo.DomainName)
 			}
 			jobInfo.RobotsRules = &crawler.RobotsRules{} // Empty rules = no restrictions
 		} else {
 			jobInfo.RobotsRules = robotsRules
 		}
 
-		log.Trace().
-			Str("job_id", jobID).
-			Str("domain", jobInfo.DomainName).
-			Int("crawl_delay", jobInfo.CrawlDelay).
-			Int("concurrency", jobInfo.Concurrency).
-			Int("disallow_patterns", len(jobInfo.RobotsRules.DisallowPatterns)).
-			Msg("Cached job info with robots rules")
+		workerLog.Debug("Cached job info with robots rules",
+			"job_id", jobID,
+			"domain", jobInfo.DomainName,
+			"crawl_delay", jobInfo.CrawlDelay,
+			"concurrency", jobInfo.Concurrency,
+			"disallow_patterns", len(jobInfo.RobotsRules.DisallowPatterns),
+		)
 	} else {
-		log.Error().Err(err).Str("job_id", jobID).Msg("Failed to cache job info")
-		sentry.CaptureException(fmt.Errorf("failed to cache job info for job %s: %w", jobID, err))
+		workerLog.Error("Failed to cache job info", "error", err, "job_id", jobID)
 	}
 
 	targetWorkers := wp.calculateConcurrencyTarget()
@@ -1338,11 +1323,11 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 
 	wp.logScalingDecision(decision, reason, currentWorkers, targetWorkers, nil)
 
-	log.Debug().
-		Str("job_id", jobID).
-		Int("current_workers", currentWorkers).
-		Int("target_workers", targetWorkers).
-		Msg("Added job to worker pool")
+	workerLog.Debug("Added job to worker pool",
+		"job_id", jobID,
+		"current_workers", currentWorkers,
+		"target_workers", targetWorkers,
+	)
 }
 
 // NotifyNewTasks wakes workers to check for new tasks immediately
@@ -1350,7 +1335,7 @@ func (wp *WorkerPool) AddJob(jobID string, options *JobOptions) {
 func (wp *WorkerPool) NotifyNewTasks() {
 	select {
 	case wp.notifyCh <- struct{}{}:
-		log.Debug().Msg("Notified workers of new tasks")
+		workerLog.Debug("Notified workers of new tasks")
 	default:
 		// Channel already has notification pending
 	}
@@ -1456,12 +1441,12 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 	oldWorkers := wp.currentWorkers
 	targetWorkers := max(wp.currentWorkers-5-jobBoost, wp.baseWorkerCount)
 
-	log.Debug().
-		Str("job_id", jobID).
-		Int("current_workers", oldWorkers).
-		Int("target_workers", targetWorkers).
-		Int("job_boost_removed", jobBoost).
-		Msg("Scaling down worker pool")
+	workerLog.Debug("Scaling down worker pool",
+		"job_id", jobID,
+		"current_workers", oldWorkers,
+		"target_workers", targetWorkers,
+		"job_boost_removed", jobBoost,
+	)
 
 	if !wp.disableRuntimeScaleDown {
 		wp.currentWorkers = targetWorkers
@@ -1482,9 +1467,7 @@ func (wp *WorkerPool) RemoveJob(jobID string) {
 		"job_boost_removed": jobBoost,
 	})
 
-	log.Debug().
-		Str("job_id", jobID).
-		Msg("Removed job from worker pool")
+	workerLog.Debug("Removed job from worker pool", "job_id", jobID)
 }
 
 func (wp *WorkerPool) resetJobFailureStreak(jobID string) {
@@ -1538,12 +1521,12 @@ func (wp *WorkerPool) recordJobFailure(ctx context.Context, jobID, taskID string
 	}
 
 	if streak > 0 {
-		log.Trace().
-			Str("job_id", jobID).
-			Str("task_id", taskID).
-			Int("failure_streak", streak).
-			Int("threshold", wp.jobFailureThreshold).
-			Msg("Incremented job failure streak")
+		workerLog.Debug("Incremented job failure streak",
+			"job_id", jobID,
+			"task_id", taskID,
+			"failure_streak", streak,
+			"threshold", wp.jobFailureThreshold,
+		)
 	}
 }
 
@@ -1553,11 +1536,11 @@ func (wp *WorkerPool) markJobFailedDueToConsecutiveFailures(ctx context.Context,
 		message = fmt.Sprintf("%s (last error: %s)", message, lastErr.Error())
 	}
 
-	log.Error().
-		Str("job_id", jobID).
-		Int("failure_streak", streak).
-		Int("threshold", wp.jobFailureThreshold).
-		Msg(message)
+	workerLog.Error(message,
+		"job_id", jobID,
+		"failure_streak", streak,
+		"threshold", wp.jobFailureThreshold,
+	)
 
 	failCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1594,17 +1577,17 @@ func (wp *WorkerPool) markJobFailedDueToConsecutiveFailures(ctx context.Context,
 
 		orphanedCount, _ := result.RowsAffected()
 		if orphanedCount > 0 {
-			log.Info().
-				Str("job_id", jobID).
-				Int64("orphaned_tasks", orphanedCount).
-				Msg("Cleaned up orphaned tasks from failed job")
+			workerLog.Info("Cleaned up orphaned tasks from failed job",
+				"job_id", jobID,
+				"orphaned_tasks", orphanedCount,
+			)
 		}
 
 		return nil
 	})
 
 	if updateErr != nil {
-		log.Error().Err(updateErr).Str("job_id", jobID).Msg("Failed to mark job as failed after consecutive task failures")
+		workerLog.Error("Failed to mark job as failed after consecutive task failures", "error", updateErr, "job_id", jobID)
 	}
 
 	wp.RemoveJob(jobID)
@@ -1625,9 +1608,9 @@ func (wp *WorkerPool) processTaskResult(result error, workerID int, consecutiveN
 			}
 		} else if errors.Is(result, db.ErrPoolSaturated) {
 			*consecutiveNoTasks++
-			log.Warn().Err(result).Int("worker_id", workerID).Msg("Control-lane DB saturation while claiming work")
+			workerLog.Warn("Control-lane DB saturation while claiming work", "error", result, "worker_id", workerID)
 		} else {
-			log.Error().Err(result).Int("worker_id", workerID).Msg("Task processing failed")
+			workerLog.Error("Task processing failed", "error", result, "worker_id", workerID)
 		}
 	} else {
 		*consecutiveNoTasks = 0
@@ -1643,10 +1626,7 @@ func calculateBackoffSleep(consecutiveNoTasks int, baseSleep, maxSleep time.Dura
 }
 
 func (wp *WorkerPool) worker(ctx context.Context, workerID int, slot *workerSlot) {
-	log.Info().
-		Int("worker_id", workerID).
-		Int("concurrency", wp.workerConcurrency).
-		Msg("Starting worker")
+	workerLog.Info("Starting worker", "worker_id", workerID, "concurrency", wp.workerConcurrency)
 
 	// Record worker capacity once at startup
 	observability.RecordWorkerConcurrency(ctx, workerID, 0, int64(wp.workerConcurrency))
@@ -1689,10 +1669,10 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int, slot *workerSlot
 		// Check for stop signals or notifications
 		select {
 		case <-wp.stopCh:
-			log.Debug().Int("worker_id", workerID).Msg("Worker received stop signal")
+			workerLog.Debug("Worker received stop signal", "worker_id", workerID)
 			return
 		case <-ctx.Done():
-			log.Debug().Int("worker_id", workerID).Msg("Worker context cancelled")
+			workerLog.Debug("Worker context cancelled", "worker_id", workerID)
 			return
 		case <-wp.notifyCh:
 			// Reset backoff when notified of new tasks
@@ -1721,7 +1701,7 @@ func (wp *WorkerPool) worker(ctx context.Context, workerID int, slot *workerSlot
 
 			// Only log occasionally during quiet periods
 			if consecutiveNoTasks == 1 || consecutiveNoTasks%10 == 0 {
-				log.Debug().Int("consecutive_no_tasks", consecutiveNoTasks).Msg("Waiting for new tasks")
+				workerLog.Debug("Waiting for new tasks", "consecutive_no_tasks", consecutiveNoTasks)
 			}
 			// Exponential backoff with a maximum, plus jitter to prevent thundering herd
 			sleepTime := calculateBackoffSleep(consecutiveNoTasks, baseSleep, maxSleep)
@@ -1793,7 +1773,7 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 
 	// If no active jobs, return immediately
 	if len(activeJobs) == 0 {
-		log.Debug().Msg("No active jobs in worker pool during task claim")
+		workerLog.Debug("No active jobs in worker pool during task claim")
 		return nil, sql.ErrNoRows
 	}
 
@@ -1860,27 +1840,27 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 					if wp.shouldLogConcurrencyBlock(jobID, time.Now()) {
 						state, sampleErr := wp.sampleConcurrencyBlockState(ctx, jobID)
 						if sampleErr != nil {
-							log.Debug().
-								Err(sampleErr).
-								Str("job_id", jobID).
-								Int64("running_tasks_in_mem", prev).
-								Int("configured_concurrency", jobInfo.Concurrency).
-								Int("active_jobs", len(activeJobs)).
-								Msg("Concurrency gate blocked job before task claim (state sample failed)")
+							workerLog.Debug("Concurrency gate blocked job before task claim (state sample failed)",
+								"error", sampleErr,
+								"job_id", jobID,
+								"running_tasks_in_mem", prev,
+								"configured_concurrency", jobInfo.Concurrency,
+								"active_jobs", len(activeJobs),
+							)
 						} else {
 							trueRunning := max(state.ActualRunningTasks, state.DBRunningTasks)
 							if trueRunning < jobInfo.Concurrency && prev > int64(trueRunning) {
 								counter.Store(int64(trueRunning))
-								log.Warn().
-									Str("job_id", jobID).
-									Int64("old_running_tasks_in_mem", prev).
-									Int("repaired_running_tasks_in_mem", trueRunning).
-									Int("configured_concurrency", jobInfo.Concurrency).
-									Int("db_running_tasks", state.DBRunningTasks).
-									Int("actual_running_tasks", state.ActualRunningTasks).
-									Int("pending_tasks", state.PendingTasks).
-									Int("active_jobs", len(activeJobs)).
-									Msg("Repaired false concurrency saturation before task claim")
+								workerLog.Warn("Repaired false concurrency saturation before task claim",
+									"job_id", jobID,
+									"old_running_tasks_in_mem", prev,
+									"repaired_running_tasks_in_mem", trueRunning,
+									"configured_concurrency", jobInfo.Concurrency,
+									"db_running_tasks", state.DBRunningTasks,
+									"actual_running_tasks", state.ActualRunningTasks,
+									"pending_tasks", state.PendingTasks,
+									"active_jobs", len(activeJobs),
+								)
 
 								repairedPrev := counter.Add(1) - 1
 								if repairedPrev < int64(jobInfo.Concurrency) {
@@ -1891,15 +1871,15 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 							}
 
 							if !reservedInMem {
-								log.Debug().
-									Str("job_id", jobID).
-									Int64("running_tasks_in_mem", prev).
-									Int("configured_concurrency", jobInfo.Concurrency).
-									Int("db_running_tasks", state.DBRunningTasks).
-									Int("actual_running_tasks", state.ActualRunningTasks).
-									Int("pending_tasks", state.PendingTasks).
-									Int("active_jobs", len(activeJobs)).
-									Msg("Concurrency gate blocked job before task claim")
+								workerLog.Debug("Concurrency gate blocked job before task claim",
+									"job_id", jobID,
+									"running_tasks_in_mem", prev,
+									"configured_concurrency", jobInfo.Concurrency,
+									"db_running_tasks", state.DBRunningTasks,
+									"actual_running_tasks", state.ActualRunningTasks,
+									"pending_tasks", state.PendingTasks,
+									"active_jobs", len(activeJobs),
+								)
 							}
 						}
 					}
@@ -1925,19 +1905,19 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 			if reservedInMem {
 				wp.decrementRunningTaskInMem(jobID) // rollback reservation
 			}
-			log.Debug().
-				Int("active_jobs", len(activeJobs)).
-				Int("empty_jobs", emptyJobs).
-				Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
-				Str("job_id", jobID).
-				Msg("Stopped task claim scan because DB pool was saturated")
+			workerLog.Debug("Stopped task claim scan because DB pool was saturated",
+				"active_jobs", len(activeJobs),
+				"empty_jobs", emptyJobs,
+				"concurrency_blocked_jobs", concurrencyBlockedJobs,
+				"job_id", jobID,
+			)
 			return nil, err
 		}
 		if err != nil {
 			if reservedInMem {
 				wp.decrementRunningTaskInMem(jobID) // rollback reservation
 			}
-			log.Error().Err(err).Str("job_id", jobID).Msg("Error getting next pending task")
+			workerLog.Error("Error getting next pending task", "error", err, "job_id", jobID)
 			return nil, err // Return actual errors
 		}
 		if task != nil {
@@ -1948,49 +1928,49 @@ func (wp *WorkerPool) claimPendingTask(ctx context.Context) (*db.Task, error) {
 				// Counter didn't exist yet (first task for this job) — full increment.
 				wp.incrementRunningTaskInMem(task.JobID)
 			}
-			log.Debug().
-				Str("task_id", task.ID).
-				Str("job_id", task.JobID).
-				Int("page_id", task.PageID).
-				Str("path", task.Path).
-				Float64("priority", task.PriorityScore).
-				Int("active_jobs", len(activeJobs)).
-				Int("empty_jobs_seen", emptyJobs).
-				Int("concurrency_blocked_jobs_seen", concurrencyBlockedJobs).
-				Int("domain_window_blocked_jobs_seen", domainWindowBlockedJobs).
-				Msg("Found and claimed pending task")
+			workerLog.Debug("Found and claimed pending task",
+				"task_id", task.ID,
+				"job_id", task.JobID,
+				"page_id", task.PageID,
+				"path", task.Path,
+				"priority", task.PriorityScore,
+				"active_jobs", len(activeJobs),
+				"empty_jobs_seen", emptyJobs,
+				"concurrency_blocked_jobs_seen", concurrencyBlockedJobs,
+				"domain_window_blocked_jobs_seen", domainWindowBlockedJobs,
+			)
 			return task, nil
 		}
 	}
 
 	// If all jobs were concurrency-blocked, return that instead of no rows
 	if sawConcurrencyBlocked {
-		log.Debug().
-			Int("active_jobs", len(activeJobs)).
-			Int("empty_jobs", emptyJobs).
-			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
-			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
-			Msg("No claimable tasks: active jobs were concurrency-blocked")
+		workerLog.Debug("No claimable tasks: active jobs were concurrency-blocked",
+			"active_jobs", len(activeJobs),
+			"empty_jobs", emptyJobs,
+			"concurrency_blocked_jobs", concurrencyBlockedJobs,
+			"domain_window_blocked_jobs", domainWindowBlockedJobs,
+		)
 		return nil, db.ErrConcurrencyBlocked
 	}
 
 	if len(readyJobs) == 0 && len(delayedJobs) > 0 {
-		log.Debug().
-			Int("active_jobs", len(activeJobs)).
-			Int("empty_jobs", emptyJobs).
-			Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
-			Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
-			Msg("No claimable tasks: active jobs were waiting on domain windows")
+		workerLog.Debug("No claimable tasks: active jobs were waiting on domain windows",
+			"active_jobs", len(activeJobs),
+			"empty_jobs", emptyJobs,
+			"concurrency_blocked_jobs", concurrencyBlockedJobs,
+			"domain_window_blocked_jobs", domainWindowBlockedJobs,
+		)
 		return nil, sql.ErrNoRows
 	}
 
 	// No tasks found in any job
-	log.Debug().
-		Int("active_jobs", len(activeJobs)).
-		Int("empty_jobs", emptyJobs).
-		Int("concurrency_blocked_jobs", concurrencyBlockedJobs).
-		Int("domain_window_blocked_jobs", domainWindowBlockedJobs).
-		Msg("No claimable tasks in active jobs")
+	workerLog.Debug("No claimable tasks in active jobs",
+		"active_jobs", len(activeJobs),
+		"empty_jobs", emptyJobs,
+		"concurrency_blocked_jobs", concurrencyBlockedJobs,
+		"domain_window_blocked_jobs", domainWindowBlockedJobs,
+	)
 	return nil, sql.ErrNoRows
 }
 
@@ -2028,11 +2008,11 @@ func (wp *WorkerPool) prepareTaskForProcessing(ctx context.Context, task *db.Tas
 		jobsTask.AdaptiveDelayFloor = jobInfo.AdaptiveDelayFloor
 	} else {
 		// Fallback to database if not in cache (shouldn't happen normally)
-		log.Warn().Str("job_id", task.JobID).Msg("Job info not in cache, querying database")
+		workerLog.Warn("Job info not in cache, querying database", "job_id", task.JobID)
 
 		info, err := wp.loadJobInfo(ctx, task.JobID, nil)
 		if err != nil {
-			log.Error().Err(err).Str("job_id", task.JobID).Msg("Failed to get domain info")
+			workerLog.Error("Failed to get domain info", "error", err, "job_id", task.JobID)
 		} else {
 			jobsTask.DomainID = info.DomainID
 			jobsTask.DomainName = info.DomainName
@@ -2083,10 +2063,10 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			} else {
 				sentry.CaptureException(recoveredErr)
 			}
-			log.Error().
-				Interface("panic", r).
-				Bytes("stack", stack).
-				Msg("Recovered from panic in processNextTask")
+			workerLog.Error("Recovered from panic in processNextTask",
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(stack),
+			)
 			if err == nil {
 				err = recoveredErr
 			}
@@ -2102,24 +2082,24 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 		// Prepare task for processing with job info
 		jobsTask, err := wp.prepareTaskForProcessing(ctx, task)
 		if err != nil {
-			log.Error().Err(err).Str("task_id", task.ID).Msg("Failed to prepare task")
+			workerLog.Error("Failed to prepare task", "error", err, "task_id", task.ID)
 			return err
 		}
-		log.Debug().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Str("domain", jobsTask.DomainName).
-			Int("job_concurrency", jobsTask.JobConcurrency).
-			Msg("Prepared claimed task for processing")
+		workerLog.Debug("Prepared claimed task for processing",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+			"domain", jobsTask.DomainName,
+			"job_concurrency", jobsTask.JobConcurrency,
+		)
 
 		// Process the task
 		taskCtx, cancel := context.WithTimeout(ctx, taskProcessingTimeout)
 		defer cancel()
-		log.Debug().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Str("url", constructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName)).
-			Msg("Starting claimed task processing")
+		workerLog.Debug("Starting claimed task processing",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+			"url", constructTaskURL(jobsTask.Path, jobsTask.Host, jobsTask.DomainName),
+		)
 
 		processCtx = taskCtx
 		processTaskRef = task
@@ -2141,20 +2121,20 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 			task.StartedAt = time.Time{}
 			wp.decrementRunningTaskInMem(task.JobID)
 			if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
-				log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
-					Msg("Failed to decrement running_tasks counter on domain delay requeue")
+				workerLog.Error("Failed to decrement running_tasks counter on domain delay requeue",
+					"error", err, "job_id", task.JobID, "task_id", task.ID)
 			}
-			log.Debug().
-				Str("task_id", task.ID).
-				Str("job_id", task.JobID).
-				Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
-				Msg("Released task slot after domain delay requeue")
+			workerLog.Debug("Released task slot after domain delay requeue",
+				"task_id", task.ID,
+				"job_id", task.JobID,
+				"running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID),
+			)
 			wp.batchManager.QueueTaskUpdate(task)
 			wp.recordWaitingTask(ctx, task, waitingReasonDomainDelay)
-			log.Debug().
-				Str("task_id", task.ID).
-				Str("domain", jobsTask.DomainName).
-				Msg("Task requeued as waiting: domain rate-limit window not elapsed")
+			workerLog.Debug("Task requeued as waiting: domain rate-limit window not elapsed",
+				"task_id", task.ID,
+				"domain", jobsTask.DomainName,
+			)
 				// Brief pause so the worker does not immediately spin back to the DB
 				// when all pending tasks belong to rate-limited domains.
 			select {
@@ -2192,25 +2172,25 @@ func (wp *WorkerPool) processNextTask(ctx context.Context) (err error) {
 // EnqueueURLs is a wrapper that ensures all task enqueuing goes through the JobManager.
 // This allows for centralised logic, such as duplicate checking, to be applied.
 func (wp *WorkerPool) EnqueueURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error {
-	log.Debug().
-		Str("job_id", jobID).
-		Str("source_type", sourceType).
-		Int("url_count", len(pages)).
-		Msg("EnqueueURLs called via WorkerPool, passing to JobManager")
+	workerLog.Debug("EnqueueURLs called via WorkerPool, passing to JobManager",
+		"job_id", jobID,
+		"source_type", sourceType,
+		"url_count", len(pages),
+	)
 
 	// The jobManager must be set for the worker pool to function correctly.
 	if wp.jobManager == nil {
 		err := fmt.Errorf("jobManager is not set on WorkerPool - cannot enqueue URLs")
-		log.Error().Err(err).Msg("Failed to enqueue URLs")
+		workerLog.Error("Failed to enqueue URLs", "error", err)
 		return err
 	}
 
 	if err := wp.jobManager.EnqueueJobURLs(ctx, jobID, pages, sourceType, sourceURL); err != nil {
 		if errors.Is(err, db.ErrPoolSaturated) {
-			log.Warn().
-				Str("job_id", jobID).
-				Str("source_type", sourceType).
-				Msg("Database pool saturated while enqueueing URLs; backing off")
+			workerLog.Warn("Database pool saturated while enqueueing URLs; backing off",
+				"job_id", jobID,
+				"source_type", sourceType,
+			)
 			time.Sleep(poolSaturationBackoff)
 		}
 		return err
@@ -2221,7 +2201,7 @@ func (wp *WorkerPool) EnqueueURLs(ctx context.Context, jobID string, pages []db.
 
 // StartTaskMonitor starts a background process that monitors for pending tasks
 func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
-	log.Info().Msg("Starting task monitor to check for pending tasks")
+	workerLog.Info("Starting task monitor to check for pending tasks")
 	wp.wg.Go(func() {
 		ticker := time.NewTicker(wp.taskMonitorInterval)
 		defer ticker.Stop()
@@ -2229,9 +2209,7 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 		// Pending queue rebalancer ticker - demote excess pending to waiting
 		rebalanceTicker := time.NewTicker(pendingRebalanceInterval)
 		defer rebalanceTicker.Stop()
-		log.Info().
-			Dur("interval", pendingRebalanceInterval).
-			Msg("Pending queue rebalancer enabled")
+		workerLog.Info("Pending queue rebalancer enabled", "interval", pendingRebalanceInterval)
 
 		// Health probe ticker (optional, disabled by default)
 		var probeTicker *time.Ticker
@@ -2240,26 +2218,26 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 			probeTicker = time.NewTicker(wp.probeInterval)
 			probeCh = probeTicker.C
 			defer probeTicker.Stop()
-			log.Info().Dur("interval", wp.probeInterval).Msg("Health probe enabled")
+			workerLog.Info("Health probe enabled", "interval", wp.probeInterval)
 		}
 
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info().Msg("Task monitor stopped due to context cancellation")
+				workerLog.Info("Task monitor stopped due to context cancellation")
 				return
 			case <-wp.stopCh:
-				log.Info().Msg("Task monitor stopped due to stop signal")
+				workerLog.Info("Task monitor stopped due to stop signal")
 				return
 			case <-ticker.C:
-				log.Debug().Msg("Task monitor checking for pending tasks")
+				workerLog.Debug("Task monitor checking for pending tasks")
 				if err := wp.checkForPendingTasks(ctx); err != nil {
-					log.Error().Err(err).Msg("Error checking for pending tasks")
+					workerLog.Error("Error checking for pending tasks", "error", err)
 				}
 			case <-rebalanceTicker.C:
-				log.Debug().Msg("Running pending queue rebalancer")
+				workerLog.Debug("Running pending queue rebalancer")
 				if err := wp.rebalancePendingQueues(ctx); err != nil {
-					log.Error().Err(err).Msg("Error rebalancing pending queues")
+					workerLog.Error("Error rebalancing pending queues", "error", err)
 				}
 			case <-probeCh:
 				if probeCh != nil {
@@ -2269,12 +2247,12 @@ func (wp *WorkerPool) StartTaskMonitor(ctx context.Context) {
 		}
 	})
 
-	log.Info().Msg("Task monitor started successfully")
+	workerLog.Info("Task monitor started successfully")
 }
 
 // checkForPendingTasks looks for any pending tasks and adds their jobs to the pool
 func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
-	log.Debug().Msg("Checking database for jobs with pending tasks")
+	workerLog.Debug("Checking database for jobs with pending tasks")
 	admissionLimit := wp.pendingAdmissionLimit()
 
 	type pendingJob struct {
@@ -2318,7 +2296,7 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	})
 
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to query for jobs with pending tasks")
+		workerLog.Error("Failed to query for jobs with pending tasks", "error", err)
 		return err
 	}
 
@@ -2337,7 +2315,7 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 
 		if !active {
 			// Add job to the worker pool
-			log.Info().Str("job_id", jobID).Msg("Adding job with pending tasks to worker pool")
+			workerLog.Info("Adding job with pending tasks to worker pool", "job_id", jobID)
 
 			// Get job options
 			var findLinks bool
@@ -2351,7 +2329,7 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 			})
 
 			if err != nil {
-				log.Error().Err(err).Str("job_id", jobID).Msg("Failed to get job options")
+				workerLog.Error("Failed to get job options", "error", err, "job_id", jobID)
 				continue
 			}
 
@@ -2363,7 +2341,7 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 			wp.AddJob(jobID, options)
 
 		} else {
-			log.Debug().Str("job_id", jobID).Msg("Job already active in worker pool")
+			workerLog.Debug("Job already active in worker pool", "job_id", jobID)
 		}
 
 		if job.Status == string(JobStatusPending) {
@@ -2378,20 +2356,17 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 			})
 
 			if err != nil {
-				log.Error().Err(err).Str("job_id", jobID).Msg("Failed to update job status")
+				workerLog.Error("Failed to update job status", "error", err, "job_id", jobID)
 			} else {
-				log.Info().Str("job_id", jobID).Msg("Updated job status to running")
+				workerLog.Info("Updated job status to running", "job_id", jobID)
 			}
 		}
 	}
 
 	if jobsFound == 0 {
-		log.Debug().Msg("No jobs with pending tasks found")
+		workerLog.Debug("No jobs with pending tasks found")
 	} else {
-		log.Debug().
-			Int("count", jobsFound).
-			Int("admission_limit", admissionLimit).
-			Msg("Found jobs with pending tasks")
+		workerLog.Debug("Found jobs with pending tasks", "count", jobsFound, "admission_limit", admissionLimit)
 	}
 
 	foundSet := make(map[string]struct{}, len(foundIDs))
@@ -2409,14 +2384,14 @@ func (wp *WorkerPool) checkForPendingTasks(ctx context.Context) error {
 	for _, id := range toRemove {
 		removable, err := wp.ensureJobSafeToRemove(ctx, id)
 		if err != nil {
-			log.Error().Err(err).Str("job_id", id).Msg("Failed to verify job removal safety")
+			workerLog.Error("Failed to verify job removal safety", "error", err, "job_id", id)
 			continue
 		}
 		if !removable {
 			continue
 		}
 
-		log.Info().Str("job_id", id).Msg("Job has no pending tasks, removing from worker pool")
+		workerLog.Info("Job has no pending tasks, removing from worker pool", "job_id", id)
 		wp.RemoveJob(id)
 	}
 
@@ -2464,7 +2439,7 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 	state, err := wp.loadJobQueueState(ctx, jobID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			log.Info().Str("job_id", jobID).Msg("Job no longer exists in database, removing stale worker-pool entry")
+			workerLog.Info("Job no longer exists in database, removing stale worker-pool entry", "job_id", jobID)
 			return true, nil
 		}
 		return false, err
@@ -2488,7 +2463,7 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 			}); err != nil {
 				return false, err
 			}
-			log.Warn().Str("job_id", jobID).Msg("Timed out stale initialising job")
+			workerLog.Warn("Timed out stale initialising job", "job_id", jobID)
 			return true, nil
 		}
 		return false, nil
@@ -2507,10 +2482,10 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 			return false, recErr
 		}
 		if recovered > 0 {
-			log.Warn().
-				Str("job_id", jobID).
-				Int64("tasks_requeued", recovered).
-				Msg("Recovered stale running tasks before removing job")
+			workerLog.Warn("Recovered stale running tasks before removing job",
+				"job_id", jobID,
+				"tasks_requeued", recovered,
+			)
 		}
 		return false, nil
 	}
@@ -2525,11 +2500,11 @@ func (wp *WorkerPool) ensureJobSafeToRemove(ctx context.Context, jobID string) (
 			return false, promoteErr
 		}
 		if promoted > 0 {
-			log.Info().
-				Str("job_id", jobID).
-				Int64("tasks_promoted", promoted).
-				Int("available_slots", slots).
-				Msg("Promoted waiting tasks to pending before job removal")
+			workerLog.Info("Promoted waiting tasks to pending before job removal",
+				"job_id", jobID,
+				"tasks_promoted", promoted,
+				"available_slots", slots,
+			)
 		}
 		return false, nil
 	}
@@ -2686,12 +2661,12 @@ func (wp *WorkerPool) recoverStaleTasks(ctx context.Context) error {
 	// These should be marked as failed immediately, not retried
 	cancelledCount, err := wp.recoverTasksFromDeadJobs(ctx, staleTime)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to recover tasks from cancelled/failed jobs")
+		workerLog.Error("Failed to recover tasks from cancelled/failed jobs", "error", err)
 		// Don't fail the whole recovery, continue to running jobs
 	} else if cancelledCount > 0 {
-		log.Info().
-			Int64("tasks_marked_failed", cancelledCount).
-			Msg("Marked stuck tasks from cancelled/failed jobs as failed")
+		workerLog.Info("Marked stuck tasks from cancelled/failed jobs as failed",
+			"tasks_marked_failed", cancelledCount,
+		)
 	}
 
 	// STEP 2: Process tasks from running jobs in batches
@@ -2711,25 +2686,23 @@ func (wp *WorkerPool) recoverStaleTasks(ctx context.Context) error {
 
 		if err != nil {
 			consecutiveFailures++
-			log.Warn().
-				Err(err).
-				Int("batch_num", batchNum).
-				Int("consecutive_failures", consecutiveFailures).
-				Msg("Batch recovery failed")
+			workerLog.Warn("Batch recovery failed",
+				"error", err,
+				"batch_num", batchNum,
+				"consecutive_failures", consecutiveFailures,
+			)
 
 			// If we've failed too many times in a row, bail out
 			if consecutiveFailures >= maxConsecutiveFailures {
-				log.Error().
-					Int("max_failures", maxConsecutiveFailures).
-					Msg("Recovery failed after max consecutive failures, will retry next cycle")
+				workerLog.Error("Recovery failed after max consecutive failures, will retry next cycle",
+					"max_failures", maxConsecutiveFailures,
+				)
 				return fmt.Errorf("recovery failed after %d consecutive batch failures: %w", maxConsecutiveFailures, err)
 			}
 
 			// Exponential backoff between failed batches
 			backoff := time.Duration(consecutiveFailures) * time.Second
-			log.Debug().
-				Dur("backoff", backoff).
-				Msg("Sleeping before retrying next batch")
+			workerLog.Debug("Sleeping before retrying next batch", "backoff", backoff)
 			time.Sleep(backoff)
 			continue
 		}
@@ -2749,14 +2722,14 @@ func (wp *WorkerPool) recoverStaleTasks(ctx context.Context) error {
 	}
 
 	if totalRecovered > 0 || totalFailed > 0 {
-		log.Info().
-			Int("tasks_recovered", totalRecovered).
-			Int("tasks_failed", totalFailed).
-			Int("batches_processed", batchNum).
-			Msg("Completed stale task recovery")
+		workerLog.Info("Completed stale task recovery",
+			"tasks_recovered", totalRecovered,
+			"tasks_failed", totalFailed,
+			"batches_processed", batchNum,
+		)
 
 		if err := wp.reconcileRunningTaskCounters(ctx); err != nil {
-			log.Error().Err(err).Msg("Failed to reconcile running task counters after stale task recovery")
+			workerLog.Error("Failed to reconcile running task counters after stale task recovery", "error", err)
 		}
 	}
 
@@ -2847,7 +2820,7 @@ func (wp *WorkerPool) recoverStaleBatch(ctx context.Context, staleTime time.Time
 		for rows.Next() {
 			var task staleTask
 			if err := rows.Scan(&task.id, &task.retryCount, &task.jobID); err != nil {
-				log.Warn().Err(err).Msg("Failed to scan stale task row")
+				workerLog.Warn("Failed to scan stale task row", "error", err)
 				continue
 			}
 			tasks = append(tasks, task)
@@ -2861,10 +2834,7 @@ func (wp *WorkerPool) recoverStaleBatch(ctx context.Context, staleTime time.Time
 			return nil // No tasks to process
 		}
 
-		log.Debug().
-			Int("batch_num", batchNum).
-			Int("batch_size", len(tasks)).
-			Msg("Processing stale task batch")
+		workerLog.Debug("Processing stale task batch", "batch_num", batchNum, "batch_size", len(tasks))
 
 		// Update tasks in this batch
 		now := time.Now().UTC()
@@ -2879,10 +2849,7 @@ func (wp *WorkerPool) recoverStaleBatch(ctx context.Context, staleTime time.Time
 				`, TaskStatusFailed, "Max retries exceeded", now, task.id)
 
 				if err != nil {
-					log.Warn().
-						Err(err).
-						Str("task_id", task.id).
-						Msg("Failed to mark task as failed")
+					workerLog.Warn("Failed to mark task as failed", "error", err, "task_id", task.id)
 					return err
 				}
 				failed++
@@ -2896,21 +2863,14 @@ func (wp *WorkerPool) recoverStaleBatch(ctx context.Context, staleTime time.Time
 				`, TaskStatusPending, task.id)
 
 				if err != nil {
-					log.Warn().
-						Err(err).
-						Str("task_id", task.id).
-						Msg("Failed to reset task to pending")
+					workerLog.Warn("Failed to reset task to pending", "error", err, "task_id", task.id)
 					return err
 				}
 				recovered++
 			}
 		}
 
-		log.Debug().
-			Int("batch_num", batchNum).
-			Int("recovered", recovered).
-			Int("failed", failed).
-			Msg("Completed batch recovery")
+		workerLog.Debug("Completed batch recovery", "batch_num", batchNum, "recovered", recovered, "failed", failed)
 
 		return nil
 	})
@@ -2921,7 +2881,7 @@ func (wp *WorkerPool) recoverStaleBatch(ctx context.Context, staleTime time.Time
 // recoverRunningJobs finds jobs that were in 'running' state when the server shut down
 // and resets their 'running' tasks to 'pending', then adds them to the worker pool
 func (wp *WorkerPool) recoverRunningJobs(ctx context.Context) error {
-	log.Info().Msg("Recovering jobs that were running before restart")
+	workerLog.Info("Recovering jobs that were running before restart")
 
 	var jobIDs []string
 	err := wp.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
@@ -2951,7 +2911,7 @@ func (wp *WorkerPool) recoverRunningJobs(ctx context.Context) error {
 	})
 
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to query for running jobs with running tasks")
+		workerLog.Error("Failed to query for running jobs with running tasks", "error", err)
 		return err
 	}
 
@@ -2974,16 +2934,16 @@ func (wp *WorkerPool) recoverRunningJobs(ctx context.Context) error {
 			}
 
 			rowsAffected, _ := result.RowsAffected()
-			log.Info().
-				Str("job_id", jobID).
-				Int64("tasks_reset", rowsAffected).
-				Msg("Reset running tasks to pending")
+			workerLog.Info("Reset running tasks to pending",
+				"job_id", jobID,
+				"tasks_reset", rowsAffected,
+			)
 
 			return nil
 		})
 
 		if err != nil {
-			log.Error().Err(err).Str("job_id", jobID).Msg("Failed to reset running tasks")
+			workerLog.Error("Failed to reset running tasks", "error", err, "job_id", jobID)
 			continue
 		}
 
@@ -2991,20 +2951,20 @@ func (wp *WorkerPool) recoverRunningJobs(ctx context.Context) error {
 		wp.AddJob(jobID, nil)
 		recoveredJobs = append(recoveredJobs, jobID)
 
-		log.Info().Str("job_id", jobID).Msg("Recovered running job and added to worker pool")
+		workerLog.Info("Recovered running job and added to worker pool", "job_id", jobID)
 	}
 
 	if len(recoveredJobs) > 0 {
-		log.Info().
-			Int("count", len(recoveredJobs)).
-			Strs("job_ids", recoveredJobs).
-			Msg("Successfully recovered running jobs from restart")
+		workerLog.Info("Successfully recovered running jobs from restart",
+			"count", len(recoveredJobs),
+			"job_ids", recoveredJobs,
+		)
 
 		if err := wp.reconcileRunningTaskCounters(ctx); err != nil {
-			log.Error().Err(err).Msg("Failed to reconcile running task counters after job recovery")
+			workerLog.Error("Failed to reconcile running task counters after job recovery", "error", err)
 		}
 	} else {
-		log.Debug().Msg("No running jobs found to recover")
+		workerLog.Debug("No running jobs found to recover")
 	}
 
 	return nil
@@ -3023,7 +2983,7 @@ func (wp *WorkerPool) recoveryMonitor(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := wp.recoverStaleTasks(ctx); err != nil {
-				log.Error().Err(err).Msg("Failed to recover stale tasks")
+				workerLog.Error("Failed to recover stale tasks", "error", err)
 			}
 		}
 	}
@@ -3037,10 +2997,10 @@ func (wp *WorkerPool) scaleWorkers(ctx context.Context, targetWorkers int) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Error().
-				Interface("panic", r).
-				Str("stack", string(debug.Stack())).
-				Msg("Recovered from panic in scaleWorkers")
+			workerLog.Error("Recovered from panic in scaleWorkers",
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(debug.Stack()),
+			)
 		}
 	}()
 
@@ -3053,11 +3013,11 @@ func (wp *WorkerPool) scaleWorkers(ctx context.Context, targetWorkers int) {
 
 	workersToAdd := targetWorkers - wp.currentWorkers
 
-	log.Debug().
-		Int("current_workers", wp.currentWorkers).
-		Int("adding_workers", workersToAdd).
-		Int("target_workers", targetWorkers).
-		Msg("Scaling worker pool")
+	workerLog.Debug("Scaling worker pool",
+		"current_workers", wp.currentWorkers,
+		"adding_workers", workersToAdd,
+		"target_workers", targetWorkers,
+	)
 
 	// Initialise isolated slot bundles for new workers.
 	for i := range workersToAdd {
@@ -3312,11 +3272,11 @@ func (wp *WorkerPool) scaleDownWorkers(target int) {
 	}
 	wp.idleWorkersMutex.Unlock()
 
-	log.Debug().
-		Int("old_workers", oldWorkers).
-		Int("new_workers", target).
-		Int("idle_workers", idleCount).
-		Msg("Scaling down worker pool")
+	workerLog.Debug("Scaling down worker pool",
+		"old_workers", oldWorkers,
+		"new_workers", target,
+		"idle_workers", idleCount,
+	)
 }
 
 // returnTaskToPending returns a claimed task back to pending status
@@ -3370,7 +3330,7 @@ func (wp *WorkerPool) healthProbe(ctx context.Context) {
 		return
 	}
 
-	log.Debug().Msg("Health probe: All workers idle, checking for work")
+	workerLog.Debug("Health probe: All workers idle, checking for work")
 
 	// Get list of active job IDs
 	wp.jobsMutex.RLock()
@@ -3381,7 +3341,7 @@ func (wp *WorkerPool) healthProbe(ctx context.Context) {
 	wp.jobsMutex.RUnlock()
 
 	if len(jobIDs) == 0 {
-		log.Debug().Msg("Health probe: No active jobs")
+		workerLog.Debug("Health probe: No active jobs")
 		return
 	}
 
@@ -3389,25 +3349,25 @@ func (wp *WorkerPool) healthProbe(ctx context.Context) {
 	task, err := wp.claimPendingTask(ctx)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			log.Debug().Msg("Health probe: No work found")
+			workerLog.Debug("Health probe: No work found")
 			return
 		}
 		if errors.Is(err, db.ErrConcurrencyBlocked) {
-			log.Debug().Msg("Health probe: Work exists but blocked by concurrency limits")
+			workerLog.Debug("Health probe: Work exists but blocked by concurrency limits")
 			return
 		}
-		log.Error().Err(err).Msg("Health probe: Error claiming task")
+		workerLog.Error("Health probe: Error claiming task", "error", err)
 		return
 	}
 
 	// Found work! Return task to pending and wake workers
 	if err := wp.returnTaskToPending(ctx, task); err != nil {
-		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
-			Msg("Health probe: Failed to return task to pending")
+		workerLog.Error("Health probe: Failed to return task to pending",
+			"error", err, "job_id", task.JobID, "task_id", task.ID)
 		// Task is claimed but we couldn't return it - let it be processed normally
 	}
 
-	log.Debug().Str("job_id", task.JobID).Msg("Health probe: Found work, waking workers")
+	workerLog.Debug("Health probe: Found work, waking workers", "job_id", task.JobID)
 
 	// Wake workers (non-blocking send)
 	select {
@@ -3433,12 +3393,12 @@ func (wp *WorkerPool) StartCleanupMonitor(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if err := wp.CleanupStuckJobs(ctx); err != nil {
-					log.Error().Err(err).Msg("Failed to cleanup stuck jobs")
+					workerLog.Error("Failed to cleanup stuck jobs", "error", err)
 				}
 			}
 		}
 	})
-	log.Info().Msg("Job cleanup monitor started")
+	workerLog.Info("Job cleanup monitor started")
 }
 
 // StartWaitingTaskRecoveryMonitor continuously recovers jobs whose waiting
@@ -3456,12 +3416,12 @@ func (wp *WorkerPool) StartWaitingTaskRecoveryMonitor(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if err := wp.recoverWaitingTasks(ctx); err != nil {
-					log.Error().Err(err).Msg("Failed to recover waiting tasks")
+					workerLog.Error("Failed to recover waiting tasks", "error", err)
 				}
 			}
 		}
 	})
-	log.Info().Dur("interval", wp.waitingRecoveryInterval).Msg("Waiting task recovery monitor started")
+	workerLog.Info("Waiting task recovery monitor started", "interval", wp.waitingRecoveryInterval)
 }
 
 // StartQuotaPromotionMonitor is retained as a compatibility shim for existing
@@ -3558,7 +3518,7 @@ func (wp *WorkerPool) recoverWaitingTasks(ctx context.Context) error {
 				return err
 			})
 			if err != nil {
-				log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to transition pending waiting job to running")
+				workerLog.Warn("Failed to transition pending waiting job to running", "error", err, "job_id", job.ID)
 				continue
 			}
 			wp.AddJob(job.ID, nil)
@@ -3569,17 +3529,17 @@ func (wp *WorkerPool) recoverWaitingTasks(ctx context.Context) error {
 			return tx.QueryRowContext(ctx, `SELECT promote_waiting_tasks_for_job($1, $2)`, job.ID, slots).Scan(&promoted)
 		})
 		if err != nil {
-			log.Warn().Err(err).Str("job_id", job.ID).Msg("Failed to recover waiting tasks for job")
+			workerLog.Warn("Failed to recover waiting tasks for job", "error", err, "job_id", job.ID)
 			continue
 		}
 		if promoted > 0 {
 			totalPromoted += promoted
-			log.Debug().Str("job_id", job.ID).Int("promoted", promoted).Int("slots", slots).Msg("Recovered waiting tasks for job")
+			workerLog.Debug("Recovered waiting tasks for job", "job_id", job.ID, "promoted", promoted, "slots", slots)
 		}
 	}
 
 	if totalPromoted > 0 {
-		log.Info().Int("total_promoted", totalPromoted).Int("jobs", len(jobs)).Msg("Recovered waiting tasks")
+		workerLog.Info("Recovered waiting tasks", "total_promoted", totalPromoted, "jobs", len(jobs))
 		wp.NotifyNewTasks()
 	}
 
@@ -3674,15 +3634,11 @@ func (wp *WorkerPool) CleanupStuckJobs(ctx context.Context) error {
 	}
 
 	if completedJobs > 0 {
-		log.Info().
-			Int64("jobs_completed", completedJobs).
-			Msg("Marked stuck jobs as completed")
+		workerLog.Info("Marked stuck jobs as completed", "jobs_completed", completedJobs)
 	}
 
 	if timedOutJobs > 0 {
-		log.Warn().
-			Int64("jobs_failed", timedOutJobs).
-			Msg("Marked timed-out jobs as failed")
+		workerLog.Warn("Marked timed-out jobs as failed", "jobs_failed", timedOutJobs)
 	}
 
 	return nil
@@ -3696,20 +3652,20 @@ func (wp *WorkerPool) cleanupOrphanedTasksLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	log.Info().Msg("Orphaned task cleanup loop started")
+	workerLog.Info("Orphaned task cleanup loop started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Orphaned task cleanup loop stopped (context cancelled)")
+			workerLog.Info("Orphaned task cleanup loop stopped (context cancelled)")
 			return
 		case <-wp.stopCh:
-			log.Info().Msg("Orphaned task cleanup loop stopped (worker pool stopped)")
+			workerLog.Info("Orphaned task cleanup loop stopped (worker pool stopped)")
 			return
 		case <-ticker.C:
 			if err := wp.cleanupOrphanedTasks(ctx); err != nil {
 				// Log but continue - this is a background cleanup process
-				log.Error().Err(err).Msg("Failed to cleanup orphaned tasks")
+				workerLog.Error("Failed to cleanup orphaned tasks", "error", err)
 			}
 		}
 	}
@@ -3782,11 +3738,11 @@ func (wp *WorkerPool) cleanupOrphanedTasks(ctx context.Context) error {
 
 		iterations++
 		if iterations > maxIterations {
-			log.Warn().
-				Str("job_id", targetJobID).
-				Int64("tasks_cleaned", totalCleaned).
-				Int("iterations", iterations).
-				Msg("Orphaned task cleanup stopped: maximum iteration limit reached")
+			workerLog.Warn("Orphaned task cleanup stopped: maximum iteration limit reached",
+				"job_id", targetJobID,
+				"tasks_cleaned", totalCleaned,
+				"iterations", iterations,
+			)
 			span.SetData("tasks_cleaned", totalCleaned)
 			span.SetData("iteration_limit_reached", true)
 			break
@@ -3834,11 +3790,11 @@ func (wp *WorkerPool) cleanupOrphanedTasks(ctx context.Context) error {
 
 	cleanupDuration := time.Since(cleanupStart)
 
-	log.Info().
-		Str("job_id", targetJobID).
-		Int64("tasks_cleaned", totalCleaned).
-		Dur("duration_ms", cleanupDuration).
-		Msg("Orphaned task cleanup completed for job")
+	workerLog.Info("Orphaned task cleanup completed for job",
+		"job_id", targetJobID,
+		"tasks_cleaned", totalCleaned,
+		"duration_ms", cleanupDuration,
+	)
 
 	span.SetData("job_id", targetJobID)
 	span.SetData("tasks_cleaned", totalCleaned)
@@ -3935,11 +3891,11 @@ func (wp *WorkerPool) flushRunningTaskReleaseCount(ctx context.Context, jobID st
 	defer cancel()
 
 	if err := wp.dbQueue.DecrementRunningTasksBy(flushCtx, jobID, count); err != nil {
-		log.Error().
-			Err(err).
-			Str("job_id", jobID).
-			Int("release_count", count).
-			Msg("Failed to release running task slots")
+		workerLog.Error("Failed to release running task slots",
+			"error", err,
+			"job_id", jobID,
+			"release_count", count,
+		)
 
 		// Requeue for retry on next tick
 		wp.runningTaskReleaseMu.Lock()
@@ -4049,8 +4005,8 @@ func (wp *WorkerPool) flushRunningTaskIncrements(ctx context.Context) {
 
 	for jobID, count := range snapshot {
 		if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
-			log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
-				Msg("Failed to flush running task increments, re-queuing")
+			workerLog.Warn("Failed to flush running task increments, re-queuing",
+				"error", err, "job_id", jobID, "count", count)
 			wp.runningTasksIncrMu.Lock()
 			wp.runningTasksIncrPending[jobID] += count
 			wp.runningTasksIncrMu.Unlock()
@@ -4070,8 +4026,8 @@ func (wp *WorkerPool) flushRunningTaskIncrementForJob(ctx context.Context, jobID
 	wp.runningTasksIncrMu.Unlock()
 
 	if err := wp.dbQueue.IncrementRunningTasksBy(ctx, jobID, count); err != nil {
-		log.Warn().Err(err).Str("job_id", jobID).Int("count", count).
-			Msg("Failed to flush running task increment for job, re-queuing")
+		workerLog.Warn("Failed to flush running task increment for job, re-queuing",
+			"error", err, "job_id", jobID, "count", count)
 		wp.runningTasksIncrMu.Lock()
 		wp.runningTasksIncrPending[jobID] += count
 		wp.runningTasksIncrMu.Unlock()
@@ -4125,7 +4081,7 @@ func (wp *WorkerPool) seedRunningTasksInMemFromDB(ctx context.Context) error {
 		var jobID string
 		var runningTasks int64
 		if err := rows.Scan(&jobID, &runningTasks); err != nil {
-			log.Warn().Err(err).Msg("Failed to scan running_tasks row during seeding")
+			workerLog.Warn("Failed to scan running_tasks row during seeding", "error", err)
 			continue
 		}
 		counter, exists := wp.runningTasksInMem[jobID]
@@ -4157,7 +4113,7 @@ func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 	case wp.runningTaskReleaseCh <- jobID:
 		return nil
 	default:
-		log.Debug().Str("job_id", jobID).Msg("Running task release channel full, forcing flush")
+		workerLog.Debug("Running task release channel full, forcing flush", "job_id", jobID)
 		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		wp.flushRunningTaskReleaseForJob(flushCtx, jobID)
 		flushCancel()
@@ -4166,7 +4122,7 @@ func (wp *WorkerPool) releaseRunningTaskSlot(jobID string) error {
 		case wp.runningTaskReleaseCh <- jobID:
 			return nil
 		default:
-			log.Warn().Str("job_id", jobID).Msg("Falling back to direct running_tasks decrement")
+			workerLog.Warn("Falling back to direct running_tasks decrement", "job_id", jobID)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			if err := wp.dbQueue.DecrementRunningTasksBy(ctx, jobID, 1); err != nil {
@@ -4226,7 +4182,8 @@ func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.Craw
 	jobInfo, exists := wp.jobInfoCache[task.JobID]
 	wp.jobInfoMutex.RUnlock()
 	if !exists {
-		log.Debug().Str("job_id", task.JobID).Str("task_id", task.ID).Msg("Skipping async link expansion: job info not cached")
+		workerLog.Debug("Skipping async link expansion: job info not cached",
+			"job_id", task.JobID, "task_id", task.ID)
 		return
 	}
 	if !jobInfo.FindLinks {
@@ -4255,11 +4212,11 @@ func (wp *WorkerPool) enqueueDiscoveredLinks(task *db.Task, result *crawler.Craw
 	case wp.discoveredLinkPersistCh <- request:
 	default:
 		wp.discoveredLinkPending.Add(-1)
-		log.Warn().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Int("queue_cap", cap(wp.discoveredLinkPersistCh)).
-			Msg("Discovered link queue full, skipping async expansion")
+		workerLog.Warn("Discovered link queue full, skipping async expansion",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+			"queue_cap", cap(wp.discoveredLinkPersistCh),
+		)
 	}
 }
 
@@ -4286,7 +4243,7 @@ func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
 		}
 	}
 
-	log.Info().Int("workers", discoveredLinkWorkers).Int("queue_cap", cap(wp.discoveredLinkPersistCh)).Msg("Starting discovered link workers")
+	workerLog.Info("Starting discovered link workers", "workers", discoveredLinkWorkers, "queue_cap", cap(wp.discoveredLinkPersistCh))
 	for range discoveredLinkWorkers {
 		wp.wg.Go(func() {
 			for {
@@ -4315,30 +4272,30 @@ func (wp *WorkerPool) startDiscoveredLinkPersistenceLoop(ctx context.Context) {
 // applyCrawlDelay applies robots.txt crawl delay if specified for the task's domain
 func applyCrawlDelay(task *Task) {
 	if task.CrawlDelay > 0 {
-		log.Debug().
-			Str("task_id", task.ID).
-			Str("domain", task.DomainName).
-			Int("crawl_delay_seconds", task.CrawlDelay).
-			Msg("Applying crawl delay from robots.txt")
+		workerLog.Debug("Applying crawl delay from robots.txt",
+			"task_id", task.ID,
+			"domain", task.DomainName,
+			"crawl_delay_seconds", task.CrawlDelay,
+		)
 		time.Sleep(time.Duration(task.CrawlDelay) * time.Second)
 	}
 }
 
 // processDiscoveredLinks handles link processing and enqueueing for discovered URLs.
 func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, links map[string][]string, sourceURL string) {
-	log.Debug().
-		Str("task_id", task.ID).
-		Int("total_links_found", len(links["header"])+len(links["footer"])+len(links["body"])).
-		Bool("find_links_enabled", task.FindLinks).
-		Msg("Starting link processing and priority assignment")
+	workerLog.Debug("Starting link processing and priority assignment",
+		"task_id", task.ID,
+		"total_links_found", len(links["header"])+len(links["footer"])+len(links["body"]),
+		"find_links_enabled", task.FindLinks,
+	)
 
 	// Use domain ID from task (already populated from job cache)
 	domainID := task.DomainID
 	if domainID == 0 {
-		log.Error().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Msg("Missing domain ID; skipping link processing")
+		workerLog.Error("Missing domain ID; skipping link processing",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+		)
 		return
 	}
 
@@ -4357,23 +4314,23 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 			return
 		}
 		if priority < wp.linkDiscoveryMinPriority {
-			log.Debug().
-				Str("task_id", task.ID).
-				Float64("priority", priority).
-				Float64("min_priority", wp.linkDiscoveryMinPriority).
-				Msg("Skipping discovered link persistence below priority threshold")
+			workerLog.Debug("Skipping discovered link persistence below priority threshold",
+				"task_id", task.ID,
+				"priority", priority,
+				"min_priority", wp.linkDiscoveryMinPriority,
+			)
 			return
 		}
 
 		baseURL, baseErr := url.Parse(sourceURL)
 
 		if err := ctx.Err(); err != nil {
-			log.Debug().
-				Err(err).
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Msg("Skipping discovered link processing: parent task context is done")
+			workerLog.Debug("Skipping discovered link processing: parent task context is done",
+				"error", err,
+				"job_id", task.JobID,
+				"domain", task.DomainName,
+				"task_id", task.ID,
+			)
 			return
 		}
 
@@ -4402,11 +4359,11 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 				// Check robots.txt rules
 				if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, linkURL.Path) {
 					blockedCount++
-					log.Debug().
-						Str("url", linkURL.String()).
-						Str("path", linkURL.Path).
-						Str("source", sourceURL).
-						Msg("Link blocked by robots.txt")
+					workerLog.Debug("Link blocked by robots.txt",
+						"url", linkURL.String(),
+						"path", linkURL.Path,
+						"source", sourceURL,
+					)
 					continue
 				}
 
@@ -4415,11 +4372,11 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 		}
 
 		if blockedCount > 0 {
-			log.Debug().
-				Str("task_id", task.ID).
-				Int("blocked_count", blockedCount).
-				Int("allowed_count", len(filtered)).
-				Msg("Filtered discovered links against robots.txt")
+			workerLog.Debug("Filtered discovered links against robots.txt",
+				"task_id", task.ID,
+				"blocked_count", blockedCount,
+				"allowed_count", len(filtered),
+			)
 		}
 
 		if len(filtered) == 0 {
@@ -4430,12 +4387,12 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 		if deadline, ok := ctx.Deadline(); ok {
 			remaining := time.Until(deadline)
 			if remaining <= discoveredLinksMinRemain {
-				log.Warn().
-					Str("job_id", task.JobID).
-					Str("domain", task.DomainName).
-					Str("task_id", task.ID).
-					Dur("remaining", remaining).
-					Msg("Skipping discovered link persistence: task deadline too close")
+				workerLog.Warn("Skipping discovered link persistence: task deadline too close",
+					"job_id", task.JobID,
+					"domain", task.DomainName,
+					"task_id", task.ID,
+					"remaining", remaining,
+				)
 				return
 			}
 
@@ -4445,12 +4402,12 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 			}
 		}
 		if linkCtxTimeout < discoveredLinksMinTimeout {
-			log.Warn().
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Dur("timeout", linkCtxTimeout).
-				Msg("Skipping discovered link persistence: insufficient timeout budget")
+			workerLog.Warn("Skipping discovered link persistence: insufficient timeout budget",
+				"job_id", task.JobID,
+				"domain", task.DomainName,
+				"task_id", task.ID,
+				"timeout", linkCtxTimeout,
+			)
 			return
 		}
 		// Keep request-scoped values while detaching from parent cancellation/deadline.
@@ -4460,7 +4417,7 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 		// 2. Create page records
 		pageIDs, hosts, paths, err := db.CreatePageRecords(linkCtx, wp.dbQueue, domainID, task.DomainName, filtered)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to create page records for links")
+			workerLog.Error("Failed to create page records for links", "error", err)
 			return
 		}
 
@@ -4477,24 +4434,24 @@ func (wp *WorkerPool) processDiscoveredLinks(ctx context.Context, task *Task, li
 
 		// 4. Enqueue new tasks
 		if err := wp.EnqueueURLs(linkCtx, task.JobID, pagesToEnqueue, "link", sourceURL); err != nil {
-			log.Error().Err(err).Msg("Failed to enqueue discovered links")
+			workerLog.Error("Failed to enqueue discovered links", "error", err)
 			return // Stop if enqueuing fails
 		}
 
 		// 5. Update priorities for the newly created tasks
 		if err := wp.updateTaskPriorities(linkCtx, task.JobID, domainID, priority, paths); err != nil {
-			log.Error().Err(err).Msg("Failed to update task priorities for discovered links")
+			workerLog.Error("Failed to update task priorities for discovered links", "error", err)
 		}
 	}
 
 	// Apply priorities based on page type and link category
 	if isHomepage {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from HOMEPAGE")
+		workerLog.Debug("Processing links from HOMEPAGE", "task_id", task.ID)
 		processLinkCategory(links["header"], 1.000)
 		processLinkCategory(links["footer"], 0.990)
 		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of homepage
 	} else {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from regular page")
+		workerLog.Debug("Processing links from regular page", "task_id", task.ID)
 		// For all other pages, only process body links
 		processLinkCategory(links["body"], task.PriorityScore*0.9) // Children of other pages
 	}
@@ -4517,23 +4474,14 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 			task.Status = string(TaskStatusWaiting)
 			task.StartedAt = time.Time{} // Reset started time
 			wp.recordWaitingTask(ctx, task, waitingReasonBlockingRetry)
-			log.Debug().
-				Err(taskErr).
-				Str("task_id", task.ID).
-				Int("retry_count", task.RetryCount).
-				Int("max_retries", maxRetries).
-				Msg("Blocking error (403/429/503), retry scheduled via waiting status")
+			workerLog.Debug("Blocking error (403/429/503), retry scheduled via waiting status", "error", taskErr, "task_id", task.ID, "retry_count", task.RetryCount, "max_retries", maxRetries)
 			observability.RecordWorkerTaskRetry(ctx, task.JobID, retryReason)
 		} else {
 			// Mark as permanently failed after 2 retries
 			task.Status = string(TaskStatusFailed)
 			task.CompletedAt = now
 			task.Error = taskErr.Error()
-			log.Debug().
-				Err(taskErr).
-				Str("task_id", task.ID).
-				Int("retry_count", task.RetryCount).
-				Msg("Task blocked permanently after exhausting retries")
+			workerLog.Debug("Task blocked permanently after exhausting retries", "error", taskErr, "task_id", task.ID, "retry_count", task.RetryCount)
 			wp.recordJobFailure(ctx, task.JobID, task.ID, taskErr)
 			observability.RecordWorkerTaskFailure(ctx, task.JobID, "blocking")
 		}
@@ -4546,26 +4494,26 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 		task.Status = string(TaskStatusWaiting)
 		task.StartedAt = time.Time{} // Reset started time
 		wp.recordWaitingTask(ctx, task, waitingReasonRetryableError)
-		log.Debug().
-			Err(taskErr).
-			Str("task_id", task.ID).
-			Int("retry_count", task.RetryCount).
-			Msg("Task failed with retryable error, scheduling retry via waiting status")
+		workerLog.Debug("Task failed with retryable error, scheduling retry via waiting status", "error", taskErr, "task_id", task.ID, "retry_count", task.RetryCount)
 		observability.RecordWorkerTaskRetry(ctx, task.JobID, retryReason)
 	} else {
 		// Mark as permanently failed
 		task.Status = string(TaskStatusFailed)
 		task.CompletedAt = now
 		task.Error = taskErr.Error()
-		logger := log.Error()
 		if isClientOrRedirectError(taskErr) {
-			logger = log.Debug()
+			workerLog.Debug("Task failed permanently",
+				"error", taskErr,
+				"task_id", task.ID,
+				"retry_count", task.RetryCount,
+			)
+		} else {
+			workerLog.Error("Task failed permanently",
+				"error", taskErr,
+				"task_id", task.ID,
+				"retry_count", task.RetryCount,
+			)
 		}
-		logger.
-			Err(taskErr).
-			Str("task_id", task.ID).
-			Int("retry_count", task.RetryCount).
-			Msg("Task failed permanently")
 		wp.recordJobFailure(ctx, task.JobID, task.ID, taskErr)
 		failureReason := retryReason
 		if !isBlockingError(taskErr) && !isRetryableError(taskErr) {
@@ -4581,16 +4529,16 @@ func (wp *WorkerPool) handleTaskError(ctx context.Context, task *db.Task, result
 	// Decrement in-memory counter immediately, then queue async DB decrement.
 	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
-		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
-			Msg("Failed to decrement running_tasks counter")
+		workerLog.Error("Failed to decrement running_tasks counter",
+			"error", err, "job_id", task.JobID, "task_id", task.ID)
 		// Don't return error here; failed decrements are buffered/retried and reconciliation fixes any drift
 	}
-	log.Debug().
-		Str("task_id", task.ID).
-		Str("job_id", task.JobID).
-		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
-		Str("final_status", task.Status).
-		Msg("Released task slot after task error")
+	workerLog.Debug("Released task slot after task error",
+		"task_id", task.ID,
+		"job_id", task.JobID,
+		"running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID),
+		"final_status", task.Status,
+	)
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
@@ -4608,10 +4556,11 @@ func (wp *WorkerPool) populateRequestDiagnostics(task *db.Task, result *crawler.
 		if json.Valid(diagnosticsBytes) {
 			task.RequestDiagnostics = diagnosticsBytes
 		} else {
-			log.Warn().Str("task_id", task.ID).Msg("Request diagnostics produced invalid JSON, using empty object")
+			workerLog.Warn("Request diagnostics produced invalid JSON, using empty object", "task_id", task.ID)
 		}
 	} else {
-		log.Error().Err(err).Str("task_id", task.ID).Interface("request_diagnostics", result.RequestDiagnostics).Msg("Failed to marshal request diagnostics")
+		workerLog.Error("Failed to marshal request diagnostics",
+			"error", err, "task_id", task.ID, "request_diagnostics", result.RequestDiagnostics)
 	}
 }
 
@@ -4715,7 +4664,7 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 
 	workerCount := wp.taskHTMLWorkerCount
 	pressureThreshold := cap(wp.taskHTMLPersistCh) / 2
-	log.Info().Int("workers", workerCount).Int("pressure_threshold", pressureThreshold).Msg("Starting HTML persistence workers")
+	workerLog.Info("Starting HTML persistence workers", "workers", workerCount, "pressure_threshold", pressureThreshold)
 	for range workerCount {
 		wp.wg.Go(func() {
 			wp.taskHTMLPersistenceWorker(ctx)
@@ -4731,12 +4680,12 @@ func (wp *WorkerPool) startTaskHTMLPersistenceLoop(ctx context.Context) {
 			case <-ticker.C:
 				depth := len(wp.taskHTMLPersistCh)
 				if depth > pressureThreshold {
-					log.Warn().
-						Int("queue_depth", depth).
-						Int("queue_cap", cap(wp.taskHTMLPersistCh)).
-						Int("workers", workerCount).
-						Int("pending", int(wp.taskHTMLPending.Load())).
-						Msg("HTML persistence queue pressure")
+					workerLog.Warn("HTML persistence queue pressure",
+						"queue_depth", depth,
+						"queue_cap", cap(wp.taskHTMLPersistCh),
+						"workers", workerCount,
+						"pending", int(wp.taskHTMLPending.Load()),
+					)
 				}
 			case <-wp.stopCh:
 				return
@@ -4794,12 +4743,12 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 	// len(ch) is a non-blocking approximation; the select below handles the
 	// race where the queue fills between this check and the actual send.
 	if len(wp.taskHTMLPersistCh) >= cap(wp.taskHTMLPersistCh) {
-		log.Warn().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
-			Int("workers", wp.taskHTMLWorkerCount).
-			Msg("HTML persistence queue full, skipping upload")
+		workerLog.Warn("HTML persistence queue full, skipping upload",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+			"queue_cap", cap(wp.taskHTMLPersistCh),
+			"workers", wp.taskHTMLWorkerCount,
+		)
 		return
 	}
 
@@ -4814,12 +4763,12 @@ func (wp *WorkerPool) persistTaskHTML(ctx context.Context, task *db.Task, result
 	default:
 		// Queue filled in the race window between len check and send.
 		wp.taskHTMLPending.Add(-1)
-		log.Warn().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Int("queue_cap", cap(wp.taskHTMLPersistCh)).
-			Int("workers", wp.taskHTMLWorkerCount).
-			Msg("HTML persistence queue full, skipping upload")
+		workerLog.Warn("HTML persistence queue full, skipping upload",
+			"task_id", task.ID,
+			"job_id", task.JobID,
+			"queue_cap", cap(wp.taskHTMLPersistCh),
+			"workers", wp.taskHTMLWorkerCount,
+		)
 	}
 }
 
@@ -4833,7 +4782,7 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 	result := &crawler.CrawlResult{ContentType: request.ContentType, Body: request.Body}
 	upload, ok, err := buildTaskHTMLUpload(&request.Task, result, request.CapturedAt)
 	if err != nil {
-		log.Warn().Err(err).Str("task_id", request.Task.ID).Msg("Failed to prepare task HTML for storage")
+		workerLog.Warn("Failed to prepare task HTML for storage", "error", err, "task_id", request.Task.ID)
 		return
 	}
 	if !ok {
@@ -4847,7 +4796,8 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 		ContentType:     upload.UploadContentType,
 		ContentEncoding: upload.ContentEncoding,
 	}); err != nil {
-		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to upload task HTML to storage")
+		workerLog.Warn("Failed to upload task HTML to storage",
+			"error", err, "task_id", request.Task.ID, "job_id", request.Task.JobID)
 		return
 	}
 
@@ -4892,24 +4842,27 @@ func (wp *WorkerPool) processTaskHTMLPersistence(ctx context.Context, request *t
 
 	if err != nil {
 		if sawNotReady && errors.Is(err, context.DeadlineExceeded) {
-			log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Task HTML metadata still not ready after retries; leaving uploaded object in storage")
+			workerLog.Warn("Task HTML metadata still not ready after retries; leaving uploaded object in storage",
+				"error", err, "task_id", request.Task.ID, "job_id", request.Task.JobID)
 			return
 		}
 		cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cleanupCancel()
 		if deleteErr := wp.storageClient.Delete(cleanupCtx, upload.Bucket, upload.Path); deleteErr != nil {
-			log.Warn().Err(deleteErr).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to clean up uploaded task HTML after metadata persistence failure")
+			workerLog.Warn("Failed to clean up uploaded task HTML after metadata persistence failure",
+				"error", deleteErr, "task_id", request.Task.ID, "job_id", request.Task.JobID)
 		}
-		log.Warn().Err(err).Str("task_id", request.Task.ID).Str("job_id", request.Task.JobID).Msg("Failed to persist task HTML metadata")
+		workerLog.Warn("Failed to persist task HTML metadata",
+			"error", err, "task_id", request.Task.ID, "job_id", request.Task.JobID)
 		return
 	}
 
-	log.Debug().
-		Str("task_id", request.Task.ID).
-		Str("job_id", request.Task.JobID).
-		Int64("html_size_bytes", upload.SizeBytes).
-		Int64("html_compressed_size_bytes", upload.CompressedSizeBytes).
-		Msg("Stored task HTML in storage")
+	workerLog.Debug("Stored task HTML in storage",
+		"task_id", request.Task.ID,
+		"job_id", request.Task.JobID,
+		"html_size_bytes", upload.SizeBytes,
+		"html_compressed_size_bytes", upload.CompressedSizeBytes,
+	)
 }
 
 // handleTaskSuccess processes successful task completion with metrics and database updates
@@ -4964,10 +4917,11 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			if json.Valid(headerBytes) {
 				task.Headers = headerBytes
 			} else {
-				log.Warn().Str("task_id", task.ID).Msg("Headers produced invalid JSON, using empty object")
+				workerLog.Warn("Headers produced invalid JSON, using empty object", "task_id", task.ID)
 			}
 		} else {
-			log.Error().Err(err).Str("task_id", task.ID).Interface("headers", result.Headers).Msg("Failed to marshal headers")
+			workerLog.Error("Failed to marshal headers",
+				"error", err, "task_id", task.ID, "headers", result.Headers)
 		}
 	}
 
@@ -4977,10 +4931,11 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			if json.Valid(secondHeaderBytes) {
 				task.SecondHeaders = secondHeaderBytes
 			} else {
-				log.Warn().Str("task_id", task.ID).Msg("Second headers produced invalid JSON, using empty object")
+				workerLog.Warn("Second headers produced invalid JSON, using empty object", "task_id", task.ID)
 			}
 		} else {
-			log.Error().Err(err).Str("task_id", task.ID).Interface("second_headers", result.SecondHeaders).Msg("Failed to marshal second headers")
+			workerLog.Error("Failed to marshal second headers",
+				"error", err, "task_id", task.ID, "second_headers", result.SecondHeaders)
 		}
 	}
 
@@ -4990,10 +4945,11 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 			if json.Valid(attemptsBytes) {
 				task.CacheCheckAttempts = attemptsBytes
 			} else {
-				log.Warn().Str("task_id", task.ID).Msg("Cache check attempts produced invalid JSON, using empty array")
+				workerLog.Warn("Cache check attempts produced invalid JSON, using empty array", "task_id", task.ID)
 			}
 		} else {
-			log.Error().Err(err).Str("task_id", task.ID).Interface("cache_attempts", result.CacheCheckAttempts).Msg("Failed to marshal cache check attempts")
+			workerLog.Error("Failed to marshal cache check attempts",
+				"error", err, "task_id", task.ID, "cache_attempts", result.CacheCheckAttempts)
 		}
 	}
 
@@ -5002,16 +4958,16 @@ func (wp *WorkerPool) handleTaskSuccess(ctx context.Context, task *db.Task, resu
 	// Decrement in-memory counter immediately, then queue async DB decrement.
 	wp.decrementRunningTaskInMem(task.JobID)
 	if err := wp.releaseRunningTaskSlot(task.JobID); err != nil {
-		log.Error().Err(err).Str("job_id", task.JobID).Str("task_id", task.ID).
-			Msg("Failed to decrement running_tasks counter")
+		workerLog.Error("Failed to decrement running_tasks counter",
+			"error", err, "job_id", task.JobID, "task_id", task.ID)
 		// Don't return error here; failed decrements are buffered/retried and reconciliation keeps counters accurate
 	}
-	log.Debug().
-		Str("task_id", task.ID).
-		Str("job_id", task.JobID).
-		Int64("running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID)).
-		Str("final_status", task.Status).
-		Msg("Released task slot after task success")
+	workerLog.Debug("Released task slot after task success",
+		"task_id", task.ID,
+		"job_id", task.JobID,
+		"running_tasks_in_mem", wp.runningTasksInMemValue(task.JobID),
+		"final_status", task.Status,
+	)
 
 	// Queue task update for batch processing (detailed field updates)
 	wp.batchManager.QueueTaskUpdate(task)
@@ -5053,7 +5009,7 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 	wp.jobInfoMutex.RUnlock()
 
 	if !exists || jobInfo.DomainID == 0 {
-		log.Debug().Str("job_id", task.JobID).Msg("No job info cached for technology detection")
+		workerLog.Debug("No job info cached for technology detection", "job_id", task.JobID)
 		return
 	}
 
@@ -5085,28 +5041,23 @@ func (wp *WorkerPool) detectTechnologies(ctx context.Context, task *db.Task, res
 	// Marshal technologies and headers for storage
 	techJSON, err := detectResult.TechnologiesJSON()
 	if err != nil {
-		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to marshal technologies")
+		workerLog.Error("Failed to marshal technologies", "error", err, "domain_id", domainID)
 		return
 	}
 
 	headersJSON, err := detectResult.HeadersJSON()
 	if err != nil {
-		log.Error().Err(err).Int("domain_id", domainID).Msg("Failed to marshal headers")
+		workerLog.Error("Failed to marshal headers", "error", err, "domain_id", domainID)
 		return
 	}
 
 	// Update domain with detection results
 	if err := wp.dbQueue.UpdateDomainTechnologies(ctx, domainID, techJSON, headersJSON, ""); err != nil {
-		log.Warn().Err(err).Int("domain_id", domainID).Msg("Failed to update domain technologies")
+		workerLog.Warn("Failed to update domain technologies", "error", err, "domain_id", domainID)
 		return
 	}
 
-	log.Info().
-		Int("domain_id", domainID).
-		Str("domain", domainName).
-		Int("tech_count", len(detectResult.Technologies)).
-		Interface("technologies", detectResult.Technologies).
-		Msg("Technology detection completed")
+	workerLog.Info("Technology detection completed", "domain_id", domainID, "domain", domainName, "tech_count", len(detectResult.Technologies), "technologies", detectResult.Technologies)
 }
 
 func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.CrawlResult, error) {
@@ -5148,7 +5099,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 	// Construct a proper URL for processing
 	urlStr := constructTaskURL(task.Path, task.Host, task.DomainName)
 
-	log.Debug().Str("url", urlStr).Str("task_id", task.ID).Msg("Starting URL warm")
+	workerLog.Debug("Starting URL warm", "url", urlStr, "task_id", task.ID)
 
 	limiter := wp.ensureDomainLimiter()
 	permit, acquired := limiter.TryAcquire(DomainRequest{
@@ -5187,16 +5138,12 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 		if !rateLimited {
 			rateLimited = IsRateLimitError(err)
 		}
-		log.Debug().Err(err).
-			Str("task_id", task.ID).
-			Bool("rate_limited", rateLimited).
-			Int("status_code", func() int {
-				if result != nil {
-					return result.StatusCode
-				}
-				return 0
-			}()).
-			Msg("Crawler failed")
+		workerLog.Debug("Crawler failed", "error", err, "task_id", task.ID, "rate_limited", rateLimited, "status_code", func() int {
+			if result != nil {
+				return result.StatusCode
+			}
+			return 0
+		}())
 		permit.Release(false, rateLimited)
 		released = true
 		return result, fmt.Errorf("crawler error: %w", err)
@@ -5213,12 +5160,7 @@ func (wp *WorkerPool) processTask(ctx context.Context, task *Task) (*crawler.Cra
 	}
 	span.SetStatus(codes.Ok, "completed")
 
-	log.Debug().
-		Int("status_code", result.StatusCode).
-		Str("task_id", task.ID).
-		Int("links_found", len(result.Links)).
-		Str("content_type", result.ContentType).
-		Msg("Crawler completed")
+	workerLog.Debug("Crawler completed", "status_code", result.StatusCode, "task_id", task.ID, "links_found", len(result.Links), "content_type", result.ContentType)
 
 	return result, nil
 }
@@ -5429,11 +5371,7 @@ func (wp *WorkerPool) updateTaskPriorities(ctx context.Context, jobID string, do
 	}
 
 	if skip, wait := wp.shouldThrottlePriorityUpdate(jobID, newPriority); skip {
-		log.Debug().
-			Str("job_id", jobID).
-			Float64("priority", newPriority).
-			Dur("cooldown_remaining", wait).
-			Msg("Debounced priority update")
+		workerLog.Debug("Debounced priority update", "job_id", jobID, "priority", newPriority, "cooldown_remaining", wait)
 		return nil
 	}
 
@@ -5486,17 +5424,9 @@ func (wp *WorkerPool) updateTaskPriorities(ctx context.Context, jobID string, do
 	}
 
 	if rowsAffected > 0 {
-		log.Debug().
-			Str("job_id", jobID).
-			Int64("tasks_updated", rowsAffected).
-			Float64("new_priority", newPriority).
-			Msg("Updated task priorities for discovered links")
+		workerLog.Debug("Updated task priorities for discovered links", "job_id", jobID, "tasks_updated", rowsAffected, "new_priority", newPriority)
 	} else {
-		log.Debug().
-			Str("job_id", jobID).
-			Float64("priority", newPriority).
-			Int("paths", len(uniquePaths)).
-			Msg("Priority update skipped (no lower-priority tasks found)")
+		workerLog.Debug("Priority update skipped (no lower-priority tasks found)", "job_id", jobID, "priority", newPriority, "paths", len(uniquePaths))
 	}
 
 	return nil
@@ -5591,15 +5521,7 @@ func (wp *WorkerPool) evaluateJobPerformance(jobID string, responseTime int64) {
 
 	clamped := neededBoost > oldBoost && actualBoost == oldBoost
 
-	log.Debug().
-		Str("job_id", jobID).
-		Int64("avg_response_time", avgResponseTime).
-		Int("requested_boost", neededBoost).
-		Int("old_boost", oldBoost).
-		Int("new_boost", actualBoost).
-		Bool("recently_blocked", recentBlocking).
-		Bool("clamped_by_concurrency", clamped).
-		Msg("Job performance scaling evaluated")
+	workerLog.Debug("Job performance scaling evaluated", "job_id", jobID, "avg_response_time", avgResponseTime, "requested_boost", neededBoost, "old_boost", oldBoost, "new_boost", actualBoost, "recently_blocked", recentBlocking, "clamped_by_concurrency", clamped)
 
 	wp.perfMutex.Lock()
 	if perf, exists := wp.jobPerformance[jobID]; exists {
@@ -5639,7 +5561,7 @@ func (wp *WorkerPool) listenForNotifications(ctx context.Context) {
 
 	conn, err = connect()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to connect for notifications initially")
+		workerLog.Error("Failed to connect for notifications initially", "error", err)
 		return
 	}
 	defer conn.Close(ctx)
@@ -5647,10 +5569,10 @@ func (wp *WorkerPool) listenForNotifications(ctx context.Context) {
 	for {
 		select {
 		case <-wp.stopCh:
-			log.Debug().Msg("Notification listener received stop signal.")
+			workerLog.Debug("Notification listener received stop signal")
 			return
 		case <-ctx.Done():
-			log.Debug().Msg("Notification listener context cancelled.")
+			workerLog.Debug("Notification listener context cancelled")
 			return
 		default:
 			// Non-blocking check for stop signal before waiting for notification
@@ -5661,19 +5583,19 @@ func (wp *WorkerPool) listenForNotifications(ctx context.Context) {
 			if ctx.Err() != nil || wp.stopping.Load() {
 				return // Context cancelled or pool is stopping
 			}
-			log.Warn().Err(err).Msg("Error waiting for notification, reconnecting...")
+			workerLog.Warn("Error waiting for notification, reconnecting", "error", err)
 			_ = conn.Close(ctx)
 			time.Sleep(5 * time.Second) // Wait before reconnecting
 
 			conn, err = connect()
 			if err != nil {
-				log.Warn().Err(err).Msg("Failed to reconnect for notifications")
+				workerLog.Warn("Failed to reconnect for notifications", "error", err)
 				continue
 			}
 			continue
 		}
 
-		log.Debug().Str("channel", notification.Channel).Msg("Received database notification")
+		workerLog.Debug("Received database notification", "channel", notification.Channel)
 		// Notify workers of new tasks (non-blocking)
 		select {
 		case wp.notifyCh <- struct{}{}:

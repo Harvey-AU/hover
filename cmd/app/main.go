@@ -20,15 +20,16 @@ import (
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/loops"
 	"github.com/Harvey-AU/hover/internal/notifications"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/getsentry/sentry-go"
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
 )
+
+var startupLog = logging.Component("startup")
 
 const (
 	schedulerTickInterval   = 30 * time.Second
@@ -55,17 +56,17 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
 
-	log.Info().Msg("Job scheduler started")
+	startupLog.Info("Job scheduler started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Job scheduler stopped")
+			startupLog.Info("Job scheduler stopped")
 			return
 		case <-ticker.C:
 			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, schedulerBatchSize)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to get schedulers ready to run")
+				startupLog.Error("Failed to get schedulers ready to run", "error", err)
 				continue
 			}
 
@@ -77,21 +78,21 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 
 			domainNames, err := pgDB.GetDomainNames(ctx, domainIDs)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to get domain names for schedulers")
+				startupLog.Error("Failed to get domain names for schedulers", "error", err)
 				continue
 			}
 
 			for _, scheduler := range schedulers {
 				domainName, ok := domainNames[scheduler.DomainID]
 				if !ok {
-					log.Warn().Int("domain_id", scheduler.DomainID).Str("scheduler_id", scheduler.ID).Msg("Domain name not found")
+					startupLog.Warn("Domain name not found", "domain_id", scheduler.DomainID, "scheduler_id", scheduler.ID)
 					continue
 				}
 
 				// Check if a job started too recently (within half the schedule interval)
 				lastJobStart, err := pgDB.GetLastJobStartTimeForScheduler(ctx, scheduler.ID)
 				if err != nil {
-					log.Error().Err(err).Str("scheduler_id", scheduler.ID).Msg("Failed to get last job start time")
+					startupLog.Error("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
@@ -100,17 +101,17 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 					timeSinceLastJob := time.Since(*lastJobStart)
 
 					if timeSinceLastJob < minInterval {
-						log.Info().
-							Str("scheduler_id", scheduler.ID).
-							Str("domain", domainName).
-							Dur("time_since_last_job", timeSinceLastJob).
-							Dur("minimum_interval", minInterval).
-							Msg("Skipping scheduled job - last job started too recently")
+						startupLog.Info("Skipping scheduled job - last job started too recently",
+							"scheduler_id", scheduler.ID,
+							"domain", domainName,
+							"time_since_last_job", timeSinceLastJob,
+							"minimum_interval", minInterval,
+						)
 
 						// Update next_run_at to the next valid time slot
 						nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 						if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-							log.Error().Err(err).Str("scheduler_id", scheduler.ID).Msg("Failed to update scheduler next run")
+							startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 						}
 						continue
 					}
@@ -137,21 +138,21 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 				// Create job (standard flow)
 				job, err := jobsManager.CreateJob(ctx, opts)
 				if err != nil {
-					log.Error().Err(err).Str("scheduler_id", scheduler.ID).Msg("Failed to create scheduled job")
+					startupLog.Error("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
 				// Update scheduler next_run_at
 				nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 				if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-					log.Error().Err(err).Str("scheduler_id", scheduler.ID).Msg("Failed to update scheduler next run")
+					startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 				} else {
-					log.Info().
-						Str("scheduler_id", scheduler.ID).
-						Str("job_id", job.ID).
-						Str("domain", domainName).
-						Time("next_run_at", nextRun).
-						Msg("Created scheduled job")
+					startupLog.Info("Created scheduled job",
+						"scheduler_id", scheduler.ID,
+						"job_id", job.ID,
+						"domain", domainName,
+						"next_run_at", nextRun,
+					)
 				}
 			}
 		}
@@ -180,8 +181,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 			RETURNING id
 		`)
 		if err != nil {
-			sentry.CaptureException(err)
-			log.Error().Err(err).Msg("Failed to update completed jobs")
+			startupLog.Error("Failed to update completed jobs", "error", err)
 			return
 		}
 		defer rows.Close()
@@ -189,7 +189,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 		for rows.Next() {
 			var jobID string
 			if err := rows.Scan(&jobID); err == nil {
-				log.Info().Str("job_id", jobID).Msg("Job marked as completed")
+				startupLog.Info("Job marked as completed", "job_id", jobID)
 			}
 		}
 	}
@@ -207,7 +207,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 		`).Scan(&totalStuckJobs)
 
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to count stuck jobs")
+			startupLog.Error("Failed to count stuck jobs", "error", err)
 		}
 
 		// Get sample of stuck jobs for details
@@ -230,7 +230,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				LIMIT 10
 			`)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to query stuck jobs sample")
+				startupLog.Error("Failed to query stuck jobs sample", "error", err)
 			} else {
 				defer stuckJobRows.Close()
 				for stuckJobRows.Next() {
@@ -248,25 +248,13 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				jobIDs[i] = job.ID
 			}
 
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetLevel(sentry.LevelWarning)
-				scope.SetTag("event_type", "stuck_jobs")
-				scope.SetContext("stuck_jobs", map[string]any{
-					"total_count":  totalStuckJobs,
-					"sample_count": len(stuckJobs),
-					"job_ids":      jobIDs,
-					"oldest_job":   stuckJobs[0].ID,
-					"started_at":   stuckJobs[0].StartedAt,
-					"sample_jobs":  stuckJobs,
-				})
-				sentry.CaptureMessage(fmt.Sprintf("Found %d stuck jobs with 0%% progress (showing %d samples)", totalStuckJobs, len(stuckJobs)))
-			})
-
-			log.Warn().
-				Int("total_stuck_jobs", totalStuckJobs).
-				Int("sample_count", len(stuckJobs)).
-				Strs("sample_job_ids", jobIDs).
-				Msg("CRITICAL: Jobs stuck without progress for >15 minutes")
+			startupLog.Error("CRITICAL: Jobs stuck without progress for >15 minutes",
+				"total_stuck_jobs", totalStuckJobs,
+				"sample_count", len(stuckJobs),
+				"sample_job_ids", jobIDs,
+				"oldest_job", stuckJobs[0].ID,
+				"oldest_started_at", stuckJobs[0].StartedAt,
+			)
 		}
 
 		// Check for stuck tasks - get total counts first
@@ -281,7 +269,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 		`).Scan(&totalStuckTasks, &totalAffectedJobs)
 
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to count stuck tasks")
+			startupLog.Error("Failed to count stuck tasks", "error", err)
 		}
 
 		// Get sample of stuck tasks for details
@@ -305,7 +293,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				LIMIT 20
 			`)
 			if err != nil {
-				log.Error().Err(err).Msg("Failed to query stuck tasks sample")
+				startupLog.Error("Failed to query stuck tasks sample", "error", err)
 			} else {
 				defer stuckTaskRows.Close()
 				for stuckTaskRows.Next() {
@@ -328,42 +316,27 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 				sampleJobIDs = append(sampleJobIDs, jobID)
 			}
 
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetLevel(sentry.LevelWarning)
-				scope.SetTag("event_type", "stuck_tasks")
-				scope.SetContext("stuck_tasks", map[string]any{
-					"total_tasks":       totalStuckTasks,
-					"total_jobs":        totalAffectedJobs,
-					"sample_task_count": len(stuckTasks),
-					"sample_job_count":  len(sampleJobIDs),
-					"sample_job_ids":    sampleJobIDs,
-					"oldest_task":       stuckTasks[0].ID,
-					"oldest_at":         stuckTasks[0].StartedAt,
-					"sample_tasks":      stuckTasks[:minInt(5, len(stuckTasks))],
-				})
-				sentry.CaptureMessage(fmt.Sprintf("Found %d stuck tasks across %d jobs (showing %d task samples)", totalStuckTasks, totalAffectedJobs, len(stuckTasks)))
-			})
-
-			log.Warn().
-				Int("total_stuck_tasks", totalStuckTasks).
-				Int("total_affected_jobs", totalAffectedJobs).
-				Int("sample_task_count", len(stuckTasks)).
-				Int("sample_job_count", len(sampleJobIDs)).
-				Strs("sample_job_ids", sampleJobIDs).
-				Time("oldest_stuck_at", stuckTasks[0].StartedAt).
-				Msg("CRITICAL: Tasks stuck in running state for >3 minutes")
+			startupLog.Error("CRITICAL: Tasks stuck in running state for >3 minutes",
+				"total_stuck_tasks", totalStuckTasks,
+				"total_affected_jobs", totalAffectedJobs,
+				"sample_task_count", len(stuckTasks),
+				"sample_job_count", len(sampleJobIDs),
+				"sample_job_ids", sampleJobIDs,
+				"oldest_task", stuckTasks[0].ID,
+				"oldest_stuck_at", stuckTasks[0].StartedAt,
+			)
 		}
 	}
 
 	// Run initial checks
 	checkJobCompletion()
 
-	log.Info().Msg("Health monitoring started")
+	startupLog.Info("Health monitoring started")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Health monitoring stopped")
+			startupLog.Info("Health monitoring stopped")
 			return
 		case <-completionTicker.C:
 			checkJobCompletion()
@@ -395,7 +368,7 @@ func main() {
 
 	// Load .env files - .env.local takes priority for development
 	if err := godotenv.Load(".env.local", ".env"); err != nil {
-		log.Debug().Err(err).Msg("Notice: .env files not loaded (expected in some environments)")
+		startupLog.Debug("Notice: .env files not loaded (expected in some environments)", "error", err)
 	}
 
 	// Determine log level: command line flag takes priority over environment variable
@@ -422,21 +395,21 @@ func main() {
 	if config.FlightRecorderEnabled {
 		f, err := os.Create("trace.out")
 		if err != nil {
-			log.Fatal().Err(err).Msg("failed to create trace file")
+			startupLog.Fatal("failed to create trace file", "error", err)
 		}
 
 		if err := trace.Start(f); err != nil {
-			log.Fatal().Err(err).Msg("failed to start flight recorder")
+			startupLog.Fatal("failed to start flight recorder", "error", err)
 		}
-		log.Info().Msg("Flight recorder enabled, writing to trace.out")
+		startupLog.Info("Flight recorder enabled, writing to trace.out")
 
 		// Defer closing the trace and the file to the shutdown sequence
 		defer func() {
 			trace.Stop()
 			if err := f.Close(); err != nil {
-				log.Error().Err(err).Msg("failed to close trace file")
+				startupLog.Error("failed to close trace file", "error", err)
 			}
-			log.Info().Msg("Flight recorder stopped and trace file closed.")
+			startupLog.Info("Flight recorder stopped and trace file closed.")
 		}()
 	}
 
@@ -457,16 +430,17 @@ func main() {
 			}(),
 			AttachStacktrace: true,
 			Debug:            config.Env == "development",
+			BeforeSend:       logging.BeforeSend,
 		})
 		if err != nil {
-			log.Warn().Err(err).Msg("Failed to initialise Sentry")
+			startupLog.Warn("Failed to initialise Sentry", "error", err)
 		} else {
-			log.Info().Str("environment", config.Env).Msg("Sentry initialised successfully")
+			startupLog.Info("Sentry initialised successfully", "environment", config.Env)
 			// Ensure Sentry flushes before application exits
 			defer sentry.Flush(2 * time.Second)
 		}
 	} else {
-		log.Warn().Msg("Sentry DSN not configured, error tracking disabled")
+		startupLog.Warn("Sentry DSN not configured, error tracking disabled")
 	}
 
 	var (
@@ -485,13 +459,13 @@ func main() {
 			MetricsAddress: config.MetricsAddr,
 		})
 		if err != nil {
-			log.Warn().Err(err).Msg("Failed to initialise observability providers")
+			startupLog.Warn("Failed to initialise observability providers", "error", err)
 		} else {
 			defer func() {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := obsProviders.Shutdown(shutdownCtx); err != nil {
-					log.Warn().Err(err).Msg("Failed to flush telemetry providers cleanly")
+					startupLog.Warn("Failed to flush telemetry providers cleanly", "error", err)
 				}
 			}()
 
@@ -503,10 +477,9 @@ func main() {
 				}
 
 				go func() {
-					log.Info().Str("addr", config.MetricsAddr).Msg("Metrics server listening")
+					startupLog.Info("Metrics server listening", "addr", config.MetricsAddr)
 					if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						sentry.CaptureException(err)
-						log.Error().Err(err).Msg("Metrics server failed")
+						startupLog.Error("Metrics server failed", "error", err)
 					}
 				}()
 
@@ -514,7 +487,7 @@ func main() {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
 					if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						log.Warn().Err(err).Msg("Graceful shutdown of metrics server failed")
+						startupLog.Warn("Graceful shutdown of metrics server failed", "error", err)
 					}
 				}()
 			}
@@ -530,21 +503,20 @@ func main() {
 
 	pgDB, err := db.WaitForDatabase(dbCtx, 5*time.Minute)
 	if err != nil {
-		sentry.CaptureException(err)
-		log.Fatal().Err(err).Msg("Failed to connect to PostgreSQL database")
+		startupLog.Fatal("Failed to connect to PostgreSQL database", "error", err)
 	}
 	// Defer DB close - will execute AFTER worker pool stops due to defer LIFO order
 	defer func() {
-		log.Info().Msg("Closing database connections")
+		startupLog.Info("Closing database connections")
 		// Give connections time to drain gracefully
 		time.Sleep(1 * time.Second)
 		if err := pgDB.Close(); err != nil {
-			log.Error().Err(err).Msg("Error closing database")
+			startupLog.Error("Error closing database", "error", err)
 		}
-		log.Info().Msg("Database closed")
+		startupLog.Info("Database closed")
 	}()
 
-	log.Info().Msg("Connected to PostgreSQL database")
+	startupLog.Info("Connected to PostgreSQL database")
 
 	queueDB := pgDB
 	if queueURL := strings.TrimSpace(os.Getenv("DATABASE_QUEUE_URL")); queueURL != "" {
@@ -555,21 +527,20 @@ func main() {
 
 		queueConn, err := db.InitFromURLWithSuffixRetry(queueCtx, queueURL, appEnv, "queue")
 		if err != nil {
-			sentry.CaptureException(err)
-			log.Fatal().Err(err).Msg("Failed to connect to queue PostgreSQL database")
+			startupLog.Fatal("Failed to connect to queue PostgreSQL database", "error", err)
 		}
 
 		defer func() {
-			log.Info().Msg("Closing queue database connections")
+			startupLog.Info("Closing queue database connections")
 			time.Sleep(500 * time.Millisecond)
 			if err := queueConn.Close(); err != nil {
-				log.Error().Err(err).Msg("Error closing queue database")
+				startupLog.Error("Error closing queue database", "error", err)
 			}
-			log.Info().Msg("Queue database closed")
+			startupLog.Info("Queue database closed")
 		}()
 
 		queueDB = queueConn
-		log.Info().Msg("Queue database connection established")
+		startupLog.Info("Queue database connection established")
 	}
 
 	// Initialise crawler
@@ -610,25 +581,25 @@ func main() {
 			safeWorkers := max(availablePoolSlots/workerConcurrency, 1)
 
 			if safeWorkers < jobWorkers {
-				log.Warn().
-					Int("configured_workers", jobWorkers).
-					Int("capped_workers", safeWorkers).
-					Int("db_max_open", cfg.MaxOpenConns).
-					Int("reserved_connections", reservedConnections).
-					Int("worker_concurrency", workerConcurrency).
-					Msg("Capping staging workers to fit database pool capacity")
+				startupLog.Warn("Capping staging workers to fit database pool capacity",
+					"configured_workers", jobWorkers,
+					"capped_workers", safeWorkers,
+					"db_max_open", cfg.MaxOpenConns,
+					"reserved_connections", reservedConnections,
+					"worker_concurrency", workerConcurrency,
+				)
 				jobWorkers = safeWorkers
 			}
 		}
 	}
 
 	totalCapacity := jobWorkers * workerConcurrency
-	log.Info().
-		Int("workers", jobWorkers).
-		Int("concurrency_per_worker", workerConcurrency).
-		Int("total_capacity", totalCapacity).
-		Str("environment", appEnv).
-		Msg("Configuring worker pool")
+	startupLog.Info("Configuring worker pool",
+		"workers", jobWorkers,
+		"concurrency_per_worker", workerConcurrency,
+		"total_capacity", totalCapacity,
+		"environment", appEnv,
+	)
 
 	workerPool := jobs.NewWorkerPool(pgDB.GetDB(), dbQueue, cr, jobWorkers, workerConcurrency, pgDB.GetConfig())
 
@@ -642,10 +613,10 @@ func main() {
 	notificationService := notifications.NewService(pgDB)
 	slackChannel, err := notifications.NewSlackChannel(pgDB)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to create Slack channel - notifications disabled")
+		startupLog.Warn("Failed to create Slack channel - notifications disabled", "error", err)
 	} else {
 		notificationService.AddChannel(slackChannel)
-		log.Info().Msg("Slack notification channel enabled")
+		startupLog.Info("Slack notification channel enabled")
 	}
 
 	// Create context for background goroutines that need graceful shutdown
@@ -662,16 +633,16 @@ func main() {
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if googleClientID == "" || googleClientSecret == "" {
-		log.Info().Msg("GA4 integration unavailable: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not configured")
+		startupLog.Info("GA4 integration unavailable: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not configured")
 	}
 
 	// Initialise Loops email client (nil-safe for dev environments)
 	var loopsClient *loops.Client
 	if loopsAPIKey := os.Getenv("LOOPS_API_KEY"); loopsAPIKey != "" {
 		loopsClient = loops.New(loopsAPIKey)
-		log.Info().Msg("Loops email client initialised")
+		startupLog.Info("Loops email client initialised")
 	} else {
-		log.Info().Msg("Loops email client unavailable: LOOPS_API_KEY not configured")
+		startupLog.Info("Loops email client unavailable: LOOPS_API_KEY not configured")
 	}
 
 	// Create API handler with dependencies
@@ -738,15 +709,15 @@ func main() {
 	serverErrCh := make(chan error, 1)
 
 	go func() {
-		log.Info().Str("port", config.Port).Msg("Starting server")
+		startupLog.Info("Starting server", "port", config.Port)
 
 		baseURL := fmt.Sprintf("http://localhost:%s", config.Port)
-		log.Info().Msg("🚀 Hover Development Server Ready!")
-		log.Info().Str("homepage", baseURL).Msg("📱 Open Homepage")
-		log.Info().Str("dashboard", baseURL+"/dashboard").Msg("📊 Open Dashboard")
-		log.Info().Str("health", baseURL+"/health").Msg("🔍 Health Check")
+		startupLog.Info("Hover Development Server Ready!")
+		startupLog.Info("Open Homepage", "homepage", baseURL)
+		startupLog.Info("Open Dashboard", "dashboard", baseURL+"/dashboard")
+		startupLog.Info("Health Check", "health", baseURL+"/health")
 		if config.Env == "development" {
-			log.Info().Str("supabase_studio", "http://localhost:54323").Msg("🗄️  Open Supabase Studio")
+			startupLog.Info("Open Supabase Studio", "supabase_studio", "http://localhost:54323")
 		}
 
 		if err := server.ListenAndServe(); err != nil {
@@ -758,14 +729,13 @@ func main() {
 
 	go func() {
 		<-stop
-		log.Info().Msg("Shutting down server...")
+		startupLog.Info("Shutting down server...")
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 
 		if err := server.Shutdown(ctx); err != nil {
-			sentry.CaptureException(err)
-			log.Error().Err(err).Msg("Server forced to shutdown")
+			startupLog.Error("Server forced to shutdown", "error", err)
 		}
 
 		close(done)
@@ -775,9 +745,9 @@ func main() {
 	workerPool.Start(context.Background())
 	// Defer worker pool stop - will execute BEFORE database close due to defer LIFO order
 	defer func() {
-		log.Info().Msg("Stopping worker pool (waiting for in-flight tasks to complete)")
+		startupLog.Info("Stopping worker pool (waiting for in-flight tasks to complete)")
 		workerPool.Stop()
-		log.Info().Msg("Worker pool stopped - all tasks completed and batches flushed")
+		startupLog.Info("Worker pool stopped - all tasks completed and batches flushed")
 	}()
 
 	// Start background health monitoring with cancellable context
@@ -792,9 +762,7 @@ func main() {
 	backgroundWG.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error().
-					Any("panic", r).
-					Msg("Recovered panic in notification listener")
+				startupLog.Error("Recovered panic in notification listener", "panic", r)
 			}
 		}()
 
@@ -812,14 +780,13 @@ func main() {
 	// Ensure background goroutines stop
 	appCancel()
 	backgroundWG.Wait()
-	log.Info().Msg("All background goroutines stopped")
+	startupLog.Info("All background goroutines stopped")
 
 	if serverErr != nil && !errors.Is(serverErr, http.ErrServerClosed) {
-		sentry.CaptureException(serverErr)
-		log.Fatal().Err(serverErr).Msg("Server error")
+		startupLog.Fatal("Server error", "error", serverErr)
 	}
 
-	log.Info().Msg("Server stopped")
+	startupLog.Info("Server stopped")
 }
 
 // getEnvWithDefault retrieves an environment variable or returns a default value if not set
@@ -840,11 +807,11 @@ func getEnvInt(key string, defaultValue int) int {
 
 	var result int
 	if _, err := fmt.Sscanf(value, "%d", &result); err != nil {
-		log.Warn().
-			Str("key", key).
-			Str("value", value).
-			Int("default", defaultValue).
-			Msg("Invalid integer in environment variable, using default")
+		startupLog.Warn("Invalid integer in environment variable, using default",
+			"key", key,
+			"value", value,
+			"default", defaultValue,
+		)
 		return defaultValue
 	}
 
@@ -883,24 +850,7 @@ func parseOTLPHeaders(raw string) map[string]string {
 
 // setupLogging configures the logging system
 func setupLogging(config *Config) {
-	// Configure log level
-	level, err := zerolog.ParseLevel(config.LogLevel)
-	if err != nil {
-		level = zerolog.WarnLevel
-	}
-	zerolog.SetGlobalLevel(level)
-
-	// Use console writer in development
-	if config.Env == "development" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
-	} else {
-		// In production, use a more verbose JSON format that works well with Fly.io logs
-		log.Logger = zerolog.New(os.Stdout).
-			With().
-			Timestamp().
-			Str("service", "hover").
-			Logger()
-	}
+	logging.Setup(logging.ParseLevel(config.LogLevel), config.Env)
 }
 
 // RateLimiter represents a rate limiting system based on client IP addresses
