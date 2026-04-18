@@ -28,7 +28,30 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Added
+
+- `internal/logging` package: component-scoped slog + Sentry fanout logger with
+  14 named components (worker, api, crawler, db, queue, batch, archive, notify,
+  auth, startup, techdetect, util, jobs, pressure), `BeforeSend` UUID/number
+  normalisation for Sentry issue grouping, and static fingerprinting
+- Cross-platform pre-commit golangci-lint hook (`scripts/lint-go.js`) — skips
+  gracefully when golangci-lint is absent, fails closed on git errors
+
+### Changed
+
+- Migrated all logging from zerolog to stdlib `log/slog` with `sentry-go/slog`
+  v0.45.0; all packages now use `logging.Component("name")` — no direct zerolog
+  or bare sentry imports remain
+- Removed `github.com/rs/zerolog` dependency
+- Sentry error capture is now automatic for `Error`/`ErrorContext` calls via the
+  fanout handler; use `logging.NoCapture(ctx)` inline to suppress capture for
+  expected errors (e.g. 404s, client validation)
+- Log monitoring pipeline restructured for agent debugging: `process_logs.py`
+  emits a flat per-iteration CSV
+  (`timestamp, level, component, message, extras`) alongside the JSON summary;
+  `aggregate_logs.py` produces `time_series.csv` (per-minute level counts) and
+  `events_per_minute.csv` (per-minute `component: message` counts) using a
+  lossless `.aggregate_data.json` state file
 
 ## Full changelog history
 
