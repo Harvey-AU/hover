@@ -227,6 +227,9 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 	dbTask := taskToDBTask(task)
 	dbTask.Status = string(TaskStatusCompleted)
 	dbTask.CompletedAt = now
+	// Clear any error text inherited from a prior failed attempt so a
+	// retried-then-succeeded task doesn't persist stale failure context.
+	dbTask.Error = ""
 
 	populateResponseFields(dbTask, result)
 	populateJSONBFields(dbTask, result)
