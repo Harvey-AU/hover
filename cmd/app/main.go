@@ -571,7 +571,9 @@ func main() {
 		}
 		startupLog.Info("connected to Redis")
 
-		scheduler := broker.NewScheduler(redisClient)
+		// Use the DB-backed constructor for parity with the worker; the
+		// app rarely calls Reschedule but any call must dual-write too.
+		scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
 
 		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis
 		jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {

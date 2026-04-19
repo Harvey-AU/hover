@@ -157,8 +157,10 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		}
 		if !paceResult.Acquired {
 			// Domain in delay window — reschedule with estimated wait.
+			// Reschedule dual-writes the new run-at to Postgres so the
+			// pacing push-back survives a Redis flush.
 			newRunAt := now.Add(paceResult.RetryAfter)
-			if err := d.scheduler.Reschedule(ctx, jobID, entry.Member(), newRunAt); err != nil {
+			if err := d.scheduler.Reschedule(ctx, *entry, newRunAt); err != nil {
 				brokerLog.Warn("reschedule failed", "error", err, "task_id", entry.TaskID)
 			}
 			continue

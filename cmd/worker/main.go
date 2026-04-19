@@ -114,7 +114,9 @@ func main() {
 	workerLog.Info("connected to Redis")
 
 	// --- broker components ---
-	scheduler := broker.NewScheduler(redisClient)
+	// Use the DB-backed constructor so Reschedule mirrors pacing
+	// push-backs to tasks.run_at (survives a Redis flush).
+	scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
 	pacerCfg := broker.DefaultPacerConfig()
 	pacer := broker.NewDomainPacer(redisClient, pacerCfg)
 	counters := broker.NewRunningCounters(redisClient)

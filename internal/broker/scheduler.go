@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -76,14 +77,35 @@ func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
 	}, nil
 }
 
-// Scheduler manages delayed task scheduling via Redis sorted sets.
-type Scheduler struct {
-	client *Client
+// runAtExecer is the narrow subset of *sql.DB used by Reschedule to
+// mirror the new run-at time into Postgres. It is an interface so tests
+// can inject sqlmock.
+type runAtExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// NewScheduler creates a Scheduler.
+// Scheduler manages delayed task scheduling via Redis sorted sets.
+//
+// When constructed via NewSchedulerWithDB, Reschedule dual-writes the new
+// run-at time to the tasks.run_at column so pacing push-backs survive a
+// Redis flush. The db dependency is optional (nil in unit tests that
+// don't exercise the durability path).
+type Scheduler struct {
+	client *Client
+	db     runAtExecer
+}
+
+// NewScheduler creates a Scheduler without Postgres mirroring. Reschedule
+// writes only to the Redis ZSET. Suitable for tests that don't need the
+// durability path.
 func NewScheduler(client *Client) *Scheduler {
 	return &Scheduler{client: client}
+}
+
+// NewSchedulerWithDB creates a Scheduler that mirrors Reschedule run-at
+// updates to the tasks.run_at column. This is the production constructor.
+func NewSchedulerWithDB(client *Client, db *sql.DB) *Scheduler {
+	return &Scheduler{client: client, db: db}
 }
 
 // Schedule adds a single task to the job's ZSET.
@@ -207,17 +229,37 @@ func (s *Scheduler) DueItems(ctx context.Context, jobID string, now time.Time, l
 	return entries, nil
 }
 
-// Reschedule updates the score (run-at time) for an existing entry
-// in the ZSET. This is used when the dispatcher cannot dispatch yet
-// (domain pacing, concurrency limit) and needs to push the item back.
-func (s *Scheduler) Reschedule(ctx context.Context, jobID string, member string, newRunAt time.Time) error {
-	key := ScheduleKey(jobID)
+// Reschedule updates the score (run-at time) for an existing entry in
+// the ZSET. Used when the dispatcher cannot dispatch yet (domain pacing,
+// concurrency limit) and needs to push the item back.
+//
+// When the Scheduler was constructed with a *sql.DB, the new run-at is
+// also written to the tasks.run_at column. Postgres is written first so
+// that if the process crashes or Redis is flushed between the two
+// writes, the durable store holds the newer time; the next dispatch
+// attempt will see the correct pacing window.
+//
+// TODO(run-at-reconcile): once the task-lifecycle redesign lands (a
+// dedicated 'scheduled' status flipped by the dispatcher on XADD), add a
+// startup sweep that re-seeds the ZSET from tasks.run_at for
+// status='scheduled' rows with no ZSET member. Blocked on the outbox PR.
+func (s *Scheduler) Reschedule(ctx context.Context, entry ScheduleEntry, newRunAt time.Time) error {
+	if s.db != nil {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE tasks SET run_at = $1 WHERE id = $2`,
+			newRunAt, entry.TaskID,
+		); err != nil {
+			return fmt.Errorf("broker: persist run_at for task %s: %w", entry.TaskID, err)
+		}
+	}
+
+	key := ScheduleKey(entry.JobID)
 	score := float64(newRunAt.UnixMilli())
 
 	// ZADD XX updates only if the member already exists.
 	return s.client.rdb.ZAddArgs(ctx, key, redis.ZAddArgs{
 		XX:      true,
-		Members: []redis.Z{{Score: score, Member: member}},
+		Members: []redis.Z{{Score: score, Member: entry.Member()}},
 	}).Err()
 }
 
