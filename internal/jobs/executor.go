@@ -269,7 +269,14 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 		populateResponseFields(dbTask, result)
 		populateJSONBFields(dbTask, result)
 	} else {
-		populateRequestDiagnostics(dbTask, result)
+		// Nil-result fallback (crawler contract breach). Seed the same
+		// JSONB defaults as populateJSONBFields so every persisted row —
+		// success, error-with-response, or error-without-response —
+		// carries the same shape.
+		dbTask.Headers = []byte("{}")
+		dbTask.SecondHeaders = []byte("{}")
+		dbTask.CacheCheckAttempts = []byte("[]")
+		populateRequestDiagnostics(dbTask, nil)
 	}
 
 	outcome := &TaskOutcome{
@@ -436,11 +443,14 @@ func populateResponseFields(task *db.Task, result *crawler.CrawlResult) {
 	task.TTFB = result.Performance.TTFB
 	task.ContentTransferTime = result.Performance.ContentTransferTime
 
-	// Second request metrics.
+	// Second request metrics. SecondContentLength is a top-level field on
+	// CrawlResult and is populated independently of SecondPerformance, so
+	// persist it unconditionally; only the timing fields depend on the
+	// performance metrics pointer being non-nil.
 	task.SecondResponseTime = result.SecondResponseTime
 	task.SecondCacheStatus = result.SecondCacheStatus
+	task.SecondContentLength = result.SecondContentLength
 	if result.SecondPerformance != nil {
-		task.SecondContentLength = result.SecondContentLength
 		task.SecondDNSLookupTime = result.SecondPerformance.DNSLookupTime
 		task.SecondTCPConnectionTime = result.SecondPerformance.TCPConnectionTime
 		task.SecondTLSHandshakeTime = result.SecondPerformance.TLSHandshakeTime
