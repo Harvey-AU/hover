@@ -85,7 +85,7 @@ GNH_WAITING_RECOVERY_INTERVAL_SECONDS = "2"
 GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
 GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
 FLIGHT_RECORDER_ENABLED = "false"
-LOG_LEVEL = "info"
+LOG_LEVEL = "debug"
 OBSERVABILITY_ENABLED = "true"              # Enable OTEL for preview throughput debugging
 OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
 

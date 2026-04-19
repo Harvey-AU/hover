@@ -55,7 +55,7 @@ primary_region = "syd"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
 
   # Observability.
-  LOG_LEVEL = "info"
+  LOG_LEVEL = "debug"
   OBSERVABILITY_ENABLED = "true"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
 
