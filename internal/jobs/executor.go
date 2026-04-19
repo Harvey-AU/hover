@@ -227,36 +227,8 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 	dbTask := taskToDBTask(task)
 	dbTask.Status = string(TaskStatusCompleted)
 	dbTask.CompletedAt = now
-	dbTask.StatusCode = result.StatusCode
-	dbTask.ResponseTime = result.ResponseTime
-	dbTask.CacheStatus = result.CacheStatus
-	dbTask.ContentType = result.ContentType
-	dbTask.ContentLength = result.ContentLength
 
-	if util.IsSignificantRedirect(result.URL, result.RedirectURL) {
-		dbTask.RedirectURL = result.RedirectURL
-	}
-
-	// Performance metrics.
-	dbTask.DNSLookupTime = result.Performance.DNSLookupTime
-	dbTask.TCPConnectionTime = result.Performance.TCPConnectionTime
-	dbTask.TLSHandshakeTime = result.Performance.TLSHandshakeTime
-	dbTask.TTFB = result.Performance.TTFB
-	dbTask.ContentTransferTime = result.Performance.ContentTransferTime
-
-	// Second request metrics.
-	dbTask.SecondResponseTime = result.SecondResponseTime
-	dbTask.SecondCacheStatus = result.SecondCacheStatus
-	if result.SecondPerformance != nil {
-		dbTask.SecondContentLength = result.SecondContentLength
-		dbTask.SecondDNSLookupTime = result.SecondPerformance.DNSLookupTime
-		dbTask.SecondTCPConnectionTime = result.SecondPerformance.TCPConnectionTime
-		dbTask.SecondTLSHandshakeTime = result.SecondPerformance.TLSHandshakeTime
-		dbTask.SecondTTFB = result.SecondPerformance.TTFB
-		dbTask.SecondContentTransferTime = result.SecondPerformance.ContentTransferTime
-	}
-
-	// Marshal JSONB fields with safe defaults.
+	populateResponseFields(dbTask, result)
 	populateJSONBFields(dbTask, result)
 
 	outcome := &TaskOutcome{
@@ -287,7 +259,15 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result *crawler.CrawlResult, taskErr error, rateLimited bool) *TaskOutcome {
 	now := time.Now().UTC()
 	dbTask := taskToDBTask(task)
-	populateRequestDiagnostics(dbTask, result)
+	// When the crawler returned a response alongside the error (e.g. 403,
+	// 429, 503 rate-limit cases) preserve the full response metadata so the
+	// failed row carries the same diagnostics the success path would.
+	if result != nil {
+		populateResponseFields(dbTask, result)
+		populateJSONBFields(dbTask, result)
+	} else {
+		populateRequestDiagnostics(dbTask, result)
+	}
 
 	outcome := &TaskOutcome{
 		Task:        dbTask,
@@ -420,6 +400,45 @@ func isBlockingError(err error) bool {
 		strings.Contains(errorStr, "service unavailable")
 }
 
+// populateResponseFields copies the HTTP response metadata from a crawl
+// result onto a task row. It is called on both the success and error
+// paths so that failed attempts which still produced a response (403,
+// 429, 503, etc.) persist the same diagnostics as successful ones.
+func populateResponseFields(task *db.Task, result *crawler.CrawlResult) {
+	if task == nil || result == nil {
+		return
+	}
+
+	task.StatusCode = result.StatusCode
+	task.ResponseTime = result.ResponseTime
+	task.CacheStatus = result.CacheStatus
+	task.ContentType = result.ContentType
+	task.ContentLength = result.ContentLength
+
+	if util.IsSignificantRedirect(result.URL, result.RedirectURL) {
+		task.RedirectURL = result.RedirectURL
+	}
+
+	// Performance metrics.
+	task.DNSLookupTime = result.Performance.DNSLookupTime
+	task.TCPConnectionTime = result.Performance.TCPConnectionTime
+	task.TLSHandshakeTime = result.Performance.TLSHandshakeTime
+	task.TTFB = result.Performance.TTFB
+	task.ContentTransferTime = result.Performance.ContentTransferTime
+
+	// Second request metrics.
+	task.SecondResponseTime = result.SecondResponseTime
+	task.SecondCacheStatus = result.SecondCacheStatus
+	if result.SecondPerformance != nil {
+		task.SecondContentLength = result.SecondContentLength
+		task.SecondDNSLookupTime = result.SecondPerformance.DNSLookupTime
+		task.SecondTCPConnectionTime = result.SecondPerformance.TCPConnectionTime
+		task.SecondTLSHandshakeTime = result.SecondPerformance.TLSHandshakeTime
+		task.SecondTTFB = result.SecondPerformance.TTFB
+		task.SecondContentTransferTime = result.SecondPerformance.ContentTransferTime
+	}
+}
+
 // --- JSONB helpers ---
 
 func populateJSONBFields(task *db.Task, result *crawler.CrawlResult) {
@@ -462,6 +481,15 @@ func populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
 const (
 	htmlStorageBucket   = "task-html"
 	htmlContentEncoding = "gzip"
+
+	// maxHTMLUploadBodyBytes caps the body size we will stage for the
+	// archive upload. The raw body and its gzipped copy are held on the
+	// TaskOutcome until the persistence loop runs, so a high cap multiplied
+	// across a wide worker pool can materially inflate RSS. The crawler
+	// itself does not bound CrawlResult.Body, so this is the point at which
+	// we refuse oversized pages rather than archive them. 8 MiB covers the
+	// long tail of modern HTML without opening a memory-exhaustion vector.
+	maxHTMLUploadBodyBytes = 8 * 1024 * 1024
 )
 
 func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time.Time) (*TaskHTMLUpload, bool) {
@@ -471,6 +499,15 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 
 	mediaType := canonicalHTMLContentType(result.ContentType)
 	if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
+		return nil, false
+	}
+
+	if len(result.Body) > maxHTMLUploadBodyBytes {
+		jobsLog.Warn("Skipping HTML archive upload: body exceeds size cap",
+			"task_id", task.ID,
+			"size_bytes", len(result.Body),
+			"cap_bytes", maxHTMLUploadBodyBytes,
+		)
 		return nil, false
 	}
 
