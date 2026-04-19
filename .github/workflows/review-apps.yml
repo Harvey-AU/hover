@@ -207,13 +207,21 @@ jobs:
             echo "Upstash Redis already exists: $REDIS_NAME"
           else
             echo "Creating Upstash Redis: $REDIS_NAME"
-            # Pipe yes to auto-accept the ProdPack prompt with "N".
-            echo "N" | flyctl redis create \
+            # Explicitly set --enable-prodpack=false and --plan so flyctl does
+            # not attempt an interactive prompt (which errors in CI with
+            # "Error: prompt: non interactive"). Piping stdin is not enough;
+            # recent flyctl versions abort rather than read from stdin.
+            if ! flyctl redis create \
               --name "$REDIS_NAME" \
               --region syd \
               --no-replicas \
               --disable-eviction \
-              --org personal || true
+              --enable-prodpack=false \
+              --plan pay-as-you-go \
+              --org personal; then
+              echo "❌ flyctl redis create failed for $REDIS_NAME"
+              exit 1
+            fi
           fi
 
           # Poll for private URL (may take a moment after creation)
