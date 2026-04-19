@@ -207,17 +207,19 @@ jobs:
             echo "Upstash Redis already exists: $REDIS_NAME"
           else
             echo "Creating Upstash Redis: $REDIS_NAME"
-            # Explicitly set --enable-prodpack=false and --plan so flyctl does
-            # not attempt an interactive prompt (which errors in CI with
+            # Explicitly set --enable-prodpack=false so flyctl does not
+            # attempt an interactive prompt (which errors in CI with
             # "Error: prompt: non interactive"). Piping stdin is not enough;
             # recent flyctl versions abort rather than read from stdin.
+            # Do not pass --plan: flyctl rejects the documented default
+            # value ("pay-as-you-go") with "plan not found", and the default
+            # is applied automatically when the flag is omitted.
             if ! flyctl redis create \
               --name "$REDIS_NAME" \
               --region syd \
               --no-replicas \
               --disable-eviction \
               --enable-prodpack=false \
-              --plan pay-as-you-go \
               --org personal; then
               echo "❌ flyctl redis create failed for $REDIS_NAME"
               exit 1
