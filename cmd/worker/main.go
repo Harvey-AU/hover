@@ -73,7 +73,6 @@ func main() {
 
 	pgDB, err := db.WaitForDatabase(dbCtx, 5*time.Minute)
 	if err != nil {
-		sentry.CaptureException(err)
 		workerLog.Fatal("failed to connect to PostgreSQL", "error", err)
 	}
 	defer func() {
@@ -90,7 +89,6 @@ func main() {
 		defer queueCancel()
 		qConn, err := db.InitFromURLWithSuffixRetry(queueCtx, queueURL, appEnv, "queue")
 		if err != nil {
-			sentry.CaptureException(err)
 			workerLog.Fatal("failed to connect to queue PostgreSQL", "error", err)
 		}
 		defer func() {

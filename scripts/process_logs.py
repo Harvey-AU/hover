@@ -47,7 +47,9 @@ def _normalise_full_timestamp(record: Dict[str, Any]) -> str:
     cleaned = raw.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(cleaned)
-        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+        # Preserve the source timezone offset — two instants with different
+        # offsets would otherwise collapse to identical CSV rows.
+        return dt.isoformat(timespec="seconds")
     except ValueError:
         return raw[:19] if len(raw) >= 19 else raw
 

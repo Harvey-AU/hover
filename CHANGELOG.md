@@ -87,8 +87,10 @@ On merge, CI will:
 ### Changed
 
 - Migrated all logging from zerolog to stdlib `log/slog` with `sentry-go/slog`
-  v0.45.0; all packages now use `logging.Component("name")` — no direct zerolog
-  or bare sentry imports remain
+  v0.45.0; all packages now use `logging.Component("name")` and zerolog is
+  removed entirely. Remaining `sentry-go` imports are limited to SDK
+  initialisation in `cmd/app/main.go` and `cmd/worker/main.go` plus explicit
+  `WithScope` / `StartSpan` usage for audit trails and tracing
 - Removed `github.com/rs/zerolog` dependency
 - Sentry error capture is now automatic for `Error`/`ErrorContext` calls via the
   fanout handler; use `logging.NoCapture(ctx)` inline to suppress capture for

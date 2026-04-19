@@ -697,7 +697,7 @@ func main() {
 		startupLog.Info("Starting server", "port", config.Port)
 
 		baseURL := fmt.Sprintf("http://localhost:%s", config.Port)
-		startupLog.Info("Hover Development Server Ready!")
+		startupLog.Info("Hover server ready", "environment", config.Env)
 		startupLog.Info("Open Homepage", "homepage", baseURL)
 		startupLog.Info("Open Dashboard", "dashboard", baseURL+"/dashboard")
 		startupLog.Info("Health Check", "health", baseURL+"/health")

@@ -13,9 +13,9 @@ import (
 // and re-running all migrations. Users and organisations are preserved.
 func (db *DB) ResetSchema() error {
 	startTime := time.Now()
-	dbLog.Warn("=== DATABASE RESET STARTED ===")
-	dbLog.Warn("Dropping job-related tables, clearing migrations, and rebuilding schema")
-	dbLog.Warn("Users and organisations will be preserved")
+	dbLog.Info("=== DATABASE RESET STARTED ===")
+	dbLog.Info("Dropping job-related tables, clearing migrations, and rebuilding schema")
+	dbLog.Info("Users and organisations will be preserved")
 
 	// Step 0: Terminate active connections that may have locks on tables we need to drop
 	dbLog.Info("Step 0/4: Terminating active backend connections to release locks")
@@ -214,7 +214,7 @@ func (db *DB) ResetSchema() error {
 		"step_duration", time.Since(verifyStart))
 
 	totalDuration := time.Since(startTime)
-	dbLog.Warn("=== DATABASE RESET COMPLETED SUCCESSFULLY ===",
+	dbLog.Info("=== DATABASE RESET COMPLETED SUCCESSFULLY ===",
 		"total_duration", totalDuration,
 		"tables_dropped", tablesDropped,
 		"migrations_cleared", migrationsCleared,

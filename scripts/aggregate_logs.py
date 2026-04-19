@@ -3,9 +3,10 @@
 Aggregate JSON log summaries into time-series CSVs for agent debugging.
 
 Outputs:
-  time_series.csv         — timestamp | debug | info | warn | error
-  events_per_minute.csv   — timestamp | component: message | ...
-  summary.md              — human-readable overview
+  time_series.csv            — timestamp | debug | info | warn | error
+  events_per_minute.csv      — timestamp | component: message | ...
+  components_per_minute.csv  — timestamp | component | ...
+  summary.md                 — human-readable overview
 
 Usage:
     python3 scripts/aggregate_logs.py logs/20251105/0750_run/

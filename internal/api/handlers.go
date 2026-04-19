@@ -18,6 +18,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/loops"
 )
 
@@ -626,7 +627,9 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	snippet, err := buildConfigSnippet()
 	if err != nil {
-		apiLog.Error("supabase config missing", "error", err)
+		// Config is sourced from env vars fixed at startup — a misconfiguration
+		// would fire on every request, so suppress Sentry capture here.
+		apiLog.ErrorContext(logging.NoCapture(r.Context()), "supabase config missing", "error", err)
 		message := "Supabase config unavailable"
 		if os.Getenv("APP_ENV") != "production" {
 			message = fmt.Sprintf("%s: %v", message, err)
@@ -635,7 +638,7 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := w.Write(snippet); err != nil {
-		apiLog.Error("failed to write config.js", "error", err)
+		apiLog.ErrorContext(logging.NoCapture(r.Context()), "failed to write config.js", "error", err)
 	}
 }
 

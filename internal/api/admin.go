@@ -9,6 +9,15 @@ import (
 	"github.com/getsentry/sentry-go"
 )
 
+// organisationIDOrNone returns the organisation ID as a string, or "none"
+// when the user has no organisation assigned. Used for audit log fields.
+func organisationIDOrNone(orgID *string) string {
+	if orgID == nil {
+		return "none"
+	}
+	return *orgID
+}
+
 // AdminResetDatabase handles the admin database reset endpoint
 // Requires valid JWT with admin role and explicit environment enablement
 func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
@@ -48,13 +57,9 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the admin action with full context
-	orgIDStr := "none"
-	if user.OrganisationID != nil {
-		orgIDStr = *user.OrganisationID
-	}
 	logger.Warn("Admin database reset requested",
 		"user_id", user.ID,
-		"org_id", orgIDStr,
+		"organisation_id", organisationIDOrNone(user.OrganisationID),
 		"remote_addr", r.RemoteAddr,
 		"user_agent", r.Header.Get("User-Agent"),
 	)
@@ -162,13 +167,9 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the admin action with full context
-	orgIDStr2 := "none"
-	if user.OrganisationID != nil {
-		orgIDStr2 = *user.OrganisationID
-	}
 	logger.Warn("Admin data-only reset requested",
 		"user_id", user.ID,
-		"org_id", orgIDStr2,
+		"organisation_id", organisationIDOrNone(user.OrganisationID),
 		"remote_addr", r.RemoteAddr,
 		"user_agent", r.Header.Get("User-Agent"),
 	)

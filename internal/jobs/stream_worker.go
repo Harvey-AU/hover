@@ -416,7 +416,9 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 		return rows.Err()
 	})
 	if err != nil {
-		jobsLog.Error("failed to refresh active jobs", "error", err)
+		// Downgrade to Warn: the refresh runs every 10s, so a transient control
+		// DB outage would otherwise flood Sentry with one event per tick.
+		jobsLog.Warn("failed to refresh active jobs", "error", err)
 		return
 	}
 

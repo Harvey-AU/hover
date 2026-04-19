@@ -327,7 +327,9 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 
 	sessionID := storePendingGASession(session)
 
-	logger.Info("Stored GA4 session", "account_count", len(accounts), "property_count", len(session.Properties), "session_id", sessionID)
+	// Do not log the raw session ID — it is a short-lived bearer token for the
+	// pending GA session and would enable log-based session replay.
+	logger.Info("Stored GA4 session", "account_count", len(accounts), "property_count", len(session.Properties))
 
 	// Redirect with session ID
 	params := url.Values{}

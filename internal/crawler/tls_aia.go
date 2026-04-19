@@ -182,8 +182,12 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 // fetchCertFromURL downloads a DER-encoded certificate from a URL.
 func fetchCertFromURL(rawURL string) *x509.Certificate {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		crawlerLog.Debug("AIA: rejecting non-HTTP(S) URL", "host", parsed.Host)
+	if err != nil {
+		crawlerLog.Debug("AIA: rejecting malformed AIA URL", "error", err)
+		return nil
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		crawlerLog.Debug("AIA: rejecting non-HTTP(S) URL", "scheme", parsed.Scheme, "host", parsed.Host)
 		return nil
 	}
 	if isPrivateHost(parsed.Host) {

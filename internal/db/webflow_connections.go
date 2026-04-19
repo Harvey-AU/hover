@@ -198,7 +198,7 @@ func (db *DB) DeleteWebflowConnection(ctx context.Context, connectionID, organis
 
 	result, err := db.client.ExecContext(ctx, query, connectionID, organisationID)
 	if err != nil {
-		dbLog.Error("Failed to delete webflow connection", "error", err, "connection_id", connectionID, "org_id", organisationID)
+		dbLog.Error("Failed to delete webflow connection", "error", err, "connection_id", connectionID, "organisation_id", organisationID)
 		return fmt.Errorf("failed to delete webflow connection: %w", err)
 	}
 

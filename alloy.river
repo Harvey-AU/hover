@@ -1,6 +1,12 @@
 prometheus.scrape "hover" {
   targets = [{
     __address__ = "localhost:9464",
+    // Per-machine identity so remote_write sees distinct series across
+    // review apps, production machines, and scaled-out instances. These
+    // env vars are injected by Fly at boot.
+    app         = coalesce(sys.env("FLY_APP_NAME"), "hover"),
+    instance    = coalesce(sys.env("FLY_MACHINE_ID"), sys.env("HOSTNAME"), "local"),
+    environment = coalesce(sys.env("APP_ENV"), "unknown"),
   }]
   scrape_interval = "60s"
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]

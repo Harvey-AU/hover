@@ -134,8 +134,9 @@ func StartWithFallback(ctx context.Context, connStr string, service *Service) {
 	// Try to use LISTEN/NOTIFY with main connection
 	listener := NewListener(connStr, service)
 	if listener == nil {
-		notifyLog.Warn("Notification listener not created, using polling fallback")
-		go startPolling(ctx, service)
+		// NewListener only returns nil when service is nil; starting the
+		// polling loop against a nil service would panic on the first tick.
+		notifyLog.Warn("Notification listener not created; notifications disabled")
 		return
 	}
 

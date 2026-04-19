@@ -70,7 +70,7 @@ func CreatePageRecords(ctx context.Context, q TransactionExecutor, domainID int,
 	for _, u := range urls {
 		host, path, err := normaliseURLPath(u, domain)
 		if err != nil {
-			dbLog.Warn("Skipping invalid URL", "error", err, "url", u)
+			dbLog.Warn("Skipping invalid URL", "error", err, "domain", domain)
 			continue
 		}
 
