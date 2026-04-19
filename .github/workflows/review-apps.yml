@@ -228,13 +228,14 @@ jobs:
           done
 
           if [ -z "$REDIS_URL" ]; then
-            echo "⚠️ Could not extract Redis URL after 6 attempts — worker will use DB queue fallback"
-            echo "redis_url=" >> "$GITHUB_OUTPUT"
-          else
-            echo "::add-mask::$REDIS_URL"
-            echo "redis_url=$REDIS_URL" >> "$GITHUB_OUTPUT"
-            echo "✅ Redis provisioned: $REDIS_NAME"
+            echo "❌ Could not extract Redis URL after 6 attempts — review app requires Redis for Stage 3 dispatch"
+            echo "Check: flyctl redis status $REDIS_NAME"
+            exit 1
           fi
+
+          echo "::add-mask::$REDIS_URL"
+          echo "redis_url=$REDIS_URL" >> "$GITHUB_OUTPUT"
+          echo "✅ Redis provisioned: $REDIS_NAME"
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
@@ -409,7 +410,16 @@ jobs:
       - name: Destroy Upstash Redis
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
-          flyctl redis destroy "$REDIS_NAME" --yes 2>/dev/null || echo "Redis instance may not exist: $REDIS_NAME"
+          # Distinguish "doesn't exist" (OK) from other failures (surface them).
+          if flyctl redis list 2>/dev/null | grep -wq "$REDIS_NAME"; then
+            if ! flyctl redis destroy "$REDIS_NAME" --yes; then
+              echo "❌ Failed to destroy Redis instance: $REDIS_NAME"
+              exit 1
+            fi
+            echo "✅ Destroyed Redis: $REDIS_NAME"
+          else
+            echo "ℹ️ Redis instance does not exist, nothing to clean up: $REDIS_NAME"
+          fi
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
@@ -417,7 +427,16 @@ jobs:
       - name: Destroy Review App
         run: |
           APP_NAME="hover-pr-${PR_NUMBER}"
-          flyctl apps destroy "$APP_NAME" --yes || echo "App may not exist"
+          # Distinguish "doesn't exist" (OK) from other failures (surface them).
+          if flyctl apps list 2>/dev/null | grep -wq "$APP_NAME"; then
+            if ! flyctl apps destroy "$APP_NAME" --yes; then
+              echo "❌ Failed to destroy review app: $APP_NAME"
+              exit 1
+            fi
+            echo "✅ Destroyed review app: $APP_NAME"
+          else
+            echo "ℹ️ Review app does not exist, nothing to clean up: $APP_NAME"
+          fi
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}

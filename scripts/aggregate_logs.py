@@ -320,11 +320,28 @@ def aggregate_logs(log_dir, incremental=True):
     # closing the race window where the file could change between checks.
     fingerprints: dict[str, str] = {}
     new_files = []
+    changed_known_file = False
     for f in all_json_files:
         fp = _file_fingerprint(f)
-        if processed_map.get(f.name) != fp:
+        prev = processed_map.get(f.name)
+        if prev != fp:
+            # If we had already processed this exact filename with a different
+            # fingerprint, the file was rotated/rewritten. Incremental re-add
+            # would double-count its lines, so force a cold rebuild instead.
+            if prev is not None and prev != "":
+                changed_known_file = True
             fingerprints[f.name] = fp
             new_files.append(f)
+
+    if changed_known_file and incremental:
+        print(
+            "Detected rewritten log file(s); discarding cached aggregate and"
+            " rebuilding from scratch to avoid double-counting."
+        )
+        by_minute, totals, processed_map = defaultdict(_empty_minute), _empty_totals(), {}
+        # Reprocess every known JSON file, not just the changed ones.
+        new_files = list(all_json_files)
+        fingerprints = {f.name: _file_fingerprint(f) for f in new_files}
 
     if not new_files and not incremental:
         # Cold run with nothing to process — bail out without creating empty

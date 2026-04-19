@@ -192,8 +192,8 @@ func (p *DomainPacer) effectiveDelayMS(ctx context.Context, domain string) (int,
 		return 0, fmt.Errorf("broker: effective delay %s: %w", domain, err)
 	}
 
-	baseMS := intFromHMGet(vals, 0)
-	adaptiveMS := intFromHMGet(vals, 1)
+	baseMS := intFromHMGet(vals, 0, "base_delay_ms", domain)
+	adaptiveMS := intFromHMGet(vals, 1, "adaptive_delay_ms", domain)
 
 	// Take the larger of base and adaptive.
 	if adaptiveMS > baseMS {
@@ -202,14 +202,24 @@ func (p *DomainPacer) effectiveDelayMS(ctx context.Context, domain string) (int,
 	return baseMS, nil
 }
 
-func intFromHMGet(vals []interface{}, idx int) int {
+// intFromHMGet parses an HMGet slot as an integer, defaulting to 0 when the
+// value is missing, nil, or malformed. Malformed values are logged (but not
+// returned as errors) so bad config is visible without blocking the pacer.
+func intFromHMGet(vals []interface{}, idx int, field, domain string) int {
 	if idx >= len(vals) || vals[idx] == nil {
 		return 0
 	}
 	s, ok := vals[idx].(string)
 	if !ok {
+		brokerLog.Warn("pacer: non-string HMGet value, defaulting to 0",
+			"field", field, "domain", domain, "type", fmt.Sprintf("%T", vals[idx]))
 		return 0
 	}
-	n, _ := strconv.Atoi(s)
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		brokerLog.Warn("pacer: malformed integer in HMGet value, defaulting to 0",
+			"field", field, "domain", domain, "value", s, "error", err)
+		return 0
+	}
 	return n
 }

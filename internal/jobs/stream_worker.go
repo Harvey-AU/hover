@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,6 +14,27 @@ import (
 	"github.com/Harvey-AU/hover/internal/observability"
 	"golang.org/x/sync/singleflight"
 )
+
+// defaultActiveJobsLimit is the fallback cap on the number of active jobs
+// scanned by the dispatcher per refresh tick. Configurable via the
+// STREAM_ACTIVE_JOBS_LIMIT environment variable.
+const defaultActiveJobsLimit = 200
+
+// activeJobsLimit returns the configured limit for refreshActiveJobs,
+// falling back to defaultActiveJobsLimit if unset or invalid.
+func activeJobsLimit() int {
+	v := os.Getenv("STREAM_ACTIVE_JOBS_LIMIT")
+	if v == "" {
+		return defaultActiveJobsLimit
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		jobsLog.Warn("invalid STREAM_ACTIVE_JOBS_LIMIT, using default",
+			"value", v, "default", defaultActiveJobsLimit)
+		return defaultActiveJobsLimit
+	}
+	return n
+}
 
 // StreamWorkerDeps groups the dependencies for a StreamWorkerPool.
 type StreamWorkerDeps struct {
@@ -399,9 +422,11 @@ func (swp *StreamWorkerPool) activeJobsRefreshLoop(ctx context.Context) {
 
 func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 	var jobIDs []string
+	limit := activeJobsLimit()
 	err := swp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM jobs WHERE status IN ('running', 'pending') ORDER BY created_at DESC LIMIT 200`)
+			`SELECT id FROM jobs WHERE status IN ('running', 'pending') ORDER BY created_at DESC LIMIT $1`,
+			limit)
 		if err != nil {
 			return err
 		}
