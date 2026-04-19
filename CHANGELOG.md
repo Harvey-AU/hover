@@ -42,6 +42,14 @@ On merge, CI will:
   `observability.RecordWorkerTaskOutcome`
 - Redis is optional for the API server — graceful degradation when `REDIS_URL`
   is not set (tasks stay in Postgres, dispatch disabled)
+- Broker integration tests (`internal/broker/dispatcher_test.go`) covering happy
+  path, concurrency gating, domain pacing, malformed entries, and XAUTOCLAIM
+  reclaim via miniredis
+- `docs/operations/REDIS_BROKER_RUNBOOK.md` — day-two ops guide (key map, common
+  operations, failure modes)
+- `docs/plans/REDIS_BROKER_CUTOVER.md` — staged rollout plan, observability gap
+  list, rollback paths, known architectural deferrals
+- `STREAM_ACTIVE_JOBS_LIMIT` env var — was hard-coded to 200, now configurable
 
 ### Changed
 
