@@ -1,0 +1,85 @@
+# Fly Review Apps Configuration — Worker Service
+#
+# Deployed alongside the main review app (.fly/review_apps.toml) so the
+# preview exercises the full producer → Redis → consumer flow. The worker
+# consumes tasks from Redis Streams and persists results to Postgres.
+#
+# Production equivalent: fly.worker.toml.
+# Per-PR app name: hover-worker-pr-<PR_NUMBER>.
+
+primary_region = "syd"
+
+[build]
+
+# Override the Dockerfile CMD (./start.sh) to run the worker binary
+# directly. start.sh only launches ./main, so without this override the
+# worker container would run the API instead of the consumer.
+[processes]
+  worker = "./worker"
+
+# Environment overrides for preview. Scaled down from fly.worker.toml to
+# fit within the Supabase preview branch's shared pool (see the
+# "Set preview branch pool size" step in review-apps.yml).
+[env]
+  APP_ENV = "staging"
+
+  # Worker concurrency (prod: 30 / 20 / 130)
+  WORKER_COUNT = "4"
+  WORKER_CONCURRENCY = "5"
+  GNH_MAX_WORKERS = "40"
+
+  # Leave headroom for the API app on the shared Supabase pool.
+  DB_MAX_OPEN_CONNS = "15"
+  DB_MAX_IDLE_CONNS = "4"
+  DB_QUEUE_MAX_CONCURRENCY = "10"
+  DB_TX_MAX_RETRIES = "5"
+
+  # Redis broker — REDIS_URL is injected via flyctl secrets in CI.
+  REDIS_POOL_SIZE = "30"
+  REDIS_TLS_ENABLED = "true"
+  REDIS_DISPATCH_INTERVAL_MS = "200"
+  REDIS_DISPATCH_BATCH_SIZE = "20"
+  REDIS_CONSUMER_BLOCK_MS = "2000"
+  REDIS_AUTOCLAIM_INTERVAL_S = "30"
+  REDIS_COUNTER_SYNC_INTERVAL_S = "5"
+
+  # Batch manager + HTML persistence (scaled from prod).
+  GNH_BATCH_CHANNEL_SIZE = "1000"
+  GNH_RUNNING_TASK_BATCH_SIZE = "32"
+  GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
+  GNH_HTML_PERSIST_WORKERS = "8"
+  GNH_HTML_PERSIST_QUEUE_SIZE = "512"
+
+  # Link discovery + pacing (aligned with API preview).
+  GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
+  GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
+
+  # Observability.
+  LOG_LEVEL = "info"
+  OBSERVABILITY_ENABLED = "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
+
+  # Cold-storage archival (R2) — credentials via flyctl secrets.
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
+  ARCHIVE_RETENTION_JOBS = "3"
+  ARCHIVE_INTERVAL = "1m"
+  ARCHIVE_BATCH_SIZE = "100"
+  ARCHIVE_CONCURRENCY = "5"
+
+  # Outbox sweeper — mirror prod defaults.
+  OUTBOX_SWEEP_INTERVAL_MS = "1000"
+  OUTBOX_SWEEP_BATCH_SIZE = "100"
+
+  # Explicitly source DATABASE_URL from secrets for parity with the API.
+  DATABASE_URL = { from_secret = "DATABASE_URL" }
+
+[deploy]
+  strategy = "immediate"
+
+# Preview-sized machine (prod is 4gb performance/2). The worker does not
+# expose HTTP, so no [http_service] block.
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 2
