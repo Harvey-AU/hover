@@ -165,8 +165,10 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		}
 
 		// Publish to stream and remove from ZSET atomically via pipeline.
+		// On failure, the TryAcquire gate is left to expire on its own; we
+		// must not call Release here because IncrementInflight has not run
+		// yet, so Release would decrement a counter that was never incremented.
 		if err := d.publishAndRemove(ctx, entry); err != nil {
-			_ = d.pacer.Release(ctx, domain, jobID, false, false)
 			brokerLog.Warn("stream publish+remove failed", "error", err, "task_id", entry.TaskID)
 			continue
 		}

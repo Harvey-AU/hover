@@ -315,12 +315,16 @@ def aggregate_logs(log_dir, incremental=True):
 
     all_json_files = sorted(f for f in log_path.glob("*.json") if not f.name.startswith("."))
     # Compare against a fingerprint (mtime+size) rather than basename alone so
-    # regenerated files are reprocessed instead of silently skipped.
-    new_files = [
-        f
-        for f in all_json_files
-        if processed_map.get(f.name) != _file_fingerprint(f)
-    ]
+    # regenerated files are reprocessed instead of silently skipped. Cache the
+    # fingerprint so we don't stat the file a second time when recording it,
+    # closing the race window where the file could change between checks.
+    fingerprints: dict[str, str] = {}
+    new_files = []
+    for f in all_json_files:
+        fp = _file_fingerprint(f)
+        if processed_map.get(f.name) != fp:
+            fingerprints[f.name] = fp
+            new_files.append(f)
 
     if not new_files and not incremental:
         # Cold run with nothing to process — bail out without creating empty
@@ -334,7 +338,7 @@ def aggregate_logs(log_dir, incremental=True):
         print(f"Processing {len(new_files)} new or changed files...")
         for json_file in new_files:
             if process_json_file(json_file, by_minute, totals):
-                processed_map[json_file.name] = _file_fingerprint(json_file)
+                processed_map[json_file.name] = fingerprints[json_file.name]
                 success += 1
                 if success % 10 == 0:
                     print(f"  {success}/{len(new_files)}...")

@@ -172,6 +172,11 @@ func (c *Consumer) Ack(ctx context.Context, jobID string, messageIDs ...string) 
 // have been pending longer than MinIdleTime. Returns the reclaimed
 // messages. Messages that have been delivered more than MaxDeliveries
 // times are returned separately as dead-letter candidates.
+//
+// Note: ReclaimStale does NOT ACK messages in the returned deadLetter
+// slice. The caller owns final disposition and must ACK or NACK each
+// dead-letter message explicitly — otherwise the same messages will be
+// reclaimed again on the next XAUTOCLAIM sweep.
 func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []StreamMessage, deadLetter []StreamMessage, err error) {
 	streamKey := StreamKey(jobID)
 	groupName := ConsumerGroup(jobID)

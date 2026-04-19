@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -70,7 +71,7 @@ func CreatePageRecords(ctx context.Context, q TransactionExecutor, domainID int,
 	for _, u := range urls {
 		host, path, err := normaliseURLPath(u, domain)
 		if err != nil {
-			dbLog.Warn("Skipping invalid URL", "error", err, "domain", domain)
+			dbLog.Warn("Skipping invalid URL", "reason", classifyURLNormalisationError(err), "domain", domain)
 			continue
 		}
 
@@ -182,6 +183,23 @@ func ensurePageBatch(ctx context.Context, q TransactionExecutor, domainID int, b
 
 		return nil
 	})
+}
+
+// classifyURLNormalisationError maps a normaliseURLPath error to a short
+// reason code so logs never carry the raw URL (which may contain
+// user-supplied content).
+func classifyURLNormalisationError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return "invalid_url_parse"
+	}
+	if strings.Contains(err.Error(), "empty host in URL normalization") {
+		return "empty_host"
+	}
+	return "invalid_url"
 }
 
 func normaliseURLPath(u string, domain string) (string, string, error) {

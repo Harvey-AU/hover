@@ -154,12 +154,20 @@ func (s *Scheduler) DueItems(ctx context.Context, jobID string, now time.Time, l
 	for _, z := range results {
 		member, ok := z.Member.(string)
 		if !ok {
-			brokerLog.Warn("skipping non-string ZSET member", "member", z.Member)
+			brokerLog.Warn("removing non-string ZSET member", "member", z.Member)
+			if memberStr, stringable := z.Member.(fmt.Stringer); stringable {
+				if remErr := s.client.rdb.ZRem(ctx, key, memberStr.String()).Err(); remErr != nil {
+					brokerLog.Warn("failed to ZREM non-string member", "error", remErr)
+				}
+			}
 			continue
 		}
 		entry, err := ParseScheduleEntry(member, z.Score)
 		if err != nil {
-			brokerLog.Warn("skipping malformed schedule entry", "error", err)
+			brokerLog.Warn("removing malformed schedule entry", "error", err, "member", member)
+			if remErr := s.client.rdb.ZRem(ctx, key, member).Err(); remErr != nil {
+				brokerLog.Warn("failed to ZREM malformed entry", "error", remErr, "member", member)
+			}
 			continue
 		}
 		entries = append(entries, entry)
