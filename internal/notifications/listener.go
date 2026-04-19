@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/lib/pq"
-	"github.com/rs/zerolog/log"
 )
+
+var notifyLog = logging.Component("notify")
 
 // Listener listens for PostgreSQL notifications and triggers delivery
 type Listener struct {
@@ -21,7 +23,7 @@ type Listener struct {
 // Returns nil if service is nil to prevent nil pointer dereferences.
 func NewListener(connStr string, service *Service) *Listener {
 	if service == nil {
-		log.Error().Msg("Cannot create notification listener: service is nil")
+		notifyLog.Error("Cannot create notification listener: service is nil")
 		return nil
 	}
 	return &Listener{
@@ -37,11 +39,11 @@ func (l *Listener) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Notification listener stopped")
+			notifyLog.Info("Notification listener stopped")
 			return
 		default:
 			if err := l.listen(ctx); err != nil {
-				log.Warn().Err(err).Msg("Notification listener error, retrying in 5s")
+				notifyLog.Warn("Notification listener error, retrying in 5s", "error", err)
 				select {
 				case <-ctx.Done():
 					return
@@ -57,7 +59,7 @@ func (l *Listener) listen(ctx context.Context) error {
 	// Create a dedicated connection for LISTEN
 	listener := pq.NewListener(l.connStr, 10*time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
-			log.Warn().Err(err).Msg("Notification listener event error")
+			notifyLog.Warn("Notification listener event error", "error", err)
 		}
 	})
 	defer listener.Close()
@@ -66,7 +68,7 @@ func (l *Listener) listen(ctx context.Context) error {
 		return err
 	}
 
-	log.Info().Msg("Notification listener started (real-time mode)")
+	notifyLog.Info("Notification listener started (real-time mode)")
 
 	// Process any pending notifications on startup
 	l.processPending(ctx)
@@ -82,10 +84,10 @@ func (l *Listener) listen(ctx context.Context) error {
 				return nil
 			}
 
-			log.Debug().
-				Str("channel", notification.Channel).
-				Str("payload", notification.Extra).
-				Msg("Received notification")
+			notifyLog.Debug("Received notification",
+				"channel", notification.Channel,
+				"payload", notification.Extra,
+			)
 
 			// Process pending notifications (the payload is the notification ID,
 			// but we process all pending to handle any that might have been missed)
@@ -103,7 +105,7 @@ func (l *Listener) listen(ctx context.Context) error {
 func (l *Listener) processPending(ctx context.Context) {
 	if err := l.service.ProcessPendingNotifications(ctx, 50); err != nil {
 		if ctx.Err() == nil {
-			log.Warn().Err(err).Msg("Failed to process pending notifications")
+			notifyLog.Warn("Failed to process pending notifications", "error", err)
 		}
 	}
 }
@@ -120,20 +122,21 @@ func StartWithFallback(ctx context.Context, connStr string, service *Service) {
 		if testConnection(directURL) {
 			listener := NewListener(directURL, service)
 			if listener != nil {
-				log.Info().Msg("Notification listener started (real-time via DATABASE_DIRECT_URL)")
+				notifyLog.Info("Notification listener started (real-time via DATABASE_DIRECT_URL)")
 				go listener.Start(ctx)
 				return
 			}
 		} else {
-			log.Warn().Msg("DATABASE_DIRECT_URL connection failed, falling back to polling")
+			notifyLog.Warn("DATABASE_DIRECT_URL connection failed, falling back to polling")
 		}
 	}
 
 	// Try to use LISTEN/NOTIFY with main connection
 	listener := NewListener(connStr, service)
 	if listener == nil {
-		log.Warn().Msg("Notification listener not created, using polling fallback")
-		go startPolling(ctx, service)
+		// NewListener only returns nil when service is nil; starting the
+		// polling loop against a nil service would panic on the first tick.
+		notifyLog.Warn("Notification listener not created; notifications disabled")
 		return
 	}
 
@@ -144,7 +147,7 @@ func StartWithFallback(ctx context.Context, connStr string, service *Service) {
 	}
 
 	// Fall back to polling
-	log.Info().Msg("Using polling mode for notifications (connection pooler detected)")
+	notifyLog.Info("Using polling mode for notifications (connection pooler detected)")
 	go startPolling(ctx, service)
 }
 
@@ -152,7 +155,7 @@ func StartWithFallback(ctx context.Context, connStr string, service *Service) {
 func testConnection(connStr string) bool {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		log.Debug().Err(err).Msg("Failed to open direct connection")
+		notifyLog.Debug("Failed to open direct connection", "error", err)
 		return false
 	}
 	defer db.Close()
@@ -161,7 +164,7 @@ func testConnection(connStr string) bool {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		log.Debug().Err(err).Msg("Failed to ping direct connection")
+		notifyLog.Debug("Failed to ping direct connection", "error", err)
 		return false
 	}
 	return true
@@ -185,17 +188,17 @@ func startPolling(ctx context.Context, service *Service) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	log.Info().Msg("Notification processor started (polling mode)")
+	notifyLog.Info("Notification processor started (polling mode)")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Notification processor stopped")
+			notifyLog.Info("Notification processor stopped")
 			return
 		case <-ticker.C:
 			if err := service.ProcessPendingNotifications(ctx, 50); err != nil {
 				if ctx.Err() == nil {
-					log.Warn().Err(err).Msg("Failed to process pending notifications")
+					notifyLog.Warn("Failed to process pending notifications", "error", err)
 				}
 			}
 		}

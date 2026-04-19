@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 )
 
 // ErrDuplicateOrganisationName is returned when a user already has an organisation
 // with the same name (case-insensitive).
 var ErrDuplicateOrganisationName = errors.New("an organisation with that name already exists")
+
+// ErrUserNotFound is returned when a lookup does not match any user. Callers
+// can distinguish "no such user" from other errors via errors.Is.
+var ErrUserNotFound = errors.New("user not found")
 
 // User represents a user in the system
 type User struct {
@@ -55,8 +58,8 @@ func (db *DB) GetUser(userID string) (*User, error) {
 		&user.ActiveOrganisationID, &user.SlackUserID, &user.WebhookToken, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -79,8 +82,8 @@ func (db *DB) GetUserByWebhookToken(webhookToken string) (*User, error) {
 		&user.ActiveOrganisationID, &user.SlackUserID, &user.WebhookToken, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found with webhook token")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user by webhook token: %w", err)
 	}
@@ -97,11 +100,15 @@ func (db *DB) GetOrCreateUser(userID, email string, fullName *string) (*User, er
 		// User exists, return them
 		return user, nil
 	}
+	// Only auto-create when the lookup cleanly returned "not found".
+	// A generic DB failure must surface so callers can retry rather than
+	// forcing a user insert on top of broken infrastructure.
+	if !errors.Is(err, ErrUserNotFound) {
+		return nil, fmt.Errorf("failed to look up user before auto-create: %w", err)
+	}
 
 	// User doesn't exist, auto-create them with a default organisation
-	log.Info().
-		Str("user_id", userID).
-		Msg("Auto-creating user from JWT token")
+	dbLog.Info("Auto-creating user from JWT token", "user_id", userID)
 
 	// Determine organisation name based on email domain
 	orgName := deriveOrganisationName(email, fullName)
@@ -276,10 +283,9 @@ func (db *DB) CreateOrganisation(name string) (*Organisation, error) {
 		return nil, fmt.Errorf("failed to create organisation: %w", err)
 	}
 
-	log.Info().
-		Str("organisation_id", org.ID).
-		Str("name", org.Name).
-		Msg("Created new organisation")
+	dbLog.Info("Created new organisation",
+		"organisation_id", org.ID,
+		"name", org.Name)
 
 	return org, nil
 }
@@ -354,11 +360,10 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 		return nil, fmt.Errorf("failed to commit organisation creation: %w", err)
 	}
 
-	log.Info().
-		Str("organisation_id", org.ID).
-		Str("user_id", userID).
-		Str("name", org.Name).
-		Msg("Created new organisation for user")
+	dbLog.Info("Created new organisation for user",
+		"organisation_id", org.ID,
+		"user_id", userID,
+		"name", org.Name)
 
 	return org, nil
 }
@@ -428,22 +433,24 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 	if err == nil {
 		// User exists, get their organisation
 		if existingUser.OrganisationID != nil {
-			org, err := db.GetOrganisation(*existingUser.OrganisationID)
-			if err != nil {
-				log.Warn().Err(err).Str("organisation_id", *existingUser.OrganisationID).Msg("Failed to get existing user's organisation")
-				// Return user without organisation rather than failing
-				return existingUser, nil, nil
+			org, orgErr := db.GetOrganisation(*existingUser.OrganisationID)
+			if orgErr != nil {
+				// Surface the underlying lookup failure so callers do not silently
+				// receive a user stripped of their organisation context.
+				return nil, nil, fmt.Errorf("failed to get existing user's organisation %s: %w", *existingUser.OrganisationID, orgErr)
 			}
-			log.Info().
-				Str("user_id", userID).
-				Msg("User already exists, returning existing user and organisation")
+			dbLog.Info("User already exists, returning existing user and organisation", "user_id", userID)
 			return existingUser, org, nil
 		}
 		// User exists but has no organisation - this shouldn't happen but handle gracefully
-		log.Info().
-			Str("user_id", userID).
-			Msg("User already exists but has no organisation")
+		dbLog.Info("User already exists but has no organisation", "user_id", userID)
 		return existingUser, nil, nil
+	}
+	// Only treat a clean "not found" as the cue to create a new record.
+	// Any other error (DB outage, scan failure) should propagate instead of
+	// masking as a fresh-user signup and causing a duplicate insert.
+	if !errors.Is(err, ErrUserNotFound) {
+		return nil, nil, fmt.Errorf("failed to look up user before create: %w", err)
 	}
 
 	// User doesn't exist, create new user and organisation
@@ -464,11 +471,10 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		if err == nil {
 			// Organisation exists, use it
 			org = existingOrg
-			log.Info().
-				Str("user_id", userID).
-				Str("organisation_id", org.ID).
-				Str("organisation_name", org.Name).
-				Msg("Joining existing organisation (business email)")
+			dbLog.Info("Joining existing organisation (business email)",
+				"user_id", userID,
+				"organisation_id", org.ID,
+				"organisation_name", org.Name)
 		}
 	}
 
@@ -541,11 +547,10 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Info().
-		Str("user_id", user.ID).
-		Str("organisation_id", org.ID).
-		Str("organisation_name", org.Name).
-		Msg("Created new user with organisation")
+	dbLog.Info("Created new user with organisation",
+		"user_id", user.ID,
+		"organisation_id", org.ID,
+		"organisation_name", org.Name)
 
 	return user, org, nil
 }
@@ -637,10 +642,9 @@ func (db *DB) SetActiveOrganisation(userID, organisationID string) error {
 		return fmt.Errorf("user not found")
 	}
 
-	log.Info().
-		Str("user_id", userID).
-		Str("organisation_id", organisationID).
-		Msg("Set active organisation")
+	dbLog.Info("Set active organisation",
+		"user_id", userID,
+		"organisation_id", organisationID)
 
 	return nil
 }
@@ -694,10 +698,9 @@ func (db *DB) AddOrganisationMember(userID, organisationID, role string) error {
 		return fmt.Errorf("failed to add organisation member: %w", err)
 	}
 
-	log.Info().
-		Str("user_id", userID).
-		Str("organisation_id", organisationID).
-		Msg("Added organisation member")
+	dbLog.Info("Added organisation member",
+		"user_id", userID,
+		"organisation_id", organisationID)
 
 	return nil
 }

@@ -17,44 +17,47 @@ import (
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/getsentry/sentry-go"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
+var workerLog = logging.Component("worker")
+
 func main() {
-	// --- logging ---
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	if os.Getenv("APP_ENV") == "development" {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	}
+	appEnv := os.Getenv("APP_ENV")
 
-	log.Info().Msg("hover worker starting")
-
-	// --- sentry ---
+	// --- sentry (initialise first so logging.Setup can wire the sentry slog handler) ---
 	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
 		if err := sentry.Init(sentry.ClientOptions{
-			Dsn:         dsn,
-			Environment: os.Getenv("APP_ENV"),
+			Dsn:              dsn,
+			Environment:      appEnv,
+			AttachStacktrace: true,
+			BeforeSend:       logging.BeforeSend,
 		}); err != nil {
-			log.Warn().Err(err).Msg("failed to initialise Sentry")
+			// Sentry failed to init — fall through with plain slog only.
+			fmt.Fprintf(os.Stderr, "failed to initialise Sentry: %v\n", err)
 		} else {
 			defer sentry.Flush(2 * time.Second)
 		}
 	}
+
+	// --- logging (slog + sentry fanout) ---
+	logging.Setup(logging.ParseLevel(os.Getenv("LOG_LEVEL")), appEnv)
+
+	workerLog.Info("hover worker starting")
 
 	// --- observability ---
 	if os.Getenv("OBSERVABILITY_ENABLED") == "true" {
 		providers, err := observability.Init(context.Background(), observability.Config{
 			Enabled:      true,
 			ServiceName:  "hover-worker",
-			Environment:  os.Getenv("APP_ENV"),
+			Environment:  appEnv,
 			OTLPEndpoint: strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
 			OTLPHeaders:  parseOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
 		})
 		if err != nil {
-			log.Warn().Err(err).Msg("failed to initialise observability")
+			workerLog.Warn("failed to initialise observability", "error", err)
 		} else {
 			defer func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -70,11 +73,10 @@ func main() {
 
 	pgDB, err := db.WaitForDatabase(dbCtx, 5*time.Minute)
 	if err != nil {
-		sentry.CaptureException(err)
-		log.Fatal().Err(err).Msg("failed to connect to PostgreSQL")
+		workerLog.Fatal("failed to connect to PostgreSQL", "error", err)
 	}
 	defer func() {
-		log.Info().Msg("closing database connection")
+		workerLog.Info("closing database connection")
 		// Allow in-flight batch manager flushes and counter syncs to complete
 		// before tearing down the connection pool.
 		time.Sleep(1 * time.Second)
@@ -85,10 +87,9 @@ func main() {
 	if queueURL := strings.TrimSpace(os.Getenv("DATABASE_QUEUE_URL")); queueURL != "" {
 		queueCtx, queueCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer queueCancel()
-		qConn, err := db.InitFromURLWithSuffixRetry(queueCtx, queueURL, os.Getenv("APP_ENV"), "queue")
+		qConn, err := db.InitFromURLWithSuffixRetry(queueCtx, queueURL, appEnv, "queue")
 		if err != nil {
-			sentry.CaptureException(err)
-			log.Fatal().Err(err).Msg("failed to connect to queue PostgreSQL")
+			workerLog.Fatal("failed to connect to queue PostgreSQL", "error", err)
 		}
 		defer func() {
 			time.Sleep(500 * time.Millisecond)
@@ -101,22 +102,22 @@ func main() {
 
 	// --- redis ---
 	redisCfg := broker.ConfigFromEnv()
-	redisClient, err := broker.NewClient(redisCfg, log.Logger)
+	redisClient, err := broker.NewClient(redisCfg)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create Redis client")
+		workerLog.Fatal("failed to create Redis client", "error", err)
 	}
 	defer redisClient.Close()
 
 	if err := redisClient.Ping(context.Background()); err != nil {
-		log.Fatal().Err(err).Msg("failed to ping Redis")
+		workerLog.Fatal("failed to ping Redis", "error", err)
 	}
-	log.Info().Msg("connected to Redis")
+	workerLog.Info("connected to Redis")
 
 	// --- broker components ---
-	scheduler := broker.NewScheduler(redisClient, log.Logger)
+	scheduler := broker.NewScheduler(redisClient)
 	pacerCfg := broker.DefaultPacerConfig()
-	pacer := broker.NewDomainPacer(redisClient, pacerCfg, log.Logger)
-	counters := broker.NewRunningCounters(redisClient, log.Logger)
+	pacer := broker.NewDomainPacer(redisClient, pacerCfg)
+	counters := broker.NewRunningCounters(redisClient)
 
 	machineName := os.Getenv("FLY_MACHINE_ID")
 	if machineName == "" {
@@ -125,10 +126,10 @@ func main() {
 
 	numWorkers := envInt("WORKER_COUNT", 30)
 	if numWorkers < 1 {
-		log.Fatal().Int("value", numWorkers).Msg("WORKER_COUNT must be >= 1")
+		workerLog.Fatal("WORKER_COUNT must be >= 1", "value", numWorkers)
 	}
 	consumerOpts := broker.DefaultConsumerOpts(fmt.Sprintf("worker-%s", machineName))
-	consumer := broker.NewConsumer(redisClient, consumerOpts, log.Logger)
+	consumer := broker.NewConsumer(redisClient, consumerOpts)
 
 	// --- crawler ---
 	crawlerCfg := crawler.DefaultConfig()
@@ -165,8 +166,8 @@ func main() {
 		}
 		if len(schedEntries) > 0 {
 			if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
-				log.Error().Err(err).Str("job_id", jobID).Int("count", len(schedEntries)).
-					Msg("failed to schedule tasks into Redis")
+				workerLog.Error("failed to schedule tasks into Redis",
+					"error", err, "job_id", jobID, "count", len(schedEntries))
 			}
 		}
 	}
@@ -186,7 +187,6 @@ func main() {
 		BatchManager: batchManager,
 		DBQueue:      dbQueue,
 		JobManager:   jobManager,
-		Logger:       log.Logger,
 	}, swpOpts)
 
 	// --- dispatcher ---
@@ -196,7 +196,6 @@ func main() {
 		swp, // implements broker.JobLister
 		swp, // implements broker.ConcurrencyChecker
 		dispatcherOpts,
-		log.Logger,
 	)
 
 	// --- running counter DB sync ---
@@ -215,16 +214,16 @@ func main() {
 	go dispatcher.Run(ctx)
 	go counters.StartDBSync(ctx, syncInterval, syncFn)
 
-	log.Info().
-		Int("workers", numWorkers).
-		Str("machine", machineName).
-		Msg("hover worker ready")
+	workerLog.Info("hover worker ready",
+		"workers", numWorkers,
+		"machine", machineName,
+	)
 
 	// --- graceful shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-	log.Info().Str("signal", sig.String()).Msg("shutdown signal received")
+	workerLog.Info("shutdown signal received", "signal", sig.String())
 
 	cancel() // stop dispatcher, counter sync, and all workers
 
@@ -237,9 +236,9 @@ func main() {
 
 	select {
 	case <-done:
-		log.Info().Msg("all workers stopped cleanly")
+		workerLog.Info("all workers stopped cleanly")
 	case <-time.After(3 * time.Minute):
-		log.Warn().Msg("shutdown timed out after 3 minutes")
+		workerLog.Warn("shutdown timed out after 3 minutes")
 	}
 }
 

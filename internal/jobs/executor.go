@@ -19,7 +19,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/Harvey-AU/hover/internal/util"
-	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -155,7 +154,7 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 
 	urlStr := ConstructTaskURL(task.Path, task.Host, task.DomainName)
 
-	log.Debug().Str("url", urlStr).Str("task_id", task.ID).Msg("Starting URL warm")
+	jobsLog.Debug("Starting URL warm", "url", urlStr, "task_id", task.ID)
 
 	result, err := e.crawler.WarmURL(ctx, urlStr, task.FindLinks)
 	if err != nil {
@@ -174,11 +173,7 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 			rateLimited = IsRateLimitError(err)
 		}
 
-		log.Debug().Err(err).
-			Str("task_id", task.ID).
-			Bool("rate_limited", rateLimited).
-			Int("status_code", statusCodeOrZero(result)).
-			Msg("Crawler failed")
+		jobsLog.Debug("Crawler failed", "error", err, "task_id", task.ID, "rate_limited", rateLimited, "status_code", statusCodeOrZero(result))
 
 		return e.buildErrorOutcome(ctx, task, result, err, rateLimited)
 	}
@@ -200,12 +195,7 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 	)
 	span.SetStatus(codes.Ok, "completed")
 
-	log.Debug().
-		Int("status_code", result.StatusCode).
-		Str("task_id", task.ID).
-		Int("links_found", len(result.Links)).
-		Str("content_type", result.ContentType).
-		Msg("Crawler completed")
+	jobsLog.Debug("Crawler completed", "status_code", result.StatusCode, "task_id", task.ID, "links_found", len(result.Links), "content_type", result.ContentType)
 
 	return e.buildSuccessOutcome(task, result)
 }
@@ -487,7 +477,7 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 
 	payload, err := gzipHTML(result.Body)
 	if err != nil {
-		log.Error().Err(err).Str("task_id", task.ID).Msg("Failed to gzip HTML")
+		jobsLog.Error("Failed to gzip HTML", "error", err, "task_id", task.ID)
 		return nil, false
 	}
 

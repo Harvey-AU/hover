@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/rs/zerolog/log"
 )
+
+var archiveLog = logging.Component("archive")
 
 const archiveCandidateTimeout = 2 * time.Minute
 
@@ -51,18 +53,18 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 	interval := a.cfg.Interval
 	if interval <= 0 {
 		interval = time.Hour
-		log.Warn().Dur("fallback_interval", interval).Msg("Archive interval was non-positive, using default")
+		archiveLog.Warn("Archive interval was non-positive, using default", "fallback_interval", interval)
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	log.Info().
-		Str("provider", a.cfg.Provider).
-		Str("bucket", a.cfg.Bucket).
-		Dur("interval", interval).
-		Int("batch_size", a.cfg.BatchSize).
-		Int("concurrency", a.cfg.Concurrency).
-		Msg("Archive scheduler started")
+	archiveLog.Info("Archive scheduler started",
+		"provider", a.cfg.Provider,
+		"bucket", a.cfg.Bucket,
+		"interval", interval,
+		"batch_size", a.cfg.BatchSize,
+		"concurrency", a.cfg.Concurrency,
+	)
 
 	// Derive a context that is cancelled when stopCh closes, so sweep
 	// internals (markJobsDone, FindCandidates, goroutines) all respect shutdown.
@@ -84,10 +86,10 @@ func (a *Archiver) Run(ctx context.Context, stopCh <-chan struct{}) {
 		case <-ticker.C:
 			a.sweep(runCtx, stopCh)
 		case <-stopCh:
-			log.Info().Msg("Archive scheduler stopping (stop signal)")
+			archiveLog.Info("Archive scheduler stopping (stop signal)")
 			return
 		case <-ctx.Done():
-			log.Info().Msg("Archive scheduler stopping (context cancelled)")
+			archiveLog.Info("Archive scheduler stopping (context cancelled)")
 			return
 		}
 	}
@@ -97,27 +99,27 @@ func (a *Archiver) sweep(ctx context.Context, stopCh <-chan struct{}) {
 	// Mark jobs as 'archived' when all their HTML has been moved to cold storage.
 	if a.markJobsDone != nil {
 		if n, err := a.markJobsDone(ctx); err != nil {
-			log.Error().Err(err).Msg("Failed to mark fully archived jobs")
+			archiveLog.Error("Failed to mark fully archived jobs", "error", err)
 		} else if n > 0 {
-			log.Info().Int64("jobs_marked", n).Msg("Jobs marked as archived")
+			archiveLog.Info("Jobs marked as archived", "jobs_marked", n)
 		}
 	}
 
 	for _, src := range a.sources {
 		candidates, err := src.FindCandidates(ctx, a.cfg.BatchSize)
 		if err != nil {
-			log.Error().Err(err).Str("source", src.Name()).Msg("Failed to find archive candidates")
+			archiveLog.Error("Failed to find archive candidates", "error", err, "source", src.Name())
 			continue
 		}
 		if len(candidates) == 0 {
-			log.Debug().Str("source", src.Name()).Msg("No archive candidates")
+			archiveLog.Debug("No archive candidates", "source", src.Name())
 			continue
 		}
 
-		log.Info().
-			Str("source", src.Name()).
-			Int("candidates", len(candidates)).
-			Msg("Archiving candidates")
+		archiveLog.Info("Archiving candidates",
+			"source", src.Name(),
+			"candidates", len(candidates),
+		)
 
 		concurrency := a.cfg.Concurrency
 		if concurrency <= 0 {
@@ -195,11 +197,7 @@ func isPermanent404(err error) bool {
 }
 
 func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveCandidate) {
-	lg := log.With().
-		Str("task_id", c.TaskID).
-		Str("job_id", c.JobID).
-		Str("source", src.Name()).
-		Logger()
+	lg := archiveLog.With("task_id", c.TaskID, "job_id", c.JobID, "source", src.Name())
 
 	// 1. Download from hot storage, falling back to cold storage if the hot
 	// copy is already gone (e.g. a previous run deleted it but OnArchived failed).
@@ -207,16 +205,16 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 	recoveredFromCold := false
 	data, err := a.storage.Download(ctx, c.StorageBucket, c.StoragePath)
 	if err != nil {
-		lg.Warn().Err(err).Msg("Hot-storage download failed, attempting cold-storage fallback")
+		lg.Warn("Hot-storage download failed, attempting cold-storage fallback", "error", err)
 		rc, coldErr := a.provider.Download(ctx, a.cfg.Bucket, key)
 		if coldErr != nil {
 			if isPermanent404(err) && isPermanent404(coldErr) {
-				lg.Warn().Str("task_id", c.TaskID).Msg("Both storages returned permanent 404 — marking archive as skipped")
+				lg.Warn("Both storages returned permanent 404 — marking archive as skipped", "task_id", c.TaskID)
 				if markErr := src.MarkSkipped(ctx, c); markErr != nil {
-					lg.Error().Err(markErr).Msg("Failed to mark archive as skipped")
+					lg.Error("Failed to mark archive as skipped", "error", markErr)
 				}
 			} else {
-				lg.Error().Err(coldErr).Msg("Cold-storage fallback also failed — candidate unrecoverable this cycle")
+				lg.Error("Cold-storage fallback also failed — candidate unrecoverable this cycle", "error", coldErr)
 			}
 			return
 		}
@@ -224,15 +222,15 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		data, readErr = io.ReadAll(rc)
 		closeErr := rc.Close()
 		if readErr != nil {
-			lg.Error().Err(readErr).Msg("Failed to read cold-storage fallback body")
+			lg.Error("Failed to read cold-storage fallback body", "error", readErr)
 			return
 		}
 		if closeErr != nil {
-			lg.Warn().Err(closeErr).Msg("Failed to close cold-storage fallback body")
+			lg.Warn("Failed to close cold-storage fallback body", "error", closeErr)
 			return
 		}
 		recoveredFromCold = true
-		lg.Info().Msg("Recovered data from cold storage — skipping re-upload")
+		lg.Info("Recovered data from cold storage — skipping re-upload")
 	}
 
 	// 2. Upload to cold storage when we only have the hot copy.
@@ -255,18 +253,18 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 			},
 		})
 		if err != nil {
-			lg.Error().Err(err).Msg("Failed to upload to cold storage")
+			lg.Error("Failed to upload to cold storage", "error", err)
 			return
 		}
 
 		// 3. Verify existence in cold storage
 		exists, err := a.provider.Exists(ctx, a.cfg.Bucket, key)
 		if err != nil {
-			lg.Error().Err(err).Msg("Failed to verify cold storage upload")
+			lg.Error("Failed to verify cold storage upload", "error", err)
 			return
 		}
 		if !exists {
-			lg.Error().Msg("Object not found in cold storage after upload")
+			lg.Error("Object not found in cold storage after upload")
 			return
 		}
 	}
@@ -281,18 +279,18 @@ func (a *Archiver) archiveOne(ctx context.Context, src ArchiveSource, c ArchiveC
 		// Check for HTTP 404 status code in the error message.
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "status 404") || strings.Contains(errMsg, "not found") {
-			lg.Info().Err(err).Msg("Hot storage object already deleted (404) — proceeding to mark archived")
+			lg.Info("Hot storage object already deleted (404) — proceeding to mark archived", "error", err)
 		} else {
-			lg.Error().Err(err).Msg("Failed to delete from hot storage — skipping DB mark to allow retry")
+			lg.Error("Failed to delete from hot storage — skipping DB mark to allow retry", "error", err)
 			return
 		}
 	}
 
 	// 5. Mark archived in DB (clears hot-storage columns)
 	if err := src.OnArchived(ctx, c, a.provider.Provider(), a.cfg.Bucket, key); err != nil {
-		lg.Error().Err(err).Str("key", key).Msg("Failed to mark task as archived after hot-storage delete")
+		lg.Error("Failed to mark task as archived after hot-storage delete", "error", err, "key", key)
 		return
 	}
 
-	lg.Debug().Str("key", key).Msg("Task HTML archived successfully")
+	lg.Debug("Task HTML archived successfully", "key", key)
 }

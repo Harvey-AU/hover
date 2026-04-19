@@ -40,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26.1"
+          go-version: "1.26.2"
 
       - name: Setup Fly.io CLI
         uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
@@ -79,6 +79,9 @@ jobs:
           ARCHIVE_SECRET_ACCESS_KEY:
             op://Good Native/hover-archive/ARCHIVE_SECRET_ACCESS_KEY
           ARCHIVE_ENDPOINT: op://Good Native/hover-archive/ARCHIVE_ENDPOINT
+          GRAFANA_CLOUD_USER: op://Good Native/hover-runtime/GRAFANA_CLOUD_USER
+          GRAFANA_CLOUD_API_KEY:
+            op://Good Native/hover-runtime/GRAFANA_CLOUD_API_KEY
 
       - name: Get Supabase Preview Branch URL
         id: supabase
@@ -326,6 +329,8 @@ jobs:
               ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
               ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
               ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+              GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+              GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
@@ -346,6 +351,8 @@ jobs:
               ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
               ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
               ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+              GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+              GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
               WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
               APP_URL="https://$APP_NAME.fly.dev" \
               SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \

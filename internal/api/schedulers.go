@@ -143,7 +143,7 @@ func (h *Handler) createScheduler(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, normalisedDomain).Scan(&domainID)
 	if err != nil {
-		logger.Error().Err(err).Str("domain", normalisedDomain).Msg("Failed to get or create domain")
+		logger.Error("Failed to get or create domain", "error", err, "domain", normalisedDomain)
 		InternalError(w, r, err)
 		return
 	}
@@ -158,7 +158,7 @@ func (h *Handler) createScheduler(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, r, "Scheduler already exists for this domain")
 		return
 	} else if err != sql.ErrNoRows {
-		logger.Error().Err(err).Msg("Failed to check for existing scheduler")
+		logger.Error("Failed to check for existing scheduler", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -207,7 +207,7 @@ func (h *Handler) createScheduler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.DB.CreateScheduler(r.Context(), scheduler); err != nil {
-		logger.Error().Err(err).Str("domain", normalisedDomain).Msg("Failed to create scheduler")
+		logger.Error("Failed to create scheduler", "error", err, "domain", normalisedDomain)
 		InternalError(w, r, err)
 		return
 	}
@@ -228,7 +228,7 @@ func (h *Handler) listSchedulers(w http.ResponseWriter, r *http.Request) {
 
 	schedulers, err := h.DB.ListSchedulers(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to list schedulers")
+		logger.Error("Failed to list schedulers", "error", err, "organisation_id", orgID)
 		InternalError(w, r, err)
 		return
 	}
@@ -248,7 +248,7 @@ func (h *Handler) listSchedulers(w http.ResponseWriter, r *http.Request) {
 	// Get domain names for all schedulers in one query
 	domainNames, err := h.DB.GetDomainNames(r.Context(), domainIDs)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to query domain names")
+		logger.Error("Failed to query domain names", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -258,7 +258,7 @@ func (h *Handler) listSchedulers(w http.ResponseWriter, r *http.Request) {
 	for _, scheduler := range schedulers {
 		domainName, ok := domainNames[scheduler.DomainID]
 		if !ok {
-			logger.Warn().Int("domain_id", scheduler.DomainID).Msg("Domain name not found")
+			logger.Warn("Domain name not found", "domain_id", scheduler.DomainID)
 			continue
 		}
 		responses = append(responses, schedulerToResponse(scheduler, domainName))
@@ -282,7 +282,7 @@ func (h *Handler) getScheduler(w http.ResponseWriter, r *http.Request, scheduler
 		if errors.Is(err, db.ErrSchedulerNotFound) {
 			NotFound(w, r, "Scheduler not found")
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to get scheduler")
+			logger.Error("Failed to get scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -295,7 +295,7 @@ func (h *Handler) getScheduler(w http.ResponseWriter, r *http.Request, scheduler
 
 	domainName, err := h.DB.GetDomainNameByID(r.Context(), scheduler.DomainID)
 	if err != nil {
-		logger.Error().Err(err).Int("domain_id", scheduler.DomainID).Msg("Failed to get domain name")
+		logger.Error("Failed to get domain name", "error", err, "domain_id", scheduler.DomainID)
 		InternalError(w, r, err)
 		return
 	}
@@ -321,7 +321,7 @@ func (h *Handler) updateScheduler(w http.ResponseWriter, r *http.Request, schedu
 		if errors.Is(err, db.ErrSchedulerNotFound) {
 			NotFound(w, r, "Scheduler not found")
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to get scheduler")
+			logger.Error("Failed to get scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -389,7 +389,7 @@ func (h *Handler) updateScheduler(w http.ResponseWriter, r *http.Request, schedu
 		} else if errors.Is(err, db.ErrSchedulerStateConflict) {
 			WriteErrorMessage(w, r, "Scheduler state changed; refresh and retry", http.StatusConflict, ErrCodeConflict)
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to update scheduler")
+			logger.Error("Failed to update scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -397,7 +397,7 @@ func (h *Handler) updateScheduler(w http.ResponseWriter, r *http.Request, schedu
 
 	domainName, err := h.DB.GetDomainNameByID(r.Context(), scheduler.DomainID)
 	if err != nil {
-		logger.Error().Err(err).Int("domain_id", scheduler.DomainID).Msg("Failed to get domain name")
+		logger.Error("Failed to get domain name", "error", err, "domain_id", scheduler.DomainID)
 		InternalError(w, r, err)
 		return
 	}
@@ -421,7 +421,7 @@ func (h *Handler) deleteScheduler(w http.ResponseWriter, r *http.Request, schedu
 		if errors.Is(err, db.ErrSchedulerNotFound) {
 			NotFound(w, r, "Scheduler not found")
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to get scheduler")
+			logger.Error("Failed to get scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -436,7 +436,7 @@ func (h *Handler) deleteScheduler(w http.ResponseWriter, r *http.Request, schedu
 		if errors.Is(err, db.ErrSchedulerNotFound) {
 			NotFound(w, r, "Scheduler not found")
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to delete scheduler")
+			logger.Error("Failed to delete scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -460,7 +460,7 @@ func (h *Handler) getSchedulerJobs(w http.ResponseWriter, r *http.Request, sched
 		if errors.Is(err, db.ErrSchedulerNotFound) {
 			NotFound(w, r, "Scheduler not found")
 		} else {
-			logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to get scheduler")
+			logger.Error("Failed to get scheduler", "error", err, "scheduler_id", schedulerID)
 			InternalError(w, r, err)
 		}
 		return
@@ -500,7 +500,7 @@ func (h *Handler) getSchedulerJobs(w http.ResponseWriter, r *http.Request, sched
 
 	rows, err := h.DB.GetDB().QueryContext(r.Context(), query, schedulerID, orgID, limit, offset)
 	if err != nil {
-		logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to query scheduler jobs")
+		logger.Error("Failed to query scheduler jobs", "error", err, "scheduler_id", schedulerID)
 		InternalError(w, r, err)
 		return
 	}
@@ -517,7 +517,7 @@ func (h *Handler) getSchedulerJobs(w http.ResponseWriter, r *http.Request, sched
 			&job.Progress, &job.CreatedAt, &startedAt, &completedAt,
 		)
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to scan job row")
+			logger.Error("Failed to scan job row", "error", err)
 			// Continue processing other rows rather than failing entire request
 			continue
 		}
@@ -540,7 +540,7 @@ func (h *Handler) getSchedulerJobs(w http.ResponseWriter, r *http.Request, sched
 		SELECT COUNT(*) FROM jobs WHERE scheduler_id = $1 AND organisation_id = $2
 	`, schedulerID, orgID).Scan(&total)
 	if err != nil {
-		logger.Error().Err(err).Str("scheduler_id", schedulerID).Msg("Failed to count scheduler jobs")
+		logger.Error("Failed to count scheduler jobs", "error", err, "scheduler_id", schedulerID)
 		InternalError(w, r, err)
 		return
 	}

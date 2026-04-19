@@ -13,8 +13,8 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/util"
-	"github.com/rs/zerolog"
 )
 
 // JobsHandler handles requests to /v1/jobs
@@ -188,7 +188,7 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to list jobs")
+		logger.Error("Failed to list jobs", "error", err, "organisation_id", orgID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -232,7 +232,7 @@ func includeContains(include, key string) bool {
 }
 
 // createJobFromRequest creates a job from a CreateJobRequest with user context
-func (h *Handler) createJobFromRequest(ctx context.Context, user *db.User, req CreateJobRequest, logger zerolog.Logger) (*jobs.Job, error) {
+func (h *Handler) createJobFromRequest(ctx context.Context, user *db.User, req CreateJobRequest, logger *logging.Logger) (*jobs.Job, error) {
 	// Set defaults
 	useSitemap := true
 	if req.UseSitemap != nil {
@@ -284,20 +284,18 @@ func (h *Handler) createJobFromRequest(ctx context.Context, user *db.User, req C
 	// GA4 data will be fetched and pages table updated, then tasks will be reprioritised
 	if findLinks && effectiveOrgID != "" && h.GoogleClientID != "" && h.GoogleClientSecret != "" {
 		go func() { //nolint:gosec // G118: intentionally outlives request; background GA4 data fetch
-			logger.Info().
-				Str("organisation_id", effectiveOrgID).
-				Msg("Triggering GA4 data fetch in background")
+			logger.Info("Triggering GA4 data fetch in background", "organisation_id", effectiveOrgID)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 			h.fetchGA4DataBeforeJob(ctx, logger, effectiveOrgID, req.Domain)
 		}()
 	} else {
-		logger.Debug().
-			Bool("find_links", findLinks).
-			Str("organisation_id", effectiveOrgID).
-			Bool("has_client_id", h.GoogleClientID != "").
-			Bool("has_client_secret", h.GoogleClientSecret != "").
-			Msg("Skipping GA4 fetch - conditions not met")
+		logger.Debug("Skipping GA4 fetch - conditions not met",
+			"find_links", findLinks,
+			"organisation_id", effectiveOrgID,
+			"has_client_id", h.GoogleClientID != "",
+			"has_client_secret", h.GoogleClientSecret != "",
+		)
 	}
 
 	return h.JobsManager.CreateJob(ctx, opts)
@@ -359,7 +357,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to create job")
+		logger.Error("Failed to create job", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -367,11 +365,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	// Look up the domain ID for the response
 	domainID, err := h.DB.GetOrCreateDomainID(r.Context(), job.Domain)
 	if err != nil {
-		logger.Error().
-			Err(err).
-			Str("job_id", job.ID).
-			Int("domain_id", domainID).
-			Msg("Failed to get domain ID")
+		logger.Error("Failed to get domain ID", "error", err, "job_id", job.ID, "domain_id", domainID)
 		// Continue without domain_id rather than failing the whole request
 		domainID = 0
 	}
@@ -414,7 +408,7 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 			return
 		}
 
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to fetch job details")
+		logger.Error("Failed to fetch job details", "error", err, "job_id", jobID)
 		InternalError(w, r, err)
 		return
 	}
@@ -584,14 +578,14 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request, jobID string
 	}
 
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Str("action", req.Action).Msg("Failed to perform job action")
+		logger.Error("Failed to perform job action", "error", err, "job_id", jobID, "action", req.Action)
 		InternalError(w, r, err)
 		return
 	}
 
 	response, err := h.fetchJobResponse(r.Context(), resultJobID, &activeOrgID)
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", resultJobID).Msg("Failed to fetch job after action")
+		logger.Error("Failed to fetch job after action", "error", err, "job_id", resultJobID)
 		InternalError(w, r, err)
 		return
 	}
@@ -629,7 +623,7 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 
 	err = h.JobsManager.CancelJob(r.Context(), jobID)
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to cancel job")
+		logger.Error("Failed to cancel job", "error", err, "job_id", jobID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1057,7 +1051,7 @@ func (h *Handler) getJobTasks(w http.ResponseWriter, r *http.Request, jobID stri
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to count tasks")
+		logger.Error("Failed to count tasks", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1068,7 +1062,7 @@ func (h *Handler) getJobTasks(w http.ResponseWriter, r *http.Request, jobID stri
 		if HandlePoolSaturation(w, r, err) {
 			return
 		}
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to get tasks")
+		logger.Error("Failed to get tasks", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1077,7 +1071,7 @@ func (h *Handler) getJobTasks(w http.ResponseWriter, r *http.Request, jobID stri
 	// Format tasks from database rows
 	tasks, err := formatTasksFromRows(rows)
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to format tasks")
+		logger.Error("Failed to format tasks", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1161,7 +1155,7 @@ func (h *Handler) serveJobExport(w http.ResponseWriter, r *http.Request, jobID s
 
 	rows, err := h.DB.GetDB().QueryContext(r.Context(), query, jobID)
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to export tasks")
+		logger.Error("Failed to export tasks", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1170,7 +1164,7 @@ func (h *Handler) serveJobExport(w http.ResponseWriter, r *http.Request, jobID s
 	// Format tasks from database rows
 	tasks, err := formatTasksFromRows(rows)
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to format export tasks")
+		logger.Error("Failed to format export tasks", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1187,7 +1181,7 @@ func (h *Handler) serveJobExport(w http.ResponseWriter, r *http.Request, jobID s
 	`, jobID).Scan(&domain, &status, &createdAt, &completedAt)
 
 	if err != nil {
-		logger.Error().Err(err).Str("job_id", jobID).Msg("Failed to get job details for export")
+		logger.Error("Failed to get job details for export", "error", err, "job_id", jobID)
 		DatabaseError(w, r, err)
 		return
 	}
@@ -1223,18 +1217,18 @@ func (h *Handler) serveJobExport(w http.ResponseWriter, r *http.Request, jobID s
 
 // fetchGA4DataBeforeJob fetches GA4 analytics data before job creation
 // This runs in the foreground (blocking) for phase 1, with phases 2-3 in background
-func (h *Handler) fetchGA4DataBeforeJob(ctx context.Context, logger zerolog.Logger, organisationID, domain string) {
+func (h *Handler) fetchGA4DataBeforeJob(ctx context.Context, logger *logging.Logger, organisationID, domain string) {
 	// Normalise domain to match database format
 	normalisedDomain := util.NormaliseDomain(domain)
 
 	// Get domain ID from database
 	domainID, err := h.DB.GetOrCreateDomainID(ctx, normalisedDomain)
 	if err != nil {
-		logger.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Str("next_action", "analytics_skipped").
-			Msg("Failed to get domain ID for GA4 fetch, skipping analytics")
+		logger.Warn("Failed to get domain ID for GA4 fetch, skipping analytics",
+			"error", err,
+			"organisation_id", organisationID,
+			"next_action", "analytics_skipped",
+		)
 		return
 	}
 
@@ -1244,11 +1238,11 @@ func (h *Handler) fetchGA4DataBeforeJob(ctx context.Context, logger zerolog.Logg
 	// Fetch GA4 data (phase 1 blocks, phases 2-3 run in background)
 	if err := fetcher.FetchAndUpdatePages(ctx, organisationID, domainID); err != nil {
 		// Log error but don't fail job creation
-		logger.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Str("next_action", "job_continues_without_ga4").
-			Msg("Failed to fetch GA4 data, continuing without analytics")
+		logger.Warn("Failed to fetch GA4 data, continuing without analytics",
+			"error", err,
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+			"next_action", "job_continues_without_ga4",
+		)
 	}
 }

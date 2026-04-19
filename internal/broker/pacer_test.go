@@ -4,14 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDomainPacer_Seed(t *testing.T) {
 	client, _ := newTestClient(t)
-	pacer := NewDomainPacer(client, DefaultPacerConfig(), zerolog.Nop())
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
 	err := pacer.Seed(ctx, "example.com", 100, 200, 50)
@@ -30,7 +29,7 @@ func TestDomainPacer_Seed(t *testing.T) {
 
 func TestDomainPacer_Seed_Idempotent(t *testing.T) {
 	client, _ := newTestClient(t)
-	pacer := NewDomainPacer(client, DefaultPacerConfig(), zerolog.Nop())
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
 	require.NoError(t, pacer.Seed(ctx, "example.com", 100, 200, 50))
@@ -45,7 +44,7 @@ func TestDomainPacer_Seed_Idempotent(t *testing.T) {
 
 func TestDomainPacer_TryAcquire_NoDelay(t *testing.T) {
 	client, _ := newTestClient(t)
-	pacer := NewDomainPacer(client, DefaultPacerConfig(), zerolog.Nop())
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
 	// No domain config seeded — delay is 0, always acquires.
@@ -56,7 +55,7 @@ func TestDomainPacer_TryAcquire_NoDelay(t *testing.T) {
 
 func TestDomainPacer_TryAcquire_WithDelay(t *testing.T) {
 	client, mr := newTestClient(t)
-	pacer := NewDomainPacer(client, DefaultPacerConfig(), zerolog.Nop())
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
 	require.NoError(t, pacer.Seed(ctx, "slow.com", 1000, 0, 0))
@@ -83,7 +82,7 @@ func TestDomainPacer_TryAcquire_WithDelay(t *testing.T) {
 
 func TestDomainPacer_Inflight(t *testing.T) {
 	client, _ := newTestClient(t)
-	pacer := NewDomainPacer(client, DefaultPacerConfig(), zerolog.Nop())
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
 	require.NoError(t, pacer.IncrementInflight(ctx, "example.com", "job-1"))
@@ -105,7 +104,7 @@ func TestDomainPacer_Release_AdaptiveDelay(t *testing.T) {
 	cfg := DefaultPacerConfig()
 	cfg.SuccessThreshold = 2
 	cfg.DelayStepMS = 100
-	pacer := NewDomainPacer(client, cfg, zerolog.Nop())
+	pacer := NewDomainPacer(client, cfg)
 	ctx := context.Background()
 
 	// Seed with an adaptive delay.

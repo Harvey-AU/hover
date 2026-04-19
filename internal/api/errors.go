@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/db"
-	"github.com/rs/zerolog/log"
 )
 
 // ErrorResponse represents a standardised error response
@@ -52,30 +51,17 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error, status int, c
 	}
 
 	// Log the error with context - 4xx are client errors (debug), 5xx are server errors (error)
+	logger := loggerWithRequest(r)
 	if status >= 500 {
-		log.Error().
-			Err(err).
-			Str("request_id", requestID).
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Int("status", status).
-			Str("code", string(code)).
-			Msg("API error response")
+		logger.Error("API error response", "error", err, "status", status, "code", string(code))
 	} else {
-		log.Debug().
-			Err(err).
-			Str("request_id", requestID).
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Int("status", status).
-			Str("code", string(code)).
-			Msg("API client error response")
+		logger.Debug("API client error response", "error", err, "status", status, "code", string(code))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(errResp); err != nil {
-		log.Error().Err(err).Msg("Failed to encode error response")
+		logger.Error("Failed to encode error response", "error", err)
 	}
 }
 
@@ -91,30 +77,17 @@ func WriteErrorMessage(w http.ResponseWriter, r *http.Request, message string, s
 	}
 
 	// Log the error with context - 4xx are client errors (debug), 5xx are server errors (error)
+	logger := loggerWithRequest(r)
 	if status >= 500 {
-		log.Error().
-			Str("request_id", requestID).
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Int("status", status).
-			Str("code", string(code)).
-			Str("message", message).
-			Msg("API error response")
+		logger.Error("API error response", "status", status, "code", string(code), "message", message)
 	} else {
-		log.Debug().
-			Str("request_id", requestID).
-			Str("method", r.Method).
-			Str("path", r.URL.Path).
-			Int("status", status).
-			Str("code", string(code)).
-			Str("message", message).
-			Msg("API client error response")
+		logger.Debug("API client error response", "status", status, "code", string(code), "message", message)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(errResp); err != nil {
-		log.Error().Err(err).Msg("Failed to encode error response")
+		logger.Error("Failed to encode error response", "error", err)
 	}
 }
 

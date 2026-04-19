@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 // RobotsRules contains parsed robots.txt rules for a domain
@@ -46,10 +44,7 @@ func ParseRobotsTxt(ctx context.Context, domain string, userAgent string, transp
 		robotsURL = fmt.Sprintf("https://%s/robots.txt", domain)
 	}
 
-	log.Debug().
-		Str("domain", domain).
-		Str("robots_url", robotsURL).
-		Msg("Fetching robots.txt")
+	crawlerLog.Debug("Fetching robots.txt", "domain", domain, "robots_url", robotsURL)
 
 	// Create a client with shorter timeout
 	client := &http.Client{
@@ -82,7 +77,7 @@ func ParseRobotsTxt(ctx context.Context, domain string, userAgent string, transp
 	if resp.StatusCode != http.StatusOK {
 		// No robots.txt means no restrictions
 		if resp.StatusCode == http.StatusNotFound {
-			log.Debug().Msg("No robots.txt found, no restrictions apply")
+			crawlerLog.Debug("No robots.txt found, no restrictions apply")
 			return &RobotsRules{}, nil
 		}
 		return nil, fmt.Errorf("robots.txt returned status %d", resp.StatusCode)
@@ -109,9 +104,7 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 
 	// Check if we likely hit the 1MB limit (exactly 1MB read)
 	if len(content) == 1*1024*1024 {
-		log.Warn().
-			Int("size_bytes", len(content)).
-			Msg("Robots.txt file truncated at 1MB limit")
+		crawlerLog.Warn("Robots.txt file truncated at 1MB limit", "size_bytes", len(content))
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(content))
@@ -162,9 +155,7 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 					DisallowPatterns: []string{},
 					AllowPatterns:    []string{},
 				}
-				log.Debug().
-					Str("user_agent_section", agent).
-					Msg("Found rules section for our bot")
+				crawlerLog.Debug("Found rules section for our bot", "user_agent_section", agent)
 			}
 			continue
 		}
@@ -198,10 +189,10 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 			delayStr := strings.TrimSpace(line[12:])
 			if delay, err := strconv.Atoi(delayStr); err == nil && delay > 0 {
 				currentRules.CrawlDelay = delay
-				log.Debug().
-					Int("crawl_delay", delay).
-					Bool("from_specific_section", inOurSection).
-					Msg("Found Crawl-delay directive")
+				crawlerLog.Debug("Found Crawl-delay directive",
+					"crawl_delay", delay,
+					"from_specific_section", inOurSection,
+				)
 			}
 			continue
 		}
@@ -234,12 +225,12 @@ func parseRobotsTxtContent(r io.Reader, userAgent string) (*RobotsRules, error) 
 		return nil, fmt.Errorf("error reading robots.txt: %w", err)
 	}
 
-	log.Debug().
-		Int("crawl_delay", rules.CrawlDelay).
-		Int("sitemaps", len(rules.Sitemaps)).
-		Int("disallow_patterns", len(rules.DisallowPatterns)).
-		Int("allow_patterns", len(rules.AllowPatterns)).
-		Msg("Parsed robots.txt rules")
+	crawlerLog.Debug("Parsed robots.txt rules",
+		"crawl_delay", rules.CrawlDelay,
+		"sitemaps", len(rules.Sitemaps),
+		"disallow_patterns", len(rules.DisallowPatterns),
+		"allow_patterns", len(rules.AllowPatterns),
+	)
 
 	return rules, nil
 }

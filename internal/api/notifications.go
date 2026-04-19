@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,7 +11,45 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+// resolveCurrentUser centralises the auth-claims + GetOrCreateUser dance shared
+// by every notifications handler. Returning (nil, false) means the helper has
+// already written the appropriate response (401 for missing claims or unknown
+// user, 500 for a real DB failure) and the caller should just return.
+//
+// `action` is used purely for log context so we can tell which handler tripped
+// without relying on stack traces.
+func (h *Handler) resolveCurrentUser(
+	w http.ResponseWriter,
+	r *http.Request,
+	logger *logging.Logger,
+	action string,
+) (*db.User, bool) {
+	userClaims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		logger.Warn("Failed to get user claims", "action", action)
+		Unauthorised(w, r, "Authentication required")
+		return nil, false
+	}
+
+	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
+	if err != nil {
+		if errors.Is(err, db.ErrUserNotFound) {
+			logger.Warn("User not found", "action", action, "error", err)
+			Unauthorised(w, r, "User not found")
+			return nil, false
+		}
+		// Real DB failure — surface as 5xx so callers retry instead of
+		// treating a transient outage as an auth rejection.
+		logger.Error("Failed to load user", "action", action, "error", err)
+		InternalError(w, r, fmt.Errorf("failed to load user for %s: %w", action, err))
+		return nil, false
+	}
+
+	return user, true
+}
 
 // NotificationResponse is the JSON response for a notification
 type NotificationResponse struct {
@@ -76,19 +116,8 @@ func (h *Handler) NotificationsReadAllHandler(w http.ResponseWriter, r *http.Req
 func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "list-notifications")
 	if !ok {
-		logger.Warn().Msg("Failed to get user claims")
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		logger.Warn().Err(err).Msg("User not found")
-		Unauthorised(w, r, "User not found")
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -113,7 +142,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get notifications
 	notifications, total, err := h.DB.ListNotifications(r.Context(), orgID, limit, offset, unreadOnly)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list notifications")
+		logger.Error("Failed to list notifications", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -121,7 +150,7 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get unread count
 	unreadCount, err := h.DB.GetUnreadNotificationCount(r.Context(), orgID)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to get unread count")
+		logger.Warn("Failed to get unread count", "error", err)
 		unreadCount = 0
 	}
 
@@ -138,24 +167,15 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		logger.Error().Err(err).Msg("Failed to encode notifications response")
+		logger.Error("Failed to encode notifications response", "error", err)
 	}
 }
 
 func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, notificationID string) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "mark-notification-read")
 	if !ok {
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		Unauthorised(w, r, "User not found")
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -166,7 +186,7 @@ func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, n
 			NotFound(w, r, "Notification not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to mark notification read")
+		logger.Error("Failed to mark notification read", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -177,24 +197,15 @@ func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, n
 func (h *Handler) markAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "mark-all-notifications-read")
 	if !ok {
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		Unauthorised(w, r, "User not found")
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
 
 	// Mark all as read
 	if err := h.DB.MarkAllNotificationsRead(r.Context(), orgID); err != nil {
-		logger.Error().Err(err).Msg("Failed to mark all notifications read")
+		logger.Error("Failed to mark all notifications read", "error", err)
 		InternalError(w, r, err)
 		return
 	}

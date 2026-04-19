@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/util"
-	"github.com/rs/zerolog/log"
 )
 
 // decompressGzip decompresses gzip-encoded data
@@ -53,10 +52,10 @@ type SitemapDiscoveryResult struct {
 func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) (*SitemapDiscoveryResult, error) {
 	// Normalise the domain first to handle different input formats
 	normalisedDomain := util.NormaliseDomain(domain)
-	log.Debug().
-		Str("original_domain", domain).
-		Str("normalised_domain", normalisedDomain).
-		Msg("Starting sitemap and robots.txt discovery")
+	crawlerLog.Debug("Starting sitemap and robots.txt discovery",
+		"original_domain", domain,
+		"normalised_domain", normalisedDomain,
+	)
 
 	result := &SitemapDiscoveryResult{
 		Sitemaps:    []string{},
@@ -75,10 +74,10 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 	}
 	if err != nil {
 		// Log at warn so TLS/network issues are visible in production logs
-		log.Warn().
-			Err(err).
-			Str("domain", normalisedDomain).
-			Msg("Failed to parse robots.txt, proceeding with no restrictions")
+		crawlerLog.Warn("Failed to parse robots.txt, proceeding with no restrictions",
+			"error", err,
+			"domain", normalisedDomain,
+		)
 	} else {
 		result.RobotsRules = robotRules
 		result.Sitemaps = robotRules.Sitemaps
@@ -86,11 +85,9 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 
 	// Log if sitemaps were found in robots.txt
 	if len(result.Sitemaps) > 0 {
-		log.Debug().
-			Strs("sitemaps", result.Sitemaps).
-			Msg("Sitemaps found in robots.txt")
+		crawlerLog.Debug("Sitemaps found in robots.txt", "sitemaps", result.Sitemaps)
 	} else {
-		log.Debug().Msg("No sitemaps found in robots.txt")
+		crawlerLog.Debug("No sitemaps found in robots.txt")
 	}
 
 	// If no sitemaps found in robots.txt, check common locations
@@ -117,25 +114,25 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 
 		// Check common locations concurrently with a timeout
 		for _, sitemapURL := range commonPaths {
-			log.Debug().Str("checking_sitemap_url", sitemapURL).Msg("Checking common sitemap location")
+			crawlerLog.Debug("Checking common sitemap location", "checking_sitemap_url", sitemapURL)
 			req, err := http.NewRequestWithContext(ctx, "HEAD", sitemapURL, nil)
 			if err != nil {
-				log.Debug().Err(err).Str("url", sitemapURL).Msg("Error creating request for sitemap")
+				crawlerLog.Debug("Error creating request for sitemap", "error", err, "url", sitemapURL)
 				continue
 			}
 			req.Header.Set("User-Agent", c.config.UserAgent)
 
 			resp, err := client.Do(req)
 			if err != nil {
-				log.Warn().Err(err).Str("url", sitemapURL).Msg("Error fetching sitemap at common location")
+				crawlerLog.Warn("Error fetching sitemap at common location", "error", err, "url", sitemapURL)
 				continue
 			}
 
 			_ = resp.Body.Close()
-			log.Debug().Str("url", sitemapURL).Int("status", resp.StatusCode).Msg("Sitemap check response")
+			crawlerLog.Debug("Sitemap check response", "url", sitemapURL, "status", resp.StatusCode)
 			if resp.StatusCode == http.StatusOK {
 				result.Sitemaps = append(result.Sitemaps, sitemapURL)
-				log.Debug().Str("url", sitemapURL).Msg("Found sitemap at common location")
+				crawlerLog.Debug("Found sitemap at common location", "url", sitemapURL)
 			}
 		}
 	}
@@ -153,18 +150,18 @@ func (c *Crawler) DiscoverSitemapsAndRobots(ctx context.Context, domain string) 
 
 	// Log final result
 	if len(result.Sitemaps) > 0 {
-		log.Debug().
-			Strs("sitemaps", result.Sitemaps).
-			Int("count", len(result.Sitemaps)).
-			Int("crawl_delay", result.RobotsRules.CrawlDelay).
-			Int("disallow_patterns", len(result.RobotsRules.DisallowPatterns)).
-			Msg("Found sitemaps and robots rules for domain")
+		crawlerLog.Debug("Found sitemaps and robots rules for domain",
+			"sitemaps", result.Sitemaps,
+			"count", len(result.Sitemaps),
+			"crawl_delay", result.RobotsRules.CrawlDelay,
+			"disallow_patterns", len(result.RobotsRules.DisallowPatterns),
+		)
 	} else {
-		log.Debug().
-			Str("domain", domain).
-			Int("crawl_delay", result.RobotsRules.CrawlDelay).
-			Int("disallow_patterns", len(result.RobotsRules.DisallowPatterns)).
-			Msg("No sitemaps found but got robots rules for domain")
+		crawlerLog.Debug("No sitemaps found but got robots rules for domain",
+			"domain", domain,
+			"crawl_delay", result.RobotsRules.CrawlDelay,
+			"disallow_patterns", len(result.RobotsRules.DisallowPatterns),
+		)
 	}
 
 	return result, nil
@@ -234,50 +231,44 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 	// Decompress if gzip-encoded (via header or .gz URL suffix)
 	contentEncoding := resp.Header.Get("Content-Encoding")
 	if isGzipContent(contentEncoding, sitemapURL) {
-		log.Debug().
-			Str("url", sitemapURL).
-			Str("content_encoding", contentEncoding).
-			Int("compressed_size", len(body)).
-			Msg("Decompressing gzip sitemap")
+		crawlerLog.Debug("Decompressing gzip sitemap",
+			"url", sitemapURL,
+			"content_encoding", contentEncoding,
+			"compressed_size", len(body),
+		)
 
 		body, err = decompressGzip(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decompress sitemap %s: %w", sitemapURL, err)
 		}
 
-		log.Debug().
-			Str("url", sitemapURL).
-			Int("decompressed_size", len(body)).
-			Msg("Sitemap decompressed successfully")
+		crawlerLog.Debug("Sitemap decompressed successfully", "url", sitemapURL, "decompressed_size", len(body))
 	}
 
 	// Log the content for debugging
-	log.Debug().
-		Str("url", sitemapURL).
-		Int("content_length", len(body)).
-		Str("content_sample", string(body[:min(100, len(body))])).
-		Msg("Sitemap content received")
+	crawlerLog.Debug("Sitemap content received",
+		"url", sitemapURL,
+		"content_length", len(body),
+		"content_sample", string(body[:min(100, len(body))]),
+	)
 
 	// Try to unmarshal as a sitemap index first.
 	// encoding/xml handles CDATA, XML entities (&amp; etc.), namespaces,
 	// and whitespace automatically.
 	var index SitemapIndex
 	if err := xml.Unmarshal(body, &index); err == nil && len(index.Sitemaps) > 0 {
-		log.Debug().
-			Str("url", sitemapURL).
-			Int("child_count", len(index.Sitemaps)).
-			Msg("Parsed as sitemap index")
+		crawlerLog.Debug("Parsed as sitemap index", "url", sitemapURL, "child_count", len(index.Sitemaps))
 
 		for _, child := range index.Sitemaps {
 			childURL := util.NormaliseURL(strings.TrimSpace(child.Loc))
 			if childURL == "" {
-				log.Warn().Str("url", child.Loc).Msg("Invalid child sitemap URL, skipping")
+				crawlerLog.Warn("Invalid child sitemap URL, skipping", "url", child.Loc)
 				continue
 			}
 
 			childURLs, err := c.ParseSitemap(ctx, childURL)
 			if err != nil {
-				log.Warn().Err(err).Str("url", childURL).Msg("Failed to parse child sitemap")
+				crawlerLog.Warn("Failed to parse child sitemap", "error", err, "url", childURL)
 				continue
 			}
 			urls = append(urls, childURLs...)
@@ -286,7 +277,7 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 		// Parse as a regular URL set
 		var urlSet URLSet
 		if err := xml.Unmarshal(body, &urlSet); err != nil {
-			log.Warn().Err(err).Str("url", sitemapURL).Msg("Failed to parse sitemap XML")
+			crawlerLog.Warn("Failed to parse sitemap XML", "error", err, "url", sitemapURL)
 			// Return empty rather than error — malformed sitemaps shouldn't halt crawling
 			return urls, nil
 		}
@@ -297,21 +288,18 @@ func (c *Crawler) ParseSitemap(ctx context.Context, sitemapURL string) ([]string
 			if validURL != "" {
 				validURLs = append(validURLs, validURL)
 			} else {
-				log.Debug().Str("invalid_url", u.Loc).Msg("Skipping invalid URL from sitemap")
+				crawlerLog.Debug("Skipping invalid URL from sitemap", "invalid_url", u.Loc)
 			}
 		}
 
-		log.Debug().
-			Str("sitemap_url", sitemapURL).
-			Int("url_count", len(validURLs)).
-			Msg("Extracted valid URLs from regular sitemap")
+		crawlerLog.Debug("Extracted valid URLs from regular sitemap",
+			"sitemap_url", sitemapURL,
+			"url_count", len(validURLs),
+		)
 		urls = append(urls, validURLs...)
 	}
 
-	log.Debug().
-		Str("sitemap_url", sitemapURL).
-		Int("total_url_count", len(urls)).
-		Msg("Finished parsing sitemap")
+	crawlerLog.Debug("Finished parsing sitemap", "sitemap_url", sitemapURL, "total_url_count", len(urls))
 
 	return urls, nil
 }

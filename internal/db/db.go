@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/cache"
+	"github.com/Harvey-AU/hover/internal/logging"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/rs/zerolog/log"
 )
+
+var dbLog = logging.Component("db")
 
 const (
 	// defaultConnMaxLifetime controls how long a connection can live before
@@ -69,12 +71,12 @@ func poolLimitsForEnv(appEnv string) (maxOpen, maxIdle int) {
 	if parsed, ok := parsePositiveIntEnv("DB_MAX_OPEN_CONNS"); ok {
 		maxOpen = parsed
 	} else if raw := strings.TrimSpace(os.Getenv("DB_MAX_OPEN_CONNS")); raw != "" {
-		log.Warn().Str("value", raw).Msg("Invalid DB_MAX_OPEN_CONNS; using default")
+		dbLog.Warn("Invalid DB_MAX_OPEN_CONNS; using default", "value", raw)
 	}
 	if parsed, ok := parsePositiveIntEnv("DB_MAX_IDLE_CONNS"); ok {
 		maxIdle = parsed
 	} else if raw := strings.TrimSpace(os.Getenv("DB_MAX_IDLE_CONNS")); raw != "" {
-		log.Warn().Str("value", raw).Msg("Invalid DB_MAX_IDLE_CONNS; using default")
+		dbLog.Warn("Invalid DB_MAX_IDLE_CONNS; using default", "value", raw)
 	}
 	if maxOpen < 1 {
 		maxOpen = 1
@@ -239,19 +241,17 @@ func cleanupAppConnections(ctx context.Context, client *sql.DB, appName string) 
 
 	var terminated int64
 	if err := client.QueryRowContext(cleanupCtx, query, pattern, appName).Scan(&terminated); err != nil {
-		log.Warn().Err(err).Msg("Failed to terminate stale PostgreSQL connections for application")
+		dbLog.Warn("Failed to terminate stale PostgreSQL connections for application", "error", err)
 		return
 	}
 
 	if terminated > 0 {
-		log.Info().
-			Str("application_name", appName).
-			Int64("terminated_connections", terminated).
-			Msg("Terminated stale PostgreSQL connections from previous deployment")
+		dbLog.Info("Terminated stale PostgreSQL connections from previous deployment",
+			"application_name", appName,
+			"terminated_connections", terminated)
 	} else {
-		log.Debug().
-			Str("application_name", appName).
-			Msg("No stale PostgreSQL connections found for termination")
+		dbLog.Debug("No stale PostgreSQL connections found for termination",
+			"application_name", appName)
 	}
 }
 
@@ -263,7 +263,7 @@ func (c *Config) ConnectionString() string {
 		connStr, _ = addConnSetting(connStr, "statement_timeout", statementTimeoutMs)
 		if strings.Contains(connStr, "pooler.supabase.com") {
 			if newStr, added := addConnSetting(connStr, "default_query_exec_mode", "simple_protocol"); added {
-				log.Info().Msg("Added minimal prepared statement disabling for pooler connection")
+				dbLog.Info("Added minimal prepared statement disabling for pooler connection")
 				connStr = newStr
 			} else {
 				connStr = newStr
@@ -287,7 +287,7 @@ func (c *Config) ConnectionString() string {
 	connStr, _ = addConnSetting(connStr, "statement_timeout", statementTimeoutMs)
 	if strings.Contains(connStr, "pooler.supabase.com") {
 		if newStr, added := addConnSetting(connStr, "default_query_exec_mode", "simple_protocol"); added {
-			log.Info().Msg("Added minimal prepared statement disabling for pooler connection")
+			dbLog.Info("Added minimal prepared statement disabling for pooler connection")
 			connStr = newStr
 		} else {
 			connStr = newStr
@@ -357,7 +357,7 @@ func New(config *Config) (*DB, error) {
 
 	connStr := config.ConnectionString()
 
-	log.Info().Msg("Opening PostgreSQL connection")
+	dbLog.Info("Opening PostgreSQL connection")
 
 	client, err := sql.Open("pgx", connStr)
 	if err != nil {
@@ -442,14 +442,14 @@ func InitFromEnv() (*DB, error) {
 
 		if strings.Contains(url, "pooler.supabase.com") {
 			if newStr, added := addConnSetting(url, "default_query_exec_mode", "simple_protocol"); added {
-				log.Info().Msg("Added minimal prepared statement disabling for pooler connection")
+				dbLog.Info("Added minimal prepared statement disabling for pooler connection")
 				url = newStr
 			} else {
 				url = newStr
 			}
 
 			if newStr, added := addConnSetting(url, "pgbouncer", "true"); added {
-				log.Info().Msg("Enabled transaction pooling mode (pgbouncer=true)")
+				dbLog.Info("Enabled transaction pooling mode (pgbouncer=true)")
 				url = newStr
 			} else {
 				url = newStr
@@ -463,7 +463,7 @@ func InitFromEnv() (*DB, error) {
 		// Persist the augmented URL back to config for consistency
 		config.DatabaseURL = url
 
-		log.Info().Str("connection_url", url).Msg("Opening PostgreSQL connection via DATABASE_URL")
+		dbLog.Info("Opening PostgreSQL connection via DATABASE_URL", "connection_url", redactURL(url))
 
 		client, err := sql.Open("pgx", url)
 		if err != nil {
@@ -589,7 +589,7 @@ func (db *DB) GetDomainNames(ctx context.Context, domainIDs []int) (map[int]stri
 		var domainID int
 		var domainName string
 		if err := rows.Scan(&domainID, &domainName); err != nil {
-			log.Warn().Err(err).Msg("Failed to scan domain row")
+			dbLog.Warn("Failed to scan domain row", "error", err)
 			continue
 		}
 		domainNames[domainID] = domainName
@@ -645,56 +645,52 @@ func (db *DB) UpdateDomainTechnologies(ctx context.Context, domainID int, techno
 // This is the safe option for clearing test data without triggering schema changes.
 func (db *DB) ResetDataOnly() error {
 	startTime := time.Now()
-	log.Warn().Msg("=== DATA-ONLY RESET STARTED ===")
-	log.Warn().Msg("Clearing all data from database tables (schema preserved)")
+	dbLog.Warn("=== DATA-ONLY RESET STARTED ===")
+	dbLog.Warn("Clearing all data from database tables (schema preserved)")
 
 	// Use TRUNCATE instead of DELETE - it's atomic, faster, and handles concurrent access better
 	// TRUNCATE automatically handles foreign key constraints with CASCADE
 	tables := []string{"tasks", "jobs", "job_share_links", "schedulers", "pages", "domains", "page_analytics", "domain_hosts", "notifications"}
 	totalRowsDeleted := int64(0)
 
-	log.Info().Msg("Step 1/2: Truncating all data from tables")
+	dbLog.Info("Step 1/2: Truncating all data from tables")
 	for i, table := range tables {
 		tableStart := time.Now()
-		log.Info().
-			Str("table", table).
-			Int("table_num", i+1).
-			Int("total_tables", len(tables)).
-			Msg("Truncating table data")
+		dbLog.Info("Truncating table data",
+			"table", table,
+			"table_num", i+1,
+			"total_tables", len(tables))
 
 		// Get row count before truncate (warn if it fails but keep going)
 		var rowCount int64
 		if err := db.client.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table)).Scan(&rowCount); err != nil {
-			log.Warn().Err(err).Str("table", table).Msg("Failed to count rows before truncate")
+			dbLog.Warn("Failed to count rows before truncate", "error", err, "table", table)
 		}
 
 		// TRUNCATE is atomic and releases all locks immediately
 		_, err := db.client.Exec(fmt.Sprintf(`TRUNCATE TABLE %s CASCADE`, table))
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("table", table).
-				Dur("elapsed", time.Since(tableStart)).
-				Msg("FAILED to truncate table - reset aborted")
+			dbLog.Error("FAILED to truncate table - reset aborted",
+				"error", err,
+				"table", table,
+				"elapsed", time.Since(tableStart))
 			return fmt.Errorf("failed to truncate table %s: %w", table, err)
 		}
 
 		totalRowsDeleted += rowCount
-		log.Info().
-			Str("table", table).
-			Int64("rows_deleted", rowCount).
-			Dur("duration", time.Since(tableStart)).
-			Msg("Truncated table data successfully")
+		dbLog.Info("Truncated table data successfully",
+			"table", table,
+			"rows_deleted", rowCount,
+			"duration", time.Since(tableStart))
 	}
 
-	log.Info().
-		Int64("total_rows_deleted", totalRowsDeleted).
-		Dur("step_duration", time.Since(startTime)).
-		Msg("Step 1/2 completed: All table data cleared")
+	dbLog.Info("Step 1/2 completed: All table data cleared",
+		"total_rows_deleted", totalRowsDeleted,
+		"step_duration", time.Since(startTime))
 
 	// Reset sequences to start from 1 again
 	sequenceStart := time.Now()
-	log.Info().Msg("Step 2/2: Resetting sequences")
+	dbLog.Info("Step 2/2: Resetting sequences")
 	sequences := []struct {
 		name  string
 		table string
@@ -707,30 +703,23 @@ func (db *DB) ResetDataOnly() error {
 	for _, seq := range sequences {
 		_, err := db.client.Exec(fmt.Sprintf(`ALTER SEQUENCE %s RESTART WITH 1`, seq.name))
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("sequence", seq.name).
-				Msg("Failed to reset sequence (may not exist)")
+			dbLog.Warn("Failed to reset sequence (may not exist)", "error", err, "sequence", seq.name)
 		} else {
 			sequencesReset++
-			log.Info().
-				Str("sequence", seq.name).
-				Msg("Reset sequence to 1")
+			dbLog.Info("Reset sequence to 1", "sequence", seq.name)
 		}
 	}
 
-	log.Info().
-		Int("sequences_reset", sequencesReset).
-		Int("sequences_total", len(sequences)).
-		Dur("step_duration", time.Since(sequenceStart)).
-		Msg("Step 2/2 completed: Sequences reset")
+	dbLog.Info("Step 2/2 completed: Sequences reset",
+		"sequences_reset", sequencesReset,
+		"sequences_total", len(sequences),
+		"step_duration", time.Since(sequenceStart))
 
 	totalDuration := time.Since(startTime)
-	log.Warn().
-		Dur("total_duration", totalDuration).
-		Int64("total_rows_deleted", totalRowsDeleted).
-		Msg("=== DATA-ONLY RESET COMPLETED SUCCESSFULLY ===")
-	log.Warn().Msg("Schema preserved - no migrations affected")
+	dbLog.Warn("=== DATA-ONLY RESET COMPLETED SUCCESSFULLY ===",
+		"total_duration", totalDuration,
+		"total_rows_deleted", totalRowsDeleted)
+	dbLog.Warn("Schema preserved - no migrations affected")
 
 	return nil
 }
@@ -749,7 +738,7 @@ func (db *DB) RecalculateJobStats(ctx context.Context, jobID string) error {
 func Serialise(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to serialise data")
+		dbLog.Error("Failed to serialise data", "error", err)
 		return "{}"
 	}
 	return string(data)
@@ -816,12 +805,11 @@ func (db *DB) UpsertPageWithAnalytics(
 	)
 	if err != nil {
 		// Log but don't fail - page was created successfully
-		log.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Str("next_action", "continuing_without_analytics").
-			Msg("Failed to upsert page analytics data; continuing without analytics")
+		dbLog.Warn("Failed to upsert page analytics data; continuing without analytics",
+			"error", err,
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+			"next_action", "continuing_without_analytics")
 	}
 
 	return pageID, nil
@@ -866,11 +854,10 @@ func (db *DB) CalculateTrafficScores(ctx context.Context, organisationID string,
 	}
 
 	rowsAffected, _ := result.RowsAffected()
-	log.Info().
-		Str("organisation_id", organisationID).
-		Int("domain_id", domainID).
-		Int64("pages_updated", rowsAffected).
-		Msg("Calculated traffic scores for domain")
+	dbLog.Info("Calculated traffic scores for domain",
+		"organisation_id", organisationID,
+		"domain_id", domainID,
+		"pages_updated", rowsAffected)
 
 	return nil
 }
@@ -900,16 +887,14 @@ func (db *DB) ApplyTrafficScoresToTasks(ctx context.Context, organisationID stri
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected > 0 {
-		log.Info().
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Int64("tasks_updated", rowsAffected).
-			Msg("Applied traffic scores to pending tasks")
+		dbLog.Info("Applied traffic scores to pending tasks",
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+			"tasks_updated", rowsAffected)
 	} else {
-		log.Debug().
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Msg("No pending tasks to reprioritise")
+		dbLog.Debug("No pending tasks to reprioritise",
+			"organisation_id", organisationID,
+			"domain_id", domainID)
 	}
 
 	return nil
@@ -979,7 +964,7 @@ func (db *DB) GetDomainsForOrganisation(ctx context.Context, organisationID stri
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			log.Error().Err(closeErr).Str("organisation_id", organisationID).Msg("Failed to close rows")
+			dbLog.Error("Failed to close rows", "error", closeErr, "organisation_id", organisationID)
 		}
 	}()
 
@@ -997,4 +982,14 @@ func (db *DB) GetDomainsForOrganisation(ctx context.Context, organisationID stri
 	}
 
 	return domains, nil
+}
+
+// redactURL strips credentials from a connection URL before logging.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	u.User = nil
+	return u.String()
 }

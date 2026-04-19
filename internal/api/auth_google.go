@@ -15,9 +15,9 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"github.com/rs/zerolog"
 )
 
 // extractGoogleAccountIDFromPath extracts Google account ID from path like "accounts/accounts/123456/properties"
@@ -156,7 +156,7 @@ func (h *Handler) InitiateGoogleOAuth(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -168,13 +168,13 @@ func (h *Handler) InitiateGoogleOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.GoogleClientID == "" {
-		logger.Error().Msg("GOOGLE_CLIENT_ID not configured")
+		logger.Error("GOOGLE_CLIENT_ID not configured")
 		InternalError(w, r, fmt.Errorf("google integration not configured"))
 		return
 	}
 
 	if getOAuthStateSecret() == "" {
-		logger.Error().Msg("SUPABASE_JWT_SECRET not configured for OAuth state signing")
+		logger.Error("SUPABASE_JWT_SECRET not configured for OAuth state signing")
 		InternalError(w, r, fmt.Errorf("google integration not configured"))
 		return
 	}
@@ -182,7 +182,7 @@ func (h *Handler) InitiateGoogleOAuth(w http.ResponseWriter, r *http.Request) {
 	// Sign state with JWT Secret
 	state, err := h.generateOAuthState(userClaims.UserID, orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to generate OAuth state")
+		logger.Error("Failed to generate OAuth state", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -219,7 +219,7 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 	errParam := r.URL.Query().Get("error")
 
 	if errParam != "" {
-		logger.Warn().Str("error", errParam).Msg("Google OAuth denied")
+		logger.Warn("Google OAuth denied", "error", errParam)
 		h.redirectToSettingsWithError(w, r, "Google", "Google connection was cancelled", "analytics", "google-analytics")
 		return
 	}
@@ -232,7 +232,7 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 	// Validate state
 	state, err := h.validateOAuthState(stateParam)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Invalid OAuth state")
+		logger.Warn("Invalid OAuth state", "error", err)
 		h.redirectToSettingsWithError(w, r, "Google", "Invalid or expired state", "analytics", "google-analytics")
 		return
 	}
@@ -240,7 +240,7 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 	// Exchange code for access token
 	tokenResp, err := h.exchangeGoogleCode(code)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to exchange Google OAuth code")
+		logger.Error("Failed to exchange Google OAuth code", "error", err)
 		h.redirectToSettingsWithError(w, r, "Google", "Failed to connect to Google", "analytics", "google-analytics")
 		return
 	}
@@ -252,13 +252,13 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 	// Fetch user info
 	userInfo, err := h.fetchGoogleUserInfo(r.Context(), tokenResp.AccessToken)
 	if err != nil {
-		logger.Warn().Err(err).Msg("Failed to fetch Google user info")
+		logger.Warn("Failed to fetch Google user info", "error", err)
 	}
 
 	// Fetch GA4 accounts (fast - single API call)
 	accounts, err := h.fetchGA4Accounts(r.Context(), tokenResp.AccessToken)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to fetch GA4 accounts")
+		logger.Error("Failed to fetch GA4 accounts", "error", err)
 		h.redirectToSettingsWithError(w, r, "Google", "Failed to fetch Google Analytics accounts. Ensure GA4 is set up.", "analytics", "google-analytics")
 		return
 	}
@@ -286,10 +286,7 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 		}
 
 		if err := h.DB.UpsertGA4Account(r.Context(), dbAccount); err != nil {
-			logger.Warn().Err(err).
-				Str("account_id", acc.AccountID).
-				Str("next_action", "retry_upsert_or_check_db_connectivity").
-				Msg("Failed to upsert GA4 account to DB")
+			logger.Warn("Failed to upsert GA4 account to DB", "error", err, "account_id", acc.AccountID, "next_action", "retry_upsert_or_check_db_connectivity")
 			// Continue anyway - the pending session flow will still work
 			continue
 		}
@@ -297,18 +294,12 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 		// Store token against each account for future refresh operations
 		if tokenResp.RefreshToken != "" {
 			if err := h.DB.StoreGA4AccountToken(r.Context(), dbAccount.ID, tokenResp.RefreshToken); err != nil {
-				logger.Warn().Err(err).
-					Str("account_id", acc.AccountID).
-					Str("next_action", "retry_store_token_or_check_vault_permissions").
-					Msg("Failed to store GA4 account token")
+				logger.Warn("Failed to store GA4 account token", "error", err, "account_id", acc.AccountID, "next_action", "retry_store_token_or_check_vault_permissions")
 			}
 		}
 	}
 
-	logger.Info().
-		Str("organisation_id", state.OrgID).
-		Int("account_count", len(accounts)).
-		Msg("Synced GA4 accounts to database")
+	logger.Info("Synced GA4 accounts to database", "organisation_id", state.OrgID, "account_count", len(accounts))
 
 	// Store session with accounts and tokens (for property selection flow)
 	session := &PendingGASession{
@@ -327,7 +318,7 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 	if len(accounts) == 1 {
 		properties, err := h.fetchPropertiesForAccount(r.Context(), logger, &http.Client{Timeout: 30 * time.Second}, tokenResp.AccessToken, accounts[0].AccountID)
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to fetch properties for single account")
+			logger.Error("Failed to fetch properties for single account", "error", err)
 			h.redirectToSettingsWithError(w, r, "Google", "Failed to fetch properties for account", "analytics", "google-analytics")
 			return
 		}
@@ -336,11 +327,9 @@ func (h *Handler) HandleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reque
 
 	sessionID := storePendingGASession(session)
 
-	logger.Info().
-		Int("account_count", len(accounts)).
-		Int("property_count", len(session.Properties)).
-		Str("session_id", sessionID).
-		Msg("Stored GA4 session")
+	// Do not log the raw session ID — it is a short-lived bearer token for the
+	// pending GA session and would enable log-based session replay.
+	logger.Info("Stored GA4 session", "account_count", len(accounts), "property_count", len(session.Properties))
 
 	// Redirect with session ID
 	params := url.Values{}
@@ -366,7 +355,7 @@ func (h *Handler) SaveGoogleProperty(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -411,22 +400,19 @@ func (h *Handler) SaveGoogleProperty(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.DB.CreateGoogleConnection(r.Context(), conn); err != nil {
-		logger.Error().Err(err).Msg("Failed to save Google Analytics connection")
+		logger.Error("Failed to save Google Analytics connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
 	// Store refresh token in Supabase Vault
 	if err := h.DB.StoreGoogleToken(r.Context(), conn.ID, req.RefreshToken); err != nil {
-		logger.Error().Err(err).Msg("Failed to store refresh token in vault")
+		logger.Error("Failed to store refresh token in vault", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().
-		Str("organisation_id", orgID).
-		Str("ga4_property_id", req.PropertyID).
-		Msg("Google Analytics connection established")
+	logger.Info("Google Analytics connection established", "organisation_id", orgID, "ga4_property_id", req.PropertyID)
 
 	WriteSuccess(w, r, map[string]string{
 		"connection_id": conn.ID,
@@ -452,7 +438,7 @@ func (h *Handler) SaveGoogleProperties(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -500,7 +486,7 @@ func (h *Handler) SaveGoogleProperties(w http.ResponseWriter, r *http.Request) {
 
 	organisationDomains, err := h.DB.GetDomainsForOrganisation(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to fetch organisation domains")
+		logger.Error("Failed to fetch organisation domains", "error", err, "organisation_id", orgID)
 		InternalError(w, r, err)
 		return
 	}
@@ -559,17 +545,14 @@ func (h *Handler) SaveGoogleProperties(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.DB.CreateGoogleConnection(r.Context(), conn); err != nil {
-			logger.Warn().Err(err).
-				Str("property_id", prop.PropertyID).
-				Str("next_action", "retry_connection_create_or_check_db_connectivity").
-				Msg("Failed to save property connection")
+			logger.Warn("Failed to save property connection", "error", err, "property_id", prop.PropertyID, "next_action", "retry_connection_create_or_check_db_connectivity")
 			continue
 		}
 
 		// Store token only for active properties (saves vault space)
 		if status == "active" && session.RefreshToken != "" {
 			if err := h.DB.StoreGoogleToken(r.Context(), conn.ID, session.RefreshToken); err != nil {
-				logger.Warn().Err(err).Str("connection_id", conn.ID).Msg("Failed to store token in vault")
+				logger.Warn("Failed to store token in vault", "error", err, "connection_id", conn.ID)
 			}
 		}
 
@@ -581,11 +564,7 @@ func (h *Handler) SaveGoogleProperties(w http.ResponseWriter, r *http.Request) {
 	delete(pendingGASessions, req.SessionID)
 	pendingGASessionsMu.Unlock()
 
-	logger.Info().
-		Str("organisation_id", orgID).
-		Int("saved_count", savedCount).
-		Int("active_count", len(req.ActivePropertyIDs)).
-		Msg("Google Analytics properties saved")
+	logger.Info("Google Analytics properties saved", "organisation_id", orgID, "saved_count", savedCount, "active_count", len(req.ActivePropertyIDs))
 
 	WriteSuccess(w, r, googleSavedPropertiesResponse{
 		SavedCount:  savedCount,
@@ -610,7 +589,7 @@ func (h *Handler) UpdateGooglePropertyStatus(w http.ResponseWriter, r *http.Requ
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -640,15 +619,12 @@ func (h *Handler) UpdateGooglePropertyStatus(w http.ResponseWriter, r *http.Requ
 			NotFound(w, r, "Connection not found")
 			return
 		}
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to update connection status")
+		logger.Error("Failed to update connection status", "error", err, "connection_id", connectionID)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().
-		Str("connection_id", connectionID).
-		Str("status", req.Status).
-		Msg("Google Analytics connection status updated")
+	logger.Info("Google Analytics connection status updated", "connection_id", connectionID, "status", req.Status)
 
 	WriteSuccess(w, r, map[string]string{
 		"connection_id": connectionID,
@@ -670,7 +646,7 @@ func (h *Handler) UpdateGoogleConnection(w http.ResponseWriter, r *http.Request,
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -695,7 +671,7 @@ func (h *Handler) UpdateGoogleConnection(w http.ResponseWriter, r *http.Request,
 	// Get existing connection to verify ownership
 	conn, err := h.DB.GetGoogleConnection(r.Context(), connectionID)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get connection")
+		logger.Error("Failed to get connection", "error", err, "connection_id", connectionID)
 		if errors.Is(err, db.ErrGoogleConnectionNotFound) {
 			NotFound(w, r, "Connection not found")
 			return
@@ -712,7 +688,7 @@ func (h *Handler) UpdateGoogleConnection(w http.ResponseWriter, r *http.Request,
 
 	organisationDomains, err := h.DB.GetDomainsForOrganisation(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to fetch organisation domains")
+		logger.Error("Failed to fetch organisation domains", "error", err, "organisation_id", orgID)
 		InternalError(w, r, err)
 		return
 	}
@@ -731,15 +707,12 @@ func (h *Handler) UpdateGoogleConnection(w http.ResponseWriter, r *http.Request,
 
 	// Update domain_ids
 	if err := h.DB.UpdateConnectionDomains(r.Context(), connectionID, req.DomainIDs); err != nil {
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to update connection domains")
+		logger.Error("Failed to update connection domains", "error", err, "connection_id", connectionID)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().
-		Str("connection_id", connectionID).
-		Ints("domain_ids", req.DomainIDs).
-		Msg("Updated connection domain mappings")
+	logger.Info("Updated connection domain mappings", "connection_id", connectionID, "domain_ids", req.DomainIDs)
 
 	// Return updated connection (sanitised to avoid exposing internal fields)
 	updatedConn, err := h.DB.GetGoogleConnection(r.Context(), connectionID)
@@ -858,11 +831,11 @@ func (h *Handler) fetchGA4Accounts(ctx context.Context, accessToken string) ([]G
 	return accounts, nil
 }
 
-func (h *Handler) fetchPropertiesForAccount(ctx context.Context, logger zerolog.Logger, client *http.Client, accessToken, accountName string) ([]GA4Property, error) {
+func (h *Handler) fetchPropertiesForAccount(ctx context.Context, logger *logging.Logger, client *http.Client, accessToken, accountName string) ([]GA4Property, error) {
 	// URL-encode the filter value (accountName contains slash like "accounts/123456")
 	apiURL := fmt.Sprintf("https://analyticsadmin.googleapis.com/v1beta/properties?filter=parent:%s", url.QueryEscape(accountName))
 
-	logger.Debug().Str("account_id", accountName).Msg("Fetching GA4 properties from API")
+	logger.Debug("Fetching GA4 properties from API", "account_id", accountName)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil) //nolint:gosec // G704: apiURL targets googleapis.com; user input only in query param
 	if err != nil {
@@ -902,7 +875,7 @@ func (h *Handler) fetchPropertiesForAccount(ctx context.Context, logger zerolog.
 		})
 	}
 
-	logger.Debug().Str("account_id", accountName).Int("property_count", len(properties)).Msg("Fetched GA4 properties")
+	logger.Debug("Fetched GA4 properties", "account_id", accountName, "property_count", len(properties))
 
 	return properties, nil
 }
@@ -1157,17 +1130,17 @@ func (h *Handler) fetchAccountProperties(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Fetch properties for this account
-	logger.Info().Str("account_id", accountID).Msg("Fetching GA4 properties")
+	logger.Info("Fetching GA4 properties", "account_id", accountID)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	properties, err := h.fetchPropertiesForAccount(r.Context(), logger, client, session.AccessToken, accountID)
 	if err != nil {
-		logger.Error().Err(err).Str("account_id", accountID).Msg("Failed to fetch properties for account")
+		logger.Error("Failed to fetch properties for account", "error", err, "account_id", accountID)
 		InternalError(w, r, fmt.Errorf("failed to fetch properties: %w", err))
 		return
 	}
 
-	logger.Info().Str("account_id", accountID).Int("property_count", len(properties)).Msg("Properties fetched successfully")
+	logger.Info("Properties fetched successfully", "account_id", accountID, "property_count", len(properties))
 
 	// Update session with these properties
 	pendingGASessionsMu.Lock()
@@ -1194,7 +1167,7 @@ func (h *Handler) listGoogleConnections(w http.ResponseWriter, r *http.Request) 
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1207,7 +1180,7 @@ func (h *Handler) listGoogleConnections(w http.ResponseWriter, r *http.Request) 
 
 	connections, err := h.DB.ListGoogleConnections(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list Google Analytics connections")
+		logger.Error("Failed to list Google Analytics connections", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -1241,7 +1214,7 @@ func (h *Handler) getOrganisationDomains(w http.ResponseWriter, r *http.Request)
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1254,15 +1227,12 @@ func (h *Handler) getOrganisationDomains(w http.ResponseWriter, r *http.Request)
 
 	domains, err := h.DB.GetDomainsForOrganisation(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Str("organisation_id", orgID).Msg("Failed to get organisation domains")
+		logger.Error("Failed to get organisation domains", "error", err, "organisation_id", orgID)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Debug().
-		Str("organisation_id", orgID).
-		Int("domain_count", len(domains)).
-		Msg("Returning domains for organisation")
+	logger.Debug("Returning domains for organisation", "organisation_id", orgID, "domain_count", len(domains))
 
 	WriteSuccess(w, r, organisationDomainsResponse{Domains: domains}, "")
 }
@@ -1279,7 +1249,7 @@ func (h *Handler) deleteGoogleConnection(w http.ResponseWriter, r *http.Request,
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1296,12 +1266,12 @@ func (h *Handler) deleteGoogleConnection(w http.ResponseWriter, r *http.Request,
 			NotFound(w, r, "Google Analytics connection not found")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to delete Google Analytics connection")
+		logger.Error("Failed to delete Google Analytics connection", "error", err)
 		InternalError(w, r, err)
 		return
 	}
 
-	logger.Info().Str("connection_id", connectionID).Msg("Google Analytics connection deleted")
+	logger.Info("Google Analytics connection deleted", "connection_id", connectionID)
 	WriteNoContent(w, r)
 }
 
@@ -1377,7 +1347,7 @@ func (h *Handler) ListGA4Accounts(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1390,7 +1360,7 @@ func (h *Handler) ListGA4Accounts(w http.ResponseWriter, r *http.Request) {
 
 	accounts, err := h.DB.ListGA4Accounts(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list Google Analytics accounts")
+		logger.Error("Failed to list Google Analytics accounts", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -1428,7 +1398,7 @@ func (h *Handler) RefreshGA4Accounts(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1448,7 +1418,7 @@ func (h *Handler) RefreshGA4Accounts(w http.ResponseWriter, r *http.Request) {
 			}, "")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to resolve GA refresh token")
+		logger.Error("Failed to resolve GA refresh token", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -1456,10 +1426,7 @@ func (h *Handler) RefreshGA4Accounts(w http.ResponseWriter, r *http.Request) {
 	// Refresh the access token using the refresh token
 	accessToken, err := h.refreshGoogleAccessToken(refreshToken)
 	if err != nil {
-		logger.Warn().
-			Err(err).
-			Str("next_action", "reauth_required").
-			Msg("Failed to refresh Google access token")
+		logger.Warn("Failed to refresh Google access token", "error", err, "next_action", "reauth_required")
 		// Token might be revoked
 		WriteSuccess(w, r, googleReauthResponse{
 			NeedsReauth: true,
@@ -1471,7 +1438,7 @@ func (h *Handler) RefreshGA4Accounts(w http.ResponseWriter, r *http.Request) {
 	// Fetch accounts from Google API
 	accounts, err := h.fetchGA4Accounts(r.Context(), accessToken)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to fetch GA4 accounts from Google")
+		logger.Error("Failed to fetch GA4 accounts from Google", "error", err)
 		InternalError(w, r, fmt.Errorf("failed to fetch accounts from Google: %w", err))
 		return
 	}
@@ -1492,19 +1459,16 @@ func (h *Handler) RefreshGA4Accounts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.DB.UpsertGA4Account(r.Context(), dbAccount); err != nil {
-			logger.Warn().Err(err).Str("account_id", acc.AccountID).Msg("Failed to upsert GA4 account")
+			logger.Warn("Failed to upsert GA4 account", "error", err, "account_id", acc.AccountID)
 		}
 	}
 
-	logger.Info().
-		Str("organisation_id", orgID).
-		Int("account_count", len(accounts)).
-		Msg("Refreshed GA4 accounts from Google API")
+	logger.Info("Refreshed GA4 accounts from Google API", "organisation_id", orgID, "account_count", len(accounts))
 
 	// Return fresh list from DB
 	dbAccounts, err := h.DB.ListGA4Accounts(r.Context(), orgID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to list refreshed GA4 accounts")
+		logger.Error("Failed to list refreshed GA4 accounts", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -1560,7 +1524,7 @@ func (h *Handler) refreshGoogleAccessToken(refreshToken string) (string, error) 
 
 // getGARefreshToken resolves a usable refresh token for the organisation.
 // It prefers account-level tokens, then falls back to any connection-level token.
-func (h *Handler) getGARefreshToken(ctx context.Context, logger zerolog.Logger, organisationID string) (*db.GoogleAnalyticsAccount, string, error) {
+func (h *Handler) getGARefreshToken(ctx context.Context, logger *logging.Logger, organisationID string) (*db.GoogleAnalyticsAccount, string, error) {
 	accountWithToken, err := h.DB.GetGA4AccountWithToken(ctx, organisationID)
 	if err == nil {
 		refreshToken, tokenErr := h.DB.GetGA4AccountToken(ctx, accountWithToken.ID)
@@ -1570,11 +1534,7 @@ func (h *Handler) getGARefreshToken(ctx context.Context, logger zerolog.Logger, 
 		if !errors.Is(tokenErr, db.ErrGoogleTokenNotFound) {
 			return nil, "", tokenErr
 		}
-		logger.Warn().
-			Str("organisation_id", organisationID).
-			Str("account_id", accountWithToken.ID).
-			Str("next_action", "retry_token_fetch_or_reauth").
-			Msg("GA account token missing in vault, falling back to connection token")
+		logger.Warn("GA account token missing in vault, falling back to connection token", "organisation_id", organisationID, "account_id", accountWithToken.ID, "next_action", "retry_token_fetch_or_reauth")
 	} else if !errors.Is(err, db.ErrGoogleAccountNotFound) {
 		return nil, "", err
 	}
@@ -1592,11 +1552,7 @@ func (h *Handler) getGARefreshToken(ctx context.Context, logger zerolog.Logger, 
 		if !errors.Is(tokenErr, db.ErrGoogleTokenNotFound) {
 			return nil, "", tokenErr
 		}
-		logger.Warn().
-			Str("organisation_id", organisationID).
-			Str("connection_id", connectionWithToken.ID).
-			Str("next_action", "reauth_required").
-			Msg("GA connection token missing in vault")
+		logger.Warn("GA connection token missing in vault", "organisation_id", organisationID, "connection_id", connectionWithToken.ID, "next_action", "reauth_required")
 	} else if !errors.Is(err, db.ErrGoogleConnectionNotFound) {
 		return nil, "", err
 	}
@@ -1622,7 +1578,7 @@ func (h *Handler) GetAccountProperties(w http.ResponseWriter, r *http.Request, g
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1639,7 +1595,7 @@ func (h *Handler) GetAccountProperties(w http.ResponseWriter, r *http.Request, g
 			BadRequest(w, r, "Google account not found for organisation")
 			return
 		}
-		logger.Error().Err(err).Str("google_account_id", googleAccountID).Msg("Failed to resolve Google account")
+		logger.Error("Failed to resolve Google account", "error", err, "google_account_id", googleAccountID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1653,7 +1609,7 @@ func (h *Handler) GetAccountProperties(w http.ResponseWriter, r *http.Request, g
 			}, "")
 			return
 		}
-		logger.Error().Err(err).Msg("Failed to resolve GA refresh token")
+		logger.Error("Failed to resolve GA refresh token", "error", err)
 		InternalError(w, r, err)
 		return
 	}
@@ -1661,10 +1617,7 @@ func (h *Handler) GetAccountProperties(w http.ResponseWriter, r *http.Request, g
 	// Refresh the access token
 	accessToken, err := h.refreshGoogleAccessToken(refreshToken)
 	if err != nil {
-		logger.Warn().
-			Err(err).
-			Str("next_action", "reauth_required").
-			Msg("Failed to refresh Google access token")
+		logger.Warn("Failed to refresh Google access token", "error", err, "next_action", "reauth_required")
 		WriteSuccess(w, r, googleReauthResponse{
 			NeedsReauth: true,
 			Message:     "Unable to refresh token. Please reconnect to Google Analytics.",
@@ -1674,17 +1627,14 @@ func (h *Handler) GetAccountProperties(w http.ResponseWriter, r *http.Request, g
 
 	// Fetch properties for this account from Google API
 	client := &http.Client{Timeout: 30 * time.Second}
-	properties, err := h.fetchPropertiesForAccount(r.Context(), loggerWithRequest(r), client, accessToken, googleAccountID)
+	properties, err := h.fetchPropertiesForAccount(r.Context(), logger, client, accessToken, googleAccountID)
 	if err != nil {
-		logger.Error().Err(err).Str("google_account_id", googleAccountID).Msg("Failed to fetch GA4 properties")
+		logger.Error("Failed to fetch GA4 properties", "error", err, "google_account_id", googleAccountID)
 		InternalError(w, r, fmt.Errorf("failed to fetch properties: %w", err))
 		return
 	}
 
-	logger.Info().
-		Str("google_account_id", googleAccountID).
-		Int("property_count", len(properties)).
-		Msg("Fetched GA4 properties for account")
+	logger.Info("Fetched GA4 properties for account", "google_account_id", googleAccountID, "property_count", len(properties))
 
 	WriteSuccess(w, r, ga4PropertiesResponse{Properties: properties}, "")
 }
@@ -1707,7 +1657,7 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", userClaims.UserID).Msg("Failed to get or create user")
+		logger.Error("Failed to get or create user", "error", err, "user_id", userClaims.UserID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1724,7 +1674,7 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 			BadRequest(w, r, "Google account not found for organisation")
 			return
 		}
-		logger.Error().Err(err).Str("google_account_id", googleAccountID).Msg("Failed to resolve Google account")
+		logger.Error("Failed to resolve Google account", "error", err, "google_account_id", googleAccountID)
 		InternalError(w, r, err)
 		return
 	}
@@ -1741,13 +1691,13 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 					}, "")
 					return
 				}
-				logger.Error().Err(fallbackErr).Str("organisation_id", orgID).Msg("Failed to resolve fallback GA refresh token")
+				logger.Error("Failed to resolve fallback GA refresh token", "error", fallbackErr, "organisation_id", orgID)
 				InternalError(w, r, fallbackErr)
 				return
 			}
 			refreshToken = fallbackToken
 		} else {
-			logger.Error().Err(err).Str("account_id", account.ID).Msg("Failed to resolve GA refresh token")
+			logger.Error("Failed to resolve GA refresh token", "error", err, "account_id", account.ID)
 			InternalError(w, r, err)
 			return
 		}
@@ -1755,10 +1705,7 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 
 	accessToken, err := h.refreshGoogleAccessToken(refreshToken)
 	if err != nil {
-		logger.Warn().
-			Err(err).
-			Str("next_action", "reauth_required").
-			Msg("Failed to refresh Google access token")
+		logger.Warn("Failed to refresh Google access token", "error", err, "next_action", "reauth_required")
 		WriteSuccess(w, r, googleReauthResponse{
 			NeedsReauth: true,
 			Message:     "Unable to refresh token. Please reconnect to Google Analytics.",
@@ -1769,7 +1716,7 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 	client := &http.Client{Timeout: 30 * time.Second}
 	properties, err := h.fetchPropertiesForAccount(r.Context(), logger, client, accessToken, googleAccountID)
 	if err != nil {
-		logger.Error().Err(err).Str("google_account_id", googleAccountID).Msg("Failed to fetch GA4 properties")
+		logger.Error("Failed to fetch GA4 properties", "error", err, "google_account_id", googleAccountID)
 		InternalError(w, r, fmt.Errorf("failed to fetch properties: %w", err))
 		return
 	}
@@ -1783,9 +1730,7 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 	savedCount := 0
 	for _, prop := range properties {
 		if prop.PropertyID == "" {
-			logger.Debug().
-				Str("display_name", prop.DisplayName).
-				Msg("Skipping property with empty ID")
+			logger.Debug("Skipping property with empty ID", "display_name", prop.DisplayName)
 			continue
 		}
 
@@ -1807,21 +1752,14 @@ func (h *Handler) SaveGA4AccountProperties(w http.ResponseWriter, r *http.Reques
 		}
 
 		if err := h.DB.CreateGoogleConnection(r.Context(), conn); err != nil {
-			logger.Warn().Err(err).
-				Str("property_id", prop.PropertyID).
-				Str("next_action", "retry_connection_create_or_check_db_connectivity").
-				Msg("Failed to save property connection")
+			logger.Warn("Failed to save property connection", "error", err, "property_id", prop.PropertyID, "next_action", "retry_connection_create_or_check_db_connectivity")
 			continue
 		}
 
 		savedCount++
 	}
 
-	logger.Info().
-		Str("organisation_id", orgID).
-		Str("google_account_id", googleAccountID).
-		Int("saved_count", savedCount).
-		Msg("Google Analytics account properties saved")
+	logger.Info("Google Analytics account properties saved", "organisation_id", orgID, "google_account_id", googleAccountID, "saved_count", savedCount)
 
 	WriteSuccess(w, r, savedCountResponse{SavedCount: savedCount}, "Google Analytics properties saved successfully")
 }

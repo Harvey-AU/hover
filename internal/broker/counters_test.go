@@ -4,14 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRunningCounters_IncrementDecrement(t *testing.T) {
 	client, _ := newTestClient(t)
-	rc := NewRunningCounters(client, zerolog.Nop())
+	rc := NewRunningCounters(client)
 	ctx := context.Background()
 
 	val, err := rc.Increment(ctx, "job-1")
@@ -39,7 +38,7 @@ func TestRunningCounters_IncrementDecrement(t *testing.T) {
 
 func TestRunningCounters_GetAll(t *testing.T) {
 	client, _ := newTestClient(t)
-	rc := NewRunningCounters(client, zerolog.Nop())
+	rc := NewRunningCounters(client)
 	ctx := context.Background()
 
 	_, err := rc.Increment(ctx, "j1")
@@ -57,7 +56,7 @@ func TestRunningCounters_GetAll(t *testing.T) {
 
 func TestRunningCounters_Reconcile(t *testing.T) {
 	client, _ := newTestClient(t)
-	rc := NewRunningCounters(client, zerolog.Nop())
+	rc := NewRunningCounters(client)
 	ctx := context.Background()
 
 	// Start with some stale data.

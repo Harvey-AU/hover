@@ -21,6 +21,7 @@ primary_region = 'syd'
   GNH_SITEMAP_BATCH_SIZE = "100"
   GNH_SITEMAP_BATCH_DELAY_MS = "200"
   GNH_SITEMAP_CONCURRENCY = "5"
+  GNH_CRAWLER_MAX_CONCURRENCY = "100"
   GNH_OTEL_EXPORT_INTERVAL_SECONDS = "60"
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
   DB_TX_MAX_RETRIES = "5"
@@ -71,7 +72,7 @@ primary_region = 'syd'
       Content-Type = "text/plain"
 
 [processes]
-  app = "./main"
+  app = "./start.sh"
 
 [[vm]]
   memory = '8gb'

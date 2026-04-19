@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/db"
-	"github.com/rs/zerolog/log"
 	"github.com/slack-go/slack"
 )
 
@@ -49,7 +48,7 @@ func (s *Service) AddChannel(ch DeliveryChannel) {
 func (s *Service) ProcessPendingNotifications(ctx context.Context, limit int) error {
 	for _, ch := range s.channels {
 		if err := s.deliverToChannel(ctx, ch, limit); err != nil {
-			log.Warn().Err(err).Str("channel", ch.Name()).Msg("Failed to deliver notifications")
+			notifyLog.Warn("Failed to deliver notifications", "error", err, "channel", ch.Name())
 		}
 	}
 	return nil
@@ -63,7 +62,7 @@ func (s *Service) deliverToChannel(ctx context.Context, ch DeliveryChannel, limi
 	case "slack":
 		notifications, err = s.db.GetPendingSlackNotifications(ctx, limit)
 	default:
-		log.Debug().Str("channel", ch.Name()).Msg("Unknown delivery channel, skipping")
+		notifyLog.Debug("Unknown delivery channel, skipping", "channel", ch.Name())
 		return nil
 	}
 
@@ -73,19 +72,19 @@ func (s *Service) deliverToChannel(ctx context.Context, ch DeliveryChannel, limi
 
 	for _, n := range notifications {
 		if err := ch.Deliver(ctx, n); err != nil {
-			log.Warn().
-				Err(err).
-				Str("notification_id", n.ID).
-				Str("channel", ch.Name()).
-				Msg("Failed to deliver notification")
+			notifyLog.Warn("Failed to deliver notification",
+				"error", err,
+				"notification_id", n.ID,
+				"channel", ch.Name(),
+			)
 			continue
 		}
 
 		if err := s.db.MarkNotificationDelivered(ctx, n.ID, ch.Name()); err != nil {
-			log.Warn().
-				Err(err).
-				Str("notification_id", n.ID).
-				Msg("Failed to mark notification delivered")
+			notifyLog.Warn("Failed to mark notification delivered",
+				"error", err,
+				"notification_id", n.ID,
+			)
 		}
 	}
 
@@ -131,11 +130,11 @@ func (c *SlackChannel) Deliver(ctx context.Context, n *db.Notification) error {
 	var lastErr error
 	for _, conn := range connections {
 		if err := c.deliverToConnection(ctx, conn, n); err != nil {
-			log.Warn().
-				Err(err).
-				Str("workspace_id", conn.WorkspaceID).
-				Str("notification_id", n.ID).
-				Msg("Failed to deliver to Slack workspace")
+			notifyLog.Warn("Failed to deliver to Slack workspace",
+				"error", err,
+				"workspace_id", conn.WorkspaceID,
+				"notification_id", n.ID,
+			)
 			lastErr = err
 		}
 	}
@@ -175,18 +174,18 @@ func (c *SlackChannel) deliverToConnection(ctx context.Context, conn *db.SlackCo
 		)
 		cancel()
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("slack_user_id", link.SlackUserID).
-				Str("notification_id", n.ID).
-				Msg("Failed to send Slack DM")
+			notifyLog.Warn("Failed to send Slack DM",
+				"error", err,
+				"slack_user_id", link.SlackUserID,
+				"notification_id", n.ID,
+			)
 			lastErr = err
 		} else {
-			log.Info().
-				Str("slack_user_id", link.SlackUserID).
-				Str("notification_id", n.ID).
-				Str("workspace_name", conn.WorkspaceName).
-				Msg("Slack DM sent")
+			notifyLog.Info("Slack DM sent",
+				"slack_user_id", link.SlackUserID,
+				"notification_id", n.ID,
+				"workspace_name", conn.WorkspaceName,
+			)
 		}
 	}
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 )
 
 // StreamMessage is a parsed task envelope read from a Redis Stream.
@@ -68,15 +67,13 @@ func DefaultConsumerOpts(consumerName string) ConsumerOpts {
 type Consumer struct {
 	client *Client
 	opts   ConsumerOpts
-	logger zerolog.Logger
 }
 
 // NewConsumer creates a Consumer.
-func NewConsumer(client *Client, opts ConsumerOpts, logger zerolog.Logger) *Consumer {
+func NewConsumer(client *Client, opts ConsumerOpts) *Consumer {
 	return &Consumer{
 		client: client,
 		opts:   opts,
-		logger: logger.With().Str("component", "consumer").Str("consumer", opts.ConsumerName).Logger(),
 	}
 }
 
@@ -111,7 +108,7 @@ func (c *Consumer) Read(ctx context.Context, jobID string) ([]StreamMessage, err
 		for _, xMsg := range stream.Messages {
 			msg, err := parseStreamMessage(xMsg)
 			if err != nil {
-				c.logger.Warn().Err(err).Str("message_id", xMsg.ID).Msg("skipping malformed stream message")
+				brokerLog.Warn("skipping malformed stream message", "error", err, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
 				// ACK to prevent infinite redelivery of bad messages.
 				_ = c.Ack(ctx, jobID, xMsg.ID)
 				continue
@@ -150,7 +147,7 @@ func (c *Consumer) ReadNonBlocking(ctx context.Context, jobID string) ([]StreamM
 		for _, xMsg := range stream.Messages {
 			msg, err := parseStreamMessage(xMsg)
 			if err != nil {
-				c.logger.Warn().Err(err).Str("message_id", xMsg.ID).Msg("skipping malformed stream message")
+				brokerLog.Warn("skipping malformed stream message", "error", err, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
 				_ = c.Ack(ctx, jobID, xMsg.ID)
 				continue
 			}
@@ -200,7 +197,7 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 	for _, xMsg := range msgs {
 		msg, parseErr := parseStreamMessage(xMsg)
 		if parseErr != nil {
-			c.logger.Warn().Err(parseErr).Str("message_id", xMsg.ID).Msg("dead-lettering unparseable reclaimed message")
+			brokerLog.Warn("dead-lettering unparseable reclaimed message", "error", parseErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
 			_ = c.Ack(ctx, jobID, xMsg.ID)
 			continue
 		}
@@ -208,7 +205,7 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 		// Check delivery count via XPENDING for this message.
 		deliveries, err := c.getDeliveryCount(ctx, streamKey, groupName, xMsg.ID)
 		if err != nil {
-			c.logger.Warn().Err(err).Str("message_id", xMsg.ID).Msg("failed to check delivery count")
+			brokerLog.Warn("failed to check delivery count", "error", err, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
 			// Treat as reclaimable to avoid losing work.
 			reclaimed = append(reclaimed, msg)
 			continue

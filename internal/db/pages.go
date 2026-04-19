@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	"github.com/rs/zerolog/log"
 )
 
 const maxPageRecordBatchSize = 250
@@ -71,7 +70,7 @@ func CreatePageRecords(ctx context.Context, q TransactionExecutor, domainID int,
 	for _, u := range urls {
 		host, path, err := normaliseURLPath(u, domain)
 		if err != nil {
-			log.Warn().Err(err).Str("url", u).Msg("Skipping invalid URL")
+			dbLog.Warn("Skipping invalid URL", "error", err, "domain", domain)
 			continue
 		}
 

@@ -1,5 +1,8 @@
+# Alloy metrics agent
+FROM grafana/alloy:v1.15.1@sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d AS alloy
+
 # Build stage
-FROM golang:1.26.1-alpine AS builder
+FROM golang:1.26.2-alpine AS builder
 
 WORKDIR /app
 
@@ -24,12 +27,22 @@ RUN adduser -D -g '' appuser
 
 WORKDIR /app
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS; gcompat provides glibc compat for Alloy sidecar
+RUN apk --no-cache add \
+  ca-certificates=20250911-r0 \
+  gcompat=1.1.0-r4
 
-# Copy binaries from builder
+# Copy Go binaries (API + worker)
 COPY --from=builder /app/main .
 COPY --from=builder /app/worker .
+
+# Copy Alloy binary and config
+COPY --from=alloy /bin/alloy /usr/local/bin/alloy
+COPY alloy.river .
+
+# Copy startup script
+COPY scripts/start.sh .
+RUN chmod +x start.sh /usr/local/bin/alloy
 
 # Copy static files
 COPY --from=builder /app/dashboard.html .
@@ -56,5 +69,5 @@ EXPOSE 8080
 # Switch to non-root user
 USER appuser
 
-# Run the binary
-CMD ["sh", "-c", "ulimit -n 65536 2>/dev/null || ulimit -n $(ulimit -Hn) 2>/dev/null; echo \"fd soft limit: $(ulimit -n)\"; exec ./main"]
+# Run app + Alloy sidecar
+CMD ["./start.sh"]
