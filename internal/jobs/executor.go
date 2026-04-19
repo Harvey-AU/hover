@@ -278,7 +278,14 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 		RateLimited: rateLimited,
 	}
 
-	if isBlockingError(taskErr) {
+	// A rate-limited response (detected upstream from the crawler result)
+	// must take the blocking retry path even when taskErr itself is a
+	// generic error — otherwise a 429/403/503 with an unrecognised error
+	// string falls through to permanent failure and defeats domain pacing.
+	isBlocking := rateLimited || isBlockingError(taskErr)
+	isRetryable := isRetryableError(taskErr)
+
+	if isBlocking {
 		if dbTask.RetryCount < e.cfg.MaxBlockingRetries {
 			dbTask.RetryCount++
 			dbTask.Error = taskErr.Error()
@@ -299,7 +306,7 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 			outcome.Retry = &RetryDecision{IsPermanentFailure: true}
 			observability.RecordWorkerTaskFailure(ctx, dbTask.JobID, "blocking")
 		}
-	} else if isRetryableError(taskErr) && dbTask.RetryCount < e.cfg.MaxTaskRetries {
+	} else if isRetryable && dbTask.RetryCount < e.cfg.MaxTaskRetries {
 		dbTask.RetryCount++
 		dbTask.Error = taskErr.Error()
 		dbTask.Status = string(TaskStatusWaiting)
@@ -319,9 +326,9 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 		outcome.Retry = &RetryDecision{IsPermanentFailure: true}
 
 		failureReason := "non_retryable"
-		if isRetryableError(taskErr) {
+		if isRetryable {
 			failureReason = "retryable_exhausted"
-		} else if isBlockingError(taskErr) {
+		} else if isBlocking {
 			failureReason = "blocking"
 		}
 		observability.RecordWorkerTaskFailure(ctx, dbTask.JobID, failureReason)
