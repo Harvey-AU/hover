@@ -15,12 +15,19 @@ Usage:
 
 Incremental mode (the default) fingerprints each input file by mtime+size and
 only re-ingests files whose fingerprint changed. That keeps incremental runs
-cheap, but means an input that is *rewritten in place* with the same mtime and
-size would be skipped. If the upstream producer may rewrite files without
-changing their size (for example re-running a capture tool that overwrites its
-JSON output atomically), pass `--full` to force a clean reprocess instead of
-relying on the incremental state. Appending new files to the directory is
-always handled correctly by incremental mode.
+cheap, with two important caveats:
+
+1. If an input is *rewritten in place* with the same mtime and size, the
+   fingerprint does not change and the new content is silently skipped.
+2. When a fingerprint DOES change and the file is reprocessed, its previous
+   contribution is NOT subtracted from the aggregates — the new counts are
+   added on top of the old ones, which inflates totals for any event/level
+   that appears in both the old and new version of the file.
+
+Both cases only matter when the upstream producer may overwrite existing
+files. Pass `--full` to force a clean reprocess in those situations. Pure
+append-only workloads (new files added to the directory, existing files never
+rewritten) are always handled correctly by incremental mode.
 """
 
 import csv
@@ -176,7 +183,10 @@ def process_json_file(json_file, by_minute, totals):
                 by_minute[minute_key]["component_counts"][component] += count
 
         return True
-    except Exception as e:
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        # Mirror the narrow catch used by load_data() so an AttributeError
+        # from a real bug in the aggregation logic above propagates instead
+        # of being swallowed as a "just another unparseable file" warning.
         print(f"Error processing {json_file}: {e}", file=sys.stderr)
         return False
 

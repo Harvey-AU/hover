@@ -11,7 +11,45 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 )
+
+// resolveCurrentUser centralises the auth-claims + GetOrCreateUser dance shared
+// by every notifications handler. Returning (nil, false) means the helper has
+// already written the appropriate response (401 for missing claims or unknown
+// user, 500 for a real DB failure) and the caller should just return.
+//
+// `action` is used purely for log context so we can tell which handler tripped
+// without relying on stack traces.
+func (h *Handler) resolveCurrentUser(
+	w http.ResponseWriter,
+	r *http.Request,
+	logger *logging.Logger,
+	action string,
+) (*db.User, bool) {
+	userClaims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		logger.Warn("Failed to get user claims", "action", action)
+		Unauthorised(w, r, "Authentication required")
+		return nil, false
+	}
+
+	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
+	if err != nil {
+		if errors.Is(err, db.ErrUserNotFound) {
+			logger.Warn("User not found", "action", action, "error", err)
+			Unauthorised(w, r, "User not found")
+			return nil, false
+		}
+		// Real DB failure — surface as 5xx so callers retry instead of
+		// treating a transient outage as an auth rejection.
+		logger.Error("Failed to load user", "action", action, "error", err)
+		InternalError(w, r, fmt.Errorf("failed to load user for %s: %w", action, err))
+		return nil, false
+	}
+
+	return user, true
+}
 
 // NotificationResponse is the JSON response for a notification
 type NotificationResponse struct {
@@ -78,26 +116,8 @@ func (h *Handler) NotificationsReadAllHandler(w http.ResponseWriter, r *http.Req
 func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "list-notifications")
 	if !ok {
-		logger.Warn("Failed to get user claims")
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		if errors.Is(err, db.ErrUserNotFound) {
-			logger.Warn("User not found", "error", err)
-			Unauthorised(w, r, "User not found")
-			return
-		}
-		// Real DB failure — surface as 5xx so callers retry instead of
-		// treating a transient outage as an auth rejection.
-		logger.Error("Failed to load user for notifications", "error", err)
-		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -154,22 +174,8 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, notificationID string) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "mark-notification-read")
 	if !ok {
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		if errors.Is(err, db.ErrUserNotFound) {
-			Unauthorised(w, r, "User not found")
-			return
-		}
-		logger.Error("Failed to load user for mark-read", "error", err)
-		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -191,22 +197,8 @@ func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, n
 func (h *Handler) markAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
-	// Get user claims
-	userClaims, ok := auth.GetUserFromContext(r.Context())
+	user, ok := h.resolveCurrentUser(w, r, logger, "mark-all-notifications-read")
 	if !ok {
-		Unauthorised(w, r, "Authentication required")
-		return
-	}
-
-	// Get user and organisation
-	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
-	if err != nil {
-		if errors.Is(err, db.ErrUserNotFound) {
-			Unauthorised(w, r, "User not found")
-			return
-		}
-		logger.Error("Failed to load user for mark-all-read", "error", err)
-		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
