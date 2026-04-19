@@ -268,8 +268,12 @@ def write_summary(summary_path, by_minute, totals, new_files_count):
         f.write("\n## Top 30 Events\n\n")
         f.write("| Count | Event |\n")
         f.write("|-------|-------|\n")
+        # Precompute the pipe-escaped label outside the f-string: backslashes
+        # inside f-string expressions are a SyntaxError on Python 3.11 and
+        # earlier (PEP 701 only relaxed that in 3.12).
         for event, count in sorted(event_totals.items(), key=lambda x: -x[1])[:30]:
-            f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
+            escaped_event = event[:80].replace("|", "\\|")
+            f.write(f"| {count:,} | {escaped_event} |\n")
 
         warn_and_error = sorted(
             totals["warn_error_counts"].items(), key=lambda x: -x[1]
@@ -279,7 +283,8 @@ def write_summary(summary_path, by_minute, totals, new_files_count):
             f.write("| Count | Event |\n")
             f.write("|-------|-------|\n")
             for event, count in warn_and_error[:20]:
-                f.write(f"| {count:,} | {event[:80].replace('|', '\\|')} |\n")
+                escaped_event = event[:80].replace("|", "\\|")
+                f.write(f"| {count:,} | {escaped_event} |\n")
 
 
 def aggregate_logs(log_dir, incremental=True):
@@ -307,24 +312,31 @@ def aggregate_logs(log_dir, incremental=True):
         if processed_map.get(f.name) != _file_fingerprint(f)
     ]
 
-    if not new_files:
-        if incremental:
-            print(f"No new files to process (already processed {len(processed_map)} files)")
-            return True
-        else:
-            print(f"No JSON files found in {log_dir}")
-            return False
+    if not new_files and not incremental:
+        # Cold run with nothing to process — bail out without creating empty
+        # artefacts. Incremental mode falls through so previously computed
+        # aggregates still refresh their derived outputs.
+        print(f"No JSON files found in {log_dir}")
+        return False
 
-    print(f"Processing {len(new_files)} new or changed files...")
     success = 0
-    for json_file in new_files:
-        if process_json_file(json_file, by_minute, totals):
-            processed_map[json_file.name] = _file_fingerprint(json_file)
-            success += 1
-            if success % 10 == 0:
-                print(f"  {success}/{len(new_files)}...")
-
-    print(f"Successfully processed {success}/{len(new_files)} new or changed files")
+    if new_files:
+        print(f"Processing {len(new_files)} new or changed files...")
+        for json_file in new_files:
+            if process_json_file(json_file, by_minute, totals):
+                processed_map[json_file.name] = _file_fingerprint(json_file)
+                success += 1
+                if success % 10 == 0:
+                    print(f"  {success}/{len(new_files)}...")
+        print(f"Successfully processed {success}/{len(new_files)} new or changed files")
+    else:
+        # Incremental no-op: load_data() already rehydrated by_minute/totals,
+        # so we still rewrite the CSVs and summary.md from the restored state
+        # rather than forcing the operator to rerun with --full.
+        print(
+            f"No new files to process (already processed {len(processed_map)} files);"
+            " refreshing derived outputs from cached aggregate"
+        )
 
     write_time_series(csv_path, by_minute)
     write_events_csv(events_csv_path, by_minute, top_n=50)

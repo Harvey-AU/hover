@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,8 +89,15 @@ func (h *Handler) listNotifications(w http.ResponseWriter, r *http.Request) {
 	// Get user and organisation
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		logger.Warn("User not found", "error", err)
-		Unauthorised(w, r, "User not found")
+		if errors.Is(err, db.ErrUserNotFound) {
+			logger.Warn("User not found", "error", err)
+			Unauthorised(w, r, "User not found")
+			return
+		}
+		// Real DB failure — surface as 5xx so callers retry instead of
+		// treating a transient outage as an auth rejection.
+		logger.Error("Failed to load user for notifications", "error", err)
+		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -155,7 +164,12 @@ func (h *Handler) markNotificationRead(w http.ResponseWriter, r *http.Request, n
 	// Get user and organisation
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		Unauthorised(w, r, "User not found")
+		if errors.Is(err, db.ErrUserNotFound) {
+			Unauthorised(w, r, "User not found")
+			return
+		}
+		logger.Error("Failed to load user for mark-read", "error", err)
+		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
@@ -187,7 +201,12 @@ func (h *Handler) markAllNotificationsRead(w http.ResponseWriter, r *http.Reques
 	// Get user and organisation
 	user, err := h.DB.GetOrCreateUser(userClaims.UserID, userClaims.Email, nil)
 	if err != nil {
-		Unauthorised(w, r, "User not found")
+		if errors.Is(err, db.ErrUserNotFound) {
+			Unauthorised(w, r, "User not found")
+			return
+		}
+		logger.Error("Failed to load user for mark-all-read", "error", err)
+		InternalError(w, r, fmt.Errorf("failed to load user: %w", err))
 		return
 	}
 	orgID := h.DB.GetEffectiveOrganisationID(user)
