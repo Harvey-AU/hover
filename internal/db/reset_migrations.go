@@ -203,11 +203,15 @@ func (db *DB) ResetSchema() error {
 				AND table_name = $1
 			)`, table).Scan(&exists)
 
-		if err != nil || !exists {
-			dbLog.Warn("Schema verification warning", "table", table, "exists", exists)
-		} else {
-			dbLog.Info("Table verified", "table", table)
+		if err != nil {
+			dbLog.Error("Schema verification failed", "table", table, "error", err)
+			return fmt.Errorf("failed to verify table %s: %w", table, err)
 		}
+		if !exists {
+			dbLog.Error("Required table missing after reset", "table", table)
+			return fmt.Errorf("required table %s missing after reset", table)
+		}
+		dbLog.Info("Table verified", "table", table)
 	}
 
 	dbLog.Info("Step 4/4 completed: Schema verification complete",

@@ -58,11 +58,9 @@ them hard to triage in Sentry.
 | 13  | `internal/db/batch.go`        | 371  | `Flush`                  | Shutdown data errors          |
 | 14  | `internal/db/batch.go`        | 604  | `flushIndividualUpdates` | Poison pill individual update |
 | 15  | `internal/db/dashboard.go`    | 76   | `GetJobStats`            | Dashboard stats query         |
-| 16  | `internal/db/queue.go`        | 489  | `executeOnce`            | Begin transaction             |
-| 17  | `internal/db/queue.go`        | 521  | `executeOnce`            | Commit transaction            |
-| 18  | `internal/db/queue.go`        | 553  | `executeOnceWithContext` | Begin transaction             |
-| 19  | `internal/db/queue.go`        | 585  | `executeOnceWithContext` | Commit transaction            |
-| 20  | `internal/db/queue.go`        | 762  | `ExecuteMaintenance`     | Maintenance begin             |
+| 16  | `internal/db/queue.go`        | 553  | `executeOnceWithContext` | Begin transaction             |
+| 17  | `internal/db/queue.go`        | 585  | `executeOnceWithContext` | Commit transaction            |
+| 18  | `internal/db/queue.go`        | 762  | `ExecuteMaintenance`     | Maintenance begin             |
 
 ## Well-Structured Calls (Reference)
 

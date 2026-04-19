@@ -16,6 +16,10 @@ import (
 // with the same name (case-insensitive).
 var ErrDuplicateOrganisationName = errors.New("an organisation with that name already exists")
 
+// ErrUserNotFound is returned when a lookup does not match any user. Callers
+// can distinguish "no such user" from other errors via errors.Is.
+var ErrUserNotFound = errors.New("user not found")
+
 // User represents a user in the system
 type User struct {
 	ID                   string    `json:"id"`
@@ -78,8 +82,8 @@ func (db *DB) GetUserByWebhookToken(webhookToken string) (*User, error) {
 		&user.ActiveOrganisationID, &user.SlackUserID, &user.WebhookToken, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found with webhook token")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user by webhook token: %w", err)
 	}

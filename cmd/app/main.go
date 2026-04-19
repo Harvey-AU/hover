@@ -58,7 +58,9 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 		case <-ticker.C:
 			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, schedulerBatchSize)
 			if err != nil {
-				startupLog.Error("Failed to get schedulers ready to run", "error", err)
+				// Warn not Error: this loop retries every 30s, so auto-capture
+				// would flood Sentry during any transient Postgres outage.
+				startupLog.Warn("Failed to get schedulers ready to run", "error", err)
 				continue
 			}
 
@@ -70,7 +72,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 
 			domainNames, err := pgDB.GetDomainNames(ctx, domainIDs)
 			if err != nil {
-				startupLog.Error("Failed to get domain names for schedulers", "error", err)
+				startupLog.Warn("Failed to get domain names for schedulers", "error", err)
 				continue
 			}
 
@@ -84,7 +86,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 				// Check if a job started too recently (within half the schedule interval)
 				lastJobStart, err := pgDB.GetLastJobStartTimeForScheduler(ctx, scheduler.ID)
 				if err != nil {
-					startupLog.Error("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
@@ -103,7 +105,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 						// Update next_run_at to the next valid time slot
 						nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 						if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-							startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
+							startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 						}
 						continue
 					}
@@ -130,14 +132,14 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 				// Create job (standard flow)
 				job, err := jobsManager.CreateJob(ctx, opts)
 				if err != nil {
-					startupLog.Error("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
 				// Update scheduler next_run_at
 				nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 				if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-					startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 				} else {
 					startupLog.Info("Created scheduled job",
 						"scheduler_id", scheduler.ID,
@@ -696,6 +698,15 @@ func main() {
 	go func() {
 		startupLog.Info("Starting server", "port", config.Port)
 
+		// Bind the listener first so that we only announce readiness once the
+		// port is actually accepting connections. If the bind fails we surface
+		// the error instead of claiming the server is ready at dead URLs.
+		listener, err := net.Listen("tcp", ":"+config.Port)
+		if err != nil {
+			serverErrCh <- fmt.Errorf("failed to bind %s: %w", config.Port, err)
+			return
+		}
+
 		baseURL := fmt.Sprintf("http://localhost:%s", config.Port)
 		startupLog.Info("Hover server ready", "environment", config.Env)
 		startupLog.Info("Open Homepage", "homepage", baseURL)
@@ -705,7 +716,7 @@ func main() {
 			startupLog.Info("Open Supabase Studio", "supabase_studio", "http://localhost:54323")
 		}
 
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.Serve(listener); err != nil {
 			serverErrCh <- err
 			return
 		}

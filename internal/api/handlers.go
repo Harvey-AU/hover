@@ -978,8 +978,14 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	if isWorkspaceWebhook {
 		mapping, err := h.DB.GetPlatformOrgMapping(r.Context(), "webflow", workspaceID)
 		if err != nil {
-			logger.Warn("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
-			NotFound(w, r, "Invalid Webflow workspace")
+			if errors.Is(err, db.ErrPlatformOrgMappingNotFound) {
+				logger.Warn("Unknown Webflow workspace", "workspace_id", workspaceID)
+				NotFound(w, r, "Invalid Webflow workspace")
+				return
+			}
+			// Real DB failure — do not mask as 404; let the caller retry.
+			logger.Error("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
+			InternalError(w, r, fmt.Errorf("failed to resolve webflow workspace: %w", err))
 			return
 		}
 		if mapping.CreatedBy == nil || *mapping.CreatedBy == "" {
@@ -999,9 +1005,15 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		var err error
 		user, err = h.DB.GetUserByWebhookToken(webhookToken)
 		if err != nil {
-			logger.Warn("Failed to get user by webhook token", "error", err)
-			// Return 404 to avoid leaking information about valid tokens
-			NotFound(w, r, "Invalid webhook token")
+			if errors.Is(err, db.ErrUserNotFound) {
+				logger.Warn("Unknown webhook token")
+				// Return 404 to avoid leaking information about valid tokens
+				NotFound(w, r, "Invalid webhook token")
+				return
+			}
+			// Real DB failure — do not mask as 404; let the caller retry.
+			logger.Error("Failed to get user by webhook token", "error", err)
+			InternalError(w, r, fmt.Errorf("failed to resolve webhook user: %w", err))
 			return
 		}
 		orgID = h.DB.GetEffectiveOrganisationID(user)

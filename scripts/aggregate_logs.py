@@ -66,12 +66,28 @@ def load_data(log_dir):
                 "failed_to_parse": saved.get("failed_to_parse", 0),
                 "warn_error_counts": defaultdict(int, saved.get("warn_error_counts", {})),
             }
-            processed_files = saved.get("processed_files", [])
+            # processed_files is a {basename: "mtime:size"} fingerprint map.
+            # Older runs stored a plain list; coerce that into an empty map so
+            # rewritten files are reprocessed rather than silently skipped.
+            raw_processed = saved.get("processed_files", {})
+            if isinstance(raw_processed, dict):
+                processed_files = dict(raw_processed)
+            else:
+                processed_files = {}
             return by_minute, totals, processed_files
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
             print(f"Warning: Could not load data file: {e}", file=sys.stderr)
 
-    return defaultdict(_empty_minute), _empty_totals(), []
+    return defaultdict(_empty_minute), _empty_totals(), {}
+
+
+def _file_fingerprint(path):
+    """Return a cheap content-ish fingerprint (mtime + size) for incremental skips."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return ""
+    return f"{int(stat.st_mtime_ns)}:{stat.st_size}"
 
 
 def save_data(log_dir, by_minute, totals, processed_files):
@@ -79,7 +95,7 @@ def save_data(log_dir, by_minute, totals, processed_files):
     melbourne_tz = ZoneInfo("Australia/Melbourne")
     data = {
         "last_update": datetime.now(melbourne_tz).isoformat(),
-        "processed_files": sorted(processed_files),
+        "processed_files": dict(sorted(processed_files.items())),
         "total_lines": totals["total_lines"],
         "failed_to_parse": totals["failed_to_parse"],
         "warn_error_counts": dict(totals["warn_error_counts"]),
@@ -269,39 +285,44 @@ def aggregate_logs(log_dir, incremental=True):
     summary_path = log_path / "summary.md"
 
     if incremental:
-        by_minute, totals, processed_list = load_data(log_path)
-        processed_set = set(processed_list)
+        by_minute, totals, processed_map = load_data(log_path)
     else:
-        by_minute, totals, processed_set = defaultdict(_empty_minute), _empty_totals(), set()
+        by_minute, totals, processed_map = defaultdict(_empty_minute), _empty_totals(), {}
 
     all_json_files = sorted(f for f in log_path.glob("*.json") if not f.name.startswith("."))
-    new_files = [f for f in all_json_files if f.name not in processed_set]
+    # Compare against a fingerprint (mtime+size) rather than basename alone so
+    # regenerated files are reprocessed instead of silently skipped.
+    new_files = [
+        f
+        for f in all_json_files
+        if processed_map.get(f.name) != _file_fingerprint(f)
+    ]
 
     if not new_files:
         if incremental:
-            print(f"No new files to process (already processed {len(processed_set)} files)")
+            print(f"No new files to process (already processed {len(processed_map)} files)")
             return True
         else:
             print(f"No JSON files found in {log_dir}")
             return False
 
-    print(f"Processing {len(new_files)} new files...")
+    print(f"Processing {len(new_files)} new or changed files...")
     success = 0
     for json_file in new_files:
         if process_json_file(json_file, by_minute, totals):
-            processed_set.add(json_file.name)
+            processed_map[json_file.name] = _file_fingerprint(json_file)
             success += 1
             if success % 10 == 0:
                 print(f"  {success}/{len(new_files)}...")
 
-    print(f"Successfully processed {success}/{len(new_files)} new files")
+    print(f"Successfully processed {success}/{len(new_files)} new or changed files")
 
     write_time_series(csv_path, by_minute)
     write_events_csv(events_csv_path, by_minute, top_n=50)
     write_components_csv(components_csv_path, by_minute)
     write_summary(summary_path, by_minute, totals, success)
 
-    save_data(log_path, by_minute, totals, processed_set)
+    save_data(log_path, by_minute, totals, processed_map)
 
     print("\nOutputs:")
     print(f"  {csv_path}")
