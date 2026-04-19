@@ -12,6 +12,15 @@ Usage:
     python3 scripts/aggregate_logs.py logs/20251105/0750_run/
     python3 scripts/aggregate_logs.py logs/20251105/0750_run/ --watch
     python3 scripts/aggregate_logs.py logs/20251105/0750_run/ --full
+
+Incremental mode (the default) fingerprints each input file by mtime+size and
+only re-ingests files whose fingerprint changed. That keeps incremental runs
+cheap, but means an input that is *rewritten in place* with the same mtime and
+size would be skipped. If the upstream producer may rewrite files without
+changing their size (for example re-running a capture tool that overwrites its
+JSON output atomically), pass `--full` to force a clean reprocess instead of
+relying on the incremental state. Appending new files to the directory is
+always handled correctly by incremental mode.
 """
 
 import csv

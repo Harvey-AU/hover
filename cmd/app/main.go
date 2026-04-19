@@ -471,20 +471,28 @@ func main() {
 					ReadHeaderTimeout: 5 * time.Second,
 				}
 
-				go func() {
-					startupLog.Info("Metrics server listening", "addr", config.MetricsAddr)
-					if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						startupLog.Error("Metrics server failed", "error", err)
-					}
-				}()
+				// Bind first, then log readiness so a bind failure surfaces as an
+				// error instead of a misleading "listening" line followed by a
+				// silent Serve crash.
+				metricsListener, err := net.Listen("tcp", config.MetricsAddr)
+				if err != nil {
+					startupLog.Error("Metrics server failed to bind", "error", err, "addr", config.MetricsAddr)
+				} else {
+					go func() {
+						startupLog.Info("Metrics server listening", "addr", config.MetricsAddr)
+						if err := metricsSrv.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							startupLog.Error("Metrics server failed", "error", err)
+						}
+					}()
 
-				defer func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						startupLog.Warn("Graceful shutdown of metrics server failed", "error", err)
-					}
-				}()
+					defer func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							startupLog.Warn("Graceful shutdown of metrics server failed", "error", err)
+						}
+					}()
+				}
 			}
 		}
 	}

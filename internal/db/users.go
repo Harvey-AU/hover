@@ -58,8 +58,8 @@ func (db *DB) GetUser(userID string) (*User, error) {
 		&user.ActiveOrganisationID, &user.SlackUserID, &user.WebhookToken, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("user not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -99,6 +99,12 @@ func (db *DB) GetOrCreateUser(userID, email string, fullName *string) (*User, er
 	if err == nil {
 		// User exists, return them
 		return user, nil
+	}
+	// Only auto-create when the lookup cleanly returned "not found".
+	// A generic DB failure must surface so callers can retry rather than
+	// forcing a user insert on top of broken infrastructure.
+	if !errors.Is(err, ErrUserNotFound) {
+		return nil, fmt.Errorf("failed to look up user before auto-create: %w", err)
 	}
 
 	// User doesn't exist, auto-create them with a default organisation
@@ -427,11 +433,11 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 	if err == nil {
 		// User exists, get their organisation
 		if existingUser.OrganisationID != nil {
-			org, err := db.GetOrganisation(*existingUser.OrganisationID)
-			if err != nil {
-				dbLog.Warn("Failed to get existing user's organisation", "error", err, "organisation_id", *existingUser.OrganisationID)
-				// Return user without organisation rather than failing
-				return existingUser, nil, nil
+			org, orgErr := db.GetOrganisation(*existingUser.OrganisationID)
+			if orgErr != nil {
+				// Surface the underlying lookup failure so callers do not silently
+				// receive a user stripped of their organisation context.
+				return nil, nil, fmt.Errorf("failed to get existing user's organisation %s: %w", *existingUser.OrganisationID, orgErr)
 			}
 			dbLog.Info("User already exists, returning existing user and organisation", "user_id", userID)
 			return existingUser, org, nil
@@ -439,6 +445,12 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		// User exists but has no organisation - this shouldn't happen but handle gracefully
 		dbLog.Info("User already exists but has no organisation", "user_id", userID)
 		return existingUser, nil, nil
+	}
+	// Only treat a clean "not found" as the cue to create a new record.
+	// Any other error (DB outage, scan failure) should propagate instead of
+	// masking as a fresh-user signup and causing a duplicate insert.
+	if !errors.Is(err, ErrUserNotFound) {
+		return nil, nil, fmt.Errorf("failed to look up user before create: %w", err)
 	}
 
 	// User doesn't exist, create new user and organisation

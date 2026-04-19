@@ -934,7 +934,19 @@ type WebflowWebhookPayload struct {
 
 // WebflowWebhook handles Webflow site publish webhooks
 func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
-	logger := loggerWithRequest(r)
+	// The legacy URL shape embeds the webhook token in the path
+	// (/v1/webhooks/webflow/{TOKEN}), and the workspace-scoped shape exposes the
+	// workspace ID. Redact both segments before building a request-scoped logger
+	// so the raw credential never reaches logs or Sentry breadcrumbs.
+	var logger *logging.Logger
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/v1/webhooks/webflow/workspaces/"):
+		logger = loggerWithRequestPath(r, "/v1/webhooks/webflow/workspaces/[redacted]")
+	case strings.HasPrefix(r.URL.Path, "/v1/webhooks/webflow/"):
+		logger = loggerWithRequestPath(r, "/v1/webhooks/webflow/[redacted]")
+	default:
+		logger = loggerWithRequest(r)
+	}
 
 	if r.Method != http.MethodPost {
 		MethodNotAllowed(w, r)
@@ -946,7 +958,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	// Org-scoped: /v1/webhooks/webflow/workspaces/WORKSPACE_ID
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[3] == "" {
-		logger.Warn("Webflow webhook missing identifier in URL", "path", r.URL.Path)
+		logger.Warn("Webflow webhook missing identifier in URL")
 		BadRequest(w, r, "Webhook identifier required in URL path")
 		return
 	}
@@ -956,7 +968,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ""
 	if isWorkspaceWebhook {
 		if len(pathParts) < 5 || pathParts[4] == "" {
-			logger.Warn("Webflow webhook missing workspace ID in URL", "path", r.URL.Path)
+			logger.Warn("Webflow webhook missing workspace ID in URL")
 			BadRequest(w, r, "Webflow workspace ID required in URL path")
 			return
 		}
