@@ -226,10 +226,16 @@ jobs:
             fi
           fi
 
-          # Poll for private URL (may take a moment after creation)
+          # Poll for private URL (may take a moment after creation).
+          # flyctl renders the status table with box-drawing characters and
+          # arbitrary whitespace, so extract only the redis://... substring
+          # and strip surrounding whitespace. The earlier sed 's/.*= *//'
+          # approach captured the full line because flyctl uses │, not =.
           REDIS_URL=""
           for i in 1 2 3 4 5 6; do
-            REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null | grep -i "private url" | sed 's/.*= *//')
+            REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null \
+              | grep -oE 'redis(s)?://[^[:space:]]+' \
+              | head -n 1)
             if [ -n "$REDIS_URL" ]; then
               break
             fi

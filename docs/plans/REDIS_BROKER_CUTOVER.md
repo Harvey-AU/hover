@@ -16,7 +16,13 @@ lean on for a safe cutover.
 
 ## Pre-cutover checklist
 
-- [ ] CI green on PR #330 (Deploy Review App + all tests).
+- [x] CI green on PR #330 (Deploy Review App + all tests) — verified at commit
+      `802b2fa`.
+- [x] Stage A nil-callback audit — API server boots cleanly with `REDIS_URL`
+      unset; all task-creation paths guard on nil (see Stage A verified
+      behaviours below).
+- [x] Outbox pattern landed (`580335c`).
+- [x] `RunAt` persistence landed (`d893957`).
 - [ ] Review app smoke-tested end-to-end: job create → ZSET → stream → worker →
       task completion.
 - [ ] Load test: 10 concurrent jobs × 500 URLs each. Watch ZSET depth, PEL
@@ -32,14 +38,35 @@ lean on for a safe cutover.
 ### Stage A — Merge with Redis OFF in prod (Day 0)
 
 1. Merge PR #330 to `main`.
-2. Deploy `hover-prod` API server with **no** `REDIS_URL` set. Dispatch is
-   disabled; nothing moves. Existing jobs carry on via the legacy path. (Note:
-   Stage 3 _deletes_ the legacy worker pool. If we truly want zero dispatch, we
-   need to confirm the API server's behaviour when `OnTasksEnqueued` is nil and
-   no worker is running. Verify before merge.)
+2. Deploy `hover-prod` API server with **no** `REDIS_URL` set. Startup logs a
+   warning; `OnTasksEnqueued` stays nil; every task-creation path guards on nil
+   and skips the fire-and-forget Redis call. No panics, no dispatch.
 3. Deploy worker binary to `hover-worker-prod` but keep it at 0 machines.
 
 This is the "dark launch" — code in prod, nothing running.
+
+**Stage A verified behaviours (audit 2026-04-19):**
+
+- API boots cleanly with `REDIS_URL` unset (`cmd/app/main.go:605–607` logs the
+  warning; skips callback wiring).
+- Task-insert paths guard on nil callback (`internal/jobs/manager.go:396`,
+  `:597`). No nil-deref.
+- `task_outbox` rows are still written unconditionally inside the tx
+  (`internal/db/queue.go:1251`, `manager.go:372`). With no worker running, these
+  rows accumulate — they are only drained by the sweeper inside the worker
+  binary.
+- Pending `tasks` rows also accumulate: without a dispatcher, nothing moves them
+  from Postgres into Redis.
+
+**Stage A caveats:**
+
+- **Stage A is safe only with no real traffic** (or test-only traffic). Any job
+  created during Stage A pins outbox + pending rows in Postgres until Stage B.
+  Restrict job creation to synthetic test runs.
+- **Expect a drain burst on Stage B.** When the worker scales up, its sweeper
+  picks up the backlog at `BatchSize=200` per `Interval=5s` (~40 rows/sec). Not
+  a herd risk at small scale, but watch ZSET depth + dispatcher tick latency
+  while it catches up.
 
 ### Stage B — Canary (Day 1)
 
@@ -114,16 +141,17 @@ Sourced from the audit in this session.
 
 Surfaced during review, intentionally out of scope for Stage 3:
 
-1. **Outbox pattern for `OnTasksEnqueued`.** Callback errors are
-   logged-and-swallowed today. If Postgres commit succeeds but the Redis
-   schedule call fails, the task is orphaned. Proper fix: write an `outbox` row
-   in the same Postgres tx, have a sweeper mirror pending outbox rows to Redis.
+1. ~~**Outbox pattern for `OnTasksEnqueued`.**~~ **Landed** in commit `580335c`
+   (2026-04-19). `task_outbox` mirrors every task insert in the same Postgres
+   tx; a sweeper in the worker service drains it into Redis with exponential
+   backoff. Callback is now belt-and-braces, not the sole path.
 
-2. **`RunAt` persistence for waiting tasks.** Reschedule lives only in Redis. If
-   Redis is flushed, adaptive-delay pushbacks are lost and tasks either replay
-   immediately or never.
+2. ~~**`RunAt` persistence for waiting tasks.**~~ **Landed** in commit `d893957`
+   (2026-04-19). `Reschedule` dual-writes the new `run_at` to Postgres alongside
+   the ZSET score update. Adaptive-delay pushbacks now survive a Redis flush.
 
-Both are tracked for a follow-up PR. Neither blocks Stage 3 because: (a) outbox
-failure is extremely rare (Redis call happens immediately after commit, in the
-same request), and (b) Redis flush is an operational incident that requires full
-re-sync anyway.
+3. **Reconcile loop (Postgres → Redis ZSET).** Still deferred. The cleanest
+   implementation needs a dedicated `scheduled` task status flipped by the
+   dispatcher on XADD; otherwise reconcile races with tasks in the Stream PEL
+   (status `pending`, not in ZSET → would be double-dispatched). Plan: separate
+   PR after Stage B proves the baseline flow is healthy.

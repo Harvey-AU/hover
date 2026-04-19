@@ -85,6 +85,10 @@ On merge, CI will:
 - `fetchJobInfo` in `StreamWorkerPool` now populates `RobotsRules` via a new
   `JobManager.GetRobotsRules` method. Previously `ProcessDiscoveredLinks`
   received nil rules and silently allowed URLs that robots.txt disallows
+- Review-app CI: `flyctl redis status` output parsing was passing the whole line
+  (including " Private URL │ ..." label and whitespace) into `REDIS_URL`,
+  crash-looping the review app on every deploy. Extractor now grabs only the
+  `redis(s)?://` substring
 
 ## Full changelog history
 
