@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
+
+// brokerLog is the package-scoped structured logger for all broker components.
+var brokerLog = logging.Component("broker")
 
 // Config holds Redis connection parameters, typically loaded from
 // environment variables.
@@ -49,12 +51,11 @@ func ConfigFromEnv() Config {
 
 // Client wraps a go-redis client with convenience helpers.
 type Client struct {
-	rdb    *redis.Client
-	logger zerolog.Logger
+	rdb *redis.Client
 }
 
 // NewClient parses cfg.URL and returns a connected Client.
-func NewClient(cfg Config, logger zerolog.Logger) (*Client, error) {
+func NewClient(cfg Config) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("broker: REDIS_URL is required")
 	}
@@ -78,11 +79,7 @@ func NewClient(cfg Config, logger zerolog.Logger) (*Client, error) {
 
 	rdb := redis.NewClient(opts)
 
-	c := &Client{
-		rdb:    rdb,
-		logger: logger.With().Str("component", "broker").Logger(),
-	}
-	return c, nil
+	return &Client{rdb: rdb}, nil
 }
 
 // Ping verifies the connection is alive.
@@ -108,8 +105,8 @@ func envInt(key string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		log.Warn().Str("key", key).Str("value", v).Int("default", def).
-			Msg("invalid integer for env var, using default")
+		brokerLog.Warn("invalid integer for env var, using default",
+			"key", key, "value", v, "default", def)
 		return def
 	}
 	return n

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 )
 
 // DispatcherOpts controls the dispatcher's scan behaviour.
@@ -56,7 +55,6 @@ type Dispatcher struct {
 	jobLister JobLister
 	concCheck ConcurrencyChecker
 	opts      DispatcherOpts
-	logger    zerolog.Logger
 }
 
 // NewDispatcher creates a Dispatcher.
@@ -68,7 +66,6 @@ func NewDispatcher(
 	jobLister JobLister,
 	concCheck ConcurrencyChecker,
 	opts DispatcherOpts,
-	logger zerolog.Logger,
 ) *Dispatcher {
 	return &Dispatcher{
 		scheduler: scheduler,
@@ -78,7 +75,6 @@ func NewDispatcher(
 		jobLister: jobLister,
 		concCheck: concCheck,
 		opts:      opts,
-		logger:    logger.With().Str("component", "dispatcher").Logger(),
 	}
 }
 
@@ -88,15 +84,15 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	ticker := time.NewTicker(d.opts.ScanInterval)
 	defer ticker.Stop()
 
-	d.logger.Info().
-		Dur("interval", d.opts.ScanInterval).
-		Int64("batch", d.opts.BatchSize).
-		Msg("dispatcher started")
+	brokerLog.Info("dispatcher started",
+		"interval", d.opts.ScanInterval,
+		"batch", d.opts.BatchSize,
+	)
 
 	for {
 		select {
 		case <-ctx.Done():
-			d.logger.Info().Msg("dispatcher stopping")
+			brokerLog.Info("dispatcher stopping")
 			return
 		case <-ticker.C:
 			d.tick(ctx)
@@ -107,7 +103,7 @@ func (d *Dispatcher) Run(ctx context.Context) {
 func (d *Dispatcher) tick(ctx context.Context) {
 	jobIDs, err := d.jobLister.ActiveJobIDs(ctx)
 	if err != nil {
-		d.logger.Error().Err(err).Msg("failed to list active jobs")
+		brokerLog.Error("failed to list active jobs", "error", err)
 		return
 	}
 
@@ -118,10 +114,10 @@ func (d *Dispatcher) tick(ctx context.Context) {
 		}
 		dispatched, err := d.dispatchJob(ctx, jobID, now)
 		if err != nil {
-			d.logger.Error().Err(err).Str("job_id", jobID).Msg("dispatch error")
+			brokerLog.Error("dispatch error", "error", err, "job_id", jobID)
 		}
 		if dispatched > 0 {
-			d.logger.Debug().Str("job_id", jobID).Int("dispatched", dispatched).Msg("dispatched tasks")
+			brokerLog.Debug("dispatched tasks", "job_id", jobID, "dispatched", dispatched)
 		}
 	}
 }
@@ -144,7 +140,7 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		// Check job-level concurrency.
 		canDispatch, err := d.concCheck.CanDispatch(ctx, jobID)
 		if err != nil {
-			d.logger.Warn().Err(err).Str("job_id", jobID).Msg("concurrency check failed, skipping batch")
+			brokerLog.Warn("concurrency check failed, skipping batch", "error", err, "job_id", jobID)
 			break
 		}
 		if !canDispatch {
@@ -156,14 +152,14 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		domain := entry.Host
 		paceResult, err := d.pacer.TryAcquire(ctx, domain)
 		if err != nil {
-			d.logger.Warn().Err(err).Str("domain", domain).Msg("pacer check failed")
+			brokerLog.Warn("pacer check failed", "error", err, "domain", domain)
 			continue
 		}
 		if !paceResult.Acquired {
 			// Domain in delay window — reschedule with estimated wait.
 			newRunAt := now.Add(paceResult.RetryAfter)
 			if err := d.scheduler.Reschedule(ctx, jobID, entry.Member(), newRunAt); err != nil {
-				d.logger.Warn().Err(err).Str("task_id", entry.TaskID).Msg("reschedule failed")
+				brokerLog.Warn("reschedule failed", "error", err, "task_id", entry.TaskID)
 			}
 			continue
 		}
@@ -171,18 +167,18 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		// Publish to stream and remove from ZSET atomically via pipeline.
 		if err := d.publishAndRemove(ctx, entry); err != nil {
 			_ = d.pacer.Release(ctx, domain, jobID, false, false)
-			d.logger.Warn().Err(err).Str("task_id", entry.TaskID).Msg("stream publish+remove failed")
+			brokerLog.Warn("stream publish+remove failed", "error", err, "task_id", entry.TaskID)
 			continue
 		}
 
 		// Increment running counter.
 		if _, err := d.counters.Increment(ctx, jobID); err != nil {
-			d.logger.Warn().Err(err).Str("job_id", jobID).Msg("counter increment failed")
+			brokerLog.Warn("counter increment failed", "error", err, "job_id", jobID)
 		}
 
 		// Increment domain inflight counter.
 		if err := d.pacer.IncrementInflight(ctx, domain, jobID); err != nil {
-			d.logger.Warn().Err(err).Str("domain", domain).Msg("inflight increment failed")
+			brokerLog.Warn("inflight increment failed", "error", err, "domain", domain)
 		}
 
 		dispatched++

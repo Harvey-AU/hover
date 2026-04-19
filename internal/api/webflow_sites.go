@@ -147,7 +147,7 @@ func (h *Handler) listWebflowSites(w http.ResponseWriter, r *http.Request, conne
 			NotFound(w, r, "Webflow connection not found")
 			return
 		}
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get Webflow connection")
+		logger.Error("Failed to get Webflow connection", "error", err, "connection_id", connectionID)
 		InternalError(w, r, err)
 		return
 	}
@@ -160,7 +160,7 @@ func (h *Handler) listWebflowSites(w http.ResponseWriter, r *http.Request, conne
 	// Get token from vault
 	token, err := h.DB.GetWebflowToken(ctx, connectionID)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to get Webflow token")
+		logger.Error("Failed to get Webflow token", "error", err, "connection_id", connectionID)
 		InternalError(w, r, fmt.Errorf("failed to retrieve Webflow token"))
 		return
 	}
@@ -183,7 +183,7 @@ func (h *Handler) listWebflowSites(w http.ResponseWriter, r *http.Request, conne
 	// Fetch sites from Webflow API
 	webflowSites, err := h.fetchWebflowSites(ctx, token)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to fetch Webflow sites")
+		logger.Error("Failed to fetch Webflow sites", "error", err, "connection_id", connectionID)
 		InternalError(w, r, fmt.Errorf("failed to fetch sites from Webflow"))
 		return
 	}
@@ -191,7 +191,7 @@ func (h *Handler) listWebflowSites(w http.ResponseWriter, r *http.Request, conne
 	// Get local settings for all sites
 	localSettings, err := h.DB.ListSiteSettingsByConnection(ctx, connectionID)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", connectionID).Msg("Failed to list site settings")
+		logger.Error("Failed to list site settings", "error", err, "connection_id", connectionID)
 		InternalError(w, r, err)
 		return
 	}
@@ -303,7 +303,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 			NotFound(w, r, "Webflow connection not found")
 			return
 		}
-		logger.Error().Err(err).Str("connection_id", req.ConnectionID).Msg("Failed to get Webflow connection")
+		logger.Error("Failed to get Webflow connection", "error", err, "connection_id", req.ConnectionID)
 		InternalError(w, r, err)
 		return
 	}
@@ -316,14 +316,14 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 	// Get token and fetch site info from Webflow
 	token, err := h.DB.GetWebflowToken(ctx, req.ConnectionID)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", req.ConnectionID).Msg("Failed to get Webflow token")
+		logger.Error("Failed to get Webflow token", "error", err, "connection_id", req.ConnectionID)
 		InternalError(w, r, fmt.Errorf("failed to retrieve Webflow token"))
 		return
 	}
 
 	siteInfo, err := h.fetchWebflowSiteByID(ctx, token, siteID)
 	if err != nil {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to fetch site info from Webflow")
+		logger.Error("Failed to fetch site info from Webflow", "error", err, "site_id", siteID)
 		InternalError(w, r, fmt.Errorf("failed to fetch site from Webflow"))
 		return
 	}
@@ -337,7 +337,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 	// Get or create site setting
 	setting, err := h.DB.GetSiteSetting(ctx, orgID, siteID)
 	if err != nil && !errors.Is(err, db.ErrWebflowSiteSettingNotFound) {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to get site setting")
+		logger.Error("Failed to get site setting", "error", err, "site_id", siteID)
 		InternalError(w, r, err)
 		return
 	}
@@ -352,7 +352,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 		// Check if scheduler exists for this domain
 		schedulers, err := h.DB.ListSchedulers(ctx, orgID)
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to list schedulers")
+			logger.Error("Failed to list schedulers", "error", err)
 			InternalError(w, r, err)
 			return
 		}
@@ -371,7 +371,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 			existingScheduler.ScheduleIntervalHours = *req.ScheduleIntervalHours
 			existingScheduler.NextRunAt = time.Now().Add(time.Duration(*req.ScheduleIntervalHours) * time.Hour)
 			if err := h.DB.UpdateScheduler(ctx, existingScheduler.ID, existingScheduler, nil); err != nil {
-				logger.Error().Err(err).Str("scheduler_id", existingScheduler.ID).Msg("Failed to update scheduler")
+				logger.Error("Failed to update scheduler", "error", err, "scheduler_id", existingScheduler.ID)
 				InternalError(w, r, err)
 				return
 			}
@@ -385,7 +385,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 				RETURNING id
 			`, normalizedDomain).Scan(&domainID)
 			if err != nil {
-				logger.Error().Err(err).Str("domain", normalizedDomain).Msg("Failed to get or create domain")
+				logger.Error("Failed to get or create domain", "error", err, "domain", normalizedDomain)
 				InternalError(w, r, err)
 				return
 			}
@@ -405,7 +405,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 			}
 
 			if err := h.DB.CreateScheduler(ctx, newScheduler); err != nil {
-				logger.Error().Err(err).Str("domain", normalizedDomain).Msg("Failed to create scheduler")
+				logger.Error("Failed to create scheduler", "error", err, "domain", normalizedDomain)
 				InternalError(w, r, err)
 				return
 			}
@@ -414,7 +414,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 	} else if setting != nil && setting.SchedulerID != "" {
 		// Remove schedule - delete scheduler
 		if err := h.DB.DeleteScheduler(ctx, setting.SchedulerID); err != nil {
-			logger.Warn().Err(err).Str("scheduler_id", setting.SchedulerID).Msg("Failed to delete scheduler (may already be deleted)")
+			logger.Warn("Failed to delete scheduler (may already be deleted)", "error", err, "scheduler_id", setting.SchedulerID)
 		}
 		schedulerID = ""
 	}
@@ -434,24 +434,24 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 	setting.SchedulerID = schedulerID
 
 	if err := h.DB.CreateOrUpdateSiteSetting(ctx, setting); err != nil {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to save site setting")
+		logger.Error("Failed to save site setting", "error", err, "site_id", siteID)
 		InternalError(w, r, err)
 		return
 	}
 
 	// Trigger immediate job when creating or updating a schedule
 	if req.ScheduleIntervalHours != nil {
-		logger.Info().
-			Str("site_id", siteID).
-			Str("domain", primaryDomain).
-			Int("interval_hours", *req.ScheduleIntervalHours).
-			Msg("Creating immediate job for schedule setup")
+		logger.Info("Creating immediate job for schedule setup",
+			"site_id", siteID,
+			"domain", primaryDomain,
+			"interval_hours", *req.ScheduleIntervalHours,
+		)
 
 		// Get user from context (already validated by auth middleware)
 		user, _, ok := h.GetActiveOrganisationWithUser(w, r)
 		if !ok {
 			// Auth already handled, but safety check
-			logger.Warn().Msg("Could not get user for immediate job creation")
+			logger.Warn("Could not get user for immediate job creation")
 		} else {
 			sourceType := "schedule_setup"
 			sourceDetail := fmt.Sprintf("Schedule enabled (%dh)", *req.ScheduleIntervalHours)
@@ -472,7 +472,7 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 			}
 			sourceInfoBytes, err := json.Marshal(sourceInfoPayload)
 			if err != nil {
-				logger.Warn().Err(err).Msg("Failed to marshal source info for immediate job")
+				logger.Warn("Failed to marshal source info for immediate job", "error", err)
 			}
 			sourceInfo := string(sourceInfoBytes)
 
@@ -485,10 +485,10 @@ func (h *Handler) updateSiteSchedule(w http.ResponseWriter, r *http.Request, sit
 
 			_, err = h.createJobFromRequest(ctx, user, jobReq, loggerWithRequest(r))
 			if err != nil {
-				logger.Warn().Err(err).Msg("Failed to create immediate job, user can trigger manually")
+				logger.Warn("Failed to create immediate job, user can trigger manually", "error", err)
 				// Don't fail the entire request - scheduler is configured successfully
 			} else {
-				logger.Info().Str("domain", primaryDomain).Str("scheduler_id", schedulerID).Msg("Immediate job created successfully")
+				logger.Info("Immediate job created successfully", "domain", primaryDomain, "scheduler_id", schedulerID)
 			}
 		}
 	}
@@ -538,7 +538,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 			NotFound(w, r, "Webflow connection not found")
 			return
 		}
-		logger.Error().Err(err).Str("connection_id", req.ConnectionID).Msg("Failed to get Webflow connection")
+		logger.Error("Failed to get Webflow connection", "error", err, "connection_id", req.ConnectionID)
 		InternalError(w, r, err)
 		return
 	}
@@ -551,7 +551,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 	// Get token
 	token, err := h.DB.GetWebflowToken(ctx, req.ConnectionID)
 	if err != nil {
-		logger.Error().Err(err).Str("connection_id", req.ConnectionID).Msg("Failed to get Webflow token")
+		logger.Error("Failed to get Webflow token", "error", err, "connection_id", req.ConnectionID)
 		InternalError(w, r, fmt.Errorf("failed to retrieve Webflow token"))
 		return
 	}
@@ -559,7 +559,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 	// Get site info from Webflow
 	siteInfo, err := h.fetchWebflowSiteByID(ctx, token, siteID)
 	if err != nil {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to fetch site info from Webflow")
+		logger.Error("Failed to fetch site info from Webflow", "error", err, "site_id", siteID)
 		InternalError(w, r, fmt.Errorf("failed to fetch site from Webflow"))
 		return
 	}
@@ -569,7 +569,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 	// Get existing setting
 	setting, err := h.DB.GetSiteSetting(ctx, orgID, siteID)
 	if err != nil && !errors.Is(err, db.ErrWebflowSiteSettingNotFound) {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to get site setting")
+		logger.Error("Failed to get site setting", "error", err, "site_id", siteID)
 		InternalError(w, r, err)
 		return
 	}
@@ -578,7 +578,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 
 	if req.Enabled {
 		if strings.TrimSpace(conn.WebflowWorkspaceID) == "" {
-			logger.Warn().Str("connection_id", req.ConnectionID).Msg("Blocked enabling auto-publish: missing workspace ID on connection")
+			logger.Warn("Blocked enabling auto-publish: missing workspace ID on connection", "connection_id", req.ConnectionID)
 			BadRequest(w, r, "Webflow workspace not available for this connection. Reconnect to Webflow and ensure your workspace is accessible.")
 			return
 		}
@@ -586,7 +586,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 		webhookURL := fmt.Sprintf("%s/v1/webhooks/webflow/workspaces/%s", getAppURL(), conn.WebflowWorkspaceID)
 		newWebhookID, err := h.registerWebflowWebhook(ctx, token, siteID, webhookURL)
 		if err != nil {
-			logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to register webhook with Webflow")
+			logger.Error("Failed to register webhook with Webflow", "error", err, "site_id", siteID)
 			InternalError(w, r, fmt.Errorf("failed to register webhook with Webflow"))
 			return
 		}
@@ -594,7 +594,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 	} else if setting != nil && setting.WebhookID != "" {
 		// Delete webhook from Webflow
 		if err := h.deleteWebflowWebhook(ctx, token, setting.WebhookID); err != nil {
-			logger.Warn().Err(err).Str("webhook_id", setting.WebhookID).Msg("Failed to delete webhook from Webflow (may already be deleted)")
+			logger.Warn("Failed to delete webhook from Webflow (may already be deleted)", "error", err, "webhook_id", setting.WebhookID)
 			// Continue anyway - we'll clear our local record
 		}
 		webhookID = ""
@@ -621,23 +621,23 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 	}
 
 	if err := h.DB.CreateOrUpdateSiteSetting(ctx, setting); err != nil {
-		logger.Error().Err(err).Str("site_id", siteID).Msg("Failed to save site setting")
+		logger.Error("Failed to save site setting", "error", err, "site_id", siteID)
 		InternalError(w, r, err)
 		return
 	}
 
 	// Trigger immediate job when enabling auto-publish
 	if req.Enabled && webhookID != "" {
-		logger.Info().
-			Str("site_id", siteID).
-			Str("domain", primaryDomain).
-			Msg("Creating immediate job for newly enabled auto-publish")
+		logger.Info("Creating immediate job for newly enabled auto-publish",
+			"site_id", siteID,
+			"domain", primaryDomain,
+		)
 
 		// Get user from context (already validated by auth middleware)
 		user, _, ok := h.GetActiveOrganisationWithUser(w, r)
 		if !ok {
 			// Auth already handled, but safety check
-			logger.Warn().Msg("Could not get user for immediate job creation")
+			logger.Warn("Could not get user for immediate job creation")
 		} else {
 			sourceType := "auto_publish_setup"
 			sourceDetail := "Auto-publish enabled"
@@ -654,7 +654,7 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 			}
 			sourceInfoBytes, err := json.Marshal(sourceInfoPayload)
 			if err != nil {
-				logger.Warn().Err(err).Msg("Failed to marshal source info for immediate job")
+				logger.Warn("Failed to marshal source info for immediate job", "error", err)
 			}
 			sourceInfo := string(sourceInfoBytes)
 
@@ -667,10 +667,10 @@ func (h *Handler) toggleSiteAutoPublish(w http.ResponseWriter, r *http.Request, 
 
 			_, err = h.createJobFromRequest(ctx, user, jobReq, loggerWithRequest(r))
 			if err != nil {
-				logger.Warn().Err(err).Msg("Failed to create immediate job, user can trigger manually")
+				logger.Warn("Failed to create immediate job, user can trigger manually", "error", err)
 				// Don't fail the entire request - webhook is registered successfully
 			} else {
-				logger.Info().Str("domain", primaryDomain).Msg("Immediate job created successfully")
+				logger.Info("Immediate job created successfully", "domain", primaryDomain)
 			}
 		}
 	}

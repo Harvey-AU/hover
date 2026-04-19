@@ -19,11 +19,13 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"github.com/rs/zerolog/log"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/Harvey-AU/hover/internal/util"
 )
+
+var queueLog = logging.Component("queue")
 
 var ErrTaskNotReadyForHTMLMetadata = errors.New("task not ready for html metadata")
 
@@ -276,26 +278,26 @@ func (q *DbQueue) executeWithContextLane(ctx context.Context, lane queueLane, fn
 
 			if !q.shouldRetry(err) || attempt == maxAttempts-1 {
 				// Log pool saturation details
-				log.Warn().
-					Err(err).
-					Str("lane", string(lane)).
-					Str("error_class", errorClass).
-					Dur("pool_wait_total", poolWaitTotal).
-					Dur("total_duration", time.Since(totalStart)).
-					Int("attempt", attempt+1).
-					Int("max_attempts", maxAttempts).
-					Msg("Failed to acquire database connection")
+				queueLog.Warn("Failed to acquire database connection",
+					"error", err,
+					"lane", string(lane),
+					"error_class", errorClass,
+					"pool_wait_total", poolWaitTotal,
+					"total_duration", time.Since(totalStart),
+					"attempt", attempt+1,
+					"max_attempts", maxAttempts,
+				)
 				return err
 			}
 
 			backoff := q.computeBackoff(attempt)
-			log.Debug().
-				Err(err).
-				Str("lane", string(lane)).
-				Str("error_class", errorClass).
-				Dur("backoff", backoff).
-				Int("attempt", attempt+1).
-				Msg("Pool capacity check failed, retrying after backoff")
+			queueLog.Debug("Pool capacity check failed, retrying after backoff",
+				"error", err,
+				"lane", string(lane),
+				"error_class", errorClass,
+				"backoff", backoff,
+				"attempt", attempt+1,
+			)
 
 			if err := q.waitForRetry(ctx, attempt); err != nil {
 				return err
@@ -316,13 +318,13 @@ func (q *DbQueue) executeWithContextLane(ctx context.Context, lane queueLane, fn
 			}
 			// Log if transaction was slow (>5s) to help diagnose performance issues
 			if totalDuration > 5*time.Second {
-				log.Warn().
-					Str("lane", string(lane)).
-					Dur("total_duration", totalDuration).
-					Dur("pool_wait_total", poolWaitTotal).
-					Dur("exec_total", execTotal).
-					Int("attempts", attempt+1).
-					Msg("Slow database transaction completed")
+				queueLog.Warn("Slow database transaction completed",
+					"lane", string(lane),
+					"total_duration", totalDuration,
+					"pool_wait_total", poolWaitTotal,
+					"exec_total", execTotal,
+					"attempts", attempt+1,
+				)
 			}
 			return nil
 		}
@@ -333,14 +335,14 @@ func (q *DbQueue) executeWithContextLane(ctx context.Context, lane queueLane, fn
 			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
-			log.Debug().
-				Err(execErr).
-				Str("lane", string(lane)).
-				Dur("total_duration", totalDuration).
-				Dur("pool_wait_total", poolWaitTotal).
-				Dur("exec_total", execTotal).
-				Int("attempt", attempt+1).
-				Msg("Database transaction finished with no rows")
+			queueLog.Debug("Database transaction finished with no rows",
+				"error", execErr,
+				"lane", string(lane),
+				"total_duration", totalDuration,
+				"pool_wait_total", poolWaitTotal,
+				"exec_total", execTotal,
+				"attempt", attempt+1,
+			)
 			return execErr
 		}
 		// Don't log concurrency blocking as error - it's normal backoff behaviour.
@@ -359,29 +361,29 @@ func (q *DbQueue) executeWithContextLane(ctx context.Context, lane queueLane, fn
 			if lane == queueLaneBulk && q.pressure != nil {
 				q.pressure.Record(float64(execTotal.Milliseconds()))
 			}
-			log.Error().
-				Err(execErr).
-				Str("lane", string(lane)).
-				Str("error_class", errorClass).
-				Dur("total_duration", totalDuration).
-				Dur("pool_wait_total", poolWaitTotal).
-				Dur("exec_total", execTotal).
-				Int("attempt", attempt+1).
-				Int("max_attempts", maxAttempts).
-				Bool("retryable", q.shouldRetry(execErr)).
-				Msg("Database transaction failed")
+			queueLog.Error("Database transaction failed",
+				"error", execErr,
+				"lane", string(lane),
+				"error_class", errorClass,
+				"total_duration", totalDuration,
+				"pool_wait_total", poolWaitTotal,
+				"exec_total", execTotal,
+				"attempt", attempt+1,
+				"max_attempts", maxAttempts,
+				"retryable", q.shouldRetry(execErr),
+			)
 			return execErr
 		}
 
 		backoff := q.computeBackoff(attempt)
-		log.Debug().
-			Err(execErr).
-			Str("lane", string(lane)).
-			Str("error_class", errorClass).
-			Dur("backoff", backoff).
-			Dur("exec_duration", execDuration).
-			Int("attempt", attempt+1).
-			Msg("Transaction failed, retrying after backoff")
+		queueLog.Debug("Transaction failed, retrying after backoff",
+			"error", execErr,
+			"lane", string(lane),
+			"error_class", errorClass,
+			"backoff", backoff,
+			"exec_duration", execDuration,
+			"attempt", attempt+1,
+		)
 
 		if err := q.waitForRetry(ctx, attempt); err != nil {
 			return err
@@ -397,11 +399,10 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 	beginDuration := time.Since(beginStart)
 
 	if err != nil {
-		sentry.CaptureException(err)
-		log.Error().
-			Err(err).
-			Dur("begin_duration", beginDuration).
-			Msg("Failed to begin transaction")
+		queueLog.Error("Failed to begin transaction",
+			"error", err,
+			"begin_duration", beginDuration,
+		)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	var committed bool
@@ -420,11 +421,11 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 		queryDuration := time.Since(queryStart)
 		// Log slow queries even when they fail
 		if queryDuration > 5*time.Second {
-			log.Warn().
-				Err(err).
-				Dur("begin_duration", beginDuration).
-				Dur("query_duration", queryDuration).
-				Msg("Slow query failed in transaction")
+			queueLog.Warn("Slow query failed in transaction",
+				"error", err,
+				"begin_duration", beginDuration,
+				"query_duration", queryDuration,
+			)
 		}
 		return err
 	}
@@ -433,13 +434,12 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 	commitStart := time.Now()
 	if err := tx.Commit(); err != nil {
 		commitDuration := time.Since(commitStart)
-		sentry.CaptureException(err)
-		log.Error().
-			Err(err).
-			Dur("begin_duration", beginDuration).
-			Dur("query_duration", queryDuration).
-			Dur("commit_duration", commitDuration).
-			Msg("Failed to commit transaction")
+		queueLog.Error("Failed to commit transaction",
+			"error", err,
+			"begin_duration", beginDuration,
+			"query_duration", queryDuration,
+			"commit_duration", commitDuration,
+		)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	committed = true
@@ -448,12 +448,12 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 	// Log breakdown for slow transactions
 	totalDuration := beginDuration + queryDuration + commitDuration
 	if totalDuration > 5*time.Second {
-		log.Warn().
-			Dur("total", totalDuration).
-			Dur("begin", beginDuration).
-			Dur("query", queryDuration).
-			Dur("commit", commitDuration).
-			Msg("Slow transaction breakdown")
+		queueLog.Warn("Slow transaction breakdown",
+			"total", totalDuration,
+			"begin", beginDuration,
+			"query", queryDuration,
+			"commit", commitDuration,
+		)
 	}
 
 	return nil
@@ -633,7 +633,7 @@ func (q *DbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error
 
 	tx, err := q.db.client.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		sentry.CaptureException(err)
+		queueLog.Error("Failed to begin maintenance transaction", "error", err)
 		return fmt.Errorf("failed to begin maintenance transaction: %w", err)
 	}
 	var committed bool
@@ -646,7 +646,7 @@ func (q *DbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error
 	// Apply a statement timeout so maintenance never blocks the pool indefinitely.
 	// Set to 60s to allow recovery batches time to process large backlogs.
 	if _, err := tx.ExecContext(ctx, `SET LOCAL statement_timeout = '60s'`); err != nil {
-		log.Warn().Err(err).Msg("Failed to set maintenance statement timeout")
+		queueLog.Warn("Failed to set maintenance statement timeout", "error", err)
 	}
 
 	if err := fn(tx); err != nil {
@@ -654,7 +654,7 @@ func (q *DbQueue) ExecuteMaintenance(ctx context.Context, fn func(*sql.Tx) error
 	}
 
 	if err := tx.Commit(); err != nil {
-		sentry.CaptureException(err)
+		queueLog.Error("Failed to commit maintenance transaction", "error", err)
 		return fmt.Errorf("failed to commit maintenance transaction: %w", err)
 	}
 	committed = true
@@ -680,12 +680,12 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(
 		// because the channel hard cap still holds.
 		if lane == queueLaneBulk && q.pressure != nil {
 			if len(semaphore) >= int(q.pressure.EffectiveLimit()) {
-				log.Debug().
-					Str("lane", string(lane)).
-					Int32("soft_limit", q.pressure.EffectiveLimit()).
-					Int("in_flight", len(semaphore)).
-					Float64("exec_ema_ms", q.pressure.EMA()).
-					Msg("DB pressure soft limit reached — shedding request")
+				queueLog.Debug("DB pressure soft limit reached — shedding request",
+					"lane", string(lane),
+					"soft_limit", q.pressure.EffectiveLimit(),
+					"in_flight", len(semaphore),
+					"exec_ema_ms", q.pressure.EMA(),
+				)
 				observability.RecordDBPoolRejection(ctx)
 				return noop, ErrPoolSaturated
 			}
@@ -698,12 +698,12 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(
 			release = func() { <-semaphore }
 		case <-ctx.Done():
 			// Explicitly log pool rejections when context expires before acquiring semaphore
-			log.Debug().
-				Str("lane", string(lane)).
-				Err(ctx.Err()).
-				Int("semaphore_capacity", cap(semaphore)).
-				Int("semaphore_in_use", len(semaphore)).
-				Msg("Pool semaphore rejected request - context done before acquiring slot")
+			queueLog.Debug("Pool semaphore rejected request - context done before acquiring slot",
+				"lane", string(lane),
+				"error", ctx.Err(),
+				"semaphore_capacity", cap(semaphore),
+				"semaphore_in_use", len(semaphore),
+			)
 			observability.RecordDBPoolRejection(ctx)
 			return noop, ErrPoolSaturated
 		}
@@ -715,12 +715,12 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(
 		fdPressure := util.FDPressureFrom(fdCurrent, fdLimit)
 		observability.RecordFDStats(ctx, fdCurrent, fdLimit, fdPressure)
 		if fdPressure > fdPressureThreshold {
-			log.Warn().
-				Str("lane", string(lane)).
-				Int("fd_current", fdCurrent).
-				Int("fd_limit", fdLimit).
-				Float64("fd_pressure", fdPressure).
-				Msg("File descriptor pressure critical — rejecting DB operation")
+			queueLog.Warn("File descriptor pressure critical — rejecting DB operation",
+				"lane", string(lane),
+				"fd_current", fdCurrent,
+				"fd_limit", fdLimit,
+				"fd_pressure", fdPressure,
+			)
 			release()
 			return noop, ErrPoolSaturated
 		}
@@ -752,43 +752,31 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(
 
 	waitDelta := stats.WaitCount - q.lastRejectWaitCount
 	if usage >= q.poolRejectThreshold && waitDelta >= minRejectWaitDelta && time.Since(q.lastRejectLog) > poolLogCooldown {
-		log.Warn().
-			Str("lane", string(lane)).
-			Int("in_use", stats.InUse).
-			Int("max_open", maxOpen).
-			Int("reserved", q.preserveConnections).
-			Float64("usage", usage).
-			Int64("wait_count", stats.WaitCount).
-			Int64("wait_delta", waitDelta).
-			Msg("DB pool saturated: requests will queue")
-		sentry.WithScope(func(scope *sentry.Scope) {
-			scope.SetLevel(sentry.LevelWarning)
-			scope.SetTag("event_type", "db_pool")
-			scope.SetTag("state", "queue")
-			scope.SetContext("db_pool", map[string]any{
-				"in_use":     stats.InUse,
-				"max_open":   maxOpen,
-				"reserved":   q.preserveConnections,
-				"idle":       stats.Idle,
-				"wait_count": stats.WaitCount,
-				"wait_delta": waitDelta,
-				"usage":      usage,
-			})
-			sentry.CaptureMessage("DB pool saturated (queuing)")
-		})
+		queueLog.Warn("DB pool saturated: requests will queue",
+			"lane", string(lane),
+			"in_use", stats.InUse,
+			"max_open", maxOpen,
+			"reserved", q.preserveConnections,
+			"idle", stats.Idle,
+			"usage", usage,
+			"wait_count", stats.WaitCount,
+			"wait_delta", waitDelta,
+			"event_type", "db_pool",
+			"state", "queue",
+		)
 		q.lastRejectLog = time.Now()
 		q.lastRejectWaitCount = stats.WaitCount
 	}
 
 	if usage >= q.poolWarnThreshold && time.Since(q.lastWarnLog) > poolLogCooldown {
-		log.Warn().
-			Str("lane", string(lane)).
-			Int("in_use", stats.InUse).
-			Int("max_open", maxOpen).
-			Int("reserved", q.preserveConnections).
-			Float64("usage", usage).
-			Int64("wait_count", stats.WaitCount).
-			Msg("DB pool nearing capacity")
+		queueLog.Warn("DB pool nearing capacity",
+			"lane", string(lane),
+			"in_use", stats.InUse,
+			"max_open", maxOpen,
+			"reserved", q.preserveConnections,
+			"usage", usage,
+			"wait_count", stats.WaitCount,
+		)
 		q.lastWarnLog = time.Now()
 	}
 
@@ -1282,7 +1270,7 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 				host = cfg.domainName.String
 			}
 			if host == "" {
-				log.Warn().Str("job_id", jobID).Int("page_id", page.ID).Msg("Skipping page enqueue due to missing host")
+				queueLog.Warn("Skipping page enqueue due to missing host", "job_id", jobID, "page_id", page.ID)
 				continue
 			}
 
@@ -1355,32 +1343,40 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			}
 			observability.RecordTaskWaiting(ctx, jobID, waitingReason, processedWaiting)
 
-			logEvent := log.Debug().
-				Str("job_id", jobID).
-				Int("waiting_tasks", processedWaiting).
-				Int("pending_tasks", processedPending).
-				Int("running_tasks", cfg.runningTasks).
-				Int("existing_pending", cfg.pendingTaskCount).
-				Int("available_slots", availableSlots).
-				Int64("concurrency_limit", cfg.concurrency.Int64).
-				Str("waiting_reason", waitingReason)
-
 			if quotaLimited {
-				logEvent.Int64("quota_remaining", cfg.quotaRemaining.Int64).
-					Int("concurrency_slots", concurrencySlots).
-					Msg("Created tasks in waiting status due to daily quota limit")
+				queueLog.Debug("Created tasks in waiting status due to daily quota limit",
+					"job_id", jobID,
+					"waiting_tasks", processedWaiting,
+					"pending_tasks", processedPending,
+					"running_tasks", cfg.runningTasks,
+					"existing_pending", cfg.pendingTaskCount,
+					"available_slots", availableSlots,
+					"concurrency_limit", cfg.concurrency.Int64,
+					"waiting_reason", waitingReason,
+					"quota_remaining", cfg.quotaRemaining.Int64,
+					"concurrency_slots", concurrencySlots,
+				)
 			} else {
-				logEvent.Msg("Created tasks in waiting status due to job concurrency limit")
+				queueLog.Debug("Created tasks in waiting status due to job concurrency limit",
+					"job_id", jobID,
+					"waiting_tasks", processedWaiting,
+					"pending_tasks", processedPending,
+					"running_tasks", cfg.runningTasks,
+					"existing_pending", cfg.pendingTaskCount,
+					"available_slots", availableSlots,
+					"concurrency_limit", cfg.concurrency.Int64,
+					"waiting_reason", waitingReason,
+				)
 			}
 		}
 
 		if droppedCount > 0 {
-			log.Debug().
-				Str("job_id", jobID).
-				Int("dropped_tasks", droppedCount).
-				Int("current_task_count", cfg.currentTaskCount).
-				Int("max_pages", cfg.maxPages).
-				Msg("Dropped overflow tasks at max_pages limit")
+			queueLog.Debug("Dropped overflow tasks at max_pages limit",
+				"job_id", jobID,
+				"dropped_tasks", droppedCount,
+				"current_task_count", cfg.currentTaskCount,
+				"max_pages", cfg.maxPages,
+			)
 		}
 
 		return nil
@@ -1420,11 +1416,11 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 				`, cfg.orgID.String, cfg.domainID.Int64, jobID, pq.Array(eligiblePageIDs))
 				return err
 			}); err2 != nil {
-				log.Warn().
-					Err(err2).
-					Str("job_id", jobID).
-					Str("next_action", "continuing_without_traffic_scores").
-					Msg("Failed to apply traffic scores to new tasks; continuing without scores")
+				queueLog.Warn("Failed to apply traffic scores to new tasks; continuing without scores",
+					"error", err2,
+					"job_id", jobID,
+					"next_action", "continuing_without_traffic_scores",
+				)
 			}
 		}
 	}
@@ -1462,15 +1458,13 @@ func (q *DbQueue) CleanupStuckJobs(ctx context.Context) error {
 	if err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		sentry.CaptureException(err)
+		queueLog.Error("Failed to cleanup stuck jobs", "error", err)
 		return fmt.Errorf("failed to cleanup stuck jobs: %w", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected > 0 {
-		log.Info().
-			Int64("jobs_fixed", rowsAffected).
-			Msg("Fixed stuck jobs")
+		queueLog.Info("Fixed stuck jobs", "jobs_fixed", rowsAffected)
 	}
 
 	return nil
@@ -1542,13 +1536,13 @@ func (q *DbQueue) UpdateTaskStatus(ctx context.Context, task *Task) error {
 			}
 
 			// Log the actual values being passed for debugging
-			log.Debug().
-				Str("task_id", task.ID).
-				Int("headers_bytes", len(headers)).
-				Int("second_headers_bytes", len(secondHeaders)).
-				Int("cache_check_attempts_bytes", len(cacheCheckAttempts)).
-				Int("request_diagnostics_bytes", len(requestDiagnostics)).
-				Msg("Updating task with JSONB fields")
+			queueLog.Debug("Updating task with JSONB fields",
+				"task_id", task.ID,
+				"headers_bytes", len(headers),
+				"second_headers_bytes", len(secondHeaders),
+				"cache_check_attempts_bytes", len(cacheCheckAttempts),
+				"request_diagnostics_bytes", len(requestDiagnostics),
+			)
 
 			// Update task fields only (running_tasks decremented separately via DecrementRunningTasks)
 			err = tx.QueryRowContext(ctx, `

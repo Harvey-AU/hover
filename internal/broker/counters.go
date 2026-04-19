@@ -9,7 +9,6 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 )
 
 // RunningCounters tracks how many tasks are currently in-flight per
@@ -17,15 +16,11 @@ import (
 // counters and async DB flush loops in the old worker pool.
 type RunningCounters struct {
 	client *Client
-	logger zerolog.Logger
 }
 
 // NewRunningCounters creates a RunningCounters.
-func NewRunningCounters(client *Client, logger zerolog.Logger) *RunningCounters {
-	return &RunningCounters{
-		client: client,
-		logger: logger.With().Str("component", "counters").Logger(),
-	}
+func NewRunningCounters(client *Client) *RunningCounters {
+	return &RunningCounters{client: client}
 }
 
 // Increment atomically bumps the running count for a job.
@@ -44,7 +39,7 @@ func (rc *RunningCounters) Decrement(ctx context.Context, jobID string) (int64, 
 	if val <= 0 {
 		// Remove zero/negative entries to keep the hash clean.
 		if err := rc.client.rdb.HDel(ctx, RunningCountersKey, jobID).Err(); err != nil {
-			rc.logger.Warn().Err(err).Str("job_id", jobID).Msg("failed to clean zero counter entry")
+			brokerLog.Warn("failed to clean zero counter entry", "error", err, "job_id", jobID)
 		}
 		return 0, nil
 	}
@@ -71,7 +66,7 @@ func (rc *RunningCounters) GetAll(ctx context.Context) (map[string]int64, error)
 	for jobID, v := range result {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			rc.logger.Warn().Str("job_id", jobID).Str("value", v).Err(err).Msg("non-numeric running counter")
+			brokerLog.Warn("non-numeric running counter", "job_id", jobID, "value", v, "error", err)
 			continue
 		}
 		counts[jobID] = n
@@ -132,11 +127,11 @@ func (rc *RunningCounters) StartDBSync(ctx context.Context, interval time.Durati
 		case <-ticker.C:
 			counts, err := rc.GetAll(ctx)
 			if err != nil {
-				rc.logger.Error().Err(err).Msg("failed to read running counters for DB sync")
+				brokerLog.Error("failed to read running counters for DB sync", "error", err)
 				continue
 			}
 			if err := syncFn(ctx, counts); err != nil {
-				rc.logger.Error().Err(err).Msg("failed to sync running counters to DB")
+				brokerLog.Error("failed to sync running counters to DB", "error", err)
 			}
 		}
 	}

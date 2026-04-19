@@ -7,7 +7,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,12 +16,12 @@ func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	return &Client{rdb: rdb, logger: zerolog.Nop()}, mr
+	return &Client{rdb: rdb}, mr
 }
 
 func TestSchedule_SingleEntry(t *testing.T) {
 	client, _ := newTestClient(t)
-	s := NewScheduler(client, zerolog.Nop())
+	s := NewScheduler(client)
 	ctx := context.Background()
 
 	now := time.Now()
@@ -50,7 +49,7 @@ func TestSchedule_SingleEntry(t *testing.T) {
 
 func TestScheduleBatch(t *testing.T) {
 	client, _ := newTestClient(t)
-	s := NewScheduler(client, zerolog.Nop())
+	s := NewScheduler(client)
 	ctx := context.Background()
 
 	now := time.Now()
@@ -75,7 +74,7 @@ func TestScheduleBatch(t *testing.T) {
 
 func TestDueItems(t *testing.T) {
 	client, _ := newTestClient(t)
-	s := NewScheduler(client, zerolog.Nop())
+	s := NewScheduler(client)
 	ctx := context.Background()
 
 	now := time.Now()
@@ -96,7 +95,7 @@ func TestDueItems(t *testing.T) {
 
 func TestReschedule(t *testing.T) {
 	client, _ := newTestClient(t)
-	s := NewScheduler(client, zerolog.Nop())
+	s := NewScheduler(client)
 	ctx := context.Background()
 
 	now := time.Now()

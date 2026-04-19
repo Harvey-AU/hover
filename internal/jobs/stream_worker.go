@@ -10,7 +10,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/observability"
-	"github.com/rs/zerolog"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -24,7 +23,6 @@ type StreamWorkerDeps struct {
 	BatchManager *db.BatchManager
 	DBQueue      DbQueueInterface
 	JobManager   JobManagerInterface
-	Logger       zerolog.Logger
 }
 
 // StreamWorkerOpts holds tunables for the stream worker pool.
@@ -64,7 +62,6 @@ type StreamWorkerPool struct {
 	dbQueue      DbQueueInterface
 	jobManager   JobManagerInterface
 	opts         StreamWorkerOpts
-	logger       zerolog.Logger
 
 	// Job info cache with TTL eviction.
 	jobInfoCache map[string]*cachedJobInfo
@@ -91,7 +88,6 @@ func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWo
 		dbQueue:      deps.DBQueue,
 		jobManager:   deps.JobManager,
 		opts:         opts,
-		logger:       deps.Logger.With().Str("component", "stream_worker").Logger(),
 		jobInfoCache: make(map[string]*cachedJobInfo),
 	}
 }
@@ -130,7 +126,7 @@ func (swp *StreamWorkerPool) Start(ctx context.Context) {
 		swp.activeJobsRefreshLoop(ctx)
 	}()
 
-	swp.logger.Info().Int("workers", swp.opts.NumWorkers).Msg("stream worker pool started")
+	jobsLog.Info("stream worker pool started", "workers", swp.opts.NumWorkers)
 }
 
 // Stop signals all goroutines to stop and waits for them.
@@ -139,14 +135,14 @@ func (swp *StreamWorkerPool) Stop() {
 		swp.cancel()
 	}
 	swp.wg.Wait()
-	swp.logger.Info().Msg("stream worker pool stopped")
+	jobsLog.Info("stream worker pool stopped")
 }
 
 // --- consumer loop ---
 
 func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
-	logger := swp.logger.With().Int("worker_id", workerID).Logger()
-	logger.Debug().Msg("worker started")
+	logger := jobsLog.With("worker_id", workerID)
+	logger.Debug("worker started")
 
 	for {
 		if ctx.Err() != nil {
@@ -173,7 +169,7 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 
 			msgs, err := swp.consumer.ReadNonBlocking(ctx, jobID)
 			if err != nil {
-				logger.Error().Err(err).Str("job_id", jobID).Msg("stream read error")
+				logger.Error("stream read error", "error", err, "job_id", jobID)
 				continue
 			}
 
@@ -188,7 +184,7 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 			if len(jobIDs) > 0 {
 				msgs, err := swp.consumer.Read(ctx, jobIDs[0])
 				if err != nil {
-					logger.Warn().Err(err).Msg("blocking read error")
+					logger.Warn("blocking read error", "error", err)
 				}
 				for _, msg := range msgs {
 					swp.processMessage(ctx, msg)
@@ -199,15 +195,12 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 }
 
 func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.StreamMessage) {
-	logger := swp.logger.With().
-		Str("task_id", msg.TaskID).
-		Str("job_id", msg.JobID).
-		Logger()
+	logger := jobsLog.With("task_id", msg.TaskID, "job_id", msg.JobID)
 
 	// Load job info and build enriched Task.
 	task, err := swp.buildTask(ctx, msg)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to build task from stream message")
+		logger.Error("failed to build task from stream message", "error", err)
 		// Do NOT ACK — buildTask failures are typically transient (DB
 		// timeouts, connection errors). Leaving the message in the PEL
 		// lets XAUTOCLAIM redeliver it after the idle threshold.
@@ -253,27 +246,25 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 			RunAt:      outcome.Retry.NextRunAt,
 		}
 		if err := swp.scheduler.Schedule(ctx, entry); err != nil {
-			swp.logger.Error().Err(err).
-				Str("task_id", outcome.Task.ID).
-				Msg("retry schedule failed, leaving in PEL for redelivery")
+			jobsLog.Error("retry schedule failed, leaving in PEL for redelivery", "error", err, "task_id", outcome.Task.ID)
 			return
 		}
 	}
 
 	// ACK the stream message (remove from PEL).
 	if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
-		swp.logger.Error().Err(err).Str("message_id", msg.MessageID).Msg("failed to ACK, skipping bookkeeping")
+		jobsLog.Error("failed to ACK, skipping bookkeeping", "error", err, "message_id", msg.MessageID)
 		return
 	}
 
 	// Decrement running counter.
 	if _, err := swp.counters.Decrement(ctx, msg.JobID); err != nil {
-		swp.logger.Warn().Err(err).Str("job_id", msg.JobID).Msg("counter decrement failed")
+		jobsLog.Warn("counter decrement failed", "error", err, "job_id", msg.JobID)
 	}
 
 	// Release domain pacer.
 	if err := swp.pacer.Release(ctx, domain, msg.JobID, outcome.Success, outcome.RateLimited); err != nil {
-		swp.logger.Warn().Err(err).Str("domain", domain).Msg("pacer release failed")
+		jobsLog.Warn("pacer release failed", "error", err, "domain", domain)
 	}
 
 	// Queue task update for batch persistence.
@@ -308,7 +299,7 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 	// Enrich from job info cache.
 	info, err := swp.loadJobInfo(ctx, outcome.Task.JobID)
 	if err != nil {
-		swp.logger.Error().Err(err).Str("job_id", outcome.Task.JobID).Msg("failed to load job info for link discovery")
+		jobsLog.Error("failed to load job info for link discovery", "error", err, "job_id", outcome.Task.JobID)
 		return
 	}
 	task.DomainID = info.DomainID
@@ -323,7 +314,6 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 	deps := LinkDiscoveryDeps{
 		DBQueue:     swp.dbQueue,
 		JobManager:  swp.jobManager,
-		Logger:      swp.logger,
 		MinPriority: linkDiscoveryMinPriorityFromEnv(),
 	}
 
@@ -351,29 +341,29 @@ func (swp *StreamWorkerPool) reclaimStaleMessages(ctx context.Context) {
 	for _, jobID := range jobIDs {
 		reclaimed, deadLetter, err := swp.consumer.ReclaimStale(ctx, jobID)
 		if err != nil {
-			swp.logger.Warn().Err(err).Str("job_id", jobID).Msg("reclaim failed")
+			jobsLog.Warn("reclaim failed", "error", err, "job_id", jobID)
 			continue
 		}
 
 		// Re-process reclaimed messages.
 		for _, msg := range reclaimed {
-			swp.logger.Info().Str("task_id", msg.TaskID).Str("message_id", msg.MessageID).Msg("reclaimed stale task")
+			jobsLog.Info("reclaimed stale task", "task_id", msg.TaskID, "message_id", msg.MessageID)
 			swp.processMessage(ctx, msg)
 		}
 
 		// Dead-letter messages that exceeded max deliveries.
 		for _, msg := range deadLetter {
-			swp.logger.Warn().Str("task_id", msg.TaskID).Int("retry_count", msg.RetryCount).Msg("dead-lettering task after max deliveries")
+			jobsLog.Warn("dead-lettering task after max deliveries", "task_id", msg.TaskID, "retry_count", msg.RetryCount)
 			if err := swp.consumer.Ack(ctx, jobID, msg.MessageID); err != nil {
-				swp.logger.Error().Err(err).Str("task_id", msg.TaskID).Msg("dead-letter ACK failed, skipping")
+				jobsLog.Error("dead-letter ACK failed, skipping", "error", err, "task_id", msg.TaskID)
 				continue
 			}
 			if _, err := swp.counters.Decrement(ctx, jobID); err != nil {
-				swp.logger.Warn().Err(err).Msg("counter decrement on dead-letter failed")
+				jobsLog.Warn("counter decrement on dead-letter failed", "error", err)
 			}
 			// Release domain pacer inflight slot.
 			if err := swp.pacer.Release(ctx, msg.Host, jobID, false, false); err != nil {
-				swp.logger.Warn().Err(err).Str("domain", msg.Host).Msg("pacer release on dead-letter failed")
+				jobsLog.Warn("pacer release on dead-letter failed", "error", err, "domain", msg.Host)
 			}
 
 			// Mark as failed in Postgres.
@@ -426,7 +416,7 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 		return rows.Err()
 	})
 	if err != nil {
-		swp.logger.Error().Err(err).Msg("failed to refresh active jobs")
+		jobsLog.Error("failed to refresh active jobs", "error", err)
 		return
 	}
 
@@ -567,12 +557,12 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 		return rows.Err()
 	})
 	if err != nil {
-		swp.logger.Error().Err(err).Msg("failed to query running task counts for reconciliation")
+		jobsLog.Error("failed to query running task counts for reconciliation", "error", err)
 		return
 	}
 
 	if err := swp.counters.Reconcile(ctx, counts); err != nil {
-		swp.logger.Error().Err(err).Msg("failed to reconcile running counters in Redis")
+		jobsLog.Error("failed to reconcile running counters in Redis", "error", err)
 		return
 	}
 
@@ -580,7 +570,7 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	for _, c := range counts {
 		total += c
 	}
-	swp.logger.Info().Int64("total_running", total).Int("jobs", len(counts)).Msg("reconciled running counters")
+	jobsLog.Info("reconciled running counters", "total_running", total, "jobs", len(counts))
 }
 
 // --- concurrency checking (for dispatcher) ---

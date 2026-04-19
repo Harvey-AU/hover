@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 )
 
 // ScheduleEntry contains the data needed to schedule a task into
@@ -80,15 +79,11 @@ func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
 // Scheduler manages delayed task scheduling via Redis sorted sets.
 type Scheduler struct {
 	client *Client
-	logger zerolog.Logger
 }
 
 // NewScheduler creates a Scheduler.
-func NewScheduler(client *Client, logger zerolog.Logger) *Scheduler {
-	return &Scheduler{
-		client: client,
-		logger: logger.With().Str("component", "scheduler").Logger(),
-	}
+func NewScheduler(client *Client) *Scheduler {
+	return &Scheduler{client: client}
 }
 
 // Schedule adds a single task to the job's ZSET.
@@ -128,7 +123,7 @@ func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) 
 		}
 	}
 	if errs > 0 {
-		s.logger.Warn().Int("failed", errs).Int("total", len(entries)).Msg("partial schedule batch failure")
+		brokerLog.Warn("partial schedule batch failure", "failed", errs, "total", len(entries))
 		return fmt.Errorf("broker: %d of %d schedule entries failed", errs, len(entries))
 	}
 	return nil
@@ -159,12 +154,12 @@ func (s *Scheduler) DueItems(ctx context.Context, jobID string, now time.Time, l
 	for _, z := range results {
 		member, ok := z.Member.(string)
 		if !ok {
-			s.logger.Warn().Interface("member", z.Member).Msg("skipping non-string ZSET member")
+			brokerLog.Warn("skipping non-string ZSET member", "member", z.Member)
 			continue
 		}
 		entry, err := ParseScheduleEntry(member, z.Score)
 		if err != nil {
-			s.logger.Warn().Err(err).Msg("skipping malformed schedule entry")
+			brokerLog.Warn("skipping malformed schedule entry", "error", err)
 			continue
 		}
 		entries = append(entries, entry)

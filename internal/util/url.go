@@ -6,9 +6,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/rs/zerolog/log"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"golang.org/x/net/publicsuffix"
 )
+
+var utilLog = logging.Component("util")
 
 // NormaliseDomain removes http/https prefix and www. from domain
 func NormaliseDomain(domain string) string {
@@ -99,14 +101,14 @@ func NormaliseURL(rawURL string) string {
 	// Validate URL format
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		log.Debug().Str("url", rawURL).Err(err).Msg("Invalid URL format")
+		utilLog.Debug("Invalid URL format", "url", rawURL, "error", err)
 		return ""
 	}
 
 	// Ensure no duplicate schemes (like https://http://example.com)
 	hostPart := parsedURL.Host
 	if strings.Contains(hostPart, "://") {
-		log.Debug().Str("url", rawURL).Msg("URL contains embedded scheme in host part, fixing")
+		utilLog.Debug("URL contains embedded scheme in host part, fixing", "url", rawURL)
 		// Extract the domain part after the embedded scheme
 		parts := strings.SplitN(hostPart, "://", 2)
 		if len(parts) == 2 {

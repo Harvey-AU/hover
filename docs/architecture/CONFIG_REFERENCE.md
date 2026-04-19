@@ -161,6 +161,25 @@ can be filtered via `deployment.environment=staging`.
 
 ---
 
+## Shared crawler
+
+**Source:** `internal/crawler/config.go`, `internal/crawler/crawler.go`,
+`fly.toml`
+
+All workers share a single crawler instance. Its internal Colly limit is a
+separate bottleneck from worker count and worker concurrency.
+
+| Env var / constant            | Production value     | Default | What it controls                                           |
+| ----------------------------- | -------------------- | ------- | ---------------------------------------------------------- |
+| `GNH_CRAWLER_MAX_CONCURRENCY` | **100** (`fly.toml`) | 10      | Global crawler request parallelism across all worker tasks |
+| `DefaultTimeout`              | hardcoded            | 30s     | Per-request crawler HTTP client timeout                    |
+| `RateLimit`                   | hardcoded            | 5       | Base Colly delay range: `200ms` to `1s` per request        |
+
+The crawler cap is global because `crawler.New(...)` creates one shared Colly
+collector with `DomainGlob="*"` and `Parallelism=MaxConcurrency`.
+
+---
+
 ## Task monitor and promotion
 
 **Source:** `internal/jobs/worker.go` — `StartTaskMonitor`,

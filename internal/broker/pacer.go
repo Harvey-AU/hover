@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/zerolog"
 )
 
 // PacerConfig holds the tuning knobs for domain pacing, mirroring
@@ -49,15 +48,13 @@ type PaceResult struct {
 type DomainPacer struct {
 	client *Client
 	cfg    PacerConfig
-	logger zerolog.Logger
 }
 
 // NewDomainPacer creates a DomainPacer.
-func NewDomainPacer(client *Client, cfg PacerConfig, logger zerolog.Logger) *DomainPacer {
+func NewDomainPacer(client *Client, cfg PacerConfig) *DomainPacer {
 	return &DomainPacer{
 		client: client,
 		cfg:    cfg,
-		logger: logger.With().Str("component", "pacer").Logger(),
 	}
 }
 
@@ -170,7 +167,7 @@ func (p *DomainPacer) DecrementInflight(ctx context.Context, domain, jobID strin
 	// Clean up zero/negative entries.
 	if val <= 0 {
 		if err := p.client.rdb.HDel(ctx, key, jobID).Err(); err != nil {
-			p.logger.Warn().Err(err).Str("domain", domain).Str("job_id", jobID).Msg("failed to clean zero inflight entry")
+			brokerLog.Warn("failed to clean zero inflight entry", "error", err, "domain", domain, "job_id", jobID)
 		}
 	}
 	return nil

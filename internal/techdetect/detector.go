@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/Harvey-AU/hover/internal/logging"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
-	"github.com/rs/zerolog/log"
 )
+
+var techdetectLog = logging.Component("techdetect")
 
 // MaxHTMLSampleSize is the maximum size of HTML to store for debugging (50KB)
 const MaxHTMLSampleSize = 50 * 1024
@@ -89,10 +91,10 @@ func (d *Detector) Detect(headers http.Header, body []byte) *Result {
 		result.Technologies[tech] = categories
 	}
 
-	log.Debug().
-		Int("tech_count", len(result.Technologies)).
-		Interface("technologies", result.Technologies).
-		Msg("Technology detection completed")
+	techdetectLog.Debug("Technology detection completed",
+		"tech_count", len(result.Technologies),
+		"technologies", result.Technologies,
+	)
 
 	return result
 }

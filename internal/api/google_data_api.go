@@ -16,7 +16,6 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/util"
-	"github.com/rs/zerolog/log"
 )
 
 // GA4 API limits and constraints
@@ -185,9 +184,7 @@ func (c *GA4Client) RefreshAccessToken(ctx context.Context, refreshToken string)
 		return "", fmt.Errorf("failed to decode token refresh response: %w", err)
 	}
 
-	log.Debug().
-		Int("expires_in", tokenResp.ExpiresIn).
-		Msg("Successfully refreshed Google access token")
+	apiLog.Debug("Successfully refreshed Google access token", "expires_in", tokenResp.ExpiresIn)
 
 	return tokenResp.AccessToken, nil
 }
@@ -231,7 +228,7 @@ func (c *GA4Client) FetchTopPages(ctx context.Context, propertyID string, limit,
 	// Fetch 28-day data and merge
 	pages28d, err := c.fetchSingleDateRange(ctx, propertyID, "28daysAgo", limit, offset, allowedHosts)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to fetch 28d data, continuing with 7d only")
+		apiLog.Warn("Failed to fetch 28d data, continuing with 7d only", "error", err)
 	} else {
 		for _, p := range pages28d {
 			mapKey := p.HostName + ":" + p.PagePath
@@ -244,7 +241,7 @@ func (c *GA4Client) FetchTopPages(ctx context.Context, propertyID string, limit,
 	// Fetch 180-day data and merge
 	pages180d, err := c.fetchSingleDateRange(ctx, propertyID, "180daysAgo", limit, offset, allowedHosts)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to fetch 180d data, continuing without it")
+		apiLog.Warn("Failed to fetch 180d data, continuing without it", "error", err)
 	} else {
 		for _, p := range pages180d {
 			mapKey := p.HostName + ":" + p.PagePath
@@ -255,11 +252,7 @@ func (c *GA4Client) FetchTopPages(ctx context.Context, propertyID string, limit,
 	}
 
 	elapsed := time.Since(start)
-	log.Info().
-		Str("property_id", propertyID).
-		Int("pages_count", len(pages)).
-		Dur("duration", elapsed).
-		Msg("GA4 data fetch completed (3 date ranges)")
+	apiLog.Info("GA4 data fetch completed (3 date ranges)", "property_id", propertyID, "pages_count", len(pages), "duration", elapsed)
 
 	return pages, nil
 }
@@ -328,12 +321,12 @@ func (c *GA4Client) fetchSingleDateRange(ctx context.Context, propertyID, startD
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	log.Debug().
-		Str("property_id", propertyID).
-		Str("start_date", startDate).
-		Int("limit", limit).
-		Int("offset", offset).
-		Msg("Fetching GA4 report for date range")
+	apiLog.Debug("Fetching GA4 report for date range",
+		"property_id", propertyID,
+		"start_date", startDate,
+		"limit", limit,
+		"offset", offset,
+	)
 
 	resp, err := c.httpClient.Do(httpReq) //nolint:gosec // G704: request targets googleapis.com
 	if err != nil {
@@ -378,13 +371,13 @@ func (c *GA4Client) fetchSingleDateRange(ctx context.Context, propertyID, startD
 	}
 
 	if malformedCount > 0 || parseFailCount > 0 {
-		log.Warn().
-			Str("property_id", propertyID).
-			Str("start_date", startDate).
-			Int("total_rows", len(reportResp.Rows)).
-			Int("malformed_rows", malformedCount).
-			Int("parse_failures", parseFailCount).
-			Msg("GA4 report rows skipped due to malformed data")
+		apiLog.Warn("GA4 report rows skipped due to malformed data",
+			"property_id", propertyID,
+			"start_date", startDate,
+			"total_rows", len(reportResp.Rows),
+			"malformed_rows", malformedCount,
+			"parse_failures", parseFailCount,
+		)
 	}
 
 	return results, nil
@@ -396,7 +389,7 @@ func (c *GA4Client) FetchTopPagesWithRetry(ctx context.Context, propertyID, refr
 	if err != nil {
 		// Check if error is 401 Unauthorised (token expired)
 		if isUnauthorisedError(err) {
-			log.Info().Str("property_id", propertyID).Msg("Access token expired, refreshing and retrying")
+			apiLog.Info("Access token expired, refreshing and retrying", "property_id", propertyID)
 
 			// Refresh access token
 			newAccessToken, refreshErr := c.RefreshAccessToken(ctx, refreshToken)
@@ -474,9 +467,7 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 
 	// No active connection is not an error - just skip GA4 integration
 	if conn == nil {
-		log.Debug().
-			Str("organisation_id", organisationID).
-			Msg("No active GA4 connection, skipping analytics fetch")
+		apiLog.Debug("No active GA4 connection, skipping analytics fetch", "organisation_id", organisationID)
 		return nil
 	}
 
@@ -495,10 +486,7 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 	// 2. Get refresh token from vault
 	refreshToken, err := pf.db.GetGoogleToken(ctx, conn.ID)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Str("connection_id", conn.ID).
-			Msg("Failed to get refresh token from vault")
+		apiLog.Error("Failed to get refresh token from vault", "error", err, "connection_id", conn.ID)
 		return fmt.Errorf("failed to get refresh token: %w", err)
 	}
 
@@ -507,16 +495,10 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 	accessToken, err := client.RefreshAccessToken(ctx, refreshToken)
 	if err != nil {
 		// Mark connection inactive on auth failure
-		log.Error().
-			Err(err).
-			Str("connection_id", conn.ID).
-			Msg("Failed to refresh access token")
+		apiLog.Error("Failed to refresh access token", "error", err, "connection_id", conn.ID)
 
 		if markErr := pf.db.MarkConnectionInactive(ctx, conn.ID, "token refresh failed"); markErr != nil {
-			log.Error().
-				Err(markErr).
-				Str("connection_id", conn.ID).
-				Msg("Failed to mark connection inactive after token refresh failure")
+			apiLog.Error("Failed to mark connection inactive after token refresh failure", "error", markErr, "connection_id", conn.ID)
 		}
 
 		return fmt.Errorf("failed to refresh access token: %w", err)
@@ -526,59 +508,43 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 	client.mu.Unlock()
 
 	// 4. Fetch initial batch of top pages
-	log.Info().
-		Str("organisation_id", organisationID).
-		Str("property_id", conn.GA4PropertyID).
-		Int("batch_size", GA4InitialBatchSize).
-		Msg("Fetching initial batch of pages from GA4")
+	apiLog.Info("Fetching initial batch of pages from GA4",
+		"organisation_id", organisationID,
+		"property_id", conn.GA4PropertyID,
+		"batch_size", GA4InitialBatchSize,
+	)
 
 	initialData, err := client.FetchTopPagesWithRetry(ctx, conn.GA4PropertyID, refreshToken, GA4InitialBatchSize, 0, allowedHosts)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Str("property_id", conn.GA4PropertyID).
-			Msg("Failed to fetch initial GA4 data")
+		apiLog.Error("Failed to fetch initial GA4 data", "error", err, "property_id", conn.GA4PropertyID)
 		return fmt.Errorf("failed to fetch initial data: %w", err)
 	}
 
 	// 5. Upsert initial data
 	if err := pf.upsertPageData(ctx, organisationID, domainID, conn.ID, initialData); err != nil {
-		log.Error().
-			Err(err).
-			Int("domain_id", domainID).
-			Int("pages_count", len(initialData)).
-			Msg("Failed to upsert initial page data")
+		apiLog.Error("Failed to upsert initial page data", "error", err, "domain_id", domainID, "pages_count", len(initialData))
 		return fmt.Errorf("failed to upsert initial data: %w", err)
 	}
 
 	// Log sample of top pages for verification (without end-user content)
 	for i := range min(5, len(initialData)) {
-		log.Info().
-			Int("rank", i+1).
-			Int64("page_views_7d", initialData[i].PageViews7d).
-			Msg("GA4 top page")
+		apiLog.Info("GA4 top page", "rank", i+1, "page_views_7d", initialData[i].PageViews7d)
 	}
 
-	log.Info().
-		Str("organisation_id", organisationID).
-		Int("pages_count", len(initialData)).
-		Dur("duration", time.Since(start)).
-		Msg("Initial GA4 fetch completed")
+	apiLog.Info("Initial GA4 fetch completed",
+		"organisation_id", organisationID,
+		"pages_count", len(initialData),
+		"duration", time.Since(start),
+	)
 
 	// 6. Calculate initial traffic scores based on top pages
 	if err := pf.db.CalculateTrafficScores(ctx, organisationID, domainID); err != nil {
-		log.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Msg("Failed to calculate initial traffic scores; continuing with existing priorities")
+		apiLog.Warn("Failed to calculate initial traffic scores; continuing with existing priorities",
+			"error", err, "organisation_id", organisationID, "domain_id", domainID)
 	}
 	if err := pf.db.ApplyTrafficScoresToTasks(ctx, organisationID, domainID); err != nil {
-		log.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Msg("Failed to apply traffic scores to pending tasks; continuing without reprioritisation")
+		apiLog.Warn("Failed to apply traffic scores to pending tasks; continuing without reprioritisation",
+			"error", err, "organisation_id", organisationID, "domain_id", domainID)
 	}
 
 	// 7. Fetch remaining pages in background (loops until all fetched)
@@ -591,10 +557,7 @@ func (pf *ProgressiveFetcher) FetchAndUpdatePages(ctx context.Context, organisat
 	// 8. Update last sync timestamp
 	if err := pf.db.UpdateConnectionLastSync(ctx, conn.ID); err != nil {
 		// Log but don't fail - this is not critical
-		log.Warn().
-			Err(err).
-			Str("connection_id", conn.ID).
-			Msg("Failed to update last sync timestamp; will retry on next sync")
+		apiLog.Warn("Failed to update last sync timestamp; will retry on next sync", "error", err, "connection_id", conn.ID)
 	}
 
 	return nil
@@ -621,21 +584,21 @@ func (pf *ProgressiveFetcher) upsertPageData(ctx context.Context, organisationID
 		}
 	}
 
-	log.Debug().
-		Str("organisation_id", organisationID).
-		Int("domain_id", domainID).
-		Int("pages_processed", len(pages)).
-		Int("pages_failed", failedCount).
-		Msg("Processed GA4 page analytics batch")
+	apiLog.Debug("Processed GA4 page analytics batch",
+		"organisation_id", organisationID,
+		"domain_id", domainID,
+		"pages_processed", len(pages),
+		"pages_failed", failedCount,
+	)
 
 	if failedCount > 0 {
-		log.Error().
-			Err(firstErr).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Int("pages_failed", failedCount).
-			Int("pages_total", len(pages)).
-			Msg("Failed to upsert some GA4 page analytics rows")
+		apiLog.Error("Failed to upsert some GA4 page analytics rows",
+			"error", firstErr,
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+			"pages_failed", failedCount,
+			"pages_total", len(pages),
+		)
 		return fmt.Errorf("failed to upsert %d pages: %w", failedCount, firstErr)
 	}
 
@@ -649,10 +612,7 @@ func (pf *ProgressiveFetcher) fetchRemainingPagesBackground(ctx context.Context,
 	offset := GA4InitialBatchSize
 	totalPages := 0
 
-	log.Info().
-		Str("property_id", propertyID).
-		Int("offset", offset).
-		Msg("Starting background fetch of remaining pages")
+	apiLog.Info("Starting background fetch of remaining pages", "property_id", propertyID, "offset", offset)
 
 	// Phase 2: Medium batches (1000) until threshold
 	for offset < GA4MediumBatchThreshold {
@@ -660,49 +620,41 @@ func (pf *ProgressiveFetcher) fetchRemainingPagesBackground(ctx context.Context,
 
 		pages, err := client.FetchTopPagesWithRetry(ctx, propertyID, refreshToken, batchSize, offset, allowedHosts)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("property_id", propertyID).
-				Int("offset", offset).
-				Msg("Failed to fetch GA4 data batch")
+			apiLog.Error("Failed to fetch GA4 data batch", "error", err, "property_id", propertyID, "offset", offset)
 			return
 		}
 
 		if len(pages) == 0 {
-			log.Info().
-				Str("property_id", propertyID).
-				Int("total_pages", totalPages).
-				Dur("duration", time.Since(start)).
-				Msg("Background GA4 fetch completed (no more pages)")
+			apiLog.Info("Background GA4 fetch completed (no more pages)",
+				"property_id", propertyID,
+				"total_pages", totalPages,
+				"duration", time.Since(start),
+			)
 			return
 		}
 
 		if err := pf.upsertPageData(ctx, organisationID, domainID, connectionID, pages); err != nil {
-			log.Error().
-				Err(err).
-				Int("domain_id", domainID).
-				Int("pages_count", len(pages)).
-				Msg("Failed to upsert page data batch")
+			apiLog.Error("Failed to upsert page data batch", "error", err, "domain_id", domainID, "pages_count", len(pages))
 			return
 		}
 
 		totalPages += len(pages)
 		offset += len(pages)
 
-		log.Info().
-			Str("property_id", propertyID).
-			Int("batch_pages", len(pages)).
-			Int("total_pages", totalPages).
-			Int("offset", offset).
-			Msg("Fetched medium batch")
+		apiLog.Info("Fetched medium batch",
+			"property_id", propertyID,
+			"batch_pages", len(pages),
+			"total_pages", totalPages,
+			"offset", offset,
+		)
 
 		// If we got fewer than requested, we've fetched all pages
 		if len(pages) < batchSize {
-			log.Info().
-				Str("property_id", propertyID).
-				Int("total_pages", totalPages).
-				Dur("duration", time.Since(start)).
-				Msg("Background GA4 fetch completed (all pages fetched)")
+			apiLog.Info("Background GA4 fetch completed (all pages fetched)",
+				"property_id", propertyID,
+				"total_pages", totalPages,
+				"duration", time.Since(start),
+			)
 			return
 		}
 	}
@@ -711,11 +663,7 @@ func (pf *ProgressiveFetcher) fetchRemainingPagesBackground(ctx context.Context,
 	for {
 		pages, err := client.FetchTopPagesWithRetry(ctx, propertyID, refreshToken, GA4LargeBatchSize, offset, allowedHosts)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("property_id", propertyID).
-				Int("offset", offset).
-				Msg("Failed to fetch GA4 data batch")
+			apiLog.Error("Failed to fetch GA4 data batch", "error", err, "property_id", propertyID, "offset", offset)
 			return
 		}
 
@@ -724,23 +672,19 @@ func (pf *ProgressiveFetcher) fetchRemainingPagesBackground(ctx context.Context,
 		}
 
 		if err := pf.upsertPageData(ctx, organisationID, domainID, connectionID, pages); err != nil {
-			log.Error().
-				Err(err).
-				Int("domain_id", domainID).
-				Int("pages_count", len(pages)).
-				Msg("Failed to upsert page data batch")
+			apiLog.Error("Failed to upsert page data batch", "error", err, "domain_id", domainID, "pages_count", len(pages))
 			return
 		}
 
 		totalPages += len(pages)
 		offset += len(pages)
 
-		log.Info().
-			Str("property_id", propertyID).
-			Int("batch_pages", len(pages)).
-			Int("total_pages", totalPages).
-			Int("offset", offset).
-			Msg("Fetched large batch")
+		apiLog.Info("Fetched large batch",
+			"property_id", propertyID,
+			"batch_pages", len(pages),
+			"total_pages", totalPages,
+			"offset", offset,
+		)
 
 		// If we got fewer than requested, we've fetched all pages
 		if len(pages) < GA4LargeBatchSize {
@@ -748,26 +692,26 @@ func (pf *ProgressiveFetcher) fetchRemainingPagesBackground(ctx context.Context,
 		}
 	}
 
-	log.Info().
-		Str("property_id", propertyID).
-		Int("total_pages", totalPages).
-		Dur("duration", time.Since(start)).
-		Msg("Background GA4 fetch completed")
+	apiLog.Info("Background GA4 fetch completed",
+		"property_id", propertyID,
+		"total_pages", totalPages,
+		"duration", time.Since(start),
+	)
 
 	// Calculate traffic scores based on page view percentiles
 	if err := pf.db.CalculateTrafficScores(ctx, organisationID, domainID); err != nil {
-		log.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Str("next_action", "continuing_without_score_updates").
-			Msg("Failed to calculate traffic scores after GA4 fetch")
+		apiLog.Warn("Failed to calculate traffic scores after GA4 fetch",
+			"error", err,
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+			"next_action", "continuing_without_score_updates",
+		)
 	}
 	if err := pf.db.ApplyTrafficScoresToTasks(ctx, organisationID, domainID); err != nil {
-		log.Warn().
-			Err(err).
-			Str("organisation_id", organisationID).
-			Int("domain_id", domainID).
-			Msg("Failed to apply traffic scores after GA4 fetch; tasks continue without reprioritisation")
+		apiLog.Warn("Failed to apply traffic scores after GA4 fetch; tasks continue without reprioritisation",
+			"error", err,
+			"organisation_id", organisationID,
+			"domain_id", domainID,
+		)
 	}
 }

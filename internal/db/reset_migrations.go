@@ -7,28 +7,25 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/getsentry/sentry-go"
-	"github.com/rs/zerolog/log"
 )
 
 // ResetSchema performs a database reset by dropping job-related tables, clearing migration history,
 // and re-running all migrations. Users and organisations are preserved.
 func (db *DB) ResetSchema() error {
 	startTime := time.Now()
-	log.Warn().Msg("=== DATABASE RESET STARTED ===")
-	log.Warn().Msg("Dropping job-related tables, clearing migrations, and rebuilding schema")
-	log.Warn().Msg("Users and organisations will be preserved")
+	dbLog.Warn("=== DATABASE RESET STARTED ===")
+	dbLog.Warn("Dropping job-related tables, clearing migrations, and rebuilding schema")
+	dbLog.Warn("Users and organisations will be preserved")
 
 	// Step 0: Terminate active connections that may have locks on tables we need to drop
-	log.Info().Msg("Step 0/4: Terminating active backend connections to release locks")
+	dbLog.Info("Step 0/4: Terminating active backend connections to release locks")
 	if err := db.terminateActiveConnections(); err != nil {
-		log.Warn().Err(err).Msg("Failed to terminate some connections (continuing anyway)")
+		dbLog.Warn("Failed to terminate some connections (continuing anyway)", "error", err)
 	}
 
 	// Step 1: Drop all public schema tables except users & organisations, so migrations
 	// always run against a clean slate and can't conflict with leftover tables.
-	log.Info().Msg("Step 1/4: Dropping all public schema tables (preserving users & organisations)")
+	dbLog.Info("Step 1/4: Dropping all public schema tables (preserving users & organisations)")
 
 	preserved := map[string]bool{"users": true, "organisations": true}
 
@@ -56,33 +53,29 @@ func (db *DB) ResetSchema() error {
 	tablesDropped := 0
 	for i, table := range tables {
 		tableStart := time.Now()
-		log.Info().
-			Str("table", table).
-			Int("table_num", i+1).
-			Int("total_tables", len(tables)).
-			Msg("Dropping table")
+		dbLog.Info("Dropping table",
+			"table", table,
+			"table_num", i+1,
+			"total_tables", len(tables))
 
 		_, err := db.client.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s CASCADE`, table)) //nolint:gosec // table names sourced from pg_tables, schema scoped to public
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("table", table).
-				Dur("elapsed", time.Since(tableStart)).
-				Msg("FAILED to drop table - reset aborted")
+			dbLog.Error("FAILED to drop table - reset aborted",
+				"error", err,
+				"table", table,
+				"elapsed", time.Since(tableStart))
 			return fmt.Errorf("failed to drop table %s: %w", table, err)
 		}
 
 		tablesDropped++
-		log.Info().
-			Str("table", table).
-			Dur("duration", time.Since(tableStart)).
-			Msg("Dropped table successfully")
+		dbLog.Info("Dropped table successfully",
+			"table", table,
+			"duration", time.Since(tableStart))
 	}
 
-	log.Info().
-		Int("tables_dropped", tablesDropped).
-		Dur("step_duration", time.Since(startTime)).
-		Msg("Step 1/4 completed: All public schema tables dropped")
+	dbLog.Info("Step 1/4 completed: All public schema tables dropped",
+		"tables_dropped", tablesDropped,
+		"step_duration", time.Since(startTime))
 
 	// Drop all views, functions, and triggers on preserved tables — everything
 	// defined in migrations so they can be cleanly recreated.
@@ -92,7 +85,7 @@ func (db *DB) ResetSchema() error {
 		SELECT viewname FROM pg_views WHERE schemaname = 'public'
 	`)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to list public views (continuing)")
+		dbLog.Warn("Failed to list public views (continuing)", "error", err)
 	} else {
 		var views []string
 		for viewRows.Next() {
@@ -104,10 +97,10 @@ func (db *DB) ResetSchema() error {
 		_ = viewRows.Close()
 		for _, v := range views {
 			if _, err := db.client.Exec(fmt.Sprintf("DROP VIEW IF EXISTS %s CASCADE", v)); err != nil { //nolint:gosec // viewname sourced from pg_views, schema scoped to public
-				log.Warn().Err(err).Str("view", v).Msg("Failed to drop view (continuing)")
+				dbLog.Warn("Failed to drop view (continuing)", "error", err, "view", v)
 			}
 		}
-		log.Info().Int("views_dropped", len(views)).Msg("Public schema views dropped")
+		dbLog.Info("Public schema views dropped", "views_dropped", len(views))
 	}
 
 	// Functions
@@ -119,7 +112,7 @@ func (db *DB) ResetSchema() error {
 		  AND p.prokind = 'f'
 	`)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to list public functions (continuing)")
+		dbLog.Warn("Failed to list public functions (continuing)", "error", err)
 	} else {
 		var sigs []string
 		for funcRows.Next() {
@@ -131,10 +124,10 @@ func (db *DB) ResetSchema() error {
 		_ = funcRows.Close()
 		for _, sig := range sigs {
 			if _, err := db.client.Exec(fmt.Sprintf("DROP FUNCTION IF EXISTS %s CASCADE", sig)); err != nil { //nolint:gosec // sig sourced from pg_proc, schema scoped to public
-				log.Warn().Err(err).Str("function", sig).Msg("Failed to drop function (continuing)")
+				dbLog.Warn("Failed to drop function (continuing)", "error", err, "function", sig)
 			}
 		}
-		log.Info().Int("functions_dropped", len(sigs)).Msg("Public schema functions dropped")
+		dbLog.Info("Public schema functions dropped", "functions_dropped", len(sigs))
 	}
 
 	// Triggers on preserved tables (users, organisations) — others were dropped with their tables
@@ -145,7 +138,7 @@ func (db *DB) ResetSchema() error {
 		  AND event_object_table IN ('users', 'organisations')
 	`)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to list triggers on preserved tables (continuing)")
+		dbLog.Warn("Failed to list triggers on preserved tables (continuing)", "error", err)
 	} else {
 		type trigEntry struct{ name, table string }
 		var trigs []trigEntry
@@ -158,52 +151,48 @@ func (db *DB) ResetSchema() error {
 		_ = trigRows.Close()
 		for _, t := range trigs {
 			if _, err := db.client.Exec(fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON %s", t.name, t.table)); err != nil { //nolint:gosec // name and table sourced from information_schema, schema scoped to public
-				log.Warn().Err(err).Str("trigger", t.name).Str("table", t.table).Msg("Failed to drop trigger (continuing)")
+				dbLog.Warn("Failed to drop trigger (continuing)", "error", err, "trigger", t.name, "table", t.table)
 			}
 		}
-		log.Info().Int("triggers_dropped", len(trigs)).Msg("Triggers on preserved tables dropped")
+		dbLog.Info("Triggers on preserved tables dropped", "triggers_dropped", len(trigs))
 	}
 
 	// Step 2: Clear migration history
 	migrationStart := time.Now()
-	log.Info().Msg("Step 2/4: Clearing migration history")
+	dbLog.Info("Step 2/4: Clearing migration history")
 
 	result, err := db.client.Exec(`DELETE FROM supabase_migrations.schema_migrations`)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Dur("elapsed", time.Since(migrationStart)).
-			Msg("FAILED to clear migration history - reset incomplete")
+		dbLog.Error("FAILED to clear migration history - reset incomplete",
+			"error", err,
+			"elapsed", time.Since(migrationStart))
 		return fmt.Errorf("failed to clear migration history: %w", err)
 	}
 
 	migrationsCleared, _ := result.RowsAffected()
-	log.Info().
-		Int64("migrations_cleared", migrationsCleared).
-		Dur("step_duration", time.Since(migrationStart)).
-		Msg("Step 2/4 completed: Migration history cleared")
+	dbLog.Info("Step 2/4 completed: Migration history cleared",
+		"migrations_cleared", migrationsCleared,
+		"step_duration", time.Since(migrationStart))
 
 	// Step 3: Run all migrations
 	executionStart := time.Now()
-	log.Info().Msg("Step 3/4: Running migrations from disk")
+	dbLog.Info("Step 3/4: Running migrations from disk")
 
 	migrationsApplied, err := db.runMigrations()
 	if err != nil {
-		log.Error().
-			Err(err).
-			Dur("elapsed", time.Since(executionStart)).
-			Msg("FAILED to run migrations - database may be in inconsistent state")
+		dbLog.Error("FAILED to run migrations - database may be in inconsistent state",
+			"error", err,
+			"elapsed", time.Since(executionStart))
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	log.Info().
-		Int("migrations_applied", migrationsApplied).
-		Dur("step_duration", time.Since(executionStart)).
-		Msg("Step 3/4 completed: Migrations executed successfully")
+	dbLog.Info("Step 3/4 completed: Migrations executed successfully",
+		"migrations_applied", migrationsApplied,
+		"step_duration", time.Since(executionStart))
 
 	// Step 4: Verify key tables exist
 	verifyStart := time.Now()
-	log.Info().Msg("Step 4/4: Verifying schema")
+	dbLog.Info("Step 4/4: Verifying schema")
 
 	for _, table := range []string{"domains", "pages", "jobs", "tasks"} {
 		var exists bool
@@ -215,28 +204,21 @@ func (db *DB) ResetSchema() error {
 			)`, table).Scan(&exists)
 
 		if err != nil || !exists {
-			log.Warn().
-				Str("table", table).
-				Bool("exists", exists).
-				Msg("Schema verification warning")
+			dbLog.Warn("Schema verification warning", "table", table, "exists", exists)
 		} else {
-			log.Info().
-				Str("table", table).
-				Msg("Table verified")
+			dbLog.Info("Table verified", "table", table)
 		}
 	}
 
-	log.Info().
-		Dur("step_duration", time.Since(verifyStart)).
-		Msg("Step 4/4 completed: Schema verification complete")
+	dbLog.Info("Step 4/4 completed: Schema verification complete",
+		"step_duration", time.Since(verifyStart))
 
 	totalDuration := time.Since(startTime)
-	log.Warn().
-		Dur("total_duration", totalDuration).
-		Int("tables_dropped", tablesDropped).
-		Int64("migrations_cleared", migrationsCleared).
-		Int("migrations_applied", migrationsApplied).
-		Msg("=== DATABASE RESET COMPLETED SUCCESSFULLY ===")
+	dbLog.Warn("=== DATABASE RESET COMPLETED SUCCESSFULLY ===",
+		"total_duration", totalDuration,
+		"tables_dropped", tablesDropped,
+		"migrations_cleared", migrationsCleared,
+		"migrations_applied", migrationsApplied)
 
 	return nil
 }
@@ -255,7 +237,7 @@ func (db *DB) runMigrations() (int, error) {
 	for _, path := range possiblePaths {
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			migrationsDir = path
-			log.Info().Str("path", path).Msg("Found migrations directory")
+			dbLog.Info("Found migrations directory", "path", path)
 			break
 		}
 	}
@@ -283,19 +265,16 @@ func (db *DB) runMigrations() (int, error) {
 		return 0, fmt.Errorf("no migration files found in %s", migrationsDir)
 	}
 
-	log.Info().
-		Int("migration_count", len(migrationFiles)).
-		Msg("Found migration files")
+	dbLog.Info("Found migration files", "migration_count", len(migrationFiles))
 
 	// Execute each migration
 	migrationsApplied := 0
 	for i, filename := range migrationFiles {
 		migrationStart := time.Now()
-		log.Info().
-			Str("file", filename).
-			Int("migration_num", i+1).
-			Int("total_migrations", len(migrationFiles)).
-			Msg("Applying migration")
+		dbLog.Info("Applying migration",
+			"file", filename,
+			"migration_num", i+1,
+			"total_migrations", len(migrationFiles))
 
 		// Read migration file
 		filePath := filepath.Clean(filepath.Join(migrationsDir, filename))
@@ -307,28 +286,14 @@ func (db *DB) runMigrations() (int, error) {
 		// Execute migration SQL
 		_, err = db.client.Exec(string(content))
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("file", filename).
-				Dur("elapsed", time.Since(migrationStart)).
-				Msg("FAILED to apply migration")
-
-			// Capture catastrophic migration failure in Sentry
-			sentry.WithScope(func(scope *sentry.Scope) {
-				scope.SetLevel(sentry.LevelError)
-				scope.SetTag("event_type", "migration_failure")
-				scope.SetTag("migration_file", filename)
-				scope.SetContext("migration_details", map[string]any{
-					"file":               filename,
-					"migration_number":   i + 1,
-					"total_migrations":   len(migrationFiles),
-					"migrations_applied": migrationsApplied,
-					"duration_ms":        time.Since(migrationStart).Milliseconds(),
-					"error":              err.Error(),
-				})
-				sentry.CaptureException(err)
-			})
-
+			dbLog.Error("FAILED to apply migration",
+				"error", err,
+				"file", filename,
+				"elapsed", time.Since(migrationStart),
+				"event_type", "migration_failure",
+				"migration_number", i+1,
+				"total_migrations", len(migrationFiles),
+				"migrations_applied", migrationsApplied)
 			return migrationsApplied, fmt.Errorf("failed to execute migration %s: %w", filename, err)
 		}
 
@@ -346,17 +311,15 @@ func (db *DB) runMigrations() (int, error) {
 			ON CONFLICT (version) DO NOTHING
 		`, version, name)
 		if err != nil {
-			log.Warn().
-				Err(err).
-				Str("migration", migrationName).
-				Msg("Failed to record migration in history (non-fatal)")
+			dbLog.Warn("Failed to record migration in history (non-fatal)",
+				"error", err,
+				"migration", migrationName)
 		}
 
 		migrationsApplied++
-		log.Info().
-			Str("file", filename).
-			Dur("duration", time.Since(migrationStart)).
-			Msg("Migration applied successfully")
+		dbLog.Info("Migration applied successfully",
+			"file", filename,
+			"duration", time.Since(migrationStart))
 	}
 
 	return migrationsApplied, nil
@@ -372,7 +335,7 @@ func (db *DB) terminateActiveConnections() error {
 		return fmt.Errorf("failed to get current backend PID: %w", err)
 	}
 
-	log.Info().Int("current_pid", currentPID).Msg("Current backend PID identified")
+	dbLog.Info("Current backend PID identified", "current_pid", currentPID)
 
 	// Step 1: Cancel all running queries first (gentle approach)
 	rows, err := db.client.Query(`
@@ -383,7 +346,7 @@ func (db *DB) terminateActiveConnections() error {
 		  AND state = 'active'
 	`)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to cancel queries (continuing)")
+		dbLog.Warn("Failed to cancel queries (continuing)", "error", err)
 	} else {
 		cancelledCount := 0
 		for rows.Next() {
@@ -394,7 +357,7 @@ func (db *DB) terminateActiveConnections() error {
 			}
 		}
 		_ = rows.Close()
-		log.Info().Int("queries_cancelled", cancelledCount).Msg("Cancelled running queries")
+		dbLog.Info("Cancelled running queries", "queries_cancelled", cancelledCount)
 	}
 
 	// Step 2: Wait briefly for cancellations to take effect
@@ -421,9 +384,7 @@ func (db *DB) terminateActiveConnections() error {
 		}
 	}
 
-	log.Info().
-		Int("connections_terminated", terminatedCount).
-		Msg("Terminated active backend connections")
+	dbLog.Info("Terminated active backend connections", "connections_terminated", terminatedCount)
 
 	return nil
 }

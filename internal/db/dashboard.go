@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/getsentry/sentry-go"
-	"github.com/rs/zerolog/log"
 )
 
 // JobStats represents job statistics for the dashboard
@@ -72,8 +69,7 @@ func (db *DB) GetJobStats(organisationID string, startDate, endDate *time.Time) 
 	)
 
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to get job stats")
-		sentry.CaptureException(fmt.Errorf("dashboard stats query failed for org %s: %w", organisationID, err))
+		dbLog.Error("Dashboard stats query failed", "error", err, "org_id", organisationID)
 		return nil, err
 	}
 
@@ -160,7 +156,7 @@ func (db *DB) GetJobActivity(organisationID string, startDate, endDate *time.Tim
 
 	rows, err := db.client.Query(query, args...)
 	if err != nil {
-		log.Error().Err(err).Str("organisation_id", organisationID).Msg("Failed to get job activity")
+		dbLog.Error("Failed to get job activity", "error", err, "organisation_id", organisationID)
 		return nil, err
 	}
 	defer rows.Close()
@@ -172,7 +168,7 @@ func (db *DB) GetJobActivity(organisationID string, startDate, endDate *time.Tim
 
 		err := rows.Scan(&timestamp, &point.JobsCount, &point.TasksCount)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan activity row")
+			dbLog.Error("Failed to scan activity row", "error", err)
 			continue
 		}
 
@@ -181,7 +177,7 @@ func (db *DB) GetJobActivity(organisationID string, startDate, endDate *time.Tim
 	}
 
 	if err = rows.Err(); err != nil {
-		log.Error().Err(err).Msg("Error iterating activity rows")
+		dbLog.Error("Error iterating activity rows", "error", err)
 		return nil, err
 	}
 
@@ -244,23 +240,21 @@ func (db *DB) ListJobs(organisationID string, limit, offset int, status, dateRan
 			argCount++
 			baseQuery += fmt.Sprintf(" AND j.created_at >= $%d", argCount)
 			args = append(args, *startDate)
-			log.Debug().
-				Str("range", dateRange).
-				Str("timezone", timezone).
-				Time("start_date", *startDate).
-				Str("start_utc", startDate.UTC().Format(time.RFC3339)).
-				Msg("Date range filter start")
+			dbLog.Debug("Date range filter start",
+				"range", dateRange,
+				"timezone", timezone,
+				"start_date", *startDate,
+				"start_utc", startDate.UTC().Format(time.RFC3339))
 		}
 		if endDate != nil {
 			argCount++
 			baseQuery += fmt.Sprintf(" AND j.created_at <= $%d", argCount)
 			args = append(args, *endDate)
-			log.Debug().
-				Str("range", dateRange).
-				Str("timezone", timezone).
-				Time("end_date", *endDate).
-				Str("end_utc", endDate.UTC().Format(time.RFC3339)).
-				Msg("Date range filter end")
+			dbLog.Debug("Date range filter end",
+				"range", dateRange,
+				"timezone", timezone,
+				"end_date", *endDate,
+				"end_utc", endDate.UTC().Format(time.RFC3339))
 		}
 	}
 
@@ -307,7 +301,7 @@ func (db *DB) ListJobs(organisationID string, limit, offset int, status, dateRan
 			&job.DurationSeconds, &job.AvgTimePerTaskSeconds,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan job row")
+			dbLog.Error("Failed to scan job row", "error", err)
 			continue
 		}
 
@@ -430,7 +424,7 @@ func (db *DB) ListJobsWithOffset(organisationID string, limit, offset int, statu
 
 		err := rows.Scan(scanArgs...)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan job row")
+			dbLog.Error("Failed to scan job row", "error", err)
 			continue
 		}
 
@@ -545,14 +539,14 @@ func calculateDateRangeForList(dateRange, timezone string) (*time.Time, *time.Ti
 
 	// Check if timezone needs aliasing
 	if canonical, exists := timezoneAliases[timezone]; exists {
-		log.Debug().Str("original", timezone).Str("canonical", canonical).Msg("Mapping timezone alias")
+		dbLog.Debug("Mapping timezone alias", "original", timezone, "canonical", canonical)
 		timezone = canonical
 	}
 
 	// Load timezone location, fall back to UTC if invalid
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Warn().Err(err).Str("timezone", timezone).Msg("Invalid timezone, falling back to UTC")
+		dbLog.Warn("Invalid timezone, falling back to UTC", "error", err, "timezone", timezone)
 		loc = time.UTC
 	}
 
@@ -694,7 +688,7 @@ func (db *DB) GetSlowPages(organisationID string, startDate, endDate *time.Time)
 
 	rows, err := db.client.Query(query, organisationID, startDate, endDate)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to query slow pages")
+		dbLog.Error("Failed to query slow pages", "error", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -715,7 +709,7 @@ func (db *DB) GetSlowPages(organisationID string, startDate, endDate *time.Time)
 			&completedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan slow page row")
+			dbLog.Error("Failed to scan slow page row", "error", err)
 			return nil, err
 		}
 
@@ -731,7 +725,7 @@ func (db *DB) GetSlowPages(organisationID string, startDate, endDate *time.Time)
 	}
 
 	if err = rows.Err(); err != nil {
-		log.Error().Err(err).Msg("Error iterating slow pages rows")
+		dbLog.Error("Error iterating slow pages rows", "error", err)
 		return nil, err
 	}
 
@@ -777,7 +771,7 @@ func (db *DB) GetExternalRedirects(organisationID string, startDate, endDate *ti
 
 	rows, err := db.client.Query(query, organisationID, startDate, endDate)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to query external redirects")
+		dbLog.Error("Failed to query external redirects", "error", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -798,7 +792,7 @@ func (db *DB) GetExternalRedirects(organisationID string, startDate, endDate *ti
 			&completedAt,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to scan external redirect row")
+			dbLog.Error("Failed to scan external redirect row", "error", err)
 			return nil, err
 		}
 
@@ -814,7 +808,7 @@ func (db *DB) GetExternalRedirects(organisationID string, startDate, endDate *ti
 	}
 
 	if err = rows.Err(); err != nil {
-		log.Error().Err(err).Msg("Error iterating external redirects rows")
+		dbLog.Error("Error iterating external redirects rows", "error", err)
 		return nil, err
 	}
 

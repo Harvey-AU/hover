@@ -8,8 +8,6 @@ import (
 
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -18,7 +16,6 @@ import (
 type LinkDiscoveryDeps struct {
 	DBQueue     DbQueueInterface
 	JobManager  JobManagerInterface
-	Logger      zerolog.Logger
 	MinPriority float64 // linkDiscoveryMinPriority threshold
 }
 
@@ -30,23 +27,20 @@ type LinkDiscoveryDeps struct {
 // running updateTaskPriorities (or equivalent) after this function returns.
 func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *Task, links map[string][]string, sourceURL string, robotsRules *crawler.RobotsRules) {
 	if deps.JobManager == nil {
-		deps.Logger.Warn().Str("task_id", task.ID).Msg("JobManager is nil; skipping link discovery")
+		jobsLog.Warn("JobManager is nil; skipping link discovery", "task_id", task.ID)
 		return
 	}
 
-	log.Debug().
-		Str("task_id", task.ID).
-		Int("total_links_found", len(links["header"])+len(links["footer"])+len(links["body"])).
-		Bool("find_links_enabled", task.FindLinks).
-		Msg("Starting link processing and priority assignment")
+	jobsLog.Debug("Starting link processing and priority assignment",
+		"task_id", task.ID,
+		"total_links_found", len(links["header"])+len(links["footer"])+len(links["body"]),
+		"find_links_enabled", task.FindLinks,
+	)
 
 	// Use domain ID from task (already populated from job cache).
 	domainID := task.DomainID
 	if domainID == 0 {
-		log.Error().
-			Str("task_id", task.ID).
-			Str("job_id", task.JobID).
-			Msg("Missing domain ID; skipping link processing")
+		jobsLog.Error("Missing domain ID; skipping link processing", "task_id", task.ID, "job_id", task.JobID)
 		return
 	}
 
@@ -57,23 +51,23 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			return
 		}
 		if priority < deps.MinPriority {
-			log.Debug().
-				Str("task_id", task.ID).
-				Float64("priority", priority).
-				Float64("min_priority", deps.MinPriority).
-				Msg("Skipping discovered link persistence below priority threshold")
+			jobsLog.Debug("Skipping discovered link persistence below priority threshold",
+				"task_id", task.ID,
+				"priority", priority,
+				"min_priority", deps.MinPriority,
+			)
 			return
 		}
 
 		baseURL, baseErr := url.Parse(sourceURL)
 
 		if err := ctx.Err(); err != nil {
-			log.Debug().
-				Err(err).
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Msg("Skipping discovered link processing: parent task context is done")
+			jobsLog.Debug("Skipping discovered link processing: parent task context is done",
+				"error", err,
+				"job_id", task.JobID,
+				"domain", task.DomainName,
+				"task_id", task.ID,
+			)
 			return
 		}
 
@@ -102,11 +96,11 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 				// Check robots.txt rules.
 				if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, linkURL.Path) {
 					blockedCount++
-					log.Debug().
-						Str("url", linkURL.String()).
-						Str("path", linkURL.Path).
-						Str("source", sourceURL).
-						Msg("Link blocked by robots.txt")
+					jobsLog.Debug("Link blocked by robots.txt",
+						"url", linkURL.String(),
+						"path", linkURL.Path,
+						"source", sourceURL,
+					)
 					continue
 				}
 
@@ -115,11 +109,11 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 		}
 
 		if blockedCount > 0 {
-			log.Debug().
-				Str("task_id", task.ID).
-				Int("blocked_count", blockedCount).
-				Int("allowed_count", len(filtered)).
-				Msg("Filtered discovered links against robots.txt")
+			jobsLog.Debug("Filtered discovered links against robots.txt",
+				"task_id", task.ID,
+				"blocked_count", blockedCount,
+				"allowed_count", len(filtered),
+			)
 		}
 
 		if len(filtered) == 0 {
@@ -130,12 +124,12 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 		if deadline, ok := ctx.Deadline(); ok {
 			remaining := time.Until(deadline)
 			if remaining <= discoveredLinksMinRemain {
-				log.Warn().
-					Str("job_id", task.JobID).
-					Str("domain", task.DomainName).
-					Str("task_id", task.ID).
-					Dur("remaining", remaining).
-					Msg("Skipping discovered link persistence: task deadline too close")
+				jobsLog.Warn("Skipping discovered link persistence: task deadline too close",
+					"job_id", task.JobID,
+					"domain", task.DomainName,
+					"task_id", task.ID,
+					"remaining", remaining,
+				)
 				return
 			}
 
@@ -145,12 +139,12 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			}
 		}
 		if linkCtxTimeout < discoveredLinksMinTimeout {
-			log.Warn().
-				Str("job_id", task.JobID).
-				Str("domain", task.DomainName).
-				Str("task_id", task.ID).
-				Dur("timeout", linkCtxTimeout).
-				Msg("Skipping discovered link persistence: insufficient timeout budget")
+			jobsLog.Warn("Skipping discovered link persistence: insufficient timeout budget",
+				"job_id", task.JobID,
+				"domain", task.DomainName,
+				"task_id", task.ID,
+				"timeout", linkCtxTimeout,
+			)
 			return
 		}
 		// Keep request-scoped values while detaching from parent cancellation/deadline.
@@ -160,7 +154,7 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 		// 2. Create page records.
 		pageIDs, hosts, paths, err := db.CreatePageRecords(linkCtx, deps.DBQueue, domainID, task.DomainName, filtered)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to create page records for links")
+			jobsLog.Error("Failed to create page records for links", "error", err)
 			return
 		}
 
@@ -177,19 +171,19 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 
 		// 4. Enqueue new tasks.
 		if err := deps.JobManager.EnqueueJobURLs(linkCtx, task.JobID, pagesToEnqueue, "link", sourceURL); err != nil {
-			log.Error().Err(err).Msg("Failed to enqueue discovered links")
+			jobsLog.Error("Failed to enqueue discovered links", "error", err)
 			return
 		}
 	}
 
 	// Apply priorities based on page type and link category.
 	if isHomepage {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from HOMEPAGE")
+		jobsLog.Debug("Processing links from HOMEPAGE", "task_id", task.ID)
 		processLinkCategory(links["header"], 1.000)
 		processLinkCategory(links["footer"], 0.990)
 		processLinkCategory(links["body"], task.PriorityScore*0.9)
 	} else {
-		log.Debug().Str("task_id", task.ID).Msg("Processing links from regular page")
+		jobsLog.Debug("Processing links from regular page", "task_id", task.ID)
 		processLinkCategory(links["body"], task.PriorityScore*0.9)
 	}
 }

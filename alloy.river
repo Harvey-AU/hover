@@ -1,0 +1,33 @@
+prometheus.scrape "hover" {
+  targets = [{
+    __address__ = "localhost:9464",
+  }]
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = "https://prometheus-prod-41-prod-au-southeast-1.grafana.net/api/prom/push"
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+
+    remote_timeout = "2m"
+
+    queue_config {
+      batch_send_deadline  = "10s"
+      min_backoff          = "1s"
+      max_backoff          = "30s"
+      max_samples_per_send = 500
+    }
+  }
+
+  wal {
+    truncate_frequency = "1h"
+    min_keepalive_time = "5m"
+    max_keepalive_time = "1h"
+  }
+}

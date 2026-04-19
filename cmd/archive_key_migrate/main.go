@@ -8,14 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/db"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
+
+var startupLog = logging.Component("startup")
 
 type archivedTask struct {
 	TaskID string
@@ -26,8 +26,7 @@ type archivedTask struct {
 }
 
 func main() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	logging.Setup(logging.ParseLevel("info"), "production")
 
 	var (
 		apply = flag.Bool("apply", false, "apply the migration; default is dry run")
@@ -40,7 +39,7 @@ func main() {
 	ctx := context.Background()
 	pgDB, err := db.InitFromEnv()
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to connect to database")
+		startupLog.Fatal("Failed to connect to database", "error", err)
 	}
 	defer pgDB.Close()
 
@@ -52,51 +51,51 @@ func main() {
 		os.Getenv("ARCHIVE_PROVIDER"),
 	)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialise archive provider")
+		startupLog.Fatal("Failed to initialise archive provider", "error", err)
 	}
 
 	rows, err := loadArchivedTasks(ctx, pgDB.GetDB(), *limit)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to query archived task keys")
+		startupLog.Fatal("Failed to query archived task keys", "error", err)
 	}
 
 	if len(rows) == 0 {
-		log.Info().Msg("No archived task keys require migration")
+		startupLog.Info("No archived task keys require migration")
 		return
 	}
 
-	log.Info().
-		Int("rows", len(rows)).
-		Bool("apply", *apply).
-		Msg("Prepared archive key migration")
+	startupLog.Info("Prepared archive key migration",
+		"rows", len(rows),
+		"apply", *apply,
+	)
 
 	for _, row := range rows {
 		if !*apply {
-			log.Info().
-				Str("task_id", row.TaskID).
-				Str("job_id", row.JobID).
-				Str("old_key", row.OldKey).
-				Str("new_key", row.NewKey).
-				Msg("Would migrate archived task key")
+			startupLog.Info("Would migrate archived task key",
+				"task_id", row.TaskID,
+				"job_id", row.JobID,
+				"old_key", row.OldKey,
+				"new_key", row.NewKey,
+			)
 			continue
 		}
 
 		if err := migrateArchivedTask(ctx, pgDB.GetDB(), provider, row); err != nil {
-			log.Error().
-				Err(err).
-				Str("task_id", row.TaskID).
-				Str("job_id", row.JobID).
-				Str("old_key", row.OldKey).
-				Str("new_key", row.NewKey).
-				Msg("Failed to migrate archived task key")
+			startupLog.Error("Failed to migrate archived task key",
+				"error", err,
+				"task_id", row.TaskID,
+				"job_id", row.JobID,
+				"old_key", row.OldKey,
+				"new_key", row.NewKey,
+			)
 			continue
 		}
 
-		log.Info().
-			Str("task_id", row.TaskID).
-			Str("job_id", row.JobID).
-			Str("new_key", row.NewKey).
-			Msg("Migrated archived task key")
+		startupLog.Info("Migrated archived task key",
+			"task_id", row.TaskID,
+			"job_id", row.JobID,
+			"new_key", row.NewKey,
+		)
 	}
 }
 

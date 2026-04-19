@@ -34,9 +34,7 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 
 	// Verify system admin role
 	if !hasSystemAdminRole(claims) {
-		logger.Warn().
-			Str("user_id", claims.UserID).
-			Msg("Non-system-admin user attempted to access database reset endpoint")
+		logger.Warn("Non-system-admin user attempted to access database reset endpoint", "user_id", claims.UserID)
 		Forbidden(w, r, "System administrator privileges required")
 		return
 	}
@@ -44,23 +42,22 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	// Verify user exists in database
 	user, err := h.DB.GetUser(claims.UserID)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", claims.UserID).Msg("Failed to verify admin user")
+		logger.Error("Failed to verify admin user", "error", err, "user_id", claims.UserID)
 		Unauthorised(w, r, "User verification failed")
 		return
 	}
 
 	// Log the admin action with full context
-	logger.Warn().
-		Str("user_id", user.ID).
-		Str("org_id", func() string {
-			if user.OrganisationID != nil {
-				return *user.OrganisationID
-			}
-			return "none"
-		}()).
-		Str("remote_addr", r.RemoteAddr).
-		Str("user_agent", r.Header.Get("User-Agent")).
-		Msg("Admin database reset requested")
+	orgIDStr := "none"
+	if user.OrganisationID != nil {
+		orgIDStr = *user.OrganisationID
+	}
+	logger.Warn("Admin database reset requested",
+		"user_id", user.ID,
+		"org_id", orgIDStr,
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"),
+	)
 
 	// Capture in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
@@ -82,10 +79,7 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	resetStart := time.Now()
 	if err := h.DB.ResetSchema(); err != nil {
 		resetDuration := time.Since(resetStart)
-		logger.Error().Err(err).
-			Str("user_id", user.ID).
-			Dur("duration", resetDuration).
-			Msg("Failed to reset database schema")
+		logger.Error("Failed to reset database schema", "error", err, "user_id", user.ID, "duration", resetDuration)
 
 		// Capture failure in Sentry
 		sentry.WithScope(func(scope *sentry.Scope) {
@@ -108,10 +102,7 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resetDuration := time.Since(resetStart)
-	logger.Warn().
-		Str("user_id", user.ID).
-		Dur("duration", resetDuration).
-		Msg("Database schema reset completed successfully by admin")
+	logger.Warn("Database schema reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
 	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
@@ -157,9 +148,7 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 
 	// Verify system admin role
 	if !hasSystemAdminRole(claims) {
-		logger.Warn().
-			Str("user_id", claims.UserID).
-			Msg("Non-system-admin user attempted to access data reset endpoint")
+		logger.Warn("Non-system-admin user attempted to access data reset endpoint", "user_id", claims.UserID)
 		Forbidden(w, r, "System administrator privileges required")
 		return
 	}
@@ -167,23 +156,22 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	// Verify user exists in database
 	user, err := h.DB.GetUser(claims.UserID)
 	if err != nil {
-		logger.Error().Err(err).Str("user_id", claims.UserID).Msg("Failed to verify admin user")
+		logger.Error("Failed to verify admin user", "error", err, "user_id", claims.UserID)
 		Unauthorised(w, r, "User verification failed")
 		return
 	}
 
 	// Log the admin action with full context
-	logger.Warn().
-		Str("user_id", user.ID).
-		Str("org_id", func() string {
-			if user.OrganisationID != nil {
-				return *user.OrganisationID
-			}
-			return "none"
-		}()).
-		Str("remote_addr", r.RemoteAddr).
-		Str("user_agent", r.Header.Get("User-Agent")).
-		Msg("Admin data-only reset requested")
+	orgIDStr2 := "none"
+	if user.OrganisationID != nil {
+		orgIDStr2 = *user.OrganisationID
+	}
+	logger.Warn("Admin data-only reset requested",
+		"user_id", user.ID,
+		"org_id", orgIDStr2,
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.Header.Get("User-Agent"),
+	)
 
 	// Capture in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
@@ -205,10 +193,7 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	resetStart := time.Now()
 	if err := h.DB.ResetDataOnly(); err != nil {
 		resetDuration := time.Since(resetStart)
-		logger.Error().Err(err).
-			Str("user_id", user.ID).
-			Dur("duration", resetDuration).
-			Msg("Failed to reset data")
+		logger.Error("Failed to reset data", "error", err, "user_id", user.ID, "duration", resetDuration)
 
 		// Capture failure in Sentry
 		sentry.WithScope(func(scope *sentry.Scope) {
@@ -231,10 +216,7 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resetDuration := time.Since(resetStart)
-	logger.Warn().
-		Str("user_id", user.ID).
-		Dur("duration", resetDuration).
-		Msg("Data reset completed successfully by admin")
+	logger.Warn("Data reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
 	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
