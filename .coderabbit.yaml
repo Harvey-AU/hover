@@ -1,0 +1,5 @@
+reviews:
+  auto_review:
+    enabled: true
+    base_branches:
+      - ".*" # regex matching any target branch, so CodeRabbit reviews PRs that don't target the default branch
