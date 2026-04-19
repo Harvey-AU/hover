@@ -206,6 +206,19 @@ func main() {
 	syncInterval := time.Duration(counterSyncSec) * time.Second
 	syncFn := broker.DefaultDBSyncFunc(pgDB.GetDB())
 
+	// --- outbox sweeper ---
+	// Drains task_outbox rows written in the same tx as tasks, guaranteeing
+	// durable Redis scheduling even if the fire-and-forget OnTasksEnqueued
+	// callback loses the write (Redis blip, process crash, etc.).
+	outboxOpts := broker.DefaultOutboxSweeperOpts()
+	if v := envInt("OUTBOX_SWEEP_INTERVAL_MS", 0); v > 0 {
+		outboxOpts.Interval = time.Duration(v) * time.Millisecond
+	}
+	if v := envInt("OUTBOX_SWEEP_BATCH_SIZE", 0); v > 0 {
+		outboxOpts.BatchSize = v
+	}
+	outboxSweeper := broker.NewOutboxSweeper(pgDB.GetDB(), scheduler, outboxOpts)
+
 	// --- start everything ---
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -213,6 +226,7 @@ func main() {
 	swp.Start(ctx)
 	go dispatcher.Run(ctx)
 	go counters.StartDBSync(ctx, syncInterval, syncFn)
+	go outboxSweeper.Run(ctx)
 
 	workerLog.Info("hover worker ready",
 		"workers", numWorkers,

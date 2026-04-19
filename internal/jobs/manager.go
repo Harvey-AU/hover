@@ -355,15 +355,32 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 		// (which multiplies by 0.9) produces non-zero child priorities.
 		const rootPriority = 1.0
 		taskID = uuid.New().String()
+		now := time.Now().UTC()
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (
 				id, job_id, page_id, host, path, status, created_at, retry_count,
 				source_type, source_url, priority_score
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "", rootPriority)
+		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", now, 0, "manual", "", rootPriority)
 
 		if err != nil {
 			return fmt.Errorf("failed to enqueue task for root path: %w", err)
+		}
+
+		// Mirror into task_outbox so the sweeper can durably push this
+		// task into Redis even if the OnTasksEnqueued callback fails.
+		if err := db.InsertOutboxRow(ctx, tx, db.OutboxEntry{
+			TaskID:     taskID,
+			JobID:      job.ID,
+			PageID:     pageID,
+			Host:       job.Domain,
+			Path:       rootPath,
+			Priority:   rootPriority,
+			RetryCount: 0,
+			SourceType: "manual",
+			RunAt:      now,
+		}); err != nil {
+			return fmt.Errorf("failed to insert outbox row for root task: %w", err)
 		}
 
 		jm.markPageProcessed(job.ID, pageID)

@@ -1185,61 +1185,77 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			}
 		}
 
-		// Use array-based insert to minimise round-trips and leverage Postgres batching
+		// Use array-based insert to minimise round-trips and leverage Postgres batching.
+		// A CTE (WITH ins AS ...) mirrors the rows the INSERT actually wrote (or updated
+		// via ON CONFLICT) into task_outbox. The ON CONFLICT guard suppresses updates
+		// for tasks already in a terminal state (running/completed/failed), so those
+		// rows do not appear in ins.RETURNING and no spurious outbox row is produced.
 		insertQuery := `
-			INSERT INTO tasks (
-				id, job_id, page_id, host, path, status, created_at, retry_count,
-				source_type, source_url, priority_score
+			WITH ins AS (
+				INSERT INTO tasks (
+					id, job_id, page_id, host, path, status, created_at, retry_count,
+					source_type, source_url, priority_score
+				)
+				SELECT
+					unnest_ids,
+					unnest_job_ids,
+					unnest_page_ids,
+					unnest_hosts,
+					unnest_paths,
+					unnest_statuses,
+					unnest_created_at,
+					unnest_retry_counts,
+					unnest_source_types,
+					unnest_source_urls,
+					unnest_priorities
+				FROM UNNEST(
+					$1::uuid[],
+					$2::uuid[],
+					$3::int[],
+					$4::text[],
+					$5::text[],
+					$6::text[],
+					$7::timestamptz[],
+					$8::int[],
+					$9::text[],
+					$10::text[],
+					$11::double precision[]
+				) AS t(
+					unnest_ids,
+					unnest_job_ids,
+					unnest_page_ids,
+					unnest_hosts,
+					unnest_paths,
+					unnest_statuses,
+					unnest_created_at,
+					unnest_retry_counts,
+					unnest_source_types,
+					unnest_source_urls,
+					unnest_priorities
+				)
+				ON CONFLICT (job_id, page_id) DO UPDATE
+				SET status = EXCLUDED.status,
+					host = EXCLUDED.host,
+					created_at = EXCLUDED.created_at,
+					retry_count = EXCLUDED.retry_count,
+					source_type = EXCLUDED.source_type,
+					source_url = EXCLUDED.source_url,
+					priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score),
+					started_at = NULL,
+					completed_at = NULL,
+					error = NULL
+				WHERE tasks.status IN ('pending', 'waiting', 'skipped')
+				RETURNING id, job_id, page_id, host, path, priority_score,
+				          retry_count, source_type, source_url, created_at, status
 			)
-			SELECT
-				unnest_ids,
-				unnest_job_ids,
-				unnest_page_ids,
-				unnest_hosts,
-				unnest_paths,
-				unnest_statuses,
-				unnest_created_at,
-				unnest_retry_counts,
-				unnest_source_types,
-				unnest_source_urls,
-				unnest_priorities
-			FROM UNNEST(
-				$1::uuid[],
-				$2::uuid[],
-				$3::int[],
-				$4::text[],
-				$5::text[],
-				$6::text[],
-				$7::timestamptz[],
-				$8::int[],
-				$9::text[],
-				$10::text[],
-				$11::double precision[]
-			) AS t(
-				unnest_ids,
-				unnest_job_ids,
-				unnest_page_ids,
-				unnest_hosts,
-				unnest_paths,
-				unnest_statuses,
-				unnest_created_at,
-				unnest_retry_counts,
-				unnest_source_types,
-				unnest_source_urls,
-				unnest_priorities
+			INSERT INTO task_outbox (
+				task_id, job_id, page_id, host, path,
+				priority, retry_count, source_type, source_url, run_at
 			)
-			ON CONFLICT (job_id, page_id) DO UPDATE
-			SET status = EXCLUDED.status,
-				host = EXCLUDED.host,
-				created_at = EXCLUDED.created_at,
-				retry_count = EXCLUDED.retry_count,
-				source_type = EXCLUDED.source_type,
-				source_url = EXCLUDED.source_url,
-				priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score),
-				started_at = NULL,
-				completed_at = NULL,
-				error = NULL
-			WHERE tasks.status IN ('pending', 'waiting', 'skipped')
+			SELECT id, job_id, page_id, host, path,
+			       priority_score, retry_count, source_type, source_url, created_at
+			FROM ins
+			WHERE status IN ('pending', 'waiting')
 		`
 
 		now := time.Now().UTC()
@@ -1331,6 +1347,10 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 		if err != nil {
 			return fmt.Errorf("failed to insert tasks: %w", err)
 		}
+
+		// Note: the same statement also populates task_outbox via the CTE above,
+		// so a successful commit guarantees every newly-pending/waiting task has
+		// a matching outbox row for the sweeper to pick up.
 
 		// Note: Daily usage is incremented when tasks COMPLETE, not when created
 		// See batch.go FlushUpdates for quota increment on completion/failure
