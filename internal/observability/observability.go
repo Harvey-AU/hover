@@ -29,6 +29,40 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ParseOTLPHeaders converts a comma-separated `key=value` list (matching the
+// OTEL_EXPORTER_OTLP_HEADERS env var format) into a map. Whitespace around
+// pairs and tokens is trimmed; empty pairs, pairs without `=`, and entries
+// with an empty key are skipped.
+func ParseOTLPHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return headers
+	}
+
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if key == "" {
+			continue
+		}
+
+		headers[key] = value
+	}
+
+	return headers
+}
+
 // Config controls observability initialisation.
 type Config struct {
 	Enabled        bool

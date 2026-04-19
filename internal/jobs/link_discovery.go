@@ -23,8 +23,16 @@ type LinkDiscoveryDeps struct {
 // URLs. It filters links for same-site compliance and robots.txt rules,
 // creates page records, and enqueues new tasks via the JobManager.
 //
-// Priority updates are NOT performed here — the caller is responsible for
-// running updateTaskPriorities (or equivalent) after this function returns.
+// Priority promotion: when a URL is re-discovered at a higher priority
+// (e.g. first seen in body, later found in the homepage header), the
+// ON CONFLICT DO UPDATE clause in EnqueueURLs applies
+// `priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score)`
+// so the stored task is promoted. Pages returned by CreatePageRecords
+// cover both newly-inserted and pre-existing rows (its INSERT uses a
+// no-op DO UPDATE to force RETURNING to emit all matched rows), and
+// `page_analytics.traffic_score` enrichment is applied inside
+// EnqueueURLs for eligible inserts. No caller-level updateTaskPriorities
+// step is required.
 func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *Task, links map[string][]string, sourceURL string, robotsRules *crawler.RobotsRules) {
 	if deps.JobManager == nil {
 		jobsLog.Warn("JobManager is nil; skipping link discovery", "task_id", task.ID)

@@ -270,10 +270,15 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 		outcome.DiscoveredLinks = cloneDiscoveredLinks(result.Links)
 	}
 
-	// HTML upload.
+	// HTML upload: we stage the upload payload on outcome.HTMLUpload so a
+	// future persistence loop in cmd/worker can pick it up. Metadata
+	// (bucket/path/checksum) is deliberately NOT applied to the task row
+	// here — the storage upload isn't wired through Stage 3 yet, so
+	// populating those fields would leave dangling references to objects
+	// that never exist. Call applyHTMLMetadata only after a successful
+	// upload in the persistence loop.
 	if upload, ok := buildHTMLUpload(dbTask, result, now); ok {
 		outcome.HTMLUpload = upload
-		applyHTMLMetadata(dbTask, upload)
 	}
 
 	return outcome
@@ -501,6 +506,13 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 	}, true
 }
 
+// applyHTMLMetadata stamps the archive metadata onto a task row after the
+// HTML payload has been successfully uploaded to storage. Intentionally
+// not called by the executor: the task row is persisted by the batch
+// manager before any upload happens, so calling this pre-upload would
+// leave dangling references to objects that never exist. The Stage 2
+// persistence loop in cmd/worker will call this once the upload
+// succeeds.
 func applyHTMLMetadata(task *db.Task, upload *TaskHTMLUpload) {
 	if task == nil || upload == nil {
 		return
@@ -514,6 +526,10 @@ func applyHTMLMetadata(task *db.Task, upload *TaskHTMLUpload) {
 	task.HTMLSHA256 = upload.SHA256
 	task.HTMLCapturedAt = upload.CapturedAt
 }
+
+// Suppress "unused function" lint: applyHTMLMetadata is intentionally
+// retained for the Stage 2 HTML upload persistence loop.
+var _ = applyHTMLMetadata
 
 func canonicalHTMLContentType(ct string) string {
 	trimmed := strings.TrimSpace(ct)

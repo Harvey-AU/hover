@@ -9,7 +9,7 @@ import (
 )
 
 func TestRunningCounters_IncrementDecrement(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	rc := NewRunningCounters(client)
 	ctx := context.Background()
 
@@ -37,7 +37,7 @@ func TestRunningCounters_IncrementDecrement(t *testing.T) {
 }
 
 func TestRunningCounters_GetAll(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	rc := NewRunningCounters(client)
 	ctx := context.Background()
 
@@ -55,7 +55,7 @@ func TestRunningCounters_GetAll(t *testing.T) {
 }
 
 func TestRunningCounters_Reconcile(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	rc := NewRunningCounters(client)
 	ctx := context.Background()
 

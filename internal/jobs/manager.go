@@ -63,6 +63,11 @@ type TaskScheduleCallback func(ctx context.Context, jobID string, entries []Task
 
 // TaskScheduleEntry carries the minimal data needed to schedule a
 // newly inserted task into the Redis ZSET.
+//
+// RunAt is the earliest time at which the task may be dispatched. For
+// freshly created pending tasks this is typically "now", but for
+// waiting/retry rows it carries the backoff deadline so callbacks do
+// not mistakenly schedule them as ready-now.
 type TaskScheduleEntry struct {
 	TaskID     string
 	PageID     int
@@ -73,6 +78,7 @@ type TaskScheduleEntry struct {
 	RetryCount int
 	SourceType string
 	SourceURL  string
+	RunAt      time.Time
 }
 
 // JobManager handles job creation and lifecycle management
@@ -327,6 +333,7 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domainID int, rootPath string) error {
 	var taskID string
 	var pageID int
+	var taskRunAt time.Time
 
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		err := tx.QueryRowContext(ctx, `
@@ -356,6 +363,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 		const rootPriority = 1.0
 		taskID = uuid.New().String()
 		now := time.Now().UTC()
+		taskRunAt = now
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (
 				id, job_id, page_id, host, path, status, created_at, retry_count,
@@ -393,6 +401,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 	}
 
 	// Notify Redis broker if configured.
+	// RunAt = now: the root task is ready to dispatch immediately.
 	if jm.OnTasksEnqueued != nil {
 		jm.OnTasksEnqueued(ctx, job.ID, []TaskScheduleEntry{{
 			TaskID:     taskID,
@@ -402,6 +411,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			Status:     "pending",
 			Priority:   1.0,
 			SourceType: "manual",
+			RunAt:      taskRunAt,
 		}})
 	}
 
@@ -611,7 +621,7 @@ func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, p
 	var entries []TaskScheduleEntry
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT id, page_id, host, path, status, priority_score, retry_count, source_type, source_url
+			SELECT id, page_id, host, path, status, priority_score, retry_count, source_type, source_url, run_at
 			FROM tasks
 			WHERE job_id = $1 AND page_id = ANY($2) AND status IN ('pending', 'waiting')
 		`, jobID, pq.Array(pageIDs))
@@ -621,7 +631,7 @@ func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, p
 		defer rows.Close()
 		for rows.Next() {
 			var e TaskScheduleEntry
-			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.RetryCount, &e.SourceType, &e.SourceURL); err != nil {
+			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.RetryCount, &e.SourceType, &e.SourceURL, &e.RunAt); err != nil {
 				return err
 			}
 			entries = append(entries, e)

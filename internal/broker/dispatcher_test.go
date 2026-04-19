@@ -54,7 +54,7 @@ func seedEntry(t *testing.T, s *Scheduler, jobID, taskID, host string, runAt tim
 
 func newDispatcherRig(t *testing.T, lister JobLister, conc ConcurrencyChecker) (*Dispatcher, *Scheduler, *DomainPacer, *RunningCounters, *Client, *miniredis.Miniredis) {
 	t.Helper()
-	client, mr := newTestClient(t)
+	client, mr := newTestClientWithMiniredis(t)
 	scheduler := NewScheduler(client)
 	counters := NewRunningCounters(client)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
@@ -261,7 +261,7 @@ func TestScheduler_ScheduleAndAck_AtomicRetry(t *testing.T) {
 // invocation. Uses a short real sleep since miniredis's XAUTOCLAIM uses
 // wall-clock idle time rather than its virtual clock.
 func TestConsumer_ReclaimStaleMessage(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	scheduler := NewScheduler(client)
 	counters := NewRunningCounters(client)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())

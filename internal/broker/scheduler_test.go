@@ -13,7 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
+func newTestClient(t *testing.T) *Client {
+	t.Helper()
+	client, _ := newTestClientWithMiniredis(t)
+	return client
+}
+
+// newTestClientWithMiniredis is for tests that need to drive the underlying
+// miniredis instance directly (e.g. to simulate a flush).
+func newTestClientWithMiniredis(t *testing.T) (*Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -22,7 +30,7 @@ func newTestClient(t *testing.T) (*Client, *miniredis.Miniredis) {
 }
 
 func TestSchedule_SingleEntry(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	s := NewScheduler(client)
 	ctx := context.Background()
 
@@ -50,7 +58,7 @@ func TestSchedule_SingleEntry(t *testing.T) {
 }
 
 func TestScheduleBatch(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	s := NewScheduler(client)
 	ctx := context.Background()
 
@@ -75,7 +83,7 @@ func TestScheduleBatch(t *testing.T) {
 }
 
 func TestDueItems(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	s := NewScheduler(client)
 	ctx := context.Background()
 
@@ -96,7 +104,7 @@ func TestDueItems(t *testing.T) {
 }
 
 func TestReschedule(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	s := NewScheduler(client)
 	ctx := context.Background()
 
@@ -165,7 +173,7 @@ func TestParseScheduleEntry_RoundTrip(t *testing.T) {
 // when constructed with a DB, issues the UPDATE to tasks.run_at *and*
 // moves the ZSET score.
 func TestReschedule_DualWritesPostgresAndRedis(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -207,7 +215,7 @@ func TestReschedule_DualWritesPostgresAndRedis(t *testing.T) {
 // fails, Reschedule returns the error and does not touch the ZSET — the
 // durable store stays authoritative.
 func TestReschedule_PostgresErrorAbortsRedisWrite(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -246,7 +254,7 @@ func TestReschedule_PostgresErrorAbortsRedisWrite(t *testing.T) {
 // re-seeds the ZSET is out of scope for this PR — the test asserts only
 // that the durable record is correct.
 func TestReschedule_RunAtSurvivesRedisFlush(t *testing.T) {
-	client, mr := newTestClient(t)
+	client, mr := newTestClientWithMiniredis(t)
 
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -298,7 +306,7 @@ func TestReschedule_RunAtSurvivesRedisFlush(t *testing.T) {
 // the legacy NewScheduler constructor still works and skips the Postgres
 // write. Unit-test call sites that don't need durability rely on this.
 func TestReschedule_NoDBWritesOnlyRedis(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	s := NewScheduler(client) // no DB
 	ctx := context.Background()
 

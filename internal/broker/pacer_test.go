@@ -9,7 +9,7 @@ import (
 )
 
 func TestDomainPacer_Seed(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
@@ -28,7 +28,7 @@ func TestDomainPacer_Seed(t *testing.T) {
 }
 
 func TestDomainPacer_Seed_Idempotent(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
@@ -43,7 +43,7 @@ func TestDomainPacer_Seed_Idempotent(t *testing.T) {
 }
 
 func TestDomainPacer_TryAcquire_NoDelay(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
@@ -54,7 +54,7 @@ func TestDomainPacer_TryAcquire_NoDelay(t *testing.T) {
 }
 
 func TestDomainPacer_TryAcquire_WithDelay(t *testing.T) {
-	client, mr := newTestClient(t)
+	client, mr := newTestClientWithMiniredis(t)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
@@ -81,7 +81,7 @@ func TestDomainPacer_TryAcquire_WithDelay(t *testing.T) {
 }
 
 func TestDomainPacer_Inflight(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	pacer := NewDomainPacer(client, DefaultPacerConfig())
 	ctx := context.Background()
 
@@ -100,7 +100,7 @@ func TestDomainPacer_Inflight(t *testing.T) {
 }
 
 func TestDomainPacer_Release_AdaptiveDelay(t *testing.T) {
-	client, _ := newTestClient(t)
+	client := newTestClient(t)
 	cfg := DefaultPacerConfig()
 	cfg.SuccessThreshold = 2
 	cfg.DelayStepMS = 100

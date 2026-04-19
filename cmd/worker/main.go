@@ -54,7 +54,7 @@ func main() {
 			ServiceName:  "hover-worker",
 			Environment:  appEnv,
 			OTLPEndpoint: strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
-			OTLPHeaders:  parseOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+			OTLPHeaders:  observability.ParseOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
 		})
 		if err != nil {
 			workerLog.Warn("failed to initialise observability", "error", err)
@@ -147,11 +147,17 @@ func main() {
 
 	// --- job manager (for EnqueueJobURLs + OnTasksEnqueued callback) ---
 	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
+	// Respect each entry's RunAt so waiting/retry rows keep their backoff
+	// deadline instead of being scheduled as ready-now.
 	jobManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
 		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
 		for _, e := range entries {
 			if e.Status == "skipped" {
 				continue
+			}
+			runAt := e.RunAt
+			if runAt.IsZero() {
+				runAt = time.Now()
 			}
 			schedEntries = append(schedEntries, broker.ScheduleEntry{
 				TaskID:     e.TaskID,
@@ -163,7 +169,7 @@ func main() {
 				RetryCount: e.RetryCount,
 				SourceType: e.SourceType,
 				SourceURL:  e.SourceURL,
-				RunAt:      time.Now(),
+				RunAt:      runAt,
 			})
 		}
 		if len(schedEntries) > 0 {
@@ -270,17 +276,6 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
-}
-
-func parseOTLPHeaders(raw string) map[string]string {
-	headers := make(map[string]string)
-	for _, pair := range strings.Split(raw, ",") {
-		parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
-		if len(parts) == 2 {
-			headers[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-		}
-	}
-	return headers
 }
 
 // Compile-time interface checks.

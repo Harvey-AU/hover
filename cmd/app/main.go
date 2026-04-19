@@ -449,7 +449,7 @@ func main() {
 			ServiceName:    "hover",
 			Environment:    config.Env,
 			OTLPEndpoint:   strings.TrimSpace(config.OTLPEndpoint),
-			OTLPHeaders:    parseOTLPHeaders(config.OTLPHeaders),
+			OTLPHeaders:    observability.ParseOTLPHeaders(config.OTLPHeaders),
 			OTLPInsecure:   config.OTLPInsecure,
 			MetricsAddress: config.MetricsAddr,
 		})
@@ -575,12 +575,18 @@ func main() {
 		// app rarely calls Reschedule but any call must dual-write too.
 		scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
 
-		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis
+		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis.
+		// Respect each entry's RunAt so waiting/retry rows keep their backoff deadline
+		// instead of being scheduled as ready-now.
 		jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
 			schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
 			for _, e := range entries {
 				if e.Status == "skipped" {
 					continue
+				}
+				runAt := e.RunAt
+				if runAt.IsZero() {
+					runAt = time.Now()
 				}
 				schedEntries = append(schedEntries, broker.ScheduleEntry{
 					TaskID:     e.TaskID,
@@ -592,7 +598,7 @@ func main() {
 					RetryCount: e.RetryCount,
 					SourceType: e.SourceType,
 					SourceURL:  e.SourceURL,
-					RunAt:      time.Now(),
+					RunAt:      runAt,
 				})
 			}
 			if len(schedEntries) > 0 {
@@ -796,36 +802,6 @@ func getEnvWithDefault(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-func parseOTLPHeaders(raw string) map[string]string {
-	headers := make(map[string]string)
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return headers
-	}
-
-	for pair := range strings.SplitSeq(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		if key == "" {
-			continue
-		}
-
-		headers[key] = value
-	}
-
-	return headers
 }
 
 // setupLogging configures the logging system
