@@ -78,6 +78,13 @@ On merge, CI will:
   failures — messages stay in the PEL for XAUTOCLAIM redelivery
 - `.env.example` Redis TLS config inconsistency (plain `redis://` URL paired
   with `REDIS_TLS_ENABLED=true`)
+- Retry scheduling + ACK race in `StreamWorkerPool.handleOutcome` — replaced the
+  two-step `Schedule` then `Ack` with a single atomic `ScheduleAndAck` (Redis
+  MULTI/EXEC) so a failed ACK after a successful schedule can no longer leave
+  the original message in the PEL for XAUTOCLAIM to redeliver
+- `fetchJobInfo` in `StreamWorkerPool` now populates `RobotsRules` via a new
+  `JobManager.GetRobotsRules` method. Previously `ProcessDiscoveredLinks`
+  received nil rules and silently allowed URLs that robots.txt disallows
 
 ## Full changelog history
 

@@ -134,6 +134,38 @@ func (s *Scheduler) Remove(ctx context.Context, jobID, member string) error {
 	return s.client.rdb.ZRem(ctx, ScheduleKey(jobID), member).Err()
 }
 
+// ScheduleAndAck atomically enqueues a retry into the job's ZSET and
+// acknowledges (removes) the original stream message in a single
+// Redis MULTI/EXEC. This prevents the two-step race where Schedule
+// succeeds but Ack fails — which would leave the retry queued while
+// the original stays in the PEL, allowing XAUTOCLAIM to redeliver it
+// and causing a duplicate crawl.
+//
+// Redis MULTI/EXEC is atomic on a single server: either both
+// operations apply or neither does. The caller receives a single
+// error to act on.
+func (s *Scheduler) ScheduleAndAck(ctx context.Context, entry ScheduleEntry, ackJobID, messageID string) error {
+	schedKey := ScheduleKey(entry.JobID)
+	streamKey := StreamKey(ackJobID)
+	groupName := ConsumerGroup(ackJobID)
+	z := redis.Z{Score: entry.Score(), Member: entry.Member()}
+
+	pipe := s.client.rdb.TxPipeline()
+	zaddCmd := pipe.ZAdd(ctx, schedKey, z)
+	xackCmd := pipe.XAck(ctx, streamKey, groupName, messageID)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("broker: schedule-and-ack task %s: %w", entry.TaskID, err)
+	}
+	if err := zaddCmd.Err(); err != nil {
+		return fmt.Errorf("broker: schedule-and-ack ZADD %s: %w", entry.TaskID, err)
+	}
+	if err := xackCmd.Err(); err != nil {
+		return fmt.Errorf("broker: schedule-and-ack XACK %s: %w", messageID, err)
+	}
+	return nil
+}
+
 // DueItems returns up to limit entries whose score is <= now from the
 // given job's ZSET. Items are returned but not removed — the caller
 // is responsible for ZREM after successful dispatch.

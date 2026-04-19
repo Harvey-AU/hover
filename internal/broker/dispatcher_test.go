@@ -206,6 +206,55 @@ func TestDispatcher_MalformedZSETEntry_IsRemoved(t *testing.T) {
 	assert.Equal(t, int64(0), pending, "malformed entry should be ZREM'd")
 }
 
+// --- Atomic Schedule+Ack for retries -----------------------------------
+
+// ScheduleAndAck must enqueue the retry into the ZSET and ACK the
+// original stream message in one atomic Redis operation, so a partial
+// failure can't leave the retry queued while the original is still in
+// the PEL (which would duplicate the crawl on XAUTOCLAIM redelivery).
+func TestScheduler_ScheduleAndAck_AtomicRetry(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-a"}}
+	conc := &staticConcurrency{can: true}
+	d, scheduler, _, _, client, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	// Dispatch one task so there's a stream + group + PEL entry.
+	seedEntry(t, scheduler, "job-a", "t1", "a.com", time.Now())
+	_, err := d.dispatchJob(ctx, "job-a", time.Now())
+	require.NoError(t, err)
+
+	consumer := NewConsumer(client, DefaultConsumerOpts("test-c"))
+	msgs, err := consumer.ReadNonBlocking(ctx, "job-a")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	originalID := msgs[0].MessageID
+
+	// Perform the atomic retry schedule+ack.
+	retryEntry := ScheduleEntry{
+		TaskID:     "t1",
+		JobID:      "job-a",
+		PageID:     1,
+		Host:       "a.com",
+		Path:       "/",
+		Priority:   0.5,
+		RetryCount: 1,
+		SourceType: "sitemap",
+		SourceURL:  "https://a.com/sitemap.xml",
+		RunAt:      time.Now().Add(30 * time.Second),
+	}
+	require.NoError(t, scheduler.ScheduleAndAck(ctx, retryEntry, "job-a", originalID))
+
+	// ZSET holds the retry.
+	pending, err := scheduler.PendingCount(ctx, "job-a")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), pending, "retry should be in ZSET")
+
+	// PEL is empty (message was ACKed).
+	result, err := client.rdb.XPending(ctx, StreamKey("job-a"), ConsumerGroup("job-a")).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), result.Count, "PEL should be empty after atomic ack")
+}
+
 // --- XAUTOCLAIM reclaim ------------------------------------------------
 
 // Messages unacked past MinIdleTime must be reclaimed by the next consumer

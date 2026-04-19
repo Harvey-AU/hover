@@ -253,8 +253,13 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.StreamMessage, outcome *TaskOutcome) {
 	domain := msg.Host
 
-	// For retryable tasks, schedule the retry BEFORE ACKing so that if
-	// scheduling fails the message stays in the PEL for redelivery.
+	// For retryable tasks, the retry enqueue and the ACK must be a single
+	// atomic Redis operation. A naive two-step (Schedule then Ack) has two
+	// failure modes: (a) if Schedule fails we leave the message in the PEL
+	// for redelivery — OK; but (b) if Schedule succeeds and Ack fails, the
+	// retry is queued AND the original message stays in the PEL, so
+	// XAUTOCLAIM will redeliver it and cause a duplicate crawl. The broker
+	// exposes ScheduleAndAck (MULTI/EXEC) to avoid both failure modes.
 	if outcome.Retry != nil && outcome.Retry.ShouldRetry {
 		entry := broker.ScheduleEntry{
 			TaskID:     outcome.Task.ID,
@@ -268,16 +273,16 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 			SourceURL:  outcome.Task.SourceURL,
 			RunAt:      outcome.Retry.NextRunAt,
 		}
-		if err := swp.scheduler.Schedule(ctx, entry); err != nil {
-			jobsLog.Error("retry schedule failed, leaving in PEL for redelivery", "error", err, "task_id", outcome.Task.ID)
+		if err := swp.scheduler.ScheduleAndAck(ctx, entry, msg.JobID, msg.MessageID); err != nil {
+			jobsLog.Error("retry schedule-and-ack failed, leaving in PEL for redelivery", "error", err, "task_id", outcome.Task.ID)
 			return
 		}
-	}
-
-	// ACK the stream message (remove from PEL).
-	if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
-		jobsLog.Error("failed to ACK, skipping bookkeeping", "error", err, "message_id", msg.MessageID)
-		return
+	} else {
+		// Non-retry path: just ACK.
+		if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
+			jobsLog.Error("failed to ACK, skipping bookkeeping", "error", err, "message_id", msg.MessageID)
+			return
+		}
 	}
 
 	// Decrement running counter.
@@ -556,6 +561,25 @@ func (swp *StreamWorkerPool) fetchJobInfo(ctx context.Context, jobID string) (*J
 	}
 	if adaptiveFloor.Valid {
 		info.AdaptiveDelayFloor = int(adaptiveFloor.Int64)
+	}
+
+	// Hydrate robots.txt rules so link discovery can enforce them.
+	// Without this, ProcessDiscoveredLinks sees a nil ruleset and
+	// lets every discovered URL through, bypassing disallow rules.
+	// Fetch lives in JobManager because it already owns a crawler
+	// handle. The caller caches the whole JobInfo for jobInfoTTL,
+	// so this fetch runs at most once every 5 minutes per job.
+	if swp.jobManager != nil {
+		rules, robotsErr := swp.jobManager.GetRobotsRules(ctx, info.DomainName)
+		if robotsErr != nil {
+			// Log and continue with nil rules — better to enqueue a few
+			// extra URLs than to stall the worker when robots.txt is
+			// temporarily unavailable. Matches legacy behaviour.
+			jobsLog.Warn("failed to load robots rules for job info, continuing without",
+				"error", robotsErr, "domain", info.DomainName)
+		} else {
+			info.RobotsRules = rules
+		}
 	}
 
 	return &info, nil

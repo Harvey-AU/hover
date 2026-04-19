@@ -47,6 +47,12 @@ type JobManagerInterface interface {
 	CalculateJobProgress(job *Job) float64
 	ValidateStatusTransition(from, to JobStatus) error
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
+
+	// GetRobotsRules fetches parsed robots.txt rules for a domain.
+	// Used by worker-side link-discovery filtering. Returns nil (not an
+	// error) when the crawler is unavailable — callers treat nil rules
+	// as "no restriction", matching the historical behaviour.
+	GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error)
 }
 
 // TaskScheduleCallback is called after tasks are successfully inserted
@@ -242,6 +248,24 @@ func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalised
 	}
 
 	return domainID, nil
+}
+
+// GetRobotsRules fetches parsed robots.txt rules for a domain via the
+// underlying crawler. Returns nil rules (and nil error) when the crawler
+// is unavailable, matching the legacy worker behaviour where missing
+// rules mean "no restriction".
+func (jm *JobManager) GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error) {
+	if jm.crawler == nil {
+		return nil, nil
+	}
+	result, err := jm.crawler.DiscoverSitemapsAndRobots(ctx, domain)
+	if err != nil {
+		return nil, fmt.Errorf("jobs: fetch robots for %s: %w", domain, err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.RobotsRules, nil
 }
 
 // validateRootURLAccess checks robots.txt rules and validates root URL access
