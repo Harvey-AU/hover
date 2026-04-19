@@ -420,12 +420,6 @@ func isBlockingError(err error) bool {
 		strings.Contains(errorStr, "service unavailable")
 }
 
-// IsRateLimitError is exported for use by the stream worker when
-// determining whether to update domain pacer state.
-func IsRateLimitErrorCheck(err error) bool {
-	return IsRateLimitError(err)
-}
-
 // --- JSONB helpers ---
 
 func populateJSONBFields(task *db.Task, result *crawler.CrawlResult) {

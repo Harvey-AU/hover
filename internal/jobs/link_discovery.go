@@ -155,8 +155,10 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			)
 			return
 		}
-		// Keep request-scoped values while detaching from parent cancellation/deadline.
-		linkCtx, linkCancel := context.WithTimeout(context.WithoutCancel(ctx), linkCtxTimeout)
+		// Derive the timeout from the parent ctx so CancelJob (or worker
+		// shutdown) propagates here; otherwise a late enqueue could
+		// repopulate a cancelled job with fresh pending work.
+		linkCtx, linkCancel := context.WithTimeout(ctx, linkCtxTimeout)
 		defer linkCancel()
 
 		// 2. Create page records.
