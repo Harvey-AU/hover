@@ -249,10 +249,10 @@ Discovered-link persistence now runs asynchronously after parent-task success.
 Expansion is bounded by a priority floor so low-value deep links do not flood
 the system under load.
 
-| Env var / constant                | Production value     | Default | What it controls                                                          |
-| --------------------------------- | -------------------- | ------- | ------------------------------------------------------------------------- |
-| `GNH_LINK_DISCOVERY_MIN_PRIORITY` | **0.5** (`fly.toml`) | 0.5     | Minimum computed child-task priority required before creating new tasks   |
-| `minPriorityForTrafficScore`      | hardcoded            | 0.729   | Minimum structural priority for traffic-score updates on link-found tasks |
+| Env var / constant                | Production value               | Default | What it controls                                                                                                                             |
+| --------------------------------- | ------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GNH_LINK_DISCOVERY_MIN_PRIORITY` | **0.5** prod / **0.7** preview | 0.5     | Minimum computed child-task priority required before creating new tasks. Preview runs tighter to keep crawls bounded on the smaller DB pool. |
+| `minPriorityForTrafficScore`      | hardcoded                      | 0.729   | Minimum structural priority for traffic-score updates on link-found tasks                                                                    |
 
 Homepage/header/footer/body links still enqueue when their computed child
 priority is at or above the threshold. Deeper body-link expansion stops once
