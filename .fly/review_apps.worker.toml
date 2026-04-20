@@ -35,8 +35,10 @@ primary_region = "syd"
   DB_TX_MAX_RETRIES = "5"
 
   # Redis broker — REDIS_URL is injected via flyctl secrets in CI.
+  # TLS is inferred from the URL scheme in broker.ConfigFromEnv (rediss:// →
+  # on, redis:// → off). Upstash-on-Fly's private endpoint is redis://, so
+  # overriding REDIS_TLS_ENABLED here would force a broken handshake.
   REDIS_POOL_SIZE = "30"
-  REDIS_TLS_ENABLED = "true"
   REDIS_DISPATCH_INTERVAL_MS = "200"
   REDIS_DISPATCH_BATCH_SIZE = "20"
   REDIS_CONSUMER_BLOCK_MS = "2000"
