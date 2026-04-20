@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -88,6 +89,8 @@ func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult
 		return PaceResult{}, err
 	}
 
+	observability.RecordBrokerPacerDelay(ctx, domain, float64(delayMS))
+
 	// A zero delay means no pacing — always acquire.
 	if delayMS <= 0 {
 		return PaceResult{Acquired: true}, nil
@@ -145,6 +148,7 @@ func (p *DomainPacer) Release(ctx context.Context, domain, jobID string, success
 		if err != nil {
 			return fmt.Errorf("broker: release rate-limited %s: %w", domain, err)
 		}
+		observability.RecordBrokerPacerPushback(ctx, domain, "rate_limited")
 	}
 
 	// Decrement inflight.

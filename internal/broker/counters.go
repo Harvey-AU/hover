@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )
@@ -155,6 +157,31 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		}
 		defer func() { _ = tx.Rollback() }()
 
+		// Snapshot PG running_tasks before writing so we can emit the
+		// Redis-vs-PG skew per job. A consistent skew > small noise
+		// usually means a counter leak (increment/decrement imbalance)
+		// or a sync lag spike.
+		jobIDsForSnapshot := make([]string, 0, len(counts))
+		for jobID := range counts {
+			jobIDsForSnapshot = append(jobIDsForSnapshot, jobID)
+		}
+		priorCounts := make(map[string]int64, len(counts))
+		if len(jobIDsForSnapshot) > 0 {
+			rows, qerr := tx.QueryContext(ctx,
+				`SELECT id, running_tasks FROM jobs WHERE id = ANY($1)`,
+				pq.Array(jobIDsForSnapshot))
+			if qerr == nil {
+				for rows.Next() {
+					var id string
+					var rt int64
+					if scanErr := rows.Scan(&id, &rt); scanErr == nil {
+						priorCounts[id] = rt
+					}
+				}
+				_ = rows.Close()
+			}
+		}
+
 		stmt, err := tx.PrepareContext(ctx,
 			`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`)
 		if err != nil {
@@ -168,6 +195,8 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 				return fmt.Errorf("update job %s: %w", jobID, err)
 			}
 			jobIDs = append(jobIDs, jobID)
+			observability.RecordBrokerCounterSyncSkew(ctx, jobID,
+				math.Abs(float64(count-priorCounts[jobID])))
 		}
 
 		// Zero out any active jobs whose counters are no longer tracked

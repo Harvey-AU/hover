@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -113,6 +114,7 @@ func (c *Consumer) Read(ctx context.Context, jobID string) ([]StreamMessage, err
 				_ = c.Ack(ctx, jobID, xMsg.ID)
 				continue
 			}
+			recordMessageAge(ctx, jobID, xMsg.ID)
 			msgs = append(msgs, msg)
 		}
 	}
@@ -151,10 +153,30 @@ func (c *Consumer) ReadNonBlocking(ctx context.Context, jobID string) ([]StreamM
 				_ = c.Ack(ctx, jobID, xMsg.ID)
 				continue
 			}
+			recordMessageAge(ctx, jobID, xMsg.ID)
 			msgs = append(msgs, msg)
 		}
 	}
 	return msgs, nil
+}
+
+// recordMessageAge emits bee.broker.consumer_message_age_ms. Redis stream
+// IDs are "ms-seq"; any parse failure is silently skipped so telemetry
+// never blocks the consume path.
+func recordMessageAge(ctx context.Context, jobID, streamID string) {
+	dash := strings.IndexByte(streamID, '-')
+	if dash <= 0 {
+		return
+	}
+	ms, err := strconv.ParseInt(streamID[:dash], 10, 64)
+	if err != nil {
+		return
+	}
+	age := time.Since(time.UnixMilli(ms))
+	if age < 0 {
+		age = 0
+	}
+	observability.RecordBrokerMessageAge(ctx, jobID, float64(age.Milliseconds()))
 }
 
 // Ack acknowledges one or more messages, removing them from the
@@ -222,6 +244,9 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 			reclaimed = append(reclaimed, msg)
 		}
 	}
+
+	observability.RecordBrokerAutoclaim(ctx, jobID, "reclaimed", len(reclaimed))
+	observability.RecordBrokerAutoclaim(ctx, jobID, "dead_letter", len(deadLetter))
 
 	return reclaimed, deadLetter, nil
 }

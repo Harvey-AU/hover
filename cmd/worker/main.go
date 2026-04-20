@@ -227,6 +227,14 @@ func main() {
 	}
 	outboxSweeper := broker.NewOutboxSweeper(pgDB.GetDB(), scheduler, outboxOpts)
 
+	// --- broker telemetry probe ---
+	// Scrapes stream length / ZSET depth / XPENDING per active job plus
+	// outbox backlog, Redis PING, and pool stats every 5s. Without this,
+	// the Tier 1 gauges stay at zero because they have no natural emission
+	// site in the request path.
+	probeOpts := broker.DefaultProbeOpts()
+	probe := broker.NewProbe(redisClient, pgDB.GetDB(), swp, probeOpts)
+
 	// --- start everything ---
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -235,6 +243,7 @@ func main() {
 	go dispatcher.Run(ctx)
 	go counters.StartDBSync(ctx, syncInterval, syncFn)
 	go outboxSweeper.Run(ctx)
+	go probe.Run(ctx)
 
 	workerLog.Info("hover worker ready",
 		"workers", numWorkers,

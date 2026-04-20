@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -141,10 +142,12 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		canDispatch, err := d.concCheck.CanDispatch(ctx, jobID)
 		if err != nil {
 			brokerLog.Warn("concurrency check failed, skipping batch", "error", err, "job_id", jobID)
+			observability.RecordBrokerDispatch(ctx, jobID, "err")
 			break
 		}
 		if !canDispatch {
 			// Job at capacity — remaining items stay in ZSET.
+			observability.RecordBrokerDispatch(ctx, jobID, "capacity")
 			break
 		}
 
@@ -153,6 +156,7 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		paceResult, err := d.pacer.TryAcquire(ctx, domain)
 		if err != nil {
 			brokerLog.Warn("pacer check failed", "error", err, "domain", domain)
+			observability.RecordBrokerDispatch(ctx, jobID, "err")
 			continue
 		}
 		if !paceResult.Acquired {
@@ -163,6 +167,8 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			if err := d.scheduler.Reschedule(ctx, *entry, newRunAt); err != nil {
 				brokerLog.Warn("reschedule failed", "error", err, "task_id", entry.TaskID)
 			}
+			observability.RecordBrokerDispatch(ctx, jobID, "paced")
+			observability.RecordBrokerPacerPushback(ctx, domain, "gate")
 			continue
 		}
 
@@ -172,6 +178,7 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		// yet, so Release would decrement a counter that was never incremented.
 		if err := d.publishAndRemove(ctx, entry); err != nil {
 			brokerLog.Warn("stream publish+remove failed", "error", err, "task_id", entry.TaskID)
+			observability.RecordBrokerDispatch(ctx, jobID, "err")
 			continue
 		}
 
@@ -185,6 +192,7 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			brokerLog.Warn("inflight increment failed", "error", err, "domain", domain)
 		}
 
+		observability.RecordBrokerDispatch(ctx, jobID, "ok")
 		dispatched++
 	}
 
