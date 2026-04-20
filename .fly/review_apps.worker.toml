@@ -53,8 +53,15 @@ primary_region = "syd"
   GNH_HTML_PERSIST_QUEUE_SIZE = "512"
 
   # Link discovery + pacing (aligned with API preview).
-  GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
+  GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.5"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
+
+  # Scale pressure-controller floor to the smaller preview DB pool. Without
+  # this, GNH_PRESSURE_MIN_LIMIT defaults to 30 while DB_QUEUE_MAX_CONCURRENCY
+  # only allows 10 — the controller clamps the floor to the max and logs a
+  # warning on every boot. Setting an explicit floor silences the noise.
+  GNH_PRESSURE_MIN_LIMIT = "5"
+  GNH_PRESSURE_INITIAL_LIMIT = "8"
 
   # Observability.
   LOG_LEVEL = "debug"
@@ -78,6 +85,13 @@ primary_region = "syd"
 
 [deploy]
   strategy = "immediate"
+
+# Keep the machine restarting after crashes. Without this, Fly's default
+# on-failure policy gives up after 10 retries — so a transient outage
+# (Redis unreachable, DB not ready yet) can leave the preview worker
+# permanently stopped until someone runs `flyctl machine start`.
+[[restart]]
+  policy = "always"
 
 # Preview-sized machine (prod is 4gb performance/2). The worker does not
 # expose HTTP, so no [http_service] block.

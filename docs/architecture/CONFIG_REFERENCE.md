@@ -251,7 +251,7 @@ the system under load.
 
 | Env var / constant                | Production value     | Default | What it controls                                                          |
 | --------------------------------- | -------------------- | ------- | ------------------------------------------------------------------------- |
-| `GNH_LINK_DISCOVERY_MIN_PRIORITY` | **0.7** (`fly.toml`) | 0.7     | Minimum computed child-task priority required before creating new tasks   |
+| `GNH_LINK_DISCOVERY_MIN_PRIORITY` | **0.5** (`fly.toml`) | 0.5     | Minimum computed child-task priority required before creating new tasks   |
 | `minPriorityForTrafficScore`      | hardcoded            | 0.729   | Minimum structural priority for traffic-score updates on link-found tasks |
 
 Homepage/header/footer/body links still enqueue when their computed child

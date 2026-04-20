@@ -83,7 +83,7 @@ func classifyTaskOutcome(o *TaskOutcome) (string, string) {
 // linkDiscoveryMinPriorityFromEnv reads the minimum priority threshold for
 // discovered links from the GNH_LINK_DISCOVERY_MIN_PRIORITY env var.
 func linkDiscoveryMinPriorityFromEnv() float64 {
-	const fallback = 0.7
+	const fallback = 0.5
 	if raw := strings.TrimSpace(os.Getenv("GNH_LINK_DISCOVERY_MIN_PRIORITY")); raw != "" {
 		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed >= 0 && parsed <= 1 {
 			return parsed
