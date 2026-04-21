@@ -272,8 +272,8 @@ dispatcher ever sees.
 ```sql
 CREATE TABLE task_outbox (
     id          BIGSERIAL        PRIMARY KEY,
-    task_id     UUID             NOT NULL,
-    job_id      UUID             NOT NULL,
+    task_id     TEXT             NOT NULL,
+    job_id      TEXT             NOT NULL,
     page_id     INT              NOT NULL,
     host        TEXT             NOT NULL,
     path        TEXT             NOT NULL,
