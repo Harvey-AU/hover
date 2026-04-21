@@ -60,6 +60,8 @@ jobs:
           GRAFANA_CLOUD_USER: op://Good Native/hover-runtime/GRAFANA_CLOUD_USER
           GRAFANA_CLOUD_API_KEY:
             op://Good Native/hover-runtime/GRAFANA_CLOUD_API_KEY
+          # Redis broker (shared by hover + hover-worker)
+          REDIS_URL: op://Good Native/hover-runtime/REDIS_URL
           # Archive (R2 cold storage)
           ARCHIVE_ACCESS_KEY_ID:
             op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
@@ -69,7 +71,7 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
-      - name: Sync secrets to Fly
+      - name: Sync secrets to Fly (API app)
         run: |
           flyctl secrets set \
             DATABASE_URL="$DATABASE_URL" \
@@ -87,6 +89,34 @@ jobs:
             ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
             GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
             GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            REDIS_URL="$REDIS_URL" \
             --stage
 
-      - run: flyctl deploy --remote-only
+      - name: Deploy API app
+        run: flyctl deploy --remote-only
+
+      - name: Sync secrets to Fly (worker app)
+        run: |
+          # hover-worker consumes Redis streams, executes crawls, persists to
+          # Postgres + R2. Only secrets actually referenced by the worker
+          # binary are synced here; user-facing auth secrets (Supabase JWT,
+          # Slack/Webflow/Google OAuth client secrets) are deliberately
+          # excluded.
+          flyctl secrets set \
+            --app hover-worker \
+            DATABASE_URL="$DATABASE_URL" \
+            DATABASE_DIRECT_URL="$DATABASE_DIRECT_URL" \
+            REDIS_URL="$REDIS_URL" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            --stage
+
+      - name: Deploy worker app
+        run:
+          flyctl deploy --config fly.worker.toml --app hover-worker
+          --remote-only
