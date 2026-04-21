@@ -227,6 +227,7 @@ CREATE TABLE tasks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
+    run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_code INTEGER,
     response_time INTEGER,
     cache_status TEXT,
@@ -244,11 +245,52 @@ CREATE INDEX idx_tasks_pending ON tasks(created_at) WHERE status = 'pending';
 
 **Status Values:**
 
-- `pending` - Task waiting to be processed
-- `running` - Task currently being processed
+- `waiting` - Task created but not yet scheduled into Redis (quota or
+  concurrency limit reached, or pacer back-off active)
+- `pending` - Scheduled into Redis ZSET, awaiting dispatch
+- `running` - Claimed by a worker via XREADGROUP
 - `completed` - Task successfully completed
 - `failed` - Task failed after retries
 - `skipped` - Task skipped due to limits
+
+**`run_at` column** (added 2026-04-19) mirrors the Redis broker's ZSET score
+into Postgres. `Scheduler.Reschedule` dual-writes both on pacing push-back so
+the deadline survives a Redis flush. See `internal/broker/scheduler.go`.
+
+#### Task Outbox
+
+Durable buffer for Redis scheduling. Rows are written in the same transaction as
+the corresponding `tasks` row, so a successful task insert guarantees a matching
+outbox row exists. A sweeper goroutine in the worker service reads due rows,
+calls `Scheduler.ScheduleBatch`, and deletes the row on success (or bumps
+`attempts` + `run_at` on failure).
+
+This fixes the orphan-task risk where the fire-and-forget `OnTasksEnqueued`
+callback could fail after Postgres commit, leaving pending tasks that no
+dispatcher ever sees.
+
+```sql
+CREATE TABLE task_outbox (
+    id          BIGSERIAL        PRIMARY KEY,
+    task_id     UUID             NOT NULL,
+    job_id      UUID             NOT NULL,
+    page_id     INT              NOT NULL,
+    host        TEXT             NOT NULL,
+    path        TEXT             NOT NULL,
+    priority    DOUBLE PRECISION NOT NULL,
+    retry_count INT              NOT NULL DEFAULT 0,
+    source_type TEXT             NOT NULL,
+    source_url  TEXT             NOT NULL DEFAULT '',
+    run_at      TIMESTAMPTZ      NOT NULL,
+    attempts    INT              NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_outbox_run_at ON task_outbox(run_at ASC);
+```
+
+The table is expected to stay small — rows are deleted on successful dispatch,
+typically within one sweep tick.
 
 ### Scheduler Tables
 

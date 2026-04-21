@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Last reviewed: 2026-04-11
+Last reviewed: 2026-04-21
 
 Every configurable dial in the application — env vars, hardcoded constants, and
 their relationships. Values reflect production unless noted. For the flat
@@ -11,19 +11,31 @@ inventory of env vars and their classification (secret vs non-secret), see
 
 ## Key relationships
 
+Services split (`cmd/app` = API, `cmd/worker` = crawl execution) and share a
+Redis broker for scheduling. Each service has its own DB pool budget against the
+shared Supabase pgBouncer.
+
 ```
-DB_MAX_OPEN_CONNS (110)
-  └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 106
-        └── bulk lane hard cap (88) + control lane headroom (18)
-              └── bulk PressureController soft limit  →  88 down to 30, self-tuning
-                    └── base workers (30) × WORKER_CONCURRENCY (20) = 600 task slots
-                          └── max workers (130) — capped below the 180-conn Supabase pool
+API server (cmd/app)
+  DB_MAX_OPEN_CONNS (60)
+    └── DB_POOL_RESERVED_CONNECTIONS (4)  →  available = 56
+          └── bulk lane hard cap (88, capped by availability)
+                └── bulk PressureController soft limit (self-tuning)
+
+Worker service (cmd/worker)
+  DB_MAX_OPEN_CONNS (60) — batch writes, counter sync, outbox sweeper
+    └── WORKER_COUNT (30) × WORKER_CONCURRENCY (20) = 600 task slots
+
+Redis broker (shared)
+  REDIS_POOL_SIZE (200)
+    └── ZSET schedule:{job} + Stream stream:{job} + consumer group group:{job}
+          └── Dispatcher interval (100ms) + autoclaim (30s)
 ```
 
-Direct DB calls (page writes, domain lookups, etc.) bypass these queue lanes and
-draw from the shared pool. In production, the queue keeps dedicated
-control-plane headroom for task claim/promotion/release traffic so bulk
-sitemap/link writes cannot stall core scheduling work.
+The two services deploy independently and are sized to fit under Supabase's
+180-connection pool with headroom for internal Supabase traffic. Direct DB calls
+(page writes, domain lookups, etc.) bypass the queue semaphore and draw from the
+shared pool.
 
 ---
 
@@ -31,14 +43,20 @@ sitemap/link writes cannot stall core scheduling work.
 
 **Source:** `internal/db/db.go`, `fly.toml`
 
-| Env var / constant       | Production value     | Code default | What it controls                           |
-| ------------------------ | -------------------- | ------------ | ------------------------------------------ |
-| `DB_MAX_OPEN_CONNS`      | **110** (`fly.toml`) | 70           | Hard cap on open connections to pgBouncer  |
-| `DB_MAX_IDLE_CONNS`      | **25** (`fly.toml`)  | 20           | Idle connections kept warm                 |
-| `defaultConnMaxLifetime` | hardcoded            | 5 min        | Max connection lifetime                    |
-| `defaultConnMaxIdleTime` | hardcoded            | 2 min        | Idle connection eviction                   |
-| `statementTimeoutMs`     | hardcoded            | 60s          | Per-statement timeout (added to DSN)       |
-| `idleInTxnTimeoutMs`     | hardcoded            | 30s          | Idle-in-transaction timeout (added to DSN) |
+| Env var / constant       | Production value    | Code default | What it controls                                 |
+| ------------------------ | ------------------- | ------------ | ------------------------------------------------ |
+| `DB_MAX_OPEN_CONNS`      | **60** (both tomls) | 70           | Per-service cap on open connections to pgBouncer |
+| `DB_MAX_IDLE_CONNS`      | **15** (worker)     | 20           | Idle connections kept warm (API uses default)    |
+| `DATABASE_QUEUE_URL`     | unset               | —            | Optional second DSN for tasks/outbox in split-DB |
+| `defaultConnMaxLifetime` | hardcoded           | 5 min        | Max connection lifetime                          |
+| `defaultConnMaxIdleTime` | hardcoded           | 2 min        | Idle connection eviction                         |
+| `statementTimeoutMs`     | hardcoded           | 60s          | Per-statement timeout (added to DSN)             |
+| `idleInTxnTimeoutMs`     | hardcoded           | 30s          | Idle-in-transaction timeout (added to DSN)       |
+
+When `DATABASE_QUEUE_URL` is set, the worker routes `tasks`, `task_outbox`, and
+scheduler writes to the queue database while keeping reads/writes of `jobs`,
+`pages`, etc. on the primary. In single-DB deployments the queue URL is unset
+and both halves share `DATABASE_URL`.
 
 Supabase pooler is auto-detected via the `pooler.supabase.com` hostname in
 `DATABASE_URL`. When detected, `simple_protocol` and `pgbouncer=true` are
@@ -56,8 +74,8 @@ Supabase connection pool size is configured on the Supabase dashboard (currently
 
 The queue now uses two DB execution lanes:
 
-- **Control lane** — reserved for task claim, task release, task promotion, and
-  waiting-task recovery. This lane is not pressure-shed by the bulk EMA.
+- **Control lane** — reserved for task claim, task release, and other low-volume
+  broker control paths. This lane is not pressure-shed by the bulk EMA.
 - **Bulk lane** — used for heavier write paths such as sitemap insertion,
   discovered-link persistence, traffic-score updates, and batch task-status
   flushes.
@@ -117,47 +135,27 @@ slots every 30s as bulk execution time drops back below the low mark.
 
 ---
 
-## Worker pool base size
+## Stream worker pool (worker service)
 
-**Source:** `cmd/app/main.go`
+**Source:** `cmd/worker/main.go`, `internal/jobs/stream_worker.go`
 
-| Env var / constant   | Production value              | Default                    | What it controls                                     |
-| -------------------- | ----------------------------- | -------------------------- | ---------------------------------------------------- |
-| —                    | **30** hardcoded by `APP_ENV` | prod=30, staging=10, dev=5 | Base worker count — no env var; requires code change |
-| `WORKER_CONCURRENCY` | **20** (`fly.toml`)           | 1                          | Tasks per worker goroutine (range 1–20)              |
+The worker service runs a fixed-size pool of goroutines that each consume from
+Redis Streams via `XREADGROUP`. Unlike the old DB-polling worker pool, the
+stream worker pool does not scale dynamically — scaling is handled by running
+more worker machines in Fly.io.
 
-Total base capacity = `base workers × WORKER_CONCURRENCY` = 30 × 20 = **600
-concurrent task slots**.
+| Env var / constant   | Production value            | Default | What it controls                                     |
+| -------------------- | --------------------------- | ------- | ---------------------------------------------------- |
+| `WORKER_COUNT`       | **30** (`fly.worker.toml`)  | 30      | Number of stream consumer goroutines                 |
+| `WORKER_CONCURRENCY` | **20** (`fly.worker.toml`)  | 1       | Tasks per worker goroutine (range 1–20)              |
+| `GNH_MAX_WORKERS`    | **130** (`fly.worker.toml`) | —       | Legacy ceiling retained for scaling hints in metrics |
 
----
+Total base capacity = `WORKER_COUNT × WORKER_CONCURRENCY` = 30 × 20 = **600
+concurrent task slots per worker machine**.
 
-## Worker pool scaling
-
-**Source:** `internal/jobs/worker.go`
-
-The pool scales dynamically between base and max based on active job
-concurrency. Scale target formula:
-`ceil(totalJobConcurrency / WORKER_CONCURRENCY × 1.1)`, capped at
-`wp.maxWorkers` (derived from `GNH_MAX_WORKERS`, or the environment fallback
-when the env var is unset). Each job's effective concurrency is reduced by the
-domain limiter when adaptive delays are active.
-
-| Env var / constant                  | Production value      | Default           | What it controls                                                     |
-| ----------------------------------- | --------------------- | ----------------- | -------------------------------------------------------------------- |
-| `GNH_MAX_WORKERS`                   | **130** (`fly.toml`)  | 160 (staging: 10) | Max workers ceiling; if unset, staging falls back to 10              |
-| `GNH_WORKER_SCALE_COOLDOWN_SECONDS` | **120s** (`fly.toml`) | 15s               | Minimum time between scale decisions                                 |
-| `GNH_WORKER_IDLE_THRESHOLD`         | **10** (`fly.toml`)   | 0                 | Idle worker count before scale-down; 0 = disabled                    |
-| `GNH_DISABLE_RUNTIME_SCALE_DOWN`    | **true** (`fly.toml`) | false             | Trial safety switch that prevents runtime worker scale-down entirely |
-| `GNH_HEALTH_PROBE_INTERVAL_SECONDS` | **30s** (`fly.toml`)  | 0                 | Health probe interval (min 10s); 0 = disabled                        |
-| `GNH_JOB_FAILURE_THRESHOLD`         | **20** (unset)        | 20                | Consecutive task failures before a job is marked permanently failed  |
-
-Example: 100 active jobs at concurrency=20 each → target = ceil(2000/20×1.1) =
-110 workers.
-
-Review apps now set `GNH_MAX_WORKERS=130` explicitly and keep `APP_ENV=staging`,
-so preview branches inherit production-scale worker ceilings for throughput
-debugging while still using smaller DB and queue budgets. Preview OTEL exports
-can be filtered via `deployment.environment=staging`.
+Review apps deploy their own worker machine (`.fly/review_apps.worker.toml`)
+with `APP_ENV=staging`, so preview branches exercise the real Redis-backed path.
+Preview OTEL exports can be filtered via `deployment.environment=staging`.
 
 ---
 
@@ -180,44 +178,92 @@ collector with `DomainGlob="*"` and `Parallelism=MaxConcurrency`.
 
 ---
 
-## Task monitor and promotion
+## Redis broker
 
-**Source:** `internal/jobs/worker.go` — `StartTaskMonitor`,
-`StartWaitingTaskRecoveryMonitor`
+**Source:** `internal/broker/`, `cmd/worker/main.go`
 
-Two background loops keep the pending task supply full. The waiting-task
-recovery monitor is the general safety net for jobs that have `waiting_tasks`
-but lost inline promotion under load.
+The broker owns task scheduling and dispatch. The API server writes task
+envelopes into per-job ZSETs; the worker service runs the dispatcher that moves
+due entries onto per-job streams for consumers to pick up.
 
-| Env var / constant                      | Production value       | Default | What it controls                                                                                      |
-| --------------------------------------- | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
-| `GNH_TASK_MONITOR_INTERVAL_SECONDS`     | **5s** (`fly.toml`)    | 10s     | Polls for jobs with `pending_tasks > 0`; adds newly-ready jobs to the work pool                       |
-| `GNH_PENDING_ADMISSION_LIMIT_MIN`       | **250** (`fly.toml`)   | 250     | Floor for how many pending jobs a monitor sweep may admit, regardless of worker count                 |
-| `GNH_PENDING_ADMISSION_WORKER_FACTOR`   | **3** (`fly.toml`)     | 3       | Scales pending-job admission breadth with `GNH_MAX_WORKERS`; admission limit = max(workers×factor)    |
-| `GNH_WAITING_RECOVERY_INTERVAL_SECONDS` | **2s** (`fly.toml`)    | 2s      | Recovers `waiting` tasks for running/pending jobs when slots are available                            |
-| `GNH_QUOTA_PROMOTION_INTERVAL_SECONDS`  | **18s** (`fly.toml`)   | 5s      | Legacy fallback used only when the new waiting-recovery interval is unset                             |
-| `GNH_DOMAIN_DELAY_PAUSE_MS`             | **100ms** (`fly.toml`) | 100ms   | Short back-off after requeueing a domain-delayed task; also the threshold for skipping closed windows |
-| `pendingRebalanceInterval`              | hardcoded              | 5 min   | Demotes excess pending tasks back to waiting to enforce concurrency limits                            |
-| `pendingRebalanceJobLimit`              | hardcoded              | 25      | Max jobs processed per rebalance sweep                                                                |
-| `pendingUnlimitedCap`                   | hardcoded              | 100     | Max pending+running tasks for jobs with no explicit concurrency set                                   |
-| `fallbackJobConcurrency`                | hardcoded              | 20      | Concurrency assumed when job has no cached info yet                                                   |
+### Client + pool
 
-Recovery is quota-aware when a quota exists, but it also scans jobs without
-relying on quota events so stalled waiting queues can recover after transient
-DB-pressure failures.
+**Source:** `internal/broker/redis.go`
 
----
+| Env var / constant         | Production value            | Default | What it controls                                              |
+| -------------------------- | --------------------------- | ------- | ------------------------------------------------------------- |
+| `REDIS_URL`                | Upstash DSN (Fly secret)    | —       | Redis connection string (optional on API; required on worker) |
+| `REDIS_TLS_ENABLED`        | set when DSN is `rediss://` | false   | Force TLS regardless of DSN scheme                            |
+| `REDIS_POOL_SIZE`          | **200** (`fly.worker.toml`) | 50      | go-redis connection pool size                                 |
+| `STREAM_ACTIVE_JOBS_LIMIT` | **200** (unset)             | 200     | Max concurrent active job streams per dispatcher              |
 
-## Running task tracking
+When `REDIS_URL` is unset on the API server, the server starts in
+degraded-dispatch mode: new tasks still land in Postgres + outbox, but no
+scheduling happens until the worker (which requires Redis) drains the outbox.
 
-**Source:** `internal/jobs/worker.go`
+### Dispatcher
 
-Controls how the `running_tasks` counter is batched and flushed to the DB.
+**Source:** `internal/broker/dispatcher.go`
 
-| Env var / constant                   | Production value       | Default | What it controls                                         |
-| ------------------------------------ | ---------------------- | ------- | -------------------------------------------------------- |
-| `GNH_RUNNING_TASK_BATCH_SIZE`        | **32** (`fly.toml`)    | 4       | Tasks batched per `running_tasks` flush                  |
-| `GNH_RUNNING_TASK_FLUSH_INTERVAL_MS` | **200ms** (`fly.toml`) | 50ms    | Max interval before flushing the `running_tasks` counter |
+Runs on the worker service. Polls active job ZSETs for due entries and moves
+them onto streams, gated by concurrency + pacer.
+
+| Env var / constant           | Production value              | Default | What it controls                                |
+| ---------------------------- | ----------------------------- | ------- | ----------------------------------------------- |
+| `REDIS_DISPATCH_INTERVAL_MS` | **100ms** (`fly.worker.toml`) | 200ms   | Interval between dispatcher sweeps              |
+| `REDIS_DISPATCH_BATCH_SIZE`  | **50** (`fly.worker.toml`)    | 25      | Max entries moved ZSET→Stream per job per sweep |
+
+### Consumer + autoclaim
+
+**Source:** `internal/broker/consumer.go`
+
+| Env var / constant           | Production value               | Default | What it controls                                                |
+| ---------------------------- | ------------------------------ | ------- | --------------------------------------------------------------- |
+| `REDIS_CONSUMER_BLOCK_MS`    | **2000ms** (`fly.worker.toml`) | 2000ms  | XREADGROUP BLOCK duration; `-1` internally means non-blocking   |
+| `REDIS_AUTOCLAIM_INTERVAL_S` | **30s** (`fly.worker.toml`)    | 30s     | XAUTOCLAIM sweep interval for reclaiming stale pending messages |
+| `MinIdleTime`                | hardcoded                      | 3 min   | Min pending-idle time before a message is eligible for reclaim  |
+| `MaxDeliveries`              | hardcoded                      | 3       | Dead-letter after this many deliveries                          |
+
+### Running counters
+
+**Source:** `internal/broker/counters.go`
+
+Replaces the old in-memory batch increment loop. The per-job running-task count
+is incremented on receive, decremented on outcome, and synced to
+`jobs.running_tasks` on a timer.
+
+| Env var / constant              | Production value           | Default | What it controls                                      |
+| ------------------------------- | -------------------------- | ------- | ----------------------------------------------------- |
+| `REDIS_COUNTER_SYNC_INTERVAL_S` | **5s** (`fly.worker.toml`) | 5s      | Redis→Postgres sync interval for `jobs.running_tasks` |
+
+Drift between Redis truth and the snapshot Postgres value is reported via
+`bee.broker.counter_sync_skew`.
+
+### Outbox sweeper
+
+**Source:** `internal/broker/outbox.go`
+
+Drains `task_outbox` rows (written in the same tx as `tasks`) into the
+scheduler. Guarantees durable scheduling even if the fire-and-forget
+`OnTasksEnqueued` callback loses the write.
+
+| Env var / constant         | Production value | Default | What it controls                     |
+| -------------------------- | ---------------- | ------- | ------------------------------------ |
+| `OUTBOX_SWEEP_INTERVAL_MS` | unset            | 500ms   | Interval between outbox sweep passes |
+| `OUTBOX_SWEEP_BATCH_SIZE`  | unset            | 100     | Max outbox rows drained per pass     |
+
+### Probe
+
+**Source:** `internal/broker/probe.go`
+
+Periodic goroutine that scrapes Tier 1 broker gauges that have no natural
+emission site: stream length, ZSET depth, XPENDING, outbox backlog + age, Redis
+PING, pool stats.
+
+| Constant      | Default | What it controls                                                  |
+| ------------- | ------- | ----------------------------------------------------------------- |
+| `Interval`    | 5s      | Probe tick frequency                                              |
+| `TickTimeout` | 3s      | Per-tick deadline so a slow Redis or DB call can't stall the loop |
 
 ---
 
@@ -243,9 +289,9 @@ trades strict immediacy for continued throughput under DB pressure.
 
 ## Link discovery expansion
 
-**Source:** `internal/jobs/worker.go`, `internal/db/queue.go`
+**Source:** `internal/jobs/link_discovery.go`, `internal/db/queue.go`
 
-Discovered-link persistence now runs asynchronously after parent-task success.
+Discovered-link persistence runs asynchronously after parent-task success.
 Expansion is bounded by a priority floor so low-value deep links do not flood
 the system under load.
 
@@ -262,7 +308,7 @@ priority is at or above the threshold. Deeper body-link expansion stops once
 
 ## HTML persistence
 
-**Source:** `internal/jobs/worker.go`
+**Source:** `internal/jobs/stream_worker.go`
 
 Async pool for uploading raw HTML to Supabase Storage after task completion.
 
@@ -273,24 +319,26 @@ Async pool for uploading raw HTML to Supabase Storage after task completion.
 
 ---
 
-## Domain rate limiter
+## Domain pacer
 
-**Source:** `internal/jobs/domain_limiter.go`
+**Source:** `internal/broker/pacer.go`, `internal/broker/pacer_lua.go`
 
-Adaptive per-domain delay that backs off when a site returns rate-limit signals
-and recovers after sustained successes. Env var overrides apply at startup only.
+Adaptive per-domain token bucket implemented as a Redis Lua script. The
+dispatcher calls `TryAcquire` before moving a task from ZSET to stream;
+rate-limit signals from crawler responses feed `Release` to widen the delay,
+sustained successes narrow it. All state lives in Redis so it's shared across
+worker machines — unlike the previous in-process `DomainLimiter`.
 
-| Env var / constant                 | Production value      | Default | What it controls                                        |
-| ---------------------------------- | --------------------- | ------- | ------------------------------------------------------- |
-| `GNH_RATE_LIMIT_BASE_DELAY_MS`     | **50ms** (`fly.toml`) | 50ms    | Minimum delay between requests to a domain              |
-| `GNH_RATE_LIMIT_DELAY_STEP_MS`     | **500ms** (unset)     | 500ms   | Delay increment per rate-limit hit                      |
-| `GNH_RATE_LIMIT_MAX_DELAY_SECONDS` | **60s** (unset)       | 60s     | Ceiling for adaptive delay                              |
-| `GNH_RATE_LIMIT_SUCCESS_THRESHOLD` | **5** (unset)         | 5       | Consecutive successes before attempting delay reduction |
-| `GNH_ROBOTS_DELAY_MULTIPLIER`      | **0.5** (unset)       | 0.5     | Scale factor applied to `Crawl-Delay` from robots.txt   |
+| Env var / constant             | Default | What it controls                                        |
+| ------------------------------ | ------- | ------------------------------------------------------- |
+| `PacerConfig.BaseDelayMs`      | 50ms    | Minimum delay between dispatches to a domain            |
+| `PacerConfig.MaxDelayMs`       | 60000ms | Ceiling for adaptive delay                              |
+| `PacerConfig.DelayStepMs`      | 500ms   | Delay increment per rate-limit hit                      |
+| `PacerConfig.SuccessThreshold` | 5       | Consecutive successes before attempting delay reduction |
+| `GNH_ROBOTS_DELAY_MULTIPLIER`  | 0.5     | Scale factor applied to `Crawl-Delay` from robots.txt   |
 
-The domain limiter also reduces a job's effective concurrency fed into
-`calculateConcurrencyTarget()`, so heavily rate-limited jobs do not inflate the
-worker count.
+Pacer pushbacks are reported via `bee.broker.pacer_pushback_total` and the
+current delay per domain via `bee.broker.pacer_delay_ms`.
 
 ---
 

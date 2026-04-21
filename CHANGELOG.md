@@ -50,6 +50,32 @@ On merge, CI will:
 - `docs/plans/REDIS_BROKER_CUTOVER.md` — staged rollout plan, observability gap
   list, rollback paths, known architectural deferrals
 - `STREAM_ACTIVE_JOBS_LIMIT` env var — was hard-coded to 200, now configurable
+- Tier 1 + Tier 2 broker OTEL metrics: `bee.broker.stream_length`,
+  `scheduled_zset_depth`, `consumer_pending`, `outbox_backlog`,
+  `outbox_age_seconds`, `redis_ping_duration_ms`, `dispatch_total`,
+  `autoclaim_total`, `consumer_message_age_ms`, `pacer_pushback_total`,
+  `pacer_delay_ms`, `counter_sync_skew`, and `redis_pool.{in_use,idle,wait}`
+- `internal/broker/probe.go` — periodic probe goroutine scraping stream length,
+  ZSET depth, XPENDING, outbox backlog/age, Redis PING, and pool stats every 5s
+  (bounded per-tick timeout, skips emission on Redis outage to avoid false
+  zeroes)
+- Counter skew telemetry — `DefaultDBSyncFunc` now snapshots prior
+  `jobs.running_tasks` and emits `bee.broker.counter_sync_skew` per job so
+  Redis↔Postgres counter drift is observable
+- `OTEL_EXPORTER_OTLP_ENDPOINT` in `fly.worker.toml` — without it the worker
+  registered broker instruments but never exported them to Grafana Cloud
+- `task_outbox` table + sweeper (`internal/broker/outbox.go`, migration
+  `20260419080120_add_task_outbox.sql`) — tasks are written to the outbox in the
+  same transaction as `tasks`, and the sweeper drains them into Redis. Closes
+  the durability gap where a fire-and-forget `OnTasksEnqueued` callback could
+  lose writes during a Redis blip or process crash
+- `tasks.run_at` column + migration `20260419120000_add_tasks_run_at.sql` —
+  `Scheduler.Reschedule` now mirrors pacer push-backs and retry backoff to
+  Postgres so the deadline survives a Redis flush
+- Per-preview-PR worker deployment — `.fly/review_apps.worker.toml` and updates
+  to `.github/workflows/review-apps.yml` spin up a dedicated worker machine
+  alongside each review app so Redis-backed flows are actually exercised in
+  preview
 
 ### Changed
 
@@ -60,6 +86,16 @@ On merge, CI will:
   produces non-zero child priorities
 - Reduced `DB_MAX_OPEN_CONNS` from 125 to 60 in `fly.toml` (API no longer runs
   workers)
+- Broker components (`Scheduler`, `OutboxSweeper`, `Probe`) now route to
+  `queueDB` when `DATABASE_QUEUE_URL` is set so they read/write the database
+  that actually holds `task_outbox` rows; falls back to `pgDB` in single-DB
+  deployments
+- `Consumer.ReadNonBlocking` now uses `Block: -1` so go-redis omits the BLOCK
+  clause entirely — `Block: 0` was being interpreted as "block indefinitely"
+- Link priority, pressure floor, and restart policy tuned in `fly.toml`,
+  `fly.worker.toml`, and review-app tomls; `internal/jobs/shared.go`
+  min-priority floor raised to stop link discovery pushing near-zero-priority
+  URLs
 
 ### Removed
 
@@ -89,6 +125,15 @@ On merge, CI will:
   (including " Private URL │ ..." label and whitespace) into `REDIS_URL`,
   crash-looping the review app on every deploy. Extractor now grabs only the
   `redis(s)?://` substring
+- Rate-limited task errors now route to a blocking retry in
+  `internal/jobs/executor.go` (previously they fell through to the generic retry
+  path, ignoring the rate-limit backoff signal)
+- Dead-letter pacer push-back — `StreamWorkerPool` now releases the pacer slot
+  when a message goes to the dead-letter queue so a poisoned message can't hold
+  a domain's concurrency permanently
+- Stale counter sync — `DefaultDBSyncFunc` no longer skips jobs whose Redis
+  counter equals the previous snapshot, so Postgres is updated even when a job
+  transiently has zero running tasks
 
 ## Full changelog history
 
