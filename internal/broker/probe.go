@@ -12,11 +12,17 @@ import (
 type ProbeOpts struct {
 	// Interval between probe ticks. Default 5s.
 	Interval time.Duration
+	// TickTimeout bounds a single tick so a slow Redis or DB call
+	// cannot stall the whole probe loop. Default 3s.
+	TickTimeout time.Duration
 }
 
 // DefaultProbeOpts returns production defaults.
 func DefaultProbeOpts() ProbeOpts {
-	return ProbeOpts{Interval: 5 * time.Second}
+	return ProbeOpts{
+		Interval:    5 * time.Second,
+		TickTimeout: 3 * time.Second,
+	}
 }
 
 // Probe periodically scrapes Tier 1 gauges that have no natural
@@ -31,10 +37,16 @@ type Probe struct {
 }
 
 // NewProbe constructs a Probe. db may be nil on the API side if the
-// outbox is only scraped by the worker.
+// outbox is only scraped by the worker. Zero-valued opts fields are
+// back-filled from DefaultProbeOpts so the defaults have a single
+// source of truth.
 func NewProbe(client *Client, db *sql.DB, lister JobLister, opts ProbeOpts) *Probe {
+	def := DefaultProbeOpts()
 	if opts.Interval <= 0 {
-		opts.Interval = 5 * time.Second
+		opts.Interval = def.Interval
+	}
+	if opts.TickTimeout <= 0 {
+		opts.TickTimeout = def.TickTimeout
 	}
 	return &Probe{client: client, db: db, jobLister: lister, opts: opts}
 }
@@ -59,10 +71,16 @@ func (p *Probe) Run(ctx context.Context) {
 }
 
 func (p *Probe) tick(ctx context.Context) {
-	p.probePing(ctx)
-	p.probePool(ctx)
-	p.probeOutbox(ctx)
-	p.probeJobs(ctx)
+	// Bound the whole tick so a single slow backend (Redis hang, DB
+	// stall) can't pin the probe goroutine indefinitely. Skipped ticks
+	// simply produce a gap in the series, which is the honest signal.
+	tickCtx, cancel := context.WithTimeout(ctx, p.opts.TickTimeout)
+	defer cancel()
+
+	p.probePing(tickCtx)
+	p.probePool(tickCtx)
+	p.probeOutbox(tickCtx)
+	p.probeJobs(tickCtx)
 }
 
 func (p *Probe) probePing(ctx context.Context) {
