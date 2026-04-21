@@ -272,6 +272,12 @@ This fixes the orphan-task risk where the fire-and-forget `OnTasksEnqueued`
 callback could fail after Postgres commit, leaving pending tasks that no
 dispatcher ever sees.
 
+`bumpAttempts` retries indefinitely — there is no max-attempt ceiling, only an
+exponential backoff delay capped at `MaxBackoff`. Prolonged Redis unavailability
+will not drop tasks, but the outbox will grow until Redis recovers. A
+dead-letter or max-attempt safeguard could be added later if the unbounded
+growth ever becomes an operational concern.
+
 ```sql
 CREATE TABLE task_outbox (
     id          BIGSERIAL        PRIMARY KEY,
@@ -292,8 +298,16 @@ CREATE TABLE task_outbox (
 CREATE INDEX idx_task_outbox_run_at ON task_outbox(run_at ASC);
 ```
 
+`task_id` and `job_id` intentionally omit foreign keys to `tasks` / `jobs`. The
+outbox lifecycle is decoupled from those tables so high-throughput inserts don't
+contend on FK validation locks, and rows are cleaned up on successful dispatch
+rather than cascaded from the parent task.
+
 The table is expected to stay small — rows are deleted on successful dispatch,
-typically within one sweep tick.
+typically within one sweep tick. If Redis is unavailable, `bumpAttempts` will
+keep re-scheduling failed rows (see note above) and the table can grow unbounded
+until Redis recovers, so outbox backlog and Redis health should be monitored
+together (see `internal/broker/probe.go` for the emitted metrics).
 
 ### Scheduler Tables
 

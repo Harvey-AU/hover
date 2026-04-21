@@ -71,6 +71,16 @@ jobs:
 
       - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
+      - name: Validate runtime secrets
+        run: |
+          # REDIS_URL is shared by the API (scheduler enqueue path) and the
+          # worker (consumer). Validate up front so an empty value doesn't
+          # produce a half-deployed API before the worker step fails.
+          if [ -z "$REDIS_URL" ]; then
+            echo "❌ REDIS_URL is required. Check 1Password: op://Good Native/hover-runtime/REDIS_URL" >&2
+            exit 1
+          fi
+
       - name: Sync secrets to Fly (API app)
         run: |
           flyctl secrets set \
@@ -97,11 +107,6 @@ jobs:
 
       - name: Sync secrets to Fly (worker app)
         run: |
-          if [ -z "$REDIS_URL" ]; then
-            echo "❌ REDIS_URL is required to deploy hover-worker. Check 1Password: op://Good Native/hover-runtime/REDIS_URL" >&2
-            exit 1
-          fi
-
           # hover-worker consumes Redis streams, executes crawls, persists to
           # Postgres + R2. Only secrets actually referenced by the worker
           # binary are synced here; user-facing auth secrets (Supabase JWT,

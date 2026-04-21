@@ -502,7 +502,13 @@ jobs:
           # Destroy the worker first so the consumer detaches before Redis
           # is torn down; otherwise the worker logs a flurry of Redis
           # connection errors on its way out.
-          if flyctl apps list 2>/dev/null | grep -wq "$WORKER_APP_NAME"; then
+          # Capture list output separately so API/auth failures surface
+          # instead of being silently treated as "app does not exist".
+          if ! APP_LIST=$(flyctl apps list); then
+            echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
+            exit 1
+          fi
+          if echo "$APP_LIST" | awk 'NR>1 {print $1}' | grep -Fxq "$WORKER_APP_NAME"; then
             if ! flyctl apps destroy "$WORKER_APP_NAME" --yes; then
               echo "❌ Failed to destroy worker review app: $WORKER_APP_NAME"
               exit 1
@@ -519,7 +525,11 @@ jobs:
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
           # Distinguish "doesn't exist" (OK) from other failures (surface them).
-          if flyctl redis list 2>/dev/null | grep -wq "$REDIS_NAME"; then
+          if ! REDIS_LIST=$(flyctl redis list); then
+            echo "❌ flyctl redis list failed — cannot determine cleanup state" >&2
+            exit 1
+          fi
+          if echo "$REDIS_LIST" | grep -wq "$REDIS_NAME"; then
             if ! flyctl redis destroy "$REDIS_NAME" --yes; then
               echo "❌ Failed to destroy Redis instance: $REDIS_NAME"
               exit 1
@@ -536,7 +546,11 @@ jobs:
         run: |
           APP_NAME="hover-pr-${PR_NUMBER}"
           # Distinguish "doesn't exist" (OK) from other failures (surface them).
-          if flyctl apps list 2>/dev/null | grep -wq "$APP_NAME"; then
+          if ! APP_LIST=$(flyctl apps list); then
+            echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
+            exit 1
+          fi
+          if echo "$APP_LIST" | awk 'NR>1 {print $1}' | grep -Fxq "$APP_NAME"; then
             if ! flyctl apps destroy "$APP_NAME" --yes; then
               echo "❌ Failed to destroy review app: $APP_NAME"
               exit 1
