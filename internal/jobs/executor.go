@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,14 +85,29 @@ type ExecutorConfig struct {
 	MaxDelayMS         int
 }
 
-// DefaultExecutorConfig returns production defaults.
+// DefaultExecutorConfig returns production defaults, allowing env overrides
+// for retry backoff. GNH_RATE_LIMIT_BASE_DELAY_MS and GNH_RATE_LIMIT_MAX_DELAY_MS
+// mirror the pre-Redis in-memory DomainLimiter dials — they now control the
+// TaskExecutor retry schedule after transient failures.
 func DefaultExecutorConfig() ExecutorConfig {
 	return ExecutorConfig{
 		MaxBlockingRetries: 3,
 		MaxTaskRetries:     MaxTaskRetries,
-		BaseDelayMS:        50,
-		MaxDelayMS:         60000,
+		BaseDelayMS:        envIntWithDefault("GNH_RATE_LIMIT_BASE_DELAY_MS", 50),
+		MaxDelayMS:         envIntWithDefault("GNH_RATE_LIMIT_MAX_DELAY_MS", 60000),
 	}
+}
+
+// envIntWithDefault parses an integer env var, returning fallback if unset,
+// empty, or unparseable. Non-positive parsed values also fall through to
+// the default — retry delays must be > 0.
+func envIntWithDefault(key string, fallback int) int {
+	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 // TaskExecutor runs crawl tasks and produces outcomes without

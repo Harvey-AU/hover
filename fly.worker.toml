@@ -29,6 +29,8 @@ primary_region = 'syd'
   GNH_HTML_PERSIST_WORKERS = "32"
   GNH_HTML_PERSIST_QUEUE_SIZE = "2048"
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.5"
+  GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
+  GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
   LOG_LEVEL = "info"
   OBSERVABILITY_ENABLED = "true"
   # Push metrics + traces to Grafana Cloud. Without this, the worker
