@@ -312,8 +312,11 @@ jobs:
           # now in review_apps.toml [env] — no need to set as secrets.
           APP_NAME="hover-pr-${{ github.event.number }}"
 
-          # Check if app exists, create if not
-          if ! flyctl apps list | grep -q "$APP_NAME"; then
+          # Check if app exists, create if not.
+          # Exact match on app name (column 1). grep -q does substring
+          # matching, so hover-pr-12 would falsely match PR 123 and cause
+          # secrets to be set on the wrong app.
+          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$APP_NAME"; then
             echo "Creating new review app: $APP_NAME"
             flyctl apps create "$APP_NAME" --org personal
           else
