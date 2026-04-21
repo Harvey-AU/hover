@@ -27,6 +27,9 @@ primary_region = "syd"
   WORKER_COUNT = "4"
   WORKER_CONCURRENCY = "5"
   GNH_MAX_WORKERS = "40"
+  # Admission breadth (prod: 250 / 3 → 390). Preview scales with smaller pool.
+  GNH_PENDING_ADMISSION_LIMIT_MIN = "80"
+  GNH_PENDING_ADMISSION_WORKER_FACTOR = "3"
 
   # Leave headroom for the API app on the shared Supabase pool.
   DB_MAX_OPEN_CONNS = "15"

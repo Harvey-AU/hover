@@ -12,6 +12,12 @@ primary_region = 'syd'
   WORKER_COUNT = "30"
   WORKER_CONCURRENCY = "20"
   GNH_MAX_WORKERS = "130"
+  # Admission breadth for the jobs query that feeds the dispatcher's
+  # ActiveJobIDs list. Pre-merge formula: max(GNH_MAX_WORKERS × factor, min).
+  # At 130 × 3 = 390 this keeps the dispatcher iterating over enough jobs
+  # that a single slow/blocked job can't starve the others.
+  GNH_PENDING_ADMISSION_LIMIT_MIN = "250"
+  GNH_PENDING_ADMISSION_WORKER_FACTOR = "3"
   # Pre-merge (2de8edec) ran a single app with 125 open / 30 idle and Grafana
   # peaked at 179 pgbouncer / 93 postgres connections during the 4k tasks/min
   # run. The worker now owns all crawl execution, so it keeps the bigger pool;

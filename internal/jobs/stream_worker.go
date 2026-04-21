@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,23 +18,46 @@ import (
 
 // defaultActiveJobsLimit is the fallback cap on the number of active jobs
 // scanned by the dispatcher per refresh tick. Configurable via the
-// STREAM_ACTIVE_JOBS_LIMIT environment variable.
-const defaultActiveJobsLimit = 200
+// STREAM_ACTIVE_JOBS_LIMIT environment variable (explicit override), or
+// derived from GNH_MAX_WORKERS × GNH_PENDING_ADMISSION_WORKER_FACTOR with
+// a floor of GNH_PENDING_ADMISSION_LIMIT_MIN — matching pre-merge behaviour.
+const (
+	defaultActiveJobsLimit              = 200
+	defaultPendingAdmissionLimitMin     = 250
+	defaultPendingAdmissionWorkerFactor = 3
+)
 
-// activeJobsLimit returns the configured limit for refreshActiveJobs,
-// falling back to defaultActiveJobsLimit if unset or invalid.
+// activeJobsLimit returns the configured limit for refreshActiveJobs.
+//
+// Resolution order:
+//  1. STREAM_ACTIVE_JOBS_LIMIT (explicit override — keeps a single-dial
+//     escape hatch for ops).
+//  2. max(GNH_MAX_WORKERS × GNH_PENDING_ADMISSION_WORKER_FACTOR,
+//     GNH_PENDING_ADMISSION_LIMIT_MIN) — the pre-merge formula, so the
+//     admission breadth scales with the worker pool by default. At prod
+//     sizing (GNH_MAX_WORKERS=130, factor=3, min=250) this yields 390.
+//  3. defaultActiveJobsLimit (200) if nothing else is configured.
 func activeJobsLimit() int {
-	v := os.Getenv("STREAM_ACTIVE_JOBS_LIMIT")
-	if v == "" {
+	if v := strings.TrimSpace(os.Getenv("STREAM_ACTIVE_JOBS_LIMIT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		jobsLog.Warn("invalid STREAM_ACTIVE_JOBS_LIMIT, ignoring",
+			"value", v)
+	}
+
+	minLimit := envIntWithDefault("GNH_PENDING_ADMISSION_LIMIT_MIN", defaultPendingAdmissionLimitMin)
+	factor := envIntWithDefault("GNH_PENDING_ADMISSION_WORKER_FACTOR", defaultPendingAdmissionWorkerFactor)
+	maxWorkers := jobDefaultConcurrency()
+
+	derived := maxWorkers * factor
+	if derived < minLimit {
+		derived = minLimit
+	}
+	if derived <= 0 {
 		return defaultActiveJobsLimit
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		jobsLog.Warn("invalid STREAM_ACTIVE_JOBS_LIMIT, using default",
-			"value", v, "default", defaultActiveJobsLimit)
-		return defaultActiveJobsLimit
-	}
-	return n
+	return derived
 }
 
 // StreamWorkerDeps groups the dependencies for a StreamWorkerPool.
