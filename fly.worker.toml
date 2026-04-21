@@ -12,8 +12,18 @@ primary_region = 'syd'
   WORKER_COUNT = "30"
   WORKER_CONCURRENCY = "20"
   GNH_MAX_WORKERS = "130"
-  DB_MAX_OPEN_CONNS = "60"
-  DB_MAX_IDLE_CONNS = "15"
+  # Pre-merge (2de8edec) ran a single app with 125 open / 30 idle and Grafana
+  # peaked at 179 pgbouncer / 93 postgres connections during the 4k tasks/min
+  # run. The worker now owns all crawl execution, so it keeps the bigger pool;
+  # the API (fly.toml) stays lean at 60 because it only serves HTTP handlers.
+  DB_MAX_OPEN_CONNS = "125"
+  DB_MAX_IDLE_CONNS = "30"
+  # Without these the worker defaults to DB_QUEUE_MAX_CONCURRENCY=12 (queue.go)
+  # and DB_TX_MAX_RETRIES=3 — throttling 130 workers down to 12 concurrent DB
+  # operations and giving up earlier on transient serialisation failures than
+  # the API does. Pre-merge these ran inside the API at 100 / 5.
+  DB_QUEUE_MAX_CONCURRENCY = "100"
+  DB_TX_MAX_RETRIES = "5"
   GNH_PRESSURE_HIGH_MARK_MS = "80"
   GNH_PRESSURE_LOW_MARK_MS = "40"
   GNH_PRESSURE_INITIAL_LIMIT = "100"
