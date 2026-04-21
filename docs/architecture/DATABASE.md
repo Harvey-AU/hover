@@ -254,8 +254,11 @@ CREATE INDEX idx_tasks_pending ON tasks(created_at) WHERE status = 'pending';
 - `skipped` - Task skipped due to limits
 
 **`run_at` column** (added 2026-04-19) mirrors the Redis broker's ZSET score
-into Postgres. `Scheduler.Reschedule` dual-writes both on pacing push-back so
-the deadline survives a Redis flush. See `internal/broker/scheduler.go`.
+into Postgres. `Scheduler.Reschedule` persists `tasks.run_at` first, then
+attempts Redis `ZADD` as a separate call, so Postgres remains the durable source
+of truth if Redis is flushed. Writes are sequential, not atomic — there is a
+short divergence window on crash between the two calls. See
+`internal/broker/scheduler.go`.
 
 #### Task Outbox
 
@@ -383,13 +386,21 @@ CREATE TABLE organisations (
 
 ## PostgreSQL-Specific Features
 
-### Lock-Free Task Processing
+### Lock-Free Task Processing (legacy path)
 
-Uses `FOR UPDATE SKIP LOCKED` to allow multiple workers to claim tasks without
-blocking:
+> **Note**: Under the Redis broker architecture, tasks are claimed by workers
+> via Redis `XREADGROUP` on the per-job stream, not by this SQL. The
+> `FOR UPDATE SKIP LOCKED` pattern below is retained for reference and still
+> applies to a few residual Postgres-only paths (e.g. reconciliation tools). The
+> broker consumer calls `UPDATE tasks SET status = 'running'` without taking a
+> Postgres row lock — the Redis stream consumer group provides the exclusivity
+> guarantee.
+
+Historically the worker used `FOR UPDATE SKIP LOCKED` to allow multiple workers
+to claim tasks without blocking:
 
 ```sql
--- Task acquisition query (internal/db/queue.go)
+-- Legacy task acquisition query (pre-broker)
 SELECT t.id, t.job_id, d.name as domain, p.path, t.source_type, t.source_url
 FROM tasks t
 JOIN pages p ON t.page_id = p.id

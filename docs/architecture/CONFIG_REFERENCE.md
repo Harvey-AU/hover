@@ -324,13 +324,12 @@ Async pool for uploading raw HTML to Supabase Storage after task completion.
 **Source:** `internal/broker/pacer.go`, `internal/broker/pacer_lua.go`
 
 Adaptive per-domain token bucket backed by Redis. `TryAcquire` uses `SET NX PX`
-
-- `PTTL` to claim the domain's time-gate before the dispatcher moves a task from
-  ZSET to stream; on contention the caller backs off by the reported TTL.
-  `Release` runs a Redis Lua script (`pacer_lua.go`) to atomically update the
-  adaptive delay state — rate-limit signals widen the delay, sustained successes
-  narrow it. All state lives in Redis so it's shared across worker machines —
-  unlike the previous in-process `DomainLimiter`.
+plus `PTTL` to claim the domain's time-gate before the dispatcher moves a task
+from ZSET to stream; on contention the caller backs off by the reported TTL.
+`Release` runs a Redis Lua script (`pacer_lua.go`) to atomically update the
+adaptive delay state — rate-limit signals widen the delay, sustained successes
+narrow it. All state lives in Redis so it's shared across worker machines —
+unlike the previous in-process `DomainLimiter`.
 
 | Env var / constant             | Default | What it controls                                        |
 | ------------------------------ | ------- | ------------------------------------------------------- |
