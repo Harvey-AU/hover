@@ -23,6 +23,14 @@ type PacerConfig struct {
 
 	// MaxDelayMS caps the adaptive delay. Default 60_000 (60s).
 	MaxDelayMS int
+
+	// MinPushbackMS is the floor applied to PaceResult.RetryAfter when
+	// the gate is already held. Prevents the dispatcher from tight-looping
+	// through rate-limited tasks whose gate TTL is near-zero — without
+	// this floor a domain with a 1ms residual delay would be re-fetched
+	// every Dispatcher tick (100ms). Named after the pre-merge constant
+	// domainDelayPause (internal/jobs/worker.go:147, 100ms default).
+	MinPushbackMS int
 }
 
 // DefaultPacerConfig returns production defaults.
@@ -31,6 +39,7 @@ func DefaultPacerConfig() PacerConfig {
 		SuccessThreshold: 5,
 		DelayStepMS:      envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500),
 		MaxDelayMS:       envInt("GNH_RATE_LIMIT_MAX_DELAY_MS", 60000),
+		MinPushbackMS:    envInt("GNH_DOMAIN_DELAY_PAUSE_MS", 100),
 	}
 }
 
@@ -119,10 +128,22 @@ func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult
 	}
 	if ttl <= 0 {
 		// Key expired between SET NX and PTTL — short retry.
-		return PaceResult{Acquired: false, RetryAfter: time.Duration(delayMS) * time.Millisecond}, nil
+		return PaceResult{Acquired: false, RetryAfter: p.pushbackFloor(time.Duration(delayMS) * time.Millisecond)}, nil
 	}
 
-	return PaceResult{Acquired: false, RetryAfter: ttl}, nil
+	return PaceResult{Acquired: false, RetryAfter: p.pushbackFloor(ttl)}, nil
+}
+
+// pushbackFloor applies MinPushbackMS as a lower bound on pacer RetryAfter
+// durations. Pre-merge this was the domainDelayPause constant — a brief
+// back-off after a domain rate-limit push-back so the dispatcher does not
+// re-claim the same task on the next tick and spin on rate-limited work.
+func (p *DomainPacer) pushbackFloor(d time.Duration) time.Duration {
+	floor := time.Duration(p.cfg.MinPushbackMS) * time.Millisecond
+	if d < floor {
+		return floor
+	}
+	return d
 }
 
 // Release is called after a crawl completes. It updates the adaptive

@@ -43,6 +43,10 @@ primary_region = 'syd'
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.5"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
   GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
+  # Floor on DomainPacer RetryAfter when the domain gate is held. Without
+  # this the dispatcher re-fetches rate-limited tasks every tick (100ms)
+  # and spins on push-back. Pre-merge this was domainDelayPause (100ms).
+  GNH_DOMAIN_DELAY_PAUSE_MS = "100"
   LOG_LEVEL = "info"
   OBSERVABILITY_ENABLED = "true"
   # Push metrics + traces to Grafana Cloud. Without this, the worker

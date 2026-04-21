@@ -56,6 +56,8 @@ primary_region = "syd"
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
   GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
+  # Floor on DomainPacer RetryAfter — see fly.worker.toml for rationale.
+  GNH_DOMAIN_DELAY_PAUSE_MS = "100"
 
   # Scale pressure-controller floor to the smaller preview DB pool. Without
   # this, GNH_PRESSURE_MIN_LIMIT defaults to 30 while DB_QUEUE_MAX_CONCURRENCY
