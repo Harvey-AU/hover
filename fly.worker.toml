@@ -26,6 +26,11 @@ primary_region = 'syd'
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.5"
   LOG_LEVEL = "info"
   OBSERVABILITY_ENABLED = "true"
+  # Push metrics + traces to Grafana Cloud. Without this, the worker
+  # registers instruments but never exports them — worker-only telemetry
+  # (bee.worker.*, bee.db.*, bee.broker.*) vanishes. Auth header is
+  # injected via CI secrets.
+  OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
   ARCHIVE_PROVIDER = "r2"
   ARCHIVE_BUCKET = "native-hover-archive"
   ARCHIVE_RETENTION_JOBS = "3"
