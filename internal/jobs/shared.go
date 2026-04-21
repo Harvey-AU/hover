@@ -10,9 +10,11 @@ import (
 )
 
 const (
-	// fallbackJobConcurrency is used when a job does not report an explicit
-	// concurrency (or the limiter has not yet seeded a value). This mirrors
-	// the API default.
+	// fallbackJobConcurrency is the hardcoded last-resort default used when
+	// GNH_MAX_WORKERS is unset or unparseable. Pre-PR-330, the CreateJob
+	// path used workerPool.maxWorkers (which GNH_MAX_WORKERS fed) as the
+	// concurrency default for new jobs; restoring that dial keeps per-job
+	// dispatch ceilings tunable via env without reintroducing the pool.
 	fallbackJobConcurrency = 20
 
 	// discoveredLinks* constants control timeout behaviour for link persistence.
@@ -20,6 +22,19 @@ const (
 	discoveredLinksMinRemain  = 8 * time.Second
 	discoveredLinksMinTimeout = 5 * time.Second
 )
+
+// jobDefaultConcurrency returns the default per-job concurrency used when a
+// job is created without an explicit Concurrency value. Reads GNH_MAX_WORKERS
+// (production default 130) and falls back to fallbackJobConcurrency if the env
+// var is unset, empty, or unparseable.
+func jobDefaultConcurrency() int {
+	if raw := strings.TrimSpace(os.Getenv("GNH_MAX_WORKERS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallbackJobConcurrency
+}
 
 // JobInfo caches job-specific data that doesn't change during execution.
 type JobInfo struct {

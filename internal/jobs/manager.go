@@ -466,9 +466,12 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 	normalisedDomain := util.NormaliseDomain(options.Domain)
 
 	if options.Concurrency <= 0 {
+		defaultConcurrency := jobDefaultConcurrency()
 		jobsLog.Info("Concurrency not specified; using default",
-			"domain", normalisedDomain, "default_concurrency", fallbackJobConcurrency)
-		options.Concurrency = fallbackJobConcurrency
+			"domain", normalisedDomain,
+			"default_concurrency", defaultConcurrency,
+			"source", "GNH_MAX_WORKERS")
+		options.Concurrency = defaultConcurrency
 	}
 
 	// Handle any existing active jobs for the same domain and user/organisation
