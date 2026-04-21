@@ -45,12 +45,10 @@ primary_region = "syd"
   REDIS_AUTOCLAIM_INTERVAL_S = "30"
   REDIS_COUNTER_SYNC_INTERVAL_S = "5"
 
-  # Batch manager + HTML persistence (scaled from prod).
+  # Batch manager (scaled from prod).
   GNH_BATCH_CHANNEL_SIZE = "1000"
   GNH_RUNNING_TASK_BATCH_SIZE = "32"
   GNH_RUNNING_TASK_FLUSH_INTERVAL_MS = "200"
-  GNH_HTML_PERSIST_WORKERS = "8"
-  GNH_HTML_PERSIST_QUEUE_SIZE = "512"
 
   # Link discovery + pacing (aligned with API preview).
   # Preview runs a tighter threshold than prod (0.7 vs 0.5) so crawls stay
