@@ -461,11 +461,7 @@ jobs:
           script: |
             const prNumber = ${{ github.event.number }};
             const appName = `hover-pr-${prNumber}`;
-            const workerAppName = `hover-worker-pr-${prNumber}`;
-            const redisName = `hover-redis-pr-${prNumber}`;
             const appUrl = `https://${appName}.fly.dev`;
-            const dbType = `${{ steps.deploy.outputs.db_type }}`;
-            const dbLabel = dbType === 'preview' ? 'Supabase preview branch' : 'Shared test database';
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -474,15 +470,7 @@ jobs:
               body: `🐝 **Review App Deployed**
 
               Homepage: <a href="${appUrl}">${appUrl}</a>
-              Dashboard: <a href="${appUrl}/dashboard">${appUrl}/dashboard</a>
-
-              Redis broker topology:
-              - API app: \`${appName}\` (producer — schedules tasks, outbox sweeper)
-              - Worker app: \`${workerAppName}\` (consumer — dispatcher, stream worker pool)
-              - Redis: \`${redisName}\` (Upstash)
-              - Database: ${dbLabel}
-
-              Tail worker logs: \`flyctl logs --app ${workerAppName}\``
+              Dashboard: <a href="${appUrl}/dashboard">${appUrl}/dashboard</a>`
             });
 
   cleanup-review:
