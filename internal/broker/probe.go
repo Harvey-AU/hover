@@ -95,18 +95,22 @@ func (p *Probe) probeOutbox(ctx context.Context) {
 		backlog       int64
 		oldestSeconds sql.NullFloat64
 	)
-	// Single round-trip: count(*) and oldest age.
+	// Only count rows that are actually due. Future-scheduled rows
+	// (retry backoff, throttled reschedule) aren't a backlog — counting
+	// them inflates the gauge and, worse, MIN(run_at) would be in the
+	// future and produce a negative age.
 	row := p.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)::bigint,
 		       EXTRACT(EPOCH FROM NOW() - MIN(run_at))
 		  FROM task_outbox
+		 WHERE run_at <= NOW()
 	`)
 	if err := row.Scan(&backlog, &oldestSeconds); err != nil {
 		brokerLog.Warn("broker probe outbox scan failed", "error", err)
 		return
 	}
 	age := 0.0
-	if oldestSeconds.Valid {
+	if oldestSeconds.Valid && oldestSeconds.Float64 > 0 {
 		age = oldestSeconds.Float64
 	}
 	observability.RecordBrokerOutbox(ctx, backlog, age)

@@ -115,8 +115,10 @@ func main() {
 
 	// --- broker components ---
 	// Use the DB-backed constructor so Reschedule mirrors pacing
-	// push-backs to tasks.run_at (survives a Redis flush).
-	scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
+	// push-backs to tasks.run_at (survives a Redis flush). Route to
+	// queueDB because tasks + task_outbox live there when DATABASE_QUEUE_URL
+	// is set; falls back to pgDB in single-DB deployments.
+	scheduler := broker.NewSchedulerWithDB(redisClient, queueDB.GetDB())
 	pacerCfg := broker.DefaultPacerConfig()
 	pacer := broker.NewDomainPacer(redisClient, pacerCfg)
 	counters := broker.NewRunningCounters(redisClient)
@@ -225,15 +227,18 @@ func main() {
 	if v := envInt("OUTBOX_SWEEP_BATCH_SIZE", 0); v > 0 {
 		outboxOpts.BatchSize = v
 	}
-	outboxSweeper := broker.NewOutboxSweeper(pgDB.GetDB(), scheduler, outboxOpts)
+	// Sweeper reads task_outbox, which is written in the same tx as tasks
+	// — so it belongs on queueDB in split deployments.
+	outboxSweeper := broker.NewOutboxSweeper(queueDB.GetDB(), scheduler, outboxOpts)
 
 	// --- broker telemetry probe ---
 	// Scrapes stream length / ZSET depth / XPENDING per active job plus
 	// outbox backlog, Redis PING, and pool stats every 5s. Without this,
 	// the Tier 1 gauges stay at zero because they have no natural emission
-	// site in the request path.
+	// site in the request path. Uses queueDB so the outbox gauges reflect
+	// the database that actually holds task_outbox rows.
 	probeOpts := broker.DefaultProbeOpts()
-	probe := broker.NewProbe(redisClient, pgDB.GetDB(), swp, probeOpts)
+	probe := broker.NewProbe(redisClient, queueDB.GetDB(), swp, probeOpts)
 
 	// --- start everything ---
 	ctx, cancel := context.WithCancel(context.Background())

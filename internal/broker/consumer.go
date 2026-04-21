@@ -132,7 +132,10 @@ func (c *Consumer) ReadNonBlocking(ctx context.Context, jobID string) ([]StreamM
 		Consumer: c.opts.ConsumerName,
 		Streams:  []string{streamKey, ">"},
 		Count:    c.opts.Count,
-		Block:    0, // non-blocking
+		// go-redis treats Block: 0 as BLOCK 0 ms — which Redis interprets as
+		// "block indefinitely". A negative duration makes the client omit the
+		// BLOCK clause entirely, giving a true non-blocking poll.
+		Block: -1,
 	}).Result()
 	if err == redis.Nil {
 		return nil, nil
