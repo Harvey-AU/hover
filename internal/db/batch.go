@@ -51,6 +51,47 @@ func init() {
 		}
 	}
 
+	// GNH_RUNNING_TASK_BATCH_SIZE mirrors the pre-Redis dial — caps the
+	// number of task-state updates flushed to Postgres per batched write.
+	if val := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_BATCH_SIZE")); val != "" {
+		parsed, err := strconv.Atoi(val)
+		if err != nil {
+			batchLog.Warn("Failed to parse GNH_RUNNING_TASK_BATCH_SIZE override", "value", val)
+		} else {
+			if parsed < 1 {
+				batchLog.Warn("GNH_RUNNING_TASK_BATCH_SIZE below minimum, using 1", "requested", parsed)
+				parsed = 1
+			} else if parsed > 1000 {
+				batchLog.Warn("GNH_RUNNING_TASK_BATCH_SIZE above maximum, using 1000", "requested", parsed)
+				parsed = 1000
+			}
+			MaxBatchSize = parsed
+			batchLog.Info("GNH_RUNNING_TASK_BATCH_SIZE override applied", "batch_size", parsed)
+		}
+	}
+
+	// GNH_RUNNING_TASK_FLUSH_INTERVAL_MS is the authoritative name for the
+	// batch-manager flush cadence (the older GNH_BATCH_MAX_INTERVAL_MS
+	// remains recognised below for backward compatibility).
+	if val := strings.TrimSpace(os.Getenv("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS")); val != "" {
+		parsed, err := strconv.Atoi(val)
+		if err != nil {
+			batchLog.Warn("Failed to parse GNH_RUNNING_TASK_FLUSH_INTERVAL_MS override", "value", val)
+		} else {
+			if parsed < 100 {
+				batchLog.Warn("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS below minimum, using 100ms", "requested", parsed)
+				parsed = 100
+			} else if parsed > 10000 {
+				batchLog.Warn("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS above maximum, using 10s", "requested", parsed)
+				parsed = 10000
+			}
+			MaxBatchInterval = time.Duration(parsed) * time.Millisecond
+			batchLog.Info("GNH_RUNNING_TASK_FLUSH_INTERVAL_MS override applied", "interval_ms", parsed)
+		}
+	}
+
+	// Backward-compat alias: GNH_BATCH_MAX_INTERVAL_MS takes precedence if
+	// also set, but emits a notice so operators move to the new name.
 	if val := strings.TrimSpace(os.Getenv("GNH_BATCH_MAX_INTERVAL_MS")); val != "" {
 		parsed, err := strconv.Atoi(val)
 		if err != nil {
@@ -64,7 +105,7 @@ func init() {
 				parsed = 10000
 			}
 			MaxBatchInterval = time.Duration(parsed) * time.Millisecond
-			batchLog.Info("GNH_BATCH_MAX_INTERVAL_MS override applied", "interval_ms", parsed)
+			batchLog.Info("GNH_BATCH_MAX_INTERVAL_MS override applied (prefer GNH_RUNNING_TASK_FLUSH_INTERVAL_MS)", "interval_ms", parsed)
 		}
 	}
 }
