@@ -489,8 +489,18 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 	var jobIDs []string
 	limit := activeJobsLimit()
 	err := swp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
+		// Pre-merge ordering (FIFO): oldest updated first so long-running
+		// jobs don't starve when more than `limit` jobs are in flight.
+		// The new-world default of `created_at DESC` (newest first) was a
+		// regression — under deep backlog it starved older jobs. Matches
+		// pre-merge internal/jobs/worker.go:2273-2276.
 		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM jobs WHERE status IN ('running', 'pending') ORDER BY created_at DESC LIMIT $1`,
+			`SELECT id FROM jobs
+			 WHERE status IN ('running', 'pending')
+			 ORDER BY updated_at ASC NULLS FIRST,
+			          started_at ASC NULLS FIRST,
+			          created_at ASC
+			 LIMIT $1`,
 			limit)
 		if err != nil {
 			return err
