@@ -103,11 +103,14 @@ See [Roadmap.md](./Roadmap.md) for detailed progress tracking.
 
 ## Tech Stack
 
-- **Backend**: Go 1.26 with PostgreSQL (Supabase)
+- **Backend**: Go 1.26 — API server (`cmd/app`) + worker service (`cmd/worker`),
+  coordinated via Redis broker (ZSET scheduler + Streams)
+- **Database**: Supabase PostgreSQL with pgBouncer pooler
 - **Frontend**: Vanilla JavaScript with data-binding (no build process)
-- **Infrastructure**: Fly.io (app + DB), Cloudflare CDN, Supabase (auth +
-  realtime)
-- **Monitoring**: Sentry (errors), Grafana Cloud (traces), Codecov (coverage)
+- **Infrastructure**: Fly.io (API + worker apps), Cloudflare CDN, Upstash Redis,
+  Supabase (auth + realtime)
+- **Monitoring**: Sentry (errors), Grafana Cloud (OTLP metrics), Codecov
+  (coverage)
 
 ## Documentation
 

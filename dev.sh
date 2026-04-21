@@ -64,6 +64,16 @@ else
         .air.toml
 fi
 
+# Start local Redis for the broker (used by worker service)
+echo "Starting local Redis..."
+if docker ps --format '{{.Names}}' | grep -q '^hover-redis$'; then
+    echo "ℹ️  Redis container already running"
+else
+    docker run -d --name hover-redis -p 6379:6379 redis:7-alpine >/dev/null 2>&1 \
+        || docker start hover-redis >/dev/null 2>&1
+    echo "✅ Redis started on localhost:6379"
+fi
+
 # Start Supabase (will be no-op if already running)
 echo "Starting local Supabase..."
 supabase start
@@ -94,11 +104,32 @@ SUPABASE_URL=${API_URL}
 SUPABASE_AUTH_URL=${API_URL}
 SUPABASE_PUBLISHABLE_KEY=${PUBLISHABLE_KEY}
 SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+
+# Redis broker (local Docker container started by dev.sh)
+REDIS_URL=redis://localhost:6379
+REDIS_TLS_ENABLED=false
+
+# Pressure controller — match production thresholds so local dev
+# sheds load at the same latency marks as prod (defaults are 500/100).
+GNH_PRESSURE_HIGH_MARK_MS=80
+GNH_PRESSURE_LOW_MARK_MS=40
 EOF
 )
     echo "✅ .env.local created"
 else
-    echo "ℹ️  .env.local already exists — skipping generation"
+    echo "ℹ️  .env.local already exists — checking for missing vars"
+    # Append each var independently so partial .env.local files get patched.
+    for VAR_LINE in \
+        "REDIS_URL=redis://localhost:6379" \
+        "REDIS_TLS_ENABLED=false" \
+        "GNH_PRESSURE_HIGH_MARK_MS=80" \
+        "GNH_PRESSURE_LOW_MARK_MS=40"; do
+        VAR_NAME="${VAR_LINE%%=*}"
+        if ! grep -q "^${VAR_NAME}=" .env.local 2>/dev/null; then
+            (umask 077; echo "$VAR_LINE" >> .env.local)
+            echo "  ✅ Appended ${VAR_NAME} to .env.local"
+        fi
+    done
 fi
 
 # Start Air with hot reloading and migration watching

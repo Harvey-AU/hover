@@ -1005,152 +1005,6 @@ func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
 	return rowsAffected, err
 }
 
-// GetNextTask gets a pending task using row-level locking.
-// Uses FOR UPDATE SKIP LOCKED to prevent lock contention between workers.
-// Combines SELECT and UPDATE in a CTE for atomic claiming.
-// Concurrency enforcement is handled by the Go-side in-memory counter in WorkerPool;
-// the jobs row is no longer locked or updated during claim to eliminate hot-row contention.
-func (q *DbQueue) GetNextTask(ctx context.Context, jobID string) (*Task, error) {
-	var task Task
-	now := time.Now().UTC()
-
-	// Track total time including retries
-	totalStart := time.Now()
-	var attemptCount int
-
-	err := q.ExecuteControl(ctx, func(tx *sql.Tx) error {
-		attemptCount++
-		queryStart := time.Now()
-
-		// Two-CTE query: select a pending task then mark it running atomically.
-		// We no longer touch the jobs row here — running_tasks is incremented
-		// asynchronously by WorkerPool.incrementRunningTaskInMem / flushRunningTaskIncrements.
-		query := `
-			WITH next_task AS (
-				SELECT t.id, t.job_id, t.page_id, t.host, t.path, t.created_at, t.retry_count,
-				       t.source_type, t.source_url, t.priority_score
-				FROM tasks t
-				INNER JOIN jobs j ON t.job_id = j.id
-				WHERE t.status = 'pending'
-				AND j.status = 'running'
-				-- Quota enforcement: don't claim if org has exceeded daily quota (completed pages only)
-				AND (j.organisation_id IS NULL OR NOT is_org_over_daily_quota(j.organisation_id))
-		`
-
-		// Add job filter if specified
-		args := []any{now}
-		if jobID != "" {
-			query += " AND t.job_id = $2"
-			args = append(args, jobID)
-		}
-
-		query += `
-				ORDER BY t.priority_score DESC, t.created_at ASC
-				LIMIT 1
-				FOR UPDATE OF t SKIP LOCKED
-			),
-			task_update AS (
-				UPDATE tasks
-				SET status = 'running', started_at = $1
-				FROM next_task nt
-				WHERE tasks.id = nt.id
-				RETURNING tasks.id, tasks.job_id, tasks.page_id, tasks.host, tasks.path,
-				          tasks.created_at, tasks.retry_count, tasks.source_type,
-				          tasks.source_url, tasks.priority_score
-			)
-			SELECT id, job_id, page_id, host, path, created_at, retry_count, source_type, source_url, priority_score
-			FROM task_update
-		`
-
-		// Execute the combined query
-		row := tx.QueryRowContext(ctx, query, args...)
-
-		err := row.Scan(
-			&task.ID, &task.JobID, &task.PageID, &task.Host, &task.Path,
-			&task.CreatedAt, &task.RetryCount, &task.SourceType, &task.SourceURL,
-			&task.PriorityScore,
-		)
-		elapsed := time.Since(queryStart)
-
-		if err == sql.ErrNoRows {
-			// Use sentinel value for metrics when jobID is empty (all-jobs query)
-			metricsJobID := jobID
-			if metricsJobID == "" {
-				metricsJobID = "__all__"
-			}
-
-			queueLog.Debug("No pending task available for job",
-				"job_id", jobID,
-				"query_duration", elapsed,
-				"attempt", attemptCount,
-			)
-			observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "empty")
-			return sql.ErrNoRows
-		}
-		if err != nil {
-			// Use sentinel value for metrics when jobID is empty (all-jobs query)
-			metricsJobID := jobID
-			if metricsJobID == "" {
-				metricsJobID = "__all__"
-			}
-			queueLog.Error("Failed to claim next task",
-				"error", err,
-				"job_id", jobID,
-				"query_duration", elapsed,
-				"attempt", attemptCount,
-			)
-			observability.RecordTaskClaimAttempt(ctx, metricsJobID, elapsed, "error")
-			return fmt.Errorf("failed to claim task: %w", err)
-		}
-
-		task.Status = "running"
-		task.StartedAt = now
-
-		queueLog.Debug("Claimed next task",
-			"job_id", task.JobID,
-			"task_id", task.ID,
-			"query_duration", elapsed,
-			"attempt", attemptCount,
-		)
-
-		observability.RecordTaskClaimAttempt(ctx, task.JobID, elapsed, "claimed")
-
-		return nil
-	})
-
-	totalElapsed := time.Since(totalStart)
-
-	// Log summary if there were retries or if total time was significantly longer than expected
-	if attemptCount > 1 || totalElapsed > 5*time.Second {
-		args := []any{
-			"job_id", jobID,
-			"total_duration", totalElapsed,
-			"attempts", attemptCount,
-		}
-		if totalElapsed > 30*time.Second {
-			queueLog.Warn("Task claim completed after retries or slow execution", args...)
-		} else {
-			queueLog.Info("Task claim completed after retries or slow execution", args...)
-		}
-	}
-
-	if err == sql.ErrNoRows {
-		return nil, nil // No tasks available
-	}
-	if err != nil {
-		// Log error with total context
-		queueLog.Error("Error getting next pending task",
-			"error", err,
-			"job_id", jobID,
-			"total_duration", totalElapsed,
-			"attempts", attemptCount,
-		)
-		return nil, err
-	}
-
-	return &task, nil
-}
-
 // enqueueJobConfig holds configuration fetched from the database for task enqueueing
 type enqueueJobConfig struct {
 	maxPages         int
@@ -1331,61 +1185,77 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			}
 		}
 
-		// Use array-based insert to minimise round-trips and leverage Postgres batching
+		// Use array-based insert to minimise round-trips and leverage Postgres batching.
+		// A CTE (WITH ins AS ...) mirrors the rows the INSERT actually wrote (or updated
+		// via ON CONFLICT) into task_outbox. The ON CONFLICT guard suppresses updates
+		// for tasks already in a terminal state (running/completed/failed), so those
+		// rows do not appear in ins.RETURNING and no spurious outbox row is produced.
 		insertQuery := `
-			INSERT INTO tasks (
-				id, job_id, page_id, host, path, status, created_at, retry_count,
-				source_type, source_url, priority_score
+			WITH ins AS (
+				INSERT INTO tasks (
+					id, job_id, page_id, host, path, status, created_at, retry_count,
+					source_type, source_url, priority_score
+				)
+				SELECT
+					unnest_ids,
+					unnest_job_ids,
+					unnest_page_ids,
+					unnest_hosts,
+					unnest_paths,
+					unnest_statuses,
+					unnest_created_at,
+					unnest_retry_counts,
+					unnest_source_types,
+					unnest_source_urls,
+					unnest_priorities
+				FROM UNNEST(
+					$1::uuid[],
+					$2::uuid[],
+					$3::int[],
+					$4::text[],
+					$5::text[],
+					$6::text[],
+					$7::timestamptz[],
+					$8::int[],
+					$9::text[],
+					$10::text[],
+					$11::double precision[]
+				) AS t(
+					unnest_ids,
+					unnest_job_ids,
+					unnest_page_ids,
+					unnest_hosts,
+					unnest_paths,
+					unnest_statuses,
+					unnest_created_at,
+					unnest_retry_counts,
+					unnest_source_types,
+					unnest_source_urls,
+					unnest_priorities
+				)
+				ON CONFLICT (job_id, page_id) DO UPDATE
+				SET status = EXCLUDED.status,
+					host = EXCLUDED.host,
+					created_at = EXCLUDED.created_at,
+					retry_count = EXCLUDED.retry_count,
+					source_type = EXCLUDED.source_type,
+					source_url = EXCLUDED.source_url,
+					priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score),
+					started_at = NULL,
+					completed_at = NULL,
+					error = NULL
+				WHERE tasks.status IN ('pending', 'waiting', 'skipped')
+				RETURNING id, job_id, page_id, host, path, priority_score,
+				          retry_count, source_type, source_url, created_at, status
 			)
-			SELECT
-				unnest_ids,
-				unnest_job_ids,
-				unnest_page_ids,
-				unnest_hosts,
-				unnest_paths,
-				unnest_statuses,
-				unnest_created_at,
-				unnest_retry_counts,
-				unnest_source_types,
-				unnest_source_urls,
-				unnest_priorities
-			FROM UNNEST(
-				$1::uuid[],
-				$2::uuid[],
-				$3::int[],
-				$4::text[],
-				$5::text[],
-				$6::text[],
-				$7::timestamptz[],
-				$8::int[],
-				$9::text[],
-				$10::text[],
-				$11::double precision[]
-			) AS t(
-				unnest_ids,
-				unnest_job_ids,
-				unnest_page_ids,
-				unnest_hosts,
-				unnest_paths,
-				unnest_statuses,
-				unnest_created_at,
-				unnest_retry_counts,
-				unnest_source_types,
-				unnest_source_urls,
-				unnest_priorities
+			INSERT INTO task_outbox (
+				task_id, job_id, page_id, host, path,
+				priority, retry_count, source_type, source_url, run_at
 			)
-			ON CONFLICT (job_id, page_id) DO UPDATE
-			SET status = EXCLUDED.status,
-				host = EXCLUDED.host,
-				created_at = EXCLUDED.created_at,
-				retry_count = EXCLUDED.retry_count,
-				source_type = EXCLUDED.source_type,
-				source_url = EXCLUDED.source_url,
-				priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score),
-				started_at = NULL,
-				completed_at = NULL,
-				error = NULL
-			WHERE tasks.status IN ('pending', 'waiting', 'skipped')
+			SELECT id, job_id, page_id, host, path,
+			       priority_score, retry_count, source_type, source_url, created_at
+			FROM ins
+			WHERE status IN ('pending', 'waiting')
 		`
 
 		now := time.Now().UTC()
@@ -1477,6 +1347,10 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 		if err != nil {
 			return fmt.Errorf("failed to insert tasks: %w", err)
 		}
+
+		// Note: the same statement also populates task_outbox via the CTE above,
+		// so a successful commit guarantees every newly-pending/waiting task has
+		// a matching outbox row for the sweeper to pick up.
 
 		// Note: Daily usage is incremented when tasks COMPLETE, not when created
 		// See batch.go FlushUpdates for quota increment on completion/failure
@@ -1855,109 +1729,6 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			}
 		}
 		return nil
-	})
-}
-
-// DecrementRunningTasks immediately decrements the running_tasks counter for a job.
-// This is called when a task completes to free up concurrency slots without waiting for batch flush.
-// Also promotes one waiting task to pending if job still has capacity.
-// The actual task field updates are still handled by the batch manager for efficiency.
-func (q *DbQueue) DecrementRunningTasks(ctx context.Context, jobID string) error {
-	return q.DecrementRunningTasksBy(ctx, jobID, 1)
-}
-
-// DecrementRunningTasksBy releases multiple running task slots for a job in one trip.
-func (q *DbQueue) DecrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
-	if jobID == "" {
-		return fmt.Errorf("jobID cannot be empty")
-	}
-	if count <= 0 {
-		return nil
-	}
-
-	queueLog.Debug("DecrementRunningTasksBy called", "job_id", jobID, "release_count", count)
-
-	var freedCapacity bool
-
-	err := q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		// Decrement running_tasks count in a single atomic update
-		decrementQuery := `
-			UPDATE jobs
-			SET running_tasks = GREATEST(0, running_tasks - $2)
-			WHERE id = $1 AND running_tasks > 0
-		`
-		result, err := tx.ExecContext(txCtx, decrementQuery, jobID, count)
-		if err != nil {
-			queueLog.Error("DecrementRunningTasksBy database error", "error", err, "job_id", jobID)
-			return fmt.Errorf("failed to decrement running_tasks for job %s: %w", jobID, err)
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			queueLog.Error("DecrementRunningTasksBy failed to get rows affected", "error", err, "job_id", jobID)
-		} else {
-			queueLog.Debug("DecrementRunningTasksBy executed",
-				"job_id", jobID,
-				"rows_affected", rowsAffected,
-				"requested_release", count,
-			)
-		}
-
-		freedCapacity = rowsAffected > 0
-
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if !freedCapacity {
-		// No slots freed (job already at 0), nothing to promote
-		return nil
-	}
-
-	// Promote exactly `count` waiting tasks now that the slots are confirmed freed.
-	// Run outside the decrement transaction to avoid holding both job and task locks
-	// concurrently (previously caused deadlocks under load).
-	promoteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := q.promoteWaitingTasksBatch(promoteCtx, jobID, count); err != nil {
-		// Best-effort: log but don't fail – the caller already freed slots.
-		queueLog.Warn("Failed to promote waiting tasks after slot release", "error", err, "job_id", jobID)
-	}
-
-	return nil
-}
-
-// IncrementRunningTasksBy adds count to running_tasks for a job.
-// It is called asynchronously by WorkerPool to flush batched in-memory increments,
-// keeping the hot claim path free from jobs row contention.
-func (q *DbQueue) IncrementRunningTasksBy(ctx context.Context, jobID string, count int) error {
-	if jobID == "" || count <= 0 {
-		return nil
-	}
-	return q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `
-			UPDATE jobs
-			SET running_tasks = running_tasks + $2
-			WHERE id = $1
-		`, jobID, count)
-		return err
-	})
-}
-
-// promoteWaitingTasksBatch promotes up to count waiting tasks to pending for the given job.
-// Uses the batch-aware SQL function that locks only task rows (SKIP LOCKED) and promotes
-// all slots in one UPDATE, avoiding the stale running_tasks check of the old function.
-func (q *DbQueue) promoteWaitingTasksBatch(ctx context.Context, jobID string, count int) error {
-	if count <= 0 {
-		return nil
-	}
-	return q.ExecuteControlWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `SELECT promote_waiting_tasks_for_job($1, $2)`, jobID, count)
-		return err
 	})
 }
 

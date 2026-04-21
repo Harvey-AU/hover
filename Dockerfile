@@ -15,8 +15,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/app/main.go
+# Build both binaries in a single layer
+RUN CGO_ENABLED=0 GOOS=linux go build -o main ./cmd/app/main.go && \
+    CGO_ENABLED=0 GOOS=linux go build -o worker ./cmd/worker/main.go
 
 # Final stage
 FROM alpine:3.19
@@ -31,8 +32,9 @@ RUN apk --no-cache add \
   ca-certificates=20250911-r0 \
   gcompat=1.1.0-r4
 
-# Copy Go binary
+# Copy Go binaries (API + worker)
 COPY --from=builder /app/main .
+COPY --from=builder /app/worker .
 
 # Copy Alloy binary and config
 COPY --from=alloy /bin/alloy /usr/local/bin/alloy

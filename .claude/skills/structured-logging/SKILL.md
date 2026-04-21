@@ -28,22 +28,23 @@ Sentry tag, enabling filtering by subsystem in both log aggregators and Sentry.
 
 ## Component taxonomy
 
-| Component    | Package(s)                                      |
-| ------------ | ----------------------------------------------- |
-| `worker`     | `internal/jobs/worker.go`                       |
-| `queue`      | `internal/db/queue.go`                          |
-| `batch`      | `internal/db/batch.go`                          |
-| `db`         | `internal/db/*.go` (all other DB files)         |
-| `api`        | `internal/api/*.go`                             |
-| `crawler`    | `internal/crawler/*.go`                         |
-| `archive`    | `internal/archive/*.go`                         |
-| `notify`     | `internal/notifications/*.go`                   |
-| `auth`       | `internal/auth/*.go`                            |
-| `startup`    | `cmd/app/main.go`                               |
-| `techdetect` | `internal/techdetect/*.go`                      |
-| `util`       | `internal/util/*.go`                            |
-| `jobs`       | `internal/jobs/manager.go`, `domain_limiter.go` |
-| `pressure`   | `internal/db/pressure.go`                       |
+| Component    | Package(s)                              |
+| ------------ | --------------------------------------- |
+| `worker`     | `cmd/worker/main.go`                    |
+| `queue`      | `internal/db/queue.go`                  |
+| `batch`      | `internal/db/batch.go`                  |
+| `db`         | `internal/db/*.go` (all other DB files) |
+| `api`        | `internal/api/*.go`                     |
+| `crawler`    | `internal/crawler/*.go`                 |
+| `archive`    | `internal/archive/*.go`                 |
+| `notify`     | `internal/notifications/*.go`           |
+| `auth`       | `internal/auth/*.go`                    |
+| `startup`    | `cmd/app/main.go`                       |
+| `techdetect` | `internal/techdetect/*.go`              |
+| `util`       | `internal/util/*.go`                    |
+| `jobs`       | `internal/jobs/*.go`                    |
+| `broker`     | `internal/broker/*.go`                  |
+| `pressure`   | `internal/db/pressure.go`               |
 
 ## Level selection
 

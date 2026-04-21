@@ -1,0 +1,57 @@
+# fly.worker.toml — Fly.io configuration for the hover worker service.
+# The worker consumes tasks from Redis Streams, executes crawls,
+# and persists results to Postgres.
+
+app = 'hover-worker'
+primary_region = 'syd'
+
+[build]
+
+[env]
+  APP_ENV = "production"
+  WORKER_COUNT = "30"
+  WORKER_CONCURRENCY = "20"
+  GNH_MAX_WORKERS = "130"
+  DB_MAX_OPEN_CONNS = "60"
+  DB_MAX_IDLE_CONNS = "15"
+  REDIS_POOL_SIZE = "200"
+  REDIS_DISPATCH_INTERVAL_MS = "100"
+  REDIS_DISPATCH_BATCH_SIZE = "50"
+  REDIS_CONSUMER_BLOCK_MS = "2000"
+  REDIS_AUTOCLAIM_INTERVAL_S = "30"
+  REDIS_COUNTER_SYNC_INTERVAL_S = "5"
+  GNH_BATCH_CHANNEL_SIZE = "5000"
+  GNH_HTML_PERSIST_WORKERS = "32"
+  GNH_HTML_PERSIST_QUEUE_SIZE = "2048"
+  GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.5"
+  LOG_LEVEL = "info"
+  OBSERVABILITY_ENABLED = "true"
+  # Push metrics + traces to Grafana Cloud. Without this, the worker
+  # registers instruments but never exports them — worker-only telemetry
+  # (bee.worker.*, bee.db.*, bee.broker.*) vanishes. Auth header is
+  # injected via CI secrets.
+  OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
+  ARCHIVE_RETENTION_JOBS = "3"
+  ARCHIVE_INTERVAL = "1m"
+  ARCHIVE_BATCH_SIZE = "100"
+  ARCHIVE_CONCURRENCY = "5"
+
+[deploy]
+  strategy = "immediate"
+
+[processes]
+  worker = "./worker"
+
+# Always restart on exit. The worker has no [http_service] block, so Fly
+# has no health-check hook to wake it up, and the default on-failure
+# policy gives up after 10 retries — a bad hour (Redis blip, DB failover)
+# could otherwise leave the worker permanently stopped.
+[[restart]]
+  policy = "always"
+
+[[vm]]
+  memory = '4gb'
+  cpu_kind = 'performance'
+  cpus = 2

@@ -3,38 +3,63 @@
 ## System Overview
 
 Hover is a web cache warming service built in Go. It crawls URLs across one or
-more domains, warms caches, and records performance metrics. A worker pool
-architecture handles concurrent crawling, backed by PostgreSQL (via Supabase)
-for state and a Fly.io single-machine deployment.
+more domains, warms caches, and records performance metrics. The system is split
+into two services: an **API server** (`cmd/app`) that handles HTTP traffic and
+schedules tasks, and a **worker service** (`cmd/worker`) that consumes tasks and
+executes crawls. The two communicate via a **Redis broker** (ZSET scheduler +
+Streams) with PostgreSQL (via Supabase) as the durable source of truth.
 
 ---
 
 ## Core Components
 
-### Worker Pool System
+### Redis Broker
 
-The worker pool is the engine of the application. It scales dynamically between
-a base count and a configured maximum based on how many jobs are active and what
-their per-job concurrency settings are.
+The broker decouples task scheduling from task execution across process
+boundaries. It replaces the previous in-process worker-pool model.
 
-- **Task claiming**: Workers claim pending tasks atomically using PostgreSQL's
-  `FOR UPDATE SKIP LOCKED` — no application-level locking required
-- **Concurrency model**: Each worker goroutine runs up to `WORKER_CONCURRENCY`
-  (20) tasks simultaneously via an in-process semaphore
-- **Dynamic scaling**: Pool size =
-  `ceil(∑ job concurrency / WORKER_CONCURRENCY × 1.1)`, capped at
-  `maxWorkersProduction` (160)
-- **Task lifecycle**: Tasks progress
-  `waiting → pending → running → completed/failed/skipped`. The `waiting` state
-  is a holding area; tasks are promoted to `pending` by a background monitor
-  every 5 seconds
-- **Domain rate limiting**: An adaptive per-domain delay backs off when sites
-  signal rate limits and recovers after sustained successes. High delays reduce
-  the job's effective concurrency fed into the scaling formula
-- **Recovery**: Periodic cleanup of tasks stuck in `running` state; graceful
-  re-queue on restart
+- **Scheduler** (`internal/broker/scheduler.go`): the API server writes task
+  envelopes into a per-job ZSET (`schedule:{job_id}`) with a `run_at` timestamp
+  score. ZSET rescheduling is dual-written to `tasks.run_at` so pacing delays
+  survive a Redis flush.
+- **Dispatcher** (`internal/broker/dispatcher.go`, runs on the worker service):
+  pops due entries from ZSETs (`ZRANGEBYSCORE` + `ZREM`) and `XADD`s them to the
+  per-job Redis Stream (`stream:{job_id}`), subject to job-level concurrency
+  caps and per-domain pacing.
+- **Consumer** (`internal/broker/consumer.go`): worker goroutines `XREADGROUP`
+  from streams using consumer group `group:{job_id}`. Stale messages (holder
+  crash, long run) are reclaimed via `XAUTOCLAIM`.
+- **Domain Pacer** (`internal/broker/pacer.go`): adaptive per-domain
+  token-bucket (Lua-scripted in Redis). Rate-limit signals from crawler
+  responses widen the delay; sustained successes narrow it.
+- **Running Counters** (`internal/broker/counters.go`): per-job in-memory
+  running-task count, periodically synced to `jobs.running_tasks` in Postgres
+  with drift telemetry.
+- **Outbox sweeper** (`internal/broker/outbox.go`): drains the `task_outbox`
+  table into the scheduler. Tasks are written to the outbox in the same
+  transaction as the `tasks` row, guaranteeing durable scheduling even if the
+  fire-and-forget `OnTasksEnqueued` callback fails.
 
-For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
+For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md). For
+operational detail (key map, failure modes, common operations) see
+[REDIS_BROKER_RUNBOOK.md](../operations/REDIS_BROKER_RUNBOOK.md).
+
+### Worker Service
+
+The worker binary runs a fixed pool of goroutines (`WORKER_COUNT`, default 30)
+that each consume from Redis Streams and execute crawls.
+
+- **Stream worker pool** (`internal/jobs/stream_worker.go`): each goroutine owns
+  its XREADGROUP consumer identity (`worker-{machine}-{idx}`) and processes
+  messages serially. Concurrency within a worker is driven by
+  `WORKER_CONCURRENCY` (tasks per goroutine).
+- **Task executor** (`internal/jobs/executor.go`): runs a single crawl,
+  classifies the outcome (ok / retryable / permanent failure / rate-limited),
+  and feeds the result to the batch writer.
+- **Batch writer** (`internal/db/batch.go`): buffers task-status updates and
+  link-discovery inserts to amortise DB writes.
+- **Graceful shutdown**: on SIGTERM the pool stops reading new messages and
+  drains in-flight tasks up to a bounded timeout.
 
 ### Database Layer (PostgreSQL via Supabase)
 
@@ -45,8 +70,9 @@ For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 - **Incremental counters**: Job progress fields (`completed_tasks`,
   `failed_tasks`, `skipped_tasks`, `progress`, `status`) are maintained by
   row-level triggers using O(1) delta arithmetic — no COUNT(\*) scans
-- **Connection pooling**: 150 max open / 30 idle connections to Supabase
-  pgBouncer; queue operations gated by a 120-slot semaphore
+- **Connection pooling**: per-service `DB_MAX_OPEN_CONNS` (60 each) against the
+  shared Supabase pgBouncer; bulk writes on the API server gated by a
+  pressure-controlled queue semaphore
 - **Row Level Security**: Enforced at the database layer for multi-tenant data
   isolation
 
@@ -69,7 +95,7 @@ For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 - **Link discovery**: Optional HTML parsing to extract additional URLs and
   enqueue them as new tasks within the same job
 - **Robots.txt compliance**: Fetched and cached per domain; `Crawl-Delay`
-  honoured via the domain rate limiter
+  honoured via the domain pacer
 - **Sitemap processing**: Parses XML sitemaps (including sitemap indexes) to
   seed jobs with a full URL list before crawling begins
 
@@ -77,12 +103,12 @@ For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 
 ## Application Entry Points (`cmd/`)
 
-| Directory                  | Purpose                                     |
-| -------------------------- | ------------------------------------------- |
-| `cmd/app/`                 | Main server: HTTP API + worker pool         |
-| `cmd/hover/`               | CLI tool for job management and diagnostics |
-| `cmd/test_jobs/`           | Load-testing utility for the job queue      |
-| `cmd/archive_key_migrate/` | One-off migration for archive storage keys  |
+| Directory                  | Purpose                                                                 |
+| -------------------------- | ----------------------------------------------------------------------- |
+| `cmd/app/`                 | API server: HTTP handlers, job creation, task scheduling into Redis     |
+| `cmd/worker/`              | Worker service: Redis Stream consumers, crawl execution, result persist |
+| `cmd/hover/`               | CLI tool for job management and diagnostics                             |
+| `cmd/archive_key_migrate/` | One-off migration for archive storage keys                              |
 
 ---
 
@@ -94,10 +120,11 @@ For all configurable values, see [CONFIG_REFERENCE.md](CONFIG_REFERENCE.md).
 | `archive/`       | Cold-storage archival to Cloudflare R2 (active background job)            |
 | `auth/`          | JWT validation, session management                                        |
 | `benchmarks/`    | Go benchmark helpers for performance regression testing                   |
+| `broker/`        | Redis broker: scheduler, dispatcher, consumer, pacer, outbox sweeper      |
 | `cache/`         | In-process caching utilities                                              |
 | `crawler/`       | HTTP crawl logic, sitemap parsing, cache validation, link extraction      |
 | `db/`            | PostgreSQL connection, queue semaphore, batch writer, page/domain records |
-| `jobs/`          | Worker pool, job manager, domain rate limiter, task promotion             |
+| `jobs/`          | Job manager, stream worker pool, task executor, link discovery            |
 | `loops/`         | Background loop helpers (ticker management, graceful stop)                |
 | `mocks/`         | Test doubles for DB and crawler interfaces                                |
 | `notifications/` | In-app notification creation and delivery                                 |
@@ -136,12 +163,16 @@ waiting → pending → running → completed
                            ↘ skipped
 ```
 
-- **waiting**: Created but not yet eligible for claiming (quota or concurrency
-  limit reached). Promoted to `pending` by the quota monitor every 5 seconds.
-- **pending**: Ready to be claimed by a worker.
-- **running**: Claimed; HTTP request in flight.
+- **waiting**: Created but not yet eligible for dispatch (quota or concurrency
+  limit reached, or pacer back-off active). A matching row in `task_outbox`
+  drives eventual scheduling into Redis.
+- **pending**: Scheduled into the Redis ZSET; `tasks.run_at` mirrors the ZSET
+  score so the deadline survives a Redis flush. The dispatcher moves the
+  envelope to the stream once due and concurrency / pacing permit.
+- **running**: Claimed by a worker via `XREADGROUP`; HTTP request in flight.
 - **completed / failed / skipped**: Terminal states. Trigger the incremental
-  counter update on the parent job row.
+  counter update on the parent job row and remove the message from the stream's
+  pending entries list.
 
 ### Job Counters (Trigger-Maintained)
 
@@ -166,29 +197,33 @@ size. See
 `supabase/migrations/20260409111417_incremental_update_job_counters.sql` and
 `20260409120000_unify_job_progress_triggers.sql`.
 
-### Waiting → Pending Promotion
+### Outbox Pattern for Durable Scheduling
 
-Tasks are created in `waiting` state and promoted to `pending` by
-`StartQuotaPromotionMonitor` every 5 seconds. This decouples URL discovery from
-worker saturation: a sitemap with 50,000 URLs can be inserted immediately
-without flooding the pending queue. Per-job concurrency limits are enforced at
-promotion time, not at claim time.
+`JobManager.EnqueueJobURLs` writes both the `tasks` row and a matching
+`task_outbox` row in one transaction. A fire-and-forget `OnTasksEnqueued`
+callback handles the common case of scheduling immediately into Redis. If that
+callback fails (Redis blip, process crash), the outbox sweeper in the worker
+service picks the row up on its next tick and schedules it durably. This closes
+the orphan-task risk where a committed task row could be invisible to the
+dispatcher.
 
-### Domain Rate Limiter
+### Domain Pacer
 
-An in-process `DomainLimiter` tracks per-domain adaptive delays. When a site
-returns rate-limit signals (429, 503, specific headers), the delay increases by
-500ms steps up to 60s. After 5 consecutive successes the delay steps down. This
-state also feeds `calculateConcurrencyTarget()` — a heavily throttled domain
-reduces the job's effective worker allocation automatically.
+`internal/broker/pacer.go` implements an adaptive per-domain token bucket via a
+Redis Lua script. Rate-limit signals from crawler responses (429, 503, specific
+headers) widen the per-domain delay; sustained successes narrow it. The
+dispatcher consults the pacer before moving a task from ZSET to stream. When a
+domain is paced, the dispatcher reschedules the task with a later `run_at`
+(mirrored to Postgres) rather than stalling the whole worker.
 
-### Batch Running-Task Increments
+### Batch Running-Task Counters
 
-Claiming a task (setting `status = 'running'`) is an O(1) DB operation, but
-updating `jobs.running_tasks` on every claim would cause hot-row contention
-under high concurrency. Instead, increments are buffered in memory and flushed
-in batches every 200ms (`GNH_RUNNING_TASK_FLUSH_INTERVAL_MS`). A reconciliation
-loop corrects any drift periodically.
+`jobs.running_tasks` is driven by `internal/broker/counters.go`, which keeps a
+per-job in-memory counter incremented on message receive and decremented on
+outcome. A background sync loop (`REDIS_COUNTER_SYNC_INTERVAL_S`, default 5s)
+flushes changes to Postgres, emitting drift telemetry
+(`bee.broker.counter_sync_skew`) so any divergence between Redis truth and the
+Postgres snapshot is observable.
 
 ### HTML Cold Storage
 
@@ -204,13 +239,18 @@ configurable interval, then marks tasks as archived. Jobs are promoted to
 
 ### Metrics (OpenTelemetry → Grafana)
 
-The application exports metrics via OTLP to Grafana Cloud. Key signals:
+Both services export metrics via OTLP to Grafana Cloud. Key signals:
 
-- Task claim latency (`GetNextTask` p50/p95/p99)
-- Tasks completed / failed / skipped per minute
-- Active job and worker counts
+- Broker throughput: `bee.broker.dispatch_total` (by outcome), stream length,
+  scheduled ZSET depth, consumer pending count
+- Consumer latency: `bee.broker.consumer_message_age_ms` (time from XADD to
+  XREADGROUP receipt)
+- Pacer behaviour: `bee.broker.pacer_pushback_total`, `pacer_delay_ms`
+- Outbox health: `bee.broker.outbox_backlog`, `outbox_age_seconds`
+- Redis health: `bee.broker.redis_ping_duration_ms`, pool in-use/idle/wait
+- Tasks completed / failed / skipped per minute (worker-side outcome labels)
 - DB pool utilisation and queue semaphore wait time
-- Domain limiter delay distribution
+- Redis ↔ Postgres counter drift (`bee.broker.counter_sync_skew`)
 
 ### Error Tracking (Sentry)
 
@@ -262,17 +302,18 @@ attribute conventions and file names. The system handles:
 
 ## Deployment
 
-| Concern      | Solution                                              |
-| ------------ | ----------------------------------------------------- |
-| Hosting      | Fly.io, `syd` region, single machine (4 CPU / 8GB)    |
-| Database     | Supabase PostgreSQL with pgBouncer pooler             |
-| Auth         | Supabase Auth on custom domain                        |
-| Real-time    | Supabase Realtime (Postgres Changes)                  |
-| Hot storage  | Supabase Storage (HTML captures, assets)              |
-| Cold storage | Cloudflare R2 (archived HTML, via `internal/archive`) |
-| CDN          | Cloudflare                                            |
-| Monitoring   | Grafana Cloud (OTLP metrics) + Sentry                 |
-| CI/CD        | GitHub Actions → Fly.io deploy                        |
+| Concern      | Solution                                                             |
+| ------------ | -------------------------------------------------------------------- |
+| Hosting      | Fly.io, `syd` region — `hover` API app + `hover-worker` worker app   |
+| Broker       | Fly.io Upstash Redis (per-env instance; preview apps get their own)  |
+| Database     | Supabase PostgreSQL with pgBouncer pooler                            |
+| Auth         | Supabase Auth on custom domain                                       |
+| Real-time    | Supabase Realtime (Postgres Changes)                                 |
+| Hot storage  | Supabase Storage (HTML captures, assets)                             |
+| Cold storage | Cloudflare R2 (archived HTML, via `internal/archive`)                |
+| CDN          | Cloudflare                                                           |
+| Monitoring   | Grafana Cloud (OTLP metrics) + Sentry                                |
+| CI/CD        | GitHub Actions → Fly.io deploy (API + worker deployed independently) |
 
 ### Schema Management
 

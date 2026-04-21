@@ -32,6 +32,115 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.0] – 2026-04-21
+
+### Added
+
+- Redis broker system for task dispatch — API server schedules tasks into Redis
+  ZSETs, dedicated worker service (`cmd/worker`) consumes via Redis Streams
+- `internal/broker/` package: Scheduler, DomainPacer, RunningCounters, Consumer,
+  Dispatcher with per-domain rate limiting and adaptive backoff
+- `StreamWorkerPool` and `TaskExecutor` in `internal/jobs/` for worker-side task
+  processing with batch result persistence
+- Dedicated worker binary (`cmd/worker/main.go`) with its own `fly.worker.toml`
+  deployment config
+- Task outcome telemetry (outcome label, reason, duration) via
+  `observability.RecordWorkerTaskOutcome`
+- Redis is optional for the API server — graceful degradation when `REDIS_URL`
+  is not set (tasks stay in Postgres, dispatch disabled)
+- Broker integration tests (`internal/broker/dispatcher_test.go`) covering happy
+  path, concurrency gating, domain pacing, malformed entries, and XAUTOCLAIM
+  reclaim via miniredis
+- `docs/operations/REDIS_BROKER_RUNBOOK.md` — day-two ops guide (key map, common
+  operations, failure modes)
+- `docs/plans/REDIS_BROKER_CUTOVER.md` — staged rollout plan, observability gap
+  list, rollback paths, known architectural deferrals
+- `STREAM_ACTIVE_JOBS_LIMIT` env var — was hard-coded to 200, now configurable
+- Tier 1 + Tier 2 broker OTEL metrics: `bee.broker.stream_length`,
+  `scheduled_zset_depth`, `consumer_pending`, `outbox_backlog`,
+  `outbox_age_seconds`, `redis_ping_duration_ms`, `dispatch_total`,
+  `autoclaim_total`, `consumer_message_age_ms`, `pacer_pushback_total`,
+  `pacer_delay_ms`, `counter_sync_skew`, and `redis_pool.{in_use,idle,wait}`
+- `internal/broker/probe.go` — periodic probe goroutine scraping stream length,
+  ZSET depth, XPENDING, outbox backlog/age, Redis PING, and pool stats every 5s
+  (bounded per-tick timeout, skips emission on Redis outage to avoid false
+  zeroes)
+- Counter skew telemetry — `DefaultDBSyncFunc` now snapshots prior
+  `jobs.running_tasks` and emits `bee.broker.counter_sync_skew` per job so
+  Redis↔Postgres counter drift is observable
+- `OTEL_EXPORTER_OTLP_ENDPOINT` in `fly.worker.toml` — without it the worker
+  registered broker instruments but never exported them to Grafana Cloud
+- `task_outbox` table + sweeper (`internal/broker/outbox.go`, migration
+  `20260419080120_add_task_outbox.sql`) — tasks are written to the outbox in the
+  same transaction as `tasks`, and the sweeper drains them into Redis. Closes
+  the durability gap where a fire-and-forget `OnTasksEnqueued` callback could
+  lose writes during a Redis blip or process crash
+- `tasks.run_at` column + migration `20260419120000_add_tasks_run_at.sql` —
+  `Scheduler.Reschedule` now mirrors pacer push-backs and retry backoff to
+  Postgres so the deadline survives a Redis flush
+- Per-preview-PR worker deployment — `.fly/review_apps.worker.toml` and updates
+  to `.github/workflows/review-apps.yml` spin up a dedicated worker machine
+  alongside each review app so Redis-backed flows are actually exercised in
+  preview
+
+### Changed
+
+- API server (`cmd/app`) no longer runs a local worker pool; task execution is
+  handled exclusively by the worker service
+- `NewJobManager` simplified from 4 parameters to 3 (worker pool removed)
+- Manual root task INSERT now includes `priority_score = 1.0` so link discovery
+  produces non-zero child priorities
+- Reduced `DB_MAX_OPEN_CONNS` from 125 to 60 in `fly.toml` (API no longer runs
+  workers)
+- Broker components (`Scheduler`, `OutboxSweeper`, `Probe`) now route to
+  `queueDB` when `DATABASE_QUEUE_URL` is set so they read/write the database
+  that actually holds `task_outbox` rows; falls back to `pgDB` in single-DB
+  deployments
+- `Consumer.ReadNonBlocking` now uses `Block: -1` so go-redis omits the BLOCK
+  clause entirely — `Block: 0` was being interpreted as "block indefinitely"
+- Link priority, pressure floor, and restart policy tuned in `fly.toml`,
+  `fly.worker.toml`, and review-app tomls; `internal/jobs/shared.go`
+  min-priority floor raised to stop link discovery pushing near-zero-priority
+  URLs
+
+### Removed
+
+- `internal/jobs/worker.go` (~5,000 LOC) — old DB-polling worker pool
+- `internal/jobs/domain_limiter.go` — replaced by `internal/broker/pacer.go`
+- `cmd/test_jobs/main.go` — legacy test binary
+- Dead DB queue functions: `GetNextTask`, `IncrementRunningTasksBy`,
+  `DecrementRunningTasksBy`, `promoteWaitingTasksBatch`
+- ~15 old worker pool environment variables from `fly.toml`
+
+### Fixed
+
+- `IsRateLimitError` now caches the lowercased error string instead of calling
+  `strings.ToLower` five times per invocation
+- `buildTask` error path in `StreamWorkerPool` no longer ACKs on transient DB
+  failures — messages stay in the PEL for XAUTOCLAIM redelivery
+- `.env.example` Redis TLS config inconsistency (plain `redis://` URL paired
+  with `REDIS_TLS_ENABLED=true`)
+- Retry scheduling + ACK race in `StreamWorkerPool.handleOutcome` — replaced the
+  two-step `Schedule` then `Ack` with a single atomic `ScheduleAndAck` (Redis
+  MULTI/EXEC) so a failed ACK after a successful schedule can no longer leave
+  the original message in the PEL for XAUTOCLAIM to redeliver
+- `fetchJobInfo` in `StreamWorkerPool` now populates `RobotsRules` via a new
+  `JobManager.GetRobotsRules` method. Previously `ProcessDiscoveredLinks`
+  received nil rules and silently allowed URLs that robots.txt disallows
+- Review-app CI: `flyctl redis status` output parsing was passing the whole line
+  (including " Private URL │ ..." label and whitespace) into `REDIS_URL`,
+  crash-looping the review app on every deploy. Extractor now grabs only the
+  `redis(s)?://` substring
+- Rate-limited task errors now route to a blocking retry in
+  `internal/jobs/executor.go` (previously they fell through to the generic retry
+  path, ignoring the rate-limit backoff signal)
+- Dead-letter pacer push-back — `StreamWorkerPool` now releases the pacer slot
+  when a message goes to the dead-letter queue so a poisoned message can't hold
+  a domain's concurrency permanently
+- Stale counter sync — `DefaultDBSyncFunc` no longer skips jobs whose Redis
+  counter equals the previous snapshot, so Postgres is updated even when a job
+  transiently has zero running tasks
+
 ## [0.32.7] – 2026-04-18
 
 ### Added
@@ -46,8 +155,10 @@ _Add unreleased changes here._
 ### Changed
 
 - Migrated all logging from zerolog to stdlib `log/slog` with `sentry-go/slog`
-  v0.45.0; all packages now use `logging.Component("name")` — no direct zerolog
-  or bare sentry imports remain
+  v0.45.0; all packages now use `logging.Component("name")` and zerolog is
+  removed entirely. Remaining `sentry-go` imports are limited to SDK
+  initialisation in `cmd/app/main.go` and `cmd/worker/main.go` plus explicit
+  `WithScope` / `StartSpan` usage for audit trails and tracing
 - Removed `github.com/rs/zerolog` dependency
 - Sentry error capture is now automatic for `Error`/`ErrorContext` calls via the
   fanout handler; use `logging.NoCapture(ctx)` inline to suppress capture for

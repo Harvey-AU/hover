@@ -19,6 +19,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/util"
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 var jobsLog = logging.Component("jobs")
@@ -46,6 +47,38 @@ type JobManagerInterface interface {
 	CalculateJobProgress(job *Job) float64
 	ValidateStatusTransition(from, to JobStatus) error
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
+
+	// GetRobotsRules fetches parsed robots.txt rules for a domain.
+	// Used by worker-side link-discovery filtering. Returns nil (not an
+	// error) when the crawler is unavailable — callers treat nil rules
+	// as "no restriction", matching the historical behaviour.
+	GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error)
+}
+
+// TaskScheduleCallback is called after tasks are successfully inserted
+// into Postgres. The callback receives the data needed to schedule
+// the tasks into an external broker (e.g. Redis). If nil, no external
+// scheduling occurs (legacy DB-queue mode).
+type TaskScheduleCallback func(ctx context.Context, jobID string, entries []TaskScheduleEntry)
+
+// TaskScheduleEntry carries the minimal data needed to schedule a
+// newly inserted task into the Redis ZSET.
+//
+// RunAt is the earliest time at which the task may be dispatched. For
+// freshly created pending tasks this is typically "now", but for
+// waiting/retry rows it carries the backoff deadline so callbacks do
+// not mistakenly schedule them as ready-now.
+type TaskScheduleEntry struct {
+	TaskID     string
+	PageID     int
+	Host       string
+	Path       string
+	Status     string // "pending", "waiting", "skipped"
+	Priority   float64
+	RetryCount int
+	SourceType string
+	SourceURL  string
+	RunAt      time.Time
 }
 
 // JobManager handles job creation and lifecycle management
@@ -54,7 +87,9 @@ type JobManager struct {
 	dbQueue DbQueueProvider
 	crawler CrawlerInterface
 
-	workerPool *WorkerPool
+	// OnTasksEnqueued is called after successful Postgres task insertion.
+	// Set by the API server or worker service to schedule tasks into Redis.
+	OnTasksEnqueued TaskScheduleCallback
 
 	// Map to track which pages have been processed for each job
 	processedPages map[string]struct{} // Key format: "jobID_pageID"
@@ -64,13 +99,12 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new job manager
-func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface, workerPool *WorkerPool) *JobManager {
+func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
 	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
 		db:             db,
 		dbQueue:        dbQueue,
 		crawler:        crawler,
-		workerPool:     workerPool,
 		processedPages: make(map[string]struct{}),
 		sitemapSem:     make(chan struct{}, sitemapConcurrency),
 	}
@@ -222,6 +256,24 @@ func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalised
 	return domainID, nil
 }
 
+// GetRobotsRules fetches parsed robots.txt rules for a domain via the
+// underlying crawler. Returns nil rules (and nil error) when the crawler
+// is unavailable, matching the legacy worker behaviour where missing
+// rules mean "no restriction".
+func (jm *JobManager) GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error) {
+	if jm.crawler == nil {
+		return nil, nil
+	}
+	result, err := jm.crawler.DiscoverSitemapsAndRobots(ctx, domain)
+	if err != nil {
+		return nil, fmt.Errorf("jobs: fetch robots for %s: %w", domain, err)
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.RobotsRules, nil
+}
+
 // validateRootURLAccess checks robots.txt rules and validates root URL access
 func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, normalisedDomain string, rootPath string) (*crawler.RobotsRules, error) {
 	var robotsRules *crawler.RobotsRules
@@ -279,8 +331,11 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 
 // createManualRootTask creates page and task records for the root URL
 func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domainID int, rootPath string) error {
+	var taskID string
+	var pageID int
+	var taskRunAt time.Time
+
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		var pageID int
 		err := tx.QueryRowContext(ctx, `
 				INSERT INTO pages (domain_id, host, path)
 				VALUES ($1, $2, $3)
@@ -302,16 +357,38 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			return fmt.Errorf("failed to upsert domain host for root path: %w", err)
 		}
 
-		// Enqueue the root URL with its page ID
+		// Enqueue the root URL with its page ID.
+		// Root/homepage tasks get priority 1.0 so downstream link discovery
+		// (which multiplies by 0.9) produces non-zero child priorities.
+		const rootPriority = 1.0
+		taskID = uuid.New().String()
+		now := time.Now().UTC()
+		taskRunAt = now
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO tasks (
 				id, job_id, page_id, host, path, status, created_at, retry_count,
-				source_type, source_url
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, uuid.New().String(), job.ID, pageID, job.Domain, rootPath, "pending", time.Now().UTC(), 0, "manual", "")
+				source_type, source_url, priority_score
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, taskID, job.ID, pageID, job.Domain, rootPath, "pending", now, 0, "manual", "", rootPriority)
 
 		if err != nil {
 			return fmt.Errorf("failed to enqueue task for root path: %w", err)
+		}
+
+		// Mirror into task_outbox so the sweeper can durably push this
+		// task into Redis even if the OnTasksEnqueued callback fails.
+		if err := db.InsertOutboxRow(ctx, tx, db.OutboxEntry{
+			TaskID:     taskID,
+			JobID:      job.ID,
+			PageID:     pageID,
+			Host:       job.Domain,
+			Path:       rootPath,
+			Priority:   rootPriority,
+			RetryCount: 0,
+			SourceType: "manual",
+			RunAt:      now,
+		}); err != nil {
+			return fmt.Errorf("failed to insert outbox row for root task: %w", err)
 		}
 
 		jm.markPageProcessed(job.ID, pageID)
@@ -321,6 +398,21 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 	if err != nil {
 		jobsLog.Error("Failed to create and enqueue root URL", "error", err)
 		return err
+	}
+
+	// Notify Redis broker if configured.
+	// RunAt = now: the root task is ready to dispatch immediately.
+	if jm.OnTasksEnqueued != nil {
+		jm.OnTasksEnqueued(ctx, job.ID, []TaskScheduleEntry{{
+			TaskID:     taskID,
+			PageID:     pageID,
+			Host:       job.Domain,
+			Path:       rootPath,
+			Status:     "pending",
+			Priority:   1.0,
+			SourceType: "manual",
+			RunAt:      taskRunAt,
+		}})
 	}
 
 	jobsLog.Info("Added root URL to job queue", "job_id", job.ID, "domain", job.Domain)
@@ -358,10 +450,7 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 			return
 		}
 
-		// Notify workers immediately that new tasks are available
-		if jm.workerPool != nil {
-			jm.workerPool.NotifyNewTasks()
-		}
+		// Note: task notification is handled via OnTasksEnqueued callback (Redis scheduling)
 	}()
 
 	return nil
@@ -377,13 +466,9 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 	normalisedDomain := util.NormaliseDomain(options.Domain)
 
 	if options.Concurrency <= 0 {
-		defaultConcurrency := fallbackJobConcurrency
-		if jm.workerPool != nil && jm.workerPool.maxWorkers > 0 {
-			defaultConcurrency = jm.workerPool.maxWorkers
-		}
-		jobsLog.Info("Concurrency not specified; using worker pool maximum",
-			"domain", normalisedDomain, "default_concurrency", defaultConcurrency)
-		options.Concurrency = defaultConcurrency
+		jobsLog.Info("Concurrency not specified; using default",
+			"domain", normalisedDomain, "default_concurrency", fallbackJobConcurrency)
+		options.Concurrency = fallbackJobConcurrency
 	}
 
 	// Handle any existing active jobs for the same domain and user/organisation
@@ -496,12 +581,71 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 		for _, page := range filteredPages {
 			jm.markPageProcessed(jobID, page.ID)
 		}
+
+		// Notify external scheduler (Redis) if configured.
+		if jm.OnTasksEnqueued != nil {
+			jm.scheduleEnqueuedTasks(ctx, jobID, filteredPages, sourceType, sourceURL)
+		}
 	} else {
 		jobsLog.Error("Failed to enqueue URLs, not marking pages as processed",
 			"error", err, "job_id", jobID, "url_count", len(filteredPages))
 	}
 
 	return err
+}
+
+// scheduleEnqueuedTasks queries for tasks just inserted into Postgres
+// and passes them to the OnTasksEnqueued callback for Redis scheduling.
+//
+// NOTE: This re-queries by page_id which could theoretically pick up
+// pre-existing rows on conflict. In practice the ON CONFLICT in
+// EnqueueURLs only updates pending/waiting/skipped tasks (same states
+// we filter here), so the result set matches what was just inserted.
+// A cleaner approach (returning IDs from EnqueueURLs) requires changing
+// the DbQueueProvider interface — deferred to Stage 2.
+func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, pages []db.Page, sourceType, sourceURL string) {
+	if jm.OnTasksEnqueued == nil || len(pages) == 0 {
+		return
+	}
+
+	pageIDs := make([]int, 0, len(pages))
+	for _, p := range pages {
+		if p.ID != 0 {
+			pageIDs = append(pageIDs, p.ID)
+		}
+	}
+	if len(pageIDs) == 0 {
+		return
+	}
+
+	var entries []TaskScheduleEntry
+	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id, page_id, host, path, status, priority_score, retry_count, source_type, source_url, run_at
+			FROM tasks
+			WHERE job_id = $1 AND page_id = ANY($2) AND status IN ('pending', 'waiting')
+		`, jobID, pq.Array(pageIDs))
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e TaskScheduleEntry
+			if err := rows.Scan(&e.TaskID, &e.PageID, &e.Host, &e.Path, &e.Status, &e.Priority, &e.RetryCount, &e.SourceType, &e.SourceURL, &e.RunAt); err != nil {
+				return err
+			}
+			entries = append(entries, e)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		jobsLog.Error("failed to query tasks for Redis scheduling", "error", err, "job_id", jobID)
+		return
+	}
+
+	if len(entries) > 0 {
+		jm.OnTasksEnqueued(ctx, jobID, entries)
+	}
 }
 
 // CancelJob cancels a running job
@@ -556,11 +700,6 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 		span.SetData("error.message", err.Error())
 		jobsLog.Error("Failed to cancel job", "error", err, "job_id", job.ID)
 		return fmt.Errorf("failed to cancel job: %w", err)
-	}
-
-	// Remove job from worker pool
-	if jm.workerPool != nil {
-		jm.workerPool.RemoveJob(job.ID)
 	}
 
 	// Clear processed pages for this job
@@ -1096,9 +1235,8 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 				firstBatchDone = true
 				if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 					jobsLog.Warn("Failed to open job after first batch", "error", err, "job_id", jobID)
-				} else if jm.workerPool != nil {
-					jm.workerPool.NotifyNewTasks()
 				}
+				// Task notification is handled via OnTasksEnqueued callback (Redis scheduling).
 			}
 
 			// Throttle between batches to spread DB write load.
@@ -1114,9 +1252,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 					"error", err, "job_id", jobID)
 				return
 			}
-			if jm.workerPool != nil {
-				jm.workerPool.NotifyNewTasks()
-			}
 		}
 	} else {
 		if err := jm.enqueueFallbackURL(ctx, jobID, domain); err != nil {
@@ -1127,9 +1262,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			jobsLog.Warn("Failed to transition job from initialising to pending after fallback URL",
 				"error", err, "job_id", jobID)
 			return
-		}
-		if jm.workerPool != nil {
-			jm.workerPool.NotifyNewTasks()
 		}
 	}
 }

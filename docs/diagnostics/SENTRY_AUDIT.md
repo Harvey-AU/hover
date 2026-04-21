@@ -1,6 +1,11 @@
 # Sentry Call Site Audit
 
-Generated: 2026-04-11
+Generated: 2026-04-11 (partial refresh 2026-04-19 after Redis broker merge —
+line numbers in this file are pre-merge and may have shifted; symbols and files
+are accurate. Worker-related entries previously in `internal/jobs/worker.go`
+have been removed because that file no longer exists; the worker lifecycle now
+lives in `cmd/worker/main.go` and `internal/jobs/stream_worker.go` with
+automatic slog→Sentry fanout.)
 
 ## Summary
 
@@ -30,8 +35,6 @@ Sentry issues per value instead of grouping.
 | 5   | `internal/db/batch.go`     | 371  | `Flush`                  | `skippedCount` in Errorf                                  | One issue per skip count        |
 | 6   | `internal/db/batch.go`     | 604  | `flushIndividualUpdates` | `task.ID`, `task.Status` in Errorf                        | One issue per task              |
 | 7   | `internal/db/dashboard.go` | 76   | `GetJobStats`            | `organisationID` in Errorf                                | One issue per org               |
-| 8   | `internal/jobs/worker.go`  | 1128 | `ProcessJob`             | `jobInfo.DomainName` in Sprintf                           | One issue per domain            |
-| 9   | `internal/jobs/worker.go`  | 1144 | `ProcessJob`             | `jobID` in Errorf                                         | One issue per job               |
 
 ## Bare CaptureException Calls (No Scope/Tags/Context)
 
@@ -55,11 +58,9 @@ them hard to triage in Sentry.
 | 13  | `internal/db/batch.go`        | 371  | `Flush`                  | Shutdown data errors          |
 | 14  | `internal/db/batch.go`        | 604  | `flushIndividualUpdates` | Poison pill individual update |
 | 15  | `internal/db/dashboard.go`    | 76   | `GetJobStats`            | Dashboard stats query         |
-| 16  | `internal/db/queue.go`        | 489  | `executeOnce`            | Begin transaction             |
-| 17  | `internal/db/queue.go`        | 521  | `executeOnce`            | Commit transaction            |
-| 18  | `internal/db/queue.go`        | 553  | `executeOnceWithContext` | Begin transaction             |
-| 19  | `internal/db/queue.go`        | 585  | `executeOnceWithContext` | Commit transaction            |
-| 20  | `internal/db/queue.go`        | 762  | `ExecuteMaintenance`     | Maintenance begin             |
+| 16  | `internal/db/queue.go`        | 553  | `executeOnceWithContext` | Begin transaction             |
+| 17  | `internal/db/queue.go`        | 585  | `executeOnceWithContext` | Commit transaction            |
+| 18  | `internal/db/queue.go`        | 762  | `ExecuteMaintenance`     | Maintenance begin             |
 
 ## Well-Structured Calls (Reference)
 
@@ -78,21 +79,21 @@ These calls use WithScope with tags and context — good patterns to replicate.
 
 ## Span Operations (Tracing)
 
-| File                       | Line | Function               | Span Name                     | Dynamic Tags          |
-| -------------------------- | ---- | ---------------------- | ----------------------------- | --------------------- |
-| `internal/db/queue.go`     | 1669 | `CleanupStuckJobs`     | `db.cleanup_stuck_jobs`       | None                  |
-| `internal/jobs/manager.go` | 397  | `CreateJob`            | `manager.create_job`          | `domain`              |
-| `internal/jobs/manager.go` | 484  | `EnqueueJobURLs`       | `manager.enqueue_job_urls`    | `job_id`, `url_count` |
-| `internal/jobs/manager.go` | 543  | `CancelJob`            | `manager.cancel_job`          | `job_id`              |
-| `internal/jobs/manager.go` | 615  | `GetJob`               | `jobs.get_job`                | `job_id`              |
-| `internal/jobs/manager.go` | 703  | `GetJobStatus`         | `manager.get_job_status`      | `job_id`              |
-| `internal/jobs/manager.go` | 1063 | `processSitemap`       | `manager.process_sitemap`     | `job_id`, `domain`    |
-| `internal/jobs/worker.go`  | 3166 | `CleanupStuckJobs`     | `jobs.cleanup_stuck_jobs`     | None                  |
-| `internal/jobs/worker.go`  | 3295 | `cleanupOrphanedTasks` | `jobs.cleanup_orphaned_tasks` | None                  |
+| File                       | Line | Function           | Span Name                  | Dynamic Tags          |
+| -------------------------- | ---- | ------------------ | -------------------------- | --------------------- |
+| `internal/db/queue.go`     | 1669 | `CleanupStuckJobs` | `db.cleanup_stuck_jobs`    | None                  |
+| `internal/jobs/manager.go` | 397  | `CreateJob`        | `manager.create_job`       | `domain`              |
+| `internal/jobs/manager.go` | 484  | `EnqueueJobURLs`   | `manager.enqueue_job_urls` | `job_id`, `url_count` |
+| `internal/jobs/manager.go` | 543  | `CancelJob`        | `manager.cancel_job`       | `job_id`              |
+| `internal/jobs/manager.go` | 615  | `GetJob`           | `jobs.get_job`             | `job_id`              |
+| `internal/jobs/manager.go` | 703  | `GetJobStatus`     | `manager.get_job_status`   | `job_id`              |
+| `internal/jobs/manager.go` | 1063 | `processSitemap`   | `manager.process_sitemap`  | `job_id`, `domain`    |
 
 ## Init Configuration
 
-**File:** `cmd/app/main.go:449`
+**Files:** `cmd/app/main.go`, `cmd/worker/main.go`
+
+Both entrypoints now initialise Sentry through the `logging` package fanout:
 
 ```go
 sentry.Init(sentry.ClientOptions{
@@ -100,9 +101,9 @@ sentry.Init(sentry.ClientOptions{
     Environment:      config.Env,
     TracesSampleRate: 0.1 (prod) / 1.0 (dev),
     AttachStacktrace: true,
-    Debug:            config.Env == "development",
+    BeforeSend:       logging.BeforeSend, // normalises dynamic values
 })
 ```
 
-**Missing:** `BeforeSend` hook for UUID stripping, `Release` tag, custom
-fingerprint defaults.
+**Still to consider:** `Release` tag, custom fingerprint defaults beyond what
+`logging.BeforeSend` provides.

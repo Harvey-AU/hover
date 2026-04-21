@@ -18,6 +18,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/auth"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/loops"
 )
 
@@ -626,7 +627,9 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	snippet, err := buildConfigSnippet()
 	if err != nil {
-		apiLog.Error("supabase config missing", "error", err)
+		// Config is sourced from env vars fixed at startup — a misconfiguration
+		// would fire on every request, so suppress Sentry capture here.
+		apiLog.ErrorContext(logging.NoCapture(r.Context()), "supabase config missing", "error", err)
 		message := "Supabase config unavailable"
 		if os.Getenv("APP_ENV") != "production" {
 			message = fmt.Sprintf("%s: %v", message, err)
@@ -635,7 +638,7 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := w.Write(snippet); err != nil {
-		apiLog.Error("failed to write config.js", "error", err)
+		apiLog.ErrorContext(logging.NoCapture(r.Context()), "failed to write config.js", "error", err)
 	}
 }
 
@@ -931,7 +934,19 @@ type WebflowWebhookPayload struct {
 
 // WebflowWebhook handles Webflow site publish webhooks
 func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
-	logger := loggerWithRequest(r)
+	// The legacy URL shape embeds the webhook token in the path
+	// (/v1/webhooks/webflow/{TOKEN}), and the workspace-scoped shape exposes the
+	// workspace ID. Redact both segments before building a request-scoped logger
+	// so the raw credential never reaches logs or Sentry breadcrumbs.
+	var logger *logging.Logger
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/v1/webhooks/webflow/workspaces/"):
+		logger = loggerWithRequestPath(r, "/v1/webhooks/webflow/workspaces/[redacted]")
+	case strings.HasPrefix(r.URL.Path, "/v1/webhooks/webflow/"):
+		logger = loggerWithRequestPath(r, "/v1/webhooks/webflow/[redacted]")
+	default:
+		logger = loggerWithRequest(r)
+	}
 
 	if r.Method != http.MethodPost {
 		MethodNotAllowed(w, r)
@@ -943,7 +958,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	// Org-scoped: /v1/webhooks/webflow/workspaces/WORKSPACE_ID
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[3] == "" {
-		logger.Warn("Webflow webhook missing identifier in URL", "path", r.URL.Path)
+		logger.Warn("Webflow webhook missing identifier in URL")
 		BadRequest(w, r, "Webhook identifier required in URL path")
 		return
 	}
@@ -953,7 +968,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	workspaceID := ""
 	if isWorkspaceWebhook {
 		if len(pathParts) < 5 || pathParts[4] == "" {
-			logger.Warn("Webflow webhook missing workspace ID in URL", "path", r.URL.Path)
+			logger.Warn("Webflow webhook missing workspace ID in URL")
 			BadRequest(w, r, "Webflow workspace ID required in URL path")
 			return
 		}
@@ -975,8 +990,14 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 	if isWorkspaceWebhook {
 		mapping, err := h.DB.GetPlatformOrgMapping(r.Context(), "webflow", workspaceID)
 		if err != nil {
-			logger.Warn("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
-			NotFound(w, r, "Invalid Webflow workspace")
+			if errors.Is(err, db.ErrPlatformOrgMappingNotFound) {
+				logger.Warn("Unknown Webflow workspace", "workspace_id", workspaceID)
+				NotFound(w, r, "Invalid Webflow workspace")
+				return
+			}
+			// Real DB failure — do not mask as 404; let the caller retry.
+			logger.Error("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
+			InternalError(w, r, fmt.Errorf("failed to resolve webflow workspace: %w", err))
 			return
 		}
 		if mapping.CreatedBy == nil || *mapping.CreatedBy == "" {
@@ -996,9 +1017,15 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		var err error
 		user, err = h.DB.GetUserByWebhookToken(webhookToken)
 		if err != nil {
-			logger.Warn("Failed to get user by webhook token", "error", err)
-			// Return 404 to avoid leaking information about valid tokens
-			NotFound(w, r, "Invalid webhook token")
+			if errors.Is(err, db.ErrUserNotFound) {
+				logger.Warn("Unknown webhook token")
+				// Return 404 to avoid leaking information about valid tokens
+				NotFound(w, r, "Invalid webhook token")
+				return
+			}
+			// Real DB failure — do not mask as 404; let the caller retry.
+			logger.Error("Failed to get user by webhook token", "error", err)
+			InternalError(w, r, fmt.Errorf("failed to resolve webhook user: %w", err))
 			return
 		}
 		orgID = h.DB.GetEffectiveOrganisationID(user)

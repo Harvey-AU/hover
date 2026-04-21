@@ -29,6 +29,40 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// ParseOTLPHeaders converts a comma-separated `key=value` list (matching the
+// OTEL_EXPORTER_OTLP_HEADERS env var format) into a map. Whitespace around
+// pairs and tokens is trimmed; empty pairs, pairs without `=`, and entries
+// with an empty key are skipped.
+func ParseOTLPHeaders(raw string) map[string]string {
+	headers := make(map[string]string)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return headers
+	}
+
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if key == "" {
+			continue
+		}
+
+		headers[key] = value
+	}
+
+	return headers
+}
+
 // Config controls observability initialisation.
 type Config struct {
 	Enabled        bool
@@ -98,6 +132,32 @@ var (
 	fdCurrentGauge  metric.Int64Gauge
 	fdLimitGauge    metric.Int64Gauge
 	fdPressureGauge metric.Float64Gauge
+
+	// --- Redis broker instruments (Tier 1 + Tier 2). ---
+	// Tier 1: gauges scraped by the broker probe goroutine.
+	brokerStreamLengthGauge    metric.Int64Gauge
+	brokerScheduledDepthGauge  metric.Int64Gauge
+	brokerConsumerPendingGauge metric.Int64Gauge
+	brokerOutboxBacklogGauge   metric.Int64Gauge
+	brokerOutboxAgeGauge       metric.Float64Gauge
+	brokerRedisPingHistogram   metric.Float64Histogram
+
+	// Tier 1: dispatch outcomes counter.
+	brokerDispatchCounter metric.Int64Counter
+
+	// Tier 2: autoclaim + message age.
+	brokerAutoclaimCounter    metric.Int64Counter
+	brokerMessageAgeHistogram metric.Float64Histogram
+
+	// Tier 2: pacer signals.
+	brokerPacerPushbackCounter metric.Int64Counter
+	brokerPacerDelayHistogram  metric.Float64Histogram
+
+	// Tier 2: counter sync skew and Redis pool stats.
+	brokerCounterSyncSkew metric.Float64Histogram
+	brokerRedisPoolInUse  metric.Int64Gauge
+	brokerRedisPoolIdle   metric.Int64Gauge
+	brokerRedisPoolWait   metric.Int64Gauge
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -212,6 +272,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		_ = initCrawlerInstruments(meterProvider)
 		_ = initJobInstruments(meterProvider)
 		_ = initDBPoolInstruments(meterProvider)
+		_ = initBrokerInstruments(meterProvider)
 	})
 
 	shutdown := func(ctx context.Context) error {
@@ -914,5 +975,270 @@ func RecordFDStats(ctx context.Context, current, limit int, pressure float64) {
 	}
 	if fdPressureGauge != nil {
 		fdPressureGauge.Record(ctx, pressure, metric.WithAttributes())
+	}
+}
+
+// initBrokerInstruments registers the Tier 1 and Tier 2 Redis broker
+// metrics. Called once from Init().
+func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
+	if meterProvider == nil {
+		return nil
+	}
+
+	meter := meterProvider.Meter("hover/broker")
+
+	var err error
+
+	// --- Tier 1 ---
+	brokerStreamLengthGauge, err = meter.Int64Gauge(
+		"bee.broker.stream_length",
+		metric.WithDescription("Current XLEN for a job's Redis stream"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerScheduledDepthGauge, err = meter.Int64Gauge(
+		"bee.broker.scheduled_zset_depth",
+		metric.WithDescription("Current ZCARD for a job's schedule ZSET"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerConsumerPendingGauge, err = meter.Int64Gauge(
+		"bee.broker.consumer_pending",
+		metric.WithDescription("Current XPENDING count for a job's consumer group"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerOutboxBacklogGauge, err = meter.Int64Gauge(
+		"bee.broker.outbox_backlog",
+		metric.WithDescription("Rows currently in task_outbox awaiting dispatch"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerOutboxAgeGauge, err = meter.Float64Gauge(
+		"bee.broker.outbox_age_seconds",
+		metric.WithUnit("s"),
+		metric.WithDescription("Age of the oldest due task_outbox row (NOW - MIN(run_at))"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerRedisPingHistogram, err = meter.Float64Histogram(
+		"bee.broker.redis_ping_duration_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Round-trip time of periodic Redis PING"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerDispatchCounter, err = meter.Int64Counter(
+		"bee.broker.dispatch_total",
+		metric.WithDescription("Dispatcher outcomes grouped by result (ok|err|capacity|paced)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	// --- Tier 2 ---
+	brokerAutoclaimCounter, err = meter.Int64Counter(
+		"bee.broker.autoclaim_total",
+		metric.WithDescription("XAUTOCLAIM outcomes grouped by result (reclaimed|dead_letter)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerMessageAgeHistogram, err = meter.Float64Histogram(
+		"bee.broker.consumer_message_age_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Age of a stream message at the moment a consumer receives it"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerPacerPushbackCounter, err = meter.Int64Counter(
+		"bee.broker.pacer_pushback_total",
+		metric.WithDescription("Pacer pushbacks grouped by reason (gate|rate_limited)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerPacerDelayHistogram, err = meter.Float64Histogram(
+		"bee.broker.pacer_delay_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Effective per-domain pacing delay applied by TryAcquire"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerCounterSyncSkew, err = meter.Float64Histogram(
+		"bee.broker.counter_sync_skew",
+		metric.WithDescription("Absolute skew between Redis and Postgres running counters at sync time"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerRedisPoolInUse, err = meter.Int64Gauge(
+		"bee.broker.redis_pool.in_use",
+		metric.WithDescription("Number of active Redis connections checked out of the pool"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerRedisPoolIdle, err = meter.Int64Gauge(
+		"bee.broker.redis_pool.idle",
+		metric.WithDescription("Number of idle Redis connections in the pool"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerRedisPoolWait, err = meter.Int64Gauge(
+		"bee.broker.redis_pool.wait",
+		metric.WithDescription("Running total of pool acquisition waits"),
+	)
+	return err
+}
+
+// BrokerStreamStats captures per-job broker depth probed from Redis.
+type BrokerStreamStats struct {
+	JobID          string
+	StreamLength   int64
+	ScheduledDepth int64
+	Pending        int64
+}
+
+// RecordBrokerStreamStats emits Tier 1 per-job depth gauges.
+func RecordBrokerStreamStats(ctx context.Context, s BrokerStreamStats) {
+	attrs := metric.WithAttributes(attribute.String("job.id", s.JobID))
+	if brokerStreamLengthGauge != nil {
+		brokerStreamLengthGauge.Record(ctx, s.StreamLength, attrs)
+	}
+	if brokerScheduledDepthGauge != nil {
+		brokerScheduledDepthGauge.Record(ctx, s.ScheduledDepth, attrs)
+	}
+	if brokerConsumerPendingGauge != nil {
+		brokerConsumerPendingGauge.Record(ctx, s.Pending, attrs)
+	}
+}
+
+// RecordBrokerOutbox emits the outbox backlog + age gauges.
+func RecordBrokerOutbox(ctx context.Context, backlog int64, oldestAgeSeconds float64) {
+	if brokerOutboxBacklogGauge != nil {
+		brokerOutboxBacklogGauge.Record(ctx, backlog)
+	}
+	if brokerOutboxAgeGauge != nil {
+		brokerOutboxAgeGauge.Record(ctx, oldestAgeSeconds)
+	}
+}
+
+// RecordBrokerRedisPing emits the periodic Redis PING RTT.
+func RecordBrokerRedisPing(ctx context.Context, duration time.Duration, ok bool) {
+	if brokerRedisPingHistogram != nil {
+		brokerRedisPingHistogram.Record(ctx, float64(duration.Milliseconds()),
+			metric.WithAttributes(attribute.Bool("ping.ok", ok)))
+	}
+}
+
+// RecordBrokerDispatch increments the dispatch outcomes counter.
+// outcome values: "ok", "err", "capacity", "paced".
+func RecordBrokerDispatch(ctx context.Context, jobID, outcome string) {
+	if brokerDispatchCounter == nil {
+		return
+	}
+	brokerDispatchCounter.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("job.id", jobID),
+			attribute.String("outcome", outcome),
+		))
+}
+
+// RecordBrokerAutoclaim increments the autoclaim outcomes counter.
+// result values: "reclaimed", "dead_letter".
+func RecordBrokerAutoclaim(ctx context.Context, jobID, result string, count int) {
+	if brokerAutoclaimCounter == nil || count <= 0 {
+		return
+	}
+	brokerAutoclaimCounter.Add(ctx, int64(count),
+		metric.WithAttributes(
+			attribute.String("job.id", jobID),
+			attribute.String("result", result),
+		))
+}
+
+// RecordBrokerMessageAge records how long a stream message sat pending
+// before a consumer received it. Call once per parsed XREADGROUP message.
+func RecordBrokerMessageAge(ctx context.Context, jobID string, ageMs float64) {
+	if brokerMessageAgeHistogram == nil {
+		return
+	}
+	brokerMessageAgeHistogram.Record(ctx, ageMs,
+		metric.WithAttributes(attribute.String("job.id", jobID)))
+}
+
+// RecordBrokerPacerPushback increments the pushback counter.
+// reason values: "gate" (domain-gate NX hold), "rate_limited" (release feedback).
+func RecordBrokerPacerPushback(ctx context.Context, domain, reason string) {
+	if brokerPacerPushbackCounter == nil {
+		return
+	}
+	brokerPacerPushbackCounter.Add(ctx, 1,
+		metric.WithAttributes(
+			attribute.String("domain", domain),
+			attribute.String("reason", reason),
+		))
+}
+
+// RecordBrokerPacerDelay records the effective per-domain pacing delay
+// observed at TryAcquire time.
+func RecordBrokerPacerDelay(ctx context.Context, domain string, delayMs float64) {
+	if brokerPacerDelayHistogram == nil {
+		return
+	}
+	brokerPacerDelayHistogram.Record(ctx, delayMs,
+		metric.WithAttributes(attribute.String("domain", domain)))
+}
+
+// RecordBrokerCounterSyncSkew records the absolute difference between
+// the Redis running counter and Postgres running_tasks at sync time.
+func RecordBrokerCounterSyncSkew(ctx context.Context, jobID string, skew float64) {
+	if brokerCounterSyncSkew == nil {
+		return
+	}
+	brokerCounterSyncSkew.Record(ctx, skew,
+		metric.WithAttributes(attribute.String("job.id", jobID)))
+}
+
+// RedisPoolSnapshot mirrors the subset of *redis.PoolStats we care about.
+type RedisPoolSnapshot struct {
+	InUse int64
+	Idle  int64
+	Waits int64
+}
+
+// RecordBrokerRedisPool emits the Redis client pool gauges.
+func RecordBrokerRedisPool(ctx context.Context, snap RedisPoolSnapshot) {
+	if brokerRedisPoolInUse != nil {
+		brokerRedisPoolInUse.Record(ctx, snap.InUse)
+	}
+	if brokerRedisPoolIdle != nil {
+		brokerRedisPoolIdle.Record(ctx, snap.Idle)
+	}
+	if brokerRedisPoolWait != nil {
+		brokerRedisPoolWait.Record(ctx, snap.Waits)
 	}
 }

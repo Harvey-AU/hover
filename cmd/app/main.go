@@ -17,6 +17,7 @@ import (
 	"runtime/trace"
 
 	"github.com/Harvey-AU/hover/internal/api"
+	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
@@ -57,7 +58,9 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 		case <-ticker.C:
 			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, schedulerBatchSize)
 			if err != nil {
-				startupLog.Error("Failed to get schedulers ready to run", "error", err)
+				// Warn not Error: this loop retries every 30s, so auto-capture
+				// would flood Sentry during any transient Postgres outage.
+				startupLog.Warn("Failed to get schedulers ready to run", "error", err)
 				continue
 			}
 
@@ -69,7 +72,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 
 			domainNames, err := pgDB.GetDomainNames(ctx, domainIDs)
 			if err != nil {
-				startupLog.Error("Failed to get domain names for schedulers", "error", err)
+				startupLog.Warn("Failed to get domain names for schedulers", "error", err)
 				continue
 			}
 
@@ -83,7 +86,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 				// Check if a job started too recently (within half the schedule interval)
 				lastJobStart, err := pgDB.GetLastJobStartTimeForScheduler(ctx, scheduler.ID)
 				if err != nil {
-					startupLog.Error("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
@@ -102,7 +105,7 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 						// Update next_run_at to the next valid time slot
 						nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 						if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-							startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
+							startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 						}
 						continue
 					}
@@ -129,14 +132,14 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 				// Create job (standard flow)
 				job, err := jobsManager.CreateJob(ctx, opts)
 				if err != nil {
-					startupLog.Error("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
 				// Update scheduler next_run_at
 				nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 				if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
-					startupLog.Error("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
+					startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
 				} else {
 					startupLog.Info("Created scheduled job",
 						"scheduler_id", scheduler.ID,
@@ -446,7 +449,7 @@ func main() {
 			ServiceName:    "hover",
 			Environment:    config.Env,
 			OTLPEndpoint:   strings.TrimSpace(config.OTLPEndpoint),
-			OTLPHeaders:    parseOTLPHeaders(config.OTLPHeaders),
+			OTLPHeaders:    observability.ParseOTLPHeaders(config.OTLPHeaders),
 			OTLPInsecure:   config.OTLPInsecure,
 			MetricsAddress: config.MetricsAddr,
 		})
@@ -468,20 +471,28 @@ func main() {
 					ReadHeaderTimeout: 5 * time.Second,
 				}
 
-				go func() {
-					startupLog.Info("Metrics server listening", "addr", config.MetricsAddr)
-					if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						startupLog.Error("Metrics server failed", "error", err)
-					}
-				}()
+				// Bind first, then log readiness so a bind failure surfaces as an
+				// error instead of a misleading "listening" line followed by a
+				// silent Serve crash.
+				metricsListener, err := net.Listen("tcp", config.MetricsAddr)
+				if err != nil {
+					startupLog.Error("Metrics server failed to bind", "error", err, "addr", config.MetricsAddr)
+				} else {
+					go func() {
+						startupLog.Info("Metrics server listening", "addr", config.MetricsAddr)
+						if err := metricsSrv.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							startupLog.Error("Metrics server failed", "error", err)
+						}
+					}()
 
-				defer func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-						startupLog.Warn("Graceful shutdown of metrics server failed", "error", err)
-					}
-				}()
+					defer func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							startupLog.Warn("Graceful shutdown of metrics server failed", "error", err)
+						}
+					}()
+				}
 			}
 		}
 	}
@@ -542,64 +553,64 @@ func main() {
 	// Create database queue for operations
 	dbQueue := db.NewDbQueue(queueDB)
 
-	// Create a worker pool for task processing
-	// Configure worker count based on environment to prevent resource exhaustion
-	var jobWorkers int
-	switch appEnv {
-	case "production":
-		jobWorkers = 30 // Production: sized to stay under Supabase pool limits while keeping queue saturated
-	case "staging":
-		jobWorkers = 10 // Preview/staging: moderate throughput for PR testing
-	default:
-		jobWorkers = 5 // Development: minimal for local testing
-	}
+	// --- Redis scheduler (optional — tasks are dispatched via Redis, consumed by the worker service) ---
+	redisCfg := broker.ConfigFromEnv()
 
-	// Configure worker concurrency (how many tasks each worker handles simultaneously)
-	workerConcurrency := getEnvInt("WORKER_CONCURRENCY", 1)
-	if workerConcurrency < 1 {
-		workerConcurrency = 1
-	} else if workerConcurrency > 20 {
-		workerConcurrency = 20
-	}
+	// Create job manager (no local worker pool — tasks are consumed by the worker service)
+	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 
-	// Keep staging worker capacity aligned with queue DB pool limits to reduce
-	// recurring queue-pressure alerts from brief capacity spikes.
-	if appEnv == "staging" {
-		reservedConnections := max(getEnvInt("DB_POOL_RESERVED_CONNECTIONS", 4), 0)
+	if redisCfg.URL != "" {
+		redisClient, err := broker.NewClient(redisCfg)
+		if err != nil {
+			startupLog.Fatal("failed to create Redis client", "error", err)
+		}
+		defer redisClient.Close()
 
-		if cfg := queueDB.GetConfig(); cfg != nil && cfg.MaxOpenConns > 0 {
-			availablePoolSlots := max(cfg.MaxOpenConns-reservedConnections, 1)
+		if err := redisClient.Ping(context.Background()); err != nil {
+			startupLog.Fatal("failed to ping Redis", "error", err)
+		}
+		startupLog.Info("connected to Redis")
 
-			safeWorkers := max(availablePoolSlots/workerConcurrency, 1)
+		// Use the DB-backed constructor for parity with the worker; the
+		// app rarely calls Reschedule but any call must dual-write too.
+		scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
 
-			if safeWorkers < jobWorkers {
-				startupLog.Warn("Capping staging workers to fit database pool capacity",
-					"configured_workers", jobWorkers,
-					"capped_workers", safeWorkers,
-					"db_max_open", cfg.MaxOpenConns,
-					"reserved_connections", reservedConnections,
-					"worker_concurrency", workerConcurrency,
-				)
-				jobWorkers = safeWorkers
+		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis.
+		// Respect each entry's RunAt so waiting/retry rows keep their backoff deadline
+		// instead of being scheduled as ready-now.
+		jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
+			schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
+			for _, e := range entries {
+				if e.Status == "skipped" {
+					continue
+				}
+				runAt := e.RunAt
+				if runAt.IsZero() {
+					runAt = time.Now()
+				}
+				schedEntries = append(schedEntries, broker.ScheduleEntry{
+					TaskID:     e.TaskID,
+					JobID:      jobID,
+					PageID:     e.PageID,
+					Host:       e.Host,
+					Path:       e.Path,
+					Priority:   e.Priority,
+					RetryCount: e.RetryCount,
+					SourceType: e.SourceType,
+					SourceURL:  e.SourceURL,
+					RunAt:      runAt,
+				})
+			}
+			if len(schedEntries) > 0 {
+				if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
+					startupLog.Error("failed to schedule tasks into Redis",
+						"error", err, "job_id", jobID, "count", len(schedEntries))
+				}
 			}
 		}
+	} else {
+		startupLog.Warn("REDIS_URL not set — task dispatch to Redis is disabled; API will still create tasks in Postgres")
 	}
-
-	totalCapacity := jobWorkers * workerConcurrency
-	startupLog.Info("Configuring worker pool",
-		"workers", jobWorkers,
-		"concurrency_per_worker", workerConcurrency,
-		"total_capacity", totalCapacity,
-		"environment", appEnv,
-	)
-
-	workerPool := jobs.NewWorkerPool(pgDB.GetDB(), dbQueue, cr, jobWorkers, workerConcurrency, pgDB.GetConfig())
-
-	// Create job manager
-	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr, workerPool)
-
-	// Set the job manager in the worker pool for duplicate checking
-	workerPool.SetJobManager(jobsManager)
 
 	// Create notification service with Slack channel
 	notificationService := notifications.NewService(pgDB)
@@ -703,8 +714,17 @@ func main() {
 	go func() {
 		startupLog.Info("Starting server", "port", config.Port)
 
+		// Bind the listener first so that we only announce readiness once the
+		// port is actually accepting connections. If the bind fails we surface
+		// the error instead of claiming the server is ready at dead URLs.
+		listener, err := net.Listen("tcp", ":"+config.Port)
+		if err != nil {
+			serverErrCh <- fmt.Errorf("failed to bind %s: %w", config.Port, err)
+			return
+		}
+
 		baseURL := fmt.Sprintf("http://localhost:%s", config.Port)
-		startupLog.Info("Hover Development Server Ready!")
+		startupLog.Info("Hover server ready", "environment", config.Env)
 		startupLog.Info("Open Homepage", "homepage", baseURL)
 		startupLog.Info("Open Dashboard", "dashboard", baseURL+"/dashboard")
 		startupLog.Info("Health Check", "health", baseURL+"/health")
@@ -712,7 +732,7 @@ func main() {
 			startupLog.Info("Open Supabase Studio", "supabase_studio", "http://localhost:54323")
 		}
 
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.Serve(listener); err != nil {
 			serverErrCh <- err
 			return
 		}
@@ -733,14 +753,8 @@ func main() {
 		close(done)
 	}()
 
-	// Start the worker pool once the HTTP server goroutine is running
-	workerPool.Start(context.Background())
-	// Defer worker pool stop - will execute BEFORE database close due to defer LIFO order
-	defer func() {
-		startupLog.Info("Stopping worker pool (waiting for in-flight tasks to complete)")
-		workerPool.Stop()
-		startupLog.Info("Worker pool stopped - all tasks completed and batches flushed")
-	}()
+	// Note: no local worker pool — task execution is handled by the dedicated
+	// worker service (cmd/worker). The API server only schedules tasks into Redis.
 
 	// Start background health monitoring with cancellable context
 	backgroundWG.Add(1)
@@ -788,56 +802,6 @@ func getEnvWithDefault(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-// getEnvInt retrieves an environment variable as an integer or returns a default value if not set or invalid
-func getEnvInt(key string, defaultValue int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-
-	var result int
-	if _, err := fmt.Sscanf(value, "%d", &result); err != nil {
-		startupLog.Warn("Invalid integer in environment variable, using default",
-			"key", key,
-			"value", value,
-			"default", defaultValue,
-		)
-		return defaultValue
-	}
-
-	return result
-}
-
-func parseOTLPHeaders(raw string) map[string]string {
-	headers := make(map[string]string)
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return headers
-	}
-
-	for pair := range strings.SplitSeq(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		if key == "" {
-			continue
-		}
-
-		headers[key] = value
-	}
-
-	return headers
 }
 
 // setupLogging configures the logging system

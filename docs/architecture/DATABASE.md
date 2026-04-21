@@ -227,6 +227,7 @@ CREATE TABLE tasks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
+    run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_code INTEGER,
     response_time INTEGER,
     cache_status TEXT,
@@ -244,11 +245,69 @@ CREATE INDEX idx_tasks_pending ON tasks(created_at) WHERE status = 'pending';
 
 **Status Values:**
 
-- `pending` - Task waiting to be processed
-- `running` - Task currently being processed
+- `waiting` - Task created but not yet scheduled into Redis (quota or
+  concurrency limit reached, or pacer back-off active)
+- `pending` - Scheduled into Redis ZSET, awaiting dispatch
+- `running` - Claimed by a worker via XREADGROUP
 - `completed` - Task successfully completed
 - `failed` - Task failed after retries
 - `skipped` - Task skipped due to limits
+
+**`run_at` column** (added 2026-04-19) mirrors the Redis broker's ZSET score
+into Postgres. `Scheduler.Reschedule` persists `tasks.run_at` first, then
+attempts Redis `ZADD` as a separate call, so Postgres remains the durable source
+of truth if Redis is flushed. Writes are sequential, not atomic — there is a
+short divergence window on crash between the two calls. See
+`internal/broker/scheduler.go`.
+
+#### Task Outbox
+
+Durable buffer for Redis scheduling. Rows are written in the same transaction as
+the corresponding `tasks` row, so a successful task insert guarantees a matching
+outbox row exists. A sweeper goroutine in the worker service reads due rows,
+calls `Scheduler.ScheduleBatch`, and deletes the row on success (or bumps
+`attempts` + `run_at` on failure).
+
+This fixes the orphan-task risk where the fire-and-forget `OnTasksEnqueued`
+callback could fail after Postgres commit, leaving pending tasks that no
+dispatcher ever sees.
+
+`bumpAttempts` retries indefinitely — there is no max-attempt ceiling, only an
+exponential backoff delay capped at `MaxBackoff`. Prolonged Redis unavailability
+will not drop tasks, but the outbox will grow until Redis recovers. A
+dead-letter or max-attempt safeguard could be added later if the unbounded
+growth ever becomes an operational concern.
+
+```sql
+CREATE TABLE task_outbox (
+    id          BIGSERIAL        PRIMARY KEY,
+    task_id     TEXT             NOT NULL,
+    job_id      TEXT             NOT NULL,
+    page_id     INT              NOT NULL,
+    host        TEXT             NOT NULL,
+    path        TEXT             NOT NULL,
+    priority    DOUBLE PRECISION NOT NULL,
+    retry_count INT              NOT NULL DEFAULT 0,
+    source_type TEXT             NOT NULL,
+    source_url  TEXT             NOT NULL DEFAULT '',
+    run_at      TIMESTAMPTZ      NOT NULL,
+    attempts    INT              NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_task_outbox_run_at ON task_outbox(run_at ASC);
+```
+
+`task_id` and `job_id` intentionally omit foreign keys to `tasks` / `jobs`. The
+outbox lifecycle is decoupled from those tables so high-throughput inserts don't
+contend on FK validation locks, and rows are cleaned up on successful dispatch
+rather than cascaded from the parent task.
+
+The table is expected to stay small — rows are deleted on successful dispatch,
+typically within one sweep tick. If Redis is unavailable, `bumpAttempts` will
+keep re-scheduling failed rows (see note above) and the table can grow unbounded
+until Redis recovers, so outbox backlog and Redis health should be monitored
+together (see `internal/broker/probe.go` for the emitted metrics).
 
 ### Scheduler Tables
 
@@ -341,13 +400,21 @@ CREATE TABLE organisations (
 
 ## PostgreSQL-Specific Features
 
-### Lock-Free Task Processing
+### Lock-Free Task Processing (legacy path)
 
-Uses `FOR UPDATE SKIP LOCKED` to allow multiple workers to claim tasks without
-blocking:
+> **Note**: Under the Redis broker architecture, tasks are claimed by workers
+> via Redis `XREADGROUP` on the per-job stream, not by this SQL. The
+> `FOR UPDATE SKIP LOCKED` pattern below is retained for reference and still
+> applies to a few residual Postgres-only paths (e.g. reconciliation tools). The
+> broker consumer calls `UPDATE tasks SET status = 'running'` without taking a
+> Postgres row lock — the Redis stream consumer group provides the exclusivity
+> guarantee.
+
+Historically the worker used `FOR UPDATE SKIP LOCKED` to allow multiple workers
+to claim tasks without blocking:
 
 ```sql
--- Task acquisition query (internal/db/queue.go)
+-- Legacy task acquisition query (pre-broker)
 SELECT t.id, t.job_id, d.name as domain, p.path, t.source_type, t.source_url
 FROM tasks t
 JOIN pages p ON t.page_id = p.id
