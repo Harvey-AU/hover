@@ -268,6 +268,74 @@ jobs:
           docker build -t hover-pr-${{ github.event.number }} .
           docker tag hover-pr-${{ github.event.number }} hover-worker-pr-${{ github.event.number }}
 
+      # Deploy the worker review app *before* the API review app. The API
+      # enables Redis dispatch as soon as REDIS_URL is set on it, so we need
+      # a running consumer on the other end before we flip that switch.
+      # Without this ordering, a failure in the worker step would leave the
+      # API review app live, enqueueing tasks into Redis that no worker
+      # consumes.
+      - name: Deploy Worker Review App
+        id: deploy_worker
+        run: |
+          # Mirrors the API deploy step but uses fly.worker.toml-equivalent
+          # config. The same image is used (Dockerfile builds both binaries);
+          # review_apps.worker.toml overrides CMD to run ./worker directly.
+          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
+            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
+            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
+          else
+            echo "❌ No Supabase preview branch found; cannot deploy worker review app." >&2
+            exit 1
+          fi
+
+          WORKER_APP_NAME="hover-worker-pr-${{ github.event.number }}"
+
+          # Exact match on app name (column 1). grep -q does substring
+          # matching, so hover-worker-pr-12 would falsely match PR 123 and
+          # cause secrets to be set on the wrong app.
+          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$WORKER_APP_NAME"; then
+            echo "Creating new worker review app: $WORKER_APP_NAME"
+            flyctl apps create "$WORKER_APP_NAME" --org personal
+          else
+            echo "Worker review app already exists: $WORKER_APP_NAME"
+          fi
+
+          if [ -z "$REVIEW_REDIS_URL" ]; then
+            echo "❌ REDIS_URL is required for the worker; provisioning earlier must have failed." >&2
+            exit 1
+          fi
+
+          # Worker-specific secret set. Worker does not serve HTTP so OAuth
+          # client secrets (Slack/Webflow/Google), Loops API key, and the
+          # WEBFLOW_REDIRECT_URI/APP_URL/SETTINGS_URL triplet are omitted.
+          DIRECT_URL_FLAGS=()
+          if [ -n "$DIRECT_URL" ]; then
+            DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
+          fi
+
+          echo "Setting secrets for worker review app..."
+          flyctl secrets set \
+            DATABASE_URL="$DB_URL" \
+            "${DIRECT_URL_FLAGS[@]}" \
+            REDIS_URL="$REVIEW_REDIS_URL" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            --app $WORKER_APP_NAME --stage
+
+          flyctl deploy \
+            --app $WORKER_APP_NAME \
+            --config .fly/review_apps.worker.toml \
+            --local-only \
+            --image hover-worker-pr-${{ github.event.number }}
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
+
       - name: Deploy Review App
         id: deploy
         run: |
@@ -395,68 +463,6 @@ jobs:
             --config .fly/review_apps.toml \
             --local-only \
             --image hover-pr-${{ github.event.number }}
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
-
-      - name: Deploy Worker Review App
-        id: deploy_worker
-        run: |
-          # Mirrors the API deploy step but uses fly.worker.toml-equivalent
-          # config. The same image is used (Dockerfile builds both binaries);
-          # review_apps.worker.toml overrides CMD to run ./worker directly.
-          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
-            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
-            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
-          else
-            echo "❌ No Supabase preview branch found; API deploy would have failed already." >&2
-            exit 1
-          fi
-
-          WORKER_APP_NAME="hover-worker-pr-${{ github.event.number }}"
-
-          # Exact match on app name (column 1). grep -q does substring
-          # matching, so hover-worker-pr-12 would falsely match PR 123 and
-          # cause secrets to be set on the wrong app.
-          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$WORKER_APP_NAME"; then
-            echo "Creating new worker review app: $WORKER_APP_NAME"
-            flyctl apps create "$WORKER_APP_NAME" --org personal
-          else
-            echo "Worker review app already exists: $WORKER_APP_NAME"
-          fi
-
-          if [ -z "$REVIEW_REDIS_URL" ]; then
-            echo "❌ REDIS_URL is required for the worker; provisioning earlier must have failed." >&2
-            exit 1
-          fi
-
-          # Worker-specific secret set. Worker does not serve HTTP so OAuth
-          # client secrets (Slack/Webflow/Google), Loops API key, and the
-          # WEBFLOW_REDIRECT_URI/APP_URL/SETTINGS_URL triplet are omitted.
-          DIRECT_URL_FLAGS=()
-          if [ -n "$DIRECT_URL" ]; then
-            DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
-          fi
-
-          echo "Setting secrets for worker review app..."
-          flyctl secrets set \
-            DATABASE_URL="$DB_URL" \
-            "${DIRECT_URL_FLAGS[@]}" \
-            REDIS_URL="$REVIEW_REDIS_URL" \
-            SENTRY_DSN="$SENTRY_DSN" \
-            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
-            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
-            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
-            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
-            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
-            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
-            --app $WORKER_APP_NAME --stage
-
-          flyctl deploy \
-            --app $WORKER_APP_NAME \
-            --config .fly/review_apps.worker.toml \
-            --local-only \
-            --image hover-worker-pr-${{ github.event.number }}
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
