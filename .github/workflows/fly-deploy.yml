@@ -97,6 +97,11 @@ jobs:
 
       - name: Sync secrets to Fly (worker app)
         run: |
+          if [ -z "$REDIS_URL" ]; then
+            echo "❌ REDIS_URL is required to deploy hover-worker. Check 1Password: op://Good Native/hover-runtime/REDIS_URL" >&2
+            exit 1
+          fi
+
           # hover-worker consumes Redis streams, executes crawls, persists to
           # Postgres + R2. Only secrets actually referenced by the worker
           # binary are synced here; user-facing auth secrets (Supabase JWT,

@@ -412,7 +412,10 @@ jobs:
 
           WORKER_APP_NAME="hover-worker-pr-${{ github.event.number }}"
 
-          if ! flyctl apps list | grep -q "$WORKER_APP_NAME"; then
+          # Exact match on app name (column 1). grep -q does substring
+          # matching, so hover-worker-pr-12 would falsely match PR 123 and
+          # cause secrets to be set on the wrong app.
+          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$WORKER_APP_NAME"; then
             echo "Creating new worker review app: $WORKER_APP_NAME"
             flyctl apps create "$WORKER_APP_NAME" --org personal
           else
