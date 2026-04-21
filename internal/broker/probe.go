@@ -145,10 +145,14 @@ func (p *Probe) probeJob(ctx context.Context, jobID string) {
 	pendingCmd := pipe.XPending(ctx, StreamKey(jobID), ConsumerGroup(jobID))
 
 	if _, err := pipe.Exec(ctx); err != nil {
-		// Missing stream/group is expected before the first dispatch —
-		// don't spam logs when the pipeline surfaces NOGROUP etc.
+		// NOGROUP / "no such key" is expected before the first dispatch —
+		// all three commands return zero, which is the correct snapshot.
+		// For any other error (Redis outage, timeout, etc.) skip emission
+		// so we produce a gap in the series rather than false zeroes that
+		// masquerade as a healthy empty queue.
 		if !isNoGroupErr(err) {
 			brokerLog.Debug("broker probe pipeline error", "error", err, "job_id", jobID)
+			return
 		}
 	}
 
