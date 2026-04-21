@@ -53,6 +53,12 @@ type StreamWorkerOpts struct {
 	// NumWorkers is the number of consumer goroutines.
 	NumWorkers int
 
+	// TasksPerWorker is the max concurrent in-flight tasks per consumer
+	// goroutine. Global parallelism ceiling = NumWorkers × TasksPerWorker.
+	// Mirrors the pre-Redis WorkerPool WORKER_CONCURRENCY semaphore.
+	// A value of 0 or 1 preserves the one-task-at-a-time legacy behaviour.
+	TasksPerWorker int
+
 	// ReclaimInterval is how often stale messages are reclaimed.
 	ReclaimInterval time.Duration
 }
@@ -61,6 +67,7 @@ type StreamWorkerOpts struct {
 func DefaultStreamWorkerOpts() StreamWorkerOpts {
 	return StreamWorkerOpts{
 		NumWorkers:      30,
+		TasksPerWorker:  20,
 		ReclaimInterval: 30 * time.Second,
 	}
 }
@@ -167,6 +174,35 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 	logger := jobsLog.With("worker_id", workerID)
 	logger.Debug("worker started")
 
+	// Per-worker semaphore controlling in-flight task concurrency.
+	// Global parallelism = NumWorkers × capacity. When TasksPerWorker is 0
+	// or 1 we keep the legacy one-at-a-time behaviour by using a capacity
+	// of 1 (sem still applied so the fan-out call site stays uniform).
+	perWorker := swp.opts.TasksPerWorker
+	if perWorker < 1 {
+		perWorker = 1
+	}
+	sem := make(chan struct{}, perWorker)
+	var inflight sync.WaitGroup
+
+	// dispatch runs processMessage on a child goroutine gated by sem.
+	// Callers must call inflight.Wait() before shutdown.
+	dispatch := func(msg broker.StreamMessage) {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		inflight.Add(1)
+		go func(m broker.StreamMessage) {
+			defer inflight.Done()
+			defer func() { <-sem }()
+			swp.processMessage(ctx, m)
+		}(msg)
+	}
+
+	defer inflight.Wait()
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -197,7 +233,7 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 			}
 
 			for _, msg := range msgs {
-				swp.processMessage(ctx, msg)
+				dispatch(msg)
 				processed = true
 			}
 		}
@@ -210,7 +246,7 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 					logger.Warn("blocking read error", "error", err)
 				}
 				for _, msg := range msgs {
-					swp.processMessage(ctx, msg)
+					dispatch(msg)
 				}
 			}
 		}

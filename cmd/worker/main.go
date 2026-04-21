@@ -132,6 +132,13 @@ func main() {
 	if numWorkers < 1 {
 		workerLog.Fatal("WORKER_COUNT must be >= 1", "value", numWorkers)
 	}
+	// Tasks-per-worker semaphore capacity. Mirrors the pre-Redis
+	// WORKER_CONCURRENCY dial: each consumer goroutine can hold up to
+	// this many in-flight tasks. Global task ceiling = numWorkers × tpw.
+	tasksPerWorker := envInt("WORKER_CONCURRENCY", 20)
+	if tasksPerWorker < 1 {
+		workerLog.Fatal("WORKER_CONCURRENCY must be >= 1", "value", tasksPerWorker)
+	}
 	consumerOpts := broker.DefaultConsumerOpts(fmt.Sprintf("worker-%s", machineName))
 	consumer := broker.NewConsumer(redisClient, consumerOpts)
 
@@ -185,6 +192,7 @@ func main() {
 	// --- stream worker pool ---
 	swpOpts := jobs.StreamWorkerOpts{
 		NumWorkers:      numWorkers,
+		TasksPerWorker:  tasksPerWorker,
 		ReclaimInterval: 30 * time.Second,
 	}
 
@@ -252,6 +260,8 @@ func main() {
 
 	workerLog.Info("hover worker ready",
 		"workers", numWorkers,
+		"tasks_per_worker", tasksPerWorker,
+		"task_slots", numWorkers*tasksPerWorker,
 		"machine", machineName,
 	)
 
