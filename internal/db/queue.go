@@ -1256,6 +1256,7 @@ func (q *DbQueue) EnqueueURLs(ctx context.Context, jobID string, pages []Page, s
 			       priority_score, retry_count, source_type, source_url, created_at
 			FROM ins
 			WHERE status IN ('pending', 'waiting')
+			ON CONFLICT (task_id) DO NOTHING
 		`
 
 		now := time.Now().UTC()
