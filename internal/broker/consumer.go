@@ -54,9 +54,16 @@ type ConsumerOpts struct {
 // DefaultConsumerOpts returns production defaults.
 func DefaultConsumerOpts(consumerName string) ConsumerOpts {
 	return ConsumerOpts{
-		ConsumerName:  consumerName,
-		BlockTimeout:  time.Duration(envInt("REDIS_CONSUMER_BLOCK_MS", 2000)) * time.Millisecond,
-		Count:         1,
+		ConsumerName: consumerName,
+		BlockTimeout: time.Duration(envInt("REDIS_CONSUMER_BLOCK_MS", 2000)) * time.Millisecond,
+		// Count is the max messages returned per XREADGROUP call. With
+		// Count=1, every ReadNonBlocking is a round-trip per message —
+		// a worker rotating across 30 active jobs makes 30 Redis calls
+		// per outer loop iteration. Bumping to 10 gives the worker a
+		// batch to fan out through its semaphore before the next Redis
+		// round-trip, reducing tail latency without changing semantics.
+		// Override via REDIS_CONSUMER_READ_COUNT.
+		Count:         int64(envInt("REDIS_CONSUMER_READ_COUNT", 10)),
 		ClaimInterval: time.Duration(envInt("REDIS_AUTOCLAIM_INTERVAL_S", 30)) * time.Second,
 		MinIdleTime:   3 * time.Minute,
 		MaxDeliveries: 3,
