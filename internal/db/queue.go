@@ -1765,7 +1765,14 @@ func (q *DbQueue) PromoteWaitingToPending(ctx context.Context, jobID string, lim
 
 	var promoted int
 	err := q.Execute(ctx, func(tx *sql.Tx) error {
-		result, execErr := tx.ExecContext(ctx, `
+		// Run the UPDATE as its own statement with RETURNING so the row
+		// count reflects actual waiting->pending transitions. A prior
+		// version tucked the INSERT into the same CTE and read the outer
+		// statement's RowsAffected — but with ON CONFLICT DO NOTHING that
+		// count reports only newly-inserted outbox rows, under-reporting
+		// whenever a race with EnqueueURLs has already placed an outbox
+		// row for the same task_id.
+		rows, queryErr := tx.QueryContext(ctx, `
 			WITH picked AS (
 				SELECT id
 				  FROM tasks
@@ -1774,37 +1781,101 @@ func (q *DbQueue) PromoteWaitingToPending(ctx context.Context, jobID string, lim
 				 ORDER BY priority_score DESC, created_at ASC
 				 LIMIT $2
 				 FOR UPDATE SKIP LOCKED
-			),
-			promoted AS (
-				UPDATE tasks t
-				   SET status = 'pending'
-				  FROM picked
-				 WHERE t.id = picked.id
-			 RETURNING t.id, t.job_id, t.page_id, t.host, t.path,
-					   t.priority_score, t.retry_count,
-					   t.source_type, COALESCE(t.source_url, ''),
-					   COALESCE(t.run_at, NOW())
 			)
+			UPDATE tasks t
+			   SET status = 'pending'
+			  FROM picked
+			 WHERE t.id = picked.id
+		 RETURNING t.id, t.job_id, t.page_id, t.host, t.path,
+				   t.priority_score, t.retry_count,
+				   t.source_type, COALESCE(t.source_url, ''),
+				   COALESCE(t.run_at, NOW())
+		`, jobID, limit)
+		if queryErr != nil {
+			return fmt.Errorf("promote waiting->pending for job %s: %w", jobID, queryErr)
+		}
+		defer rows.Close()
+
+		var (
+			taskIDs     []string
+			jobIDs      []string
+			pageIDs     []int
+			hosts       []string
+			paths       []string
+			priorities  []float64
+			retries     []int
+			sourceTypes []string
+			sourceURLs  []string
+			runAts      []time.Time
+		)
+		for rows.Next() {
+			var (
+				taskID, tJobID, host, path, sourceType, sourceURL string
+				pageID, retryCount                                int
+				priority                                          float64
+				runAt                                             time.Time
+			)
+			if err := rows.Scan(&taskID, &tJobID, &pageID, &host, &path,
+				&priority, &retryCount, &sourceType, &sourceURL, &runAt); err != nil {
+				return fmt.Errorf("promote waiting->pending scan for job %s: %w", jobID, err)
+			}
+			taskIDs = append(taskIDs, taskID)
+			jobIDs = append(jobIDs, tJobID)
+			pageIDs = append(pageIDs, pageID)
+			hosts = append(hosts, host)
+			paths = append(paths, path)
+			priorities = append(priorities, priority)
+			retries = append(retries, retryCount)
+			sourceTypes = append(sourceTypes, sourceType)
+			sourceURLs = append(sourceURLs, sourceURL)
+			runAts = append(runAts, runAt)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("promote waiting->pending rows for job %s: %w", jobID, err)
+		}
+
+		promoted = len(taskIDs)
+		if promoted == 0 {
+			return nil
+		}
+
+		// ON CONFLICT DO NOTHING still guards against the rare race with
+		// EnqueueURLs placing a pending row for the same task_id; the
+		// promoted count above is unaffected by whether the INSERT was
+		// elided for any individual row.
+		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO task_outbox (
 				task_id, job_id, page_id, host, path, priority,
 				retry_count, source_type, source_url, run_at,
 				attempts, created_at
 			)
-			SELECT id, job_id, page_id, host, path, priority_score,
-				   retry_count, source_type, source_url, run_at,
-				   0, NOW()
-			  FROM promoted
+			SELECT unnest($1::uuid[]),
+				   unnest($2::uuid[]),
+				   unnest($3::int[]),
+				   unnest($4::text[]),
+				   unnest($5::text[]),
+				   unnest($6::double precision[]),
+				   unnest($7::int[]),
+				   unnest($8::text[]),
+				   unnest($9::text[]),
+				   unnest($10::timestamptz[]),
+				   0,
+				   NOW()
 		 ON CONFLICT (task_id) DO NOTHING
-		`, jobID, limit)
-		if execErr != nil {
-			return fmt.Errorf("promote waiting->pending for job %s: %w", jobID, execErr)
+		`,
+			pq.Array(taskIDs),
+			pq.Array(jobIDs),
+			pq.Array(pageIDs),
+			pq.Array(hosts),
+			pq.Array(paths),
+			pq.Array(priorities),
+			pq.Array(retries),
+			pq.Array(sourceTypes),
+			pq.Array(sourceURLs),
+			pq.Array(runAts),
+		); err != nil {
+			return fmt.Errorf("promote waiting->pending outbox insert for job %s: %w", jobID, err)
 		}
-
-		n, rowsErr := result.RowsAffected()
-		if rowsErr != nil {
-			return fmt.Errorf("promote waiting->pending rows affected for job %s: %w", jobID, rowsErr)
-		}
-		promoted = int(n)
 		return nil
 	})
 	return promoted, err

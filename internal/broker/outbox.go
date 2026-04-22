@@ -11,7 +11,7 @@ import (
 
 // OutboxSweeperOpts configures a Sweeper.
 type OutboxSweeperOpts struct {
-	// Interval between sweep ticks. Default: 5s.
+	// Interval between sweep ticks. Default: 500ms.
 	Interval time.Duration
 	// BatchSize caps how many rows are claimed per tick. Default: 200.
 	BatchSize int
