@@ -59,6 +59,9 @@ primary_region = "syd"
   GNH_LINK_DISCOVERY_MIN_PRIORITY = "0.7"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
   GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
+  # Match prod recovery tuning — see fly.worker.toml for rationale.
+  GNH_RATE_LIMIT_SUCCESS_THRESHOLD = "1"
+  GNH_RATE_LIMIT_DELAY_STEP_DOWN_MS = "2000"
   # Floor on DomainPacer RetryAfter — see fly.worker.toml for rationale.
   GNH_DOMAIN_DELAY_PAUSE_MS = "100"
 

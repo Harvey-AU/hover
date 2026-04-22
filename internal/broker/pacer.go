@@ -14,12 +14,22 @@ import (
 // the constants from the current in-memory DomainLimiter.
 type PacerConfig struct {
 	// SuccessThreshold is the number of consecutive successes before
-	// the adaptive delay decreases. Default 5.
+	// the adaptive delay decreases. Default 5. Override via
+	// GNH_RATE_LIMIT_SUCCESS_THRESHOLD. Lower values recover faster
+	// after a transient rate-limit event.
 	SuccessThreshold int
 
 	// DelayStepMS is the amount (milliseconds) the adaptive delay
-	// changes per adjustment. Default 500.
+	// GROWS on each rate-limited release. Default 500.
 	DelayStepMS int
+
+	// DelayStepDownMS is the amount (milliseconds) the adaptive delay
+	// SHRINKS on each success once SuccessThreshold is reached. Default
+	// falls back to DelayStepMS (symmetric growth/recovery). Setting
+	// this higher than DelayStepMS makes recovery faster than the
+	// growth on rate-limit, which is usually the right default — a
+	// single spike of 429s shouldn't throttle a domain for 20 minutes.
+	DelayStepDownMS int
 
 	// MaxDelayMS caps the adaptive delay. Default 60_000 (60s).
 	MaxDelayMS int
@@ -35,9 +45,12 @@ type PacerConfig struct {
 
 // DefaultPacerConfig returns production defaults.
 func DefaultPacerConfig() PacerConfig {
+	stepUp := envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500)
+	stepDown := envInt("GNH_RATE_LIMIT_DELAY_STEP_DOWN_MS", stepUp)
 	return PacerConfig{
-		SuccessThreshold: 5,
-		DelayStepMS:      envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500),
+		SuccessThreshold: envInt("GNH_RATE_LIMIT_SUCCESS_THRESHOLD", 5),
+		DelayStepMS:      stepUp,
+		DelayStepDownMS:  stepDown,
 		MaxDelayMS:       envInt("GNH_RATE_LIMIT_MAX_DELAY_MS", 60000),
 		MinPushbackMS:    envInt("GNH_DOMAIN_DELAY_PAUSE_MS", 100),
 	}
@@ -152,10 +165,14 @@ func (p *DomainPacer) Release(ctx context.Context, domain, jobID string, success
 	cfgKey := DomainConfigKey(domain)
 
 	if success {
+		stepDown := p.cfg.DelayStepDownMS
+		if stepDown <= 0 {
+			stepDown = p.cfg.DelayStepMS
+		}
 		_, err := adaptiveDelayOnSuccessScript.Run(ctx, p.client.rdb,
 			[]string{cfgKey},
 			p.cfg.SuccessThreshold,
-			p.cfg.DelayStepMS,
+			stepDown,
 		).Result()
 		if err != nil {
 			return fmt.Errorf("broker: release success %s: %w", domain, err)
@@ -174,6 +191,48 @@ func (p *DomainPacer) Release(ctx context.Context, domain, jobID string, success
 
 	// Decrement inflight.
 	return p.DecrementInflight(ctx, domain, jobID)
+}
+
+// FlushAdaptiveDelays removes all accumulated per-domain adaptive
+// delay state (hover:dom:cfg:* keys). Pre-merge the DomainLimiter was
+// in-memory and reset on every worker restart — so a bad afternoon of
+// 429s from a flaky target could never throttle crawls for longer than
+// the worker's lifetime. Post-merge the state lives in Redis with a
+// 24h TTL, which means a single spike can keep a domain at the 60s
+// adaptive floor for a full day.
+//
+// Call this on worker startup to restore the pre-merge behaviour: the
+// pacer still grows delay on 429 during this run, but the slate is
+// clean on each deploy. Returns the number of keys deleted.
+func (p *DomainPacer) FlushAdaptiveDelays(ctx context.Context) (int, error) {
+	pattern := keyPrefix + "dom:cfg:*"
+	iter := p.client.rdb.Scan(ctx, 0, pattern, 500).Iterator()
+	var keys []string
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return 0, fmt.Errorf("broker: flush scan %s: %w", pattern, err)
+	}
+	if len(keys) == 0 {
+		return 0, nil
+	}
+
+	// Delete in chunks of 500 to avoid oversized commands.
+	deleted := 0
+	const chunk = 500
+	for i := 0; i < len(keys); i += chunk {
+		end := i + chunk
+		if end > len(keys) {
+			end = len(keys)
+		}
+		n, err := p.client.rdb.Del(ctx, keys[i:end]...).Result()
+		if err != nil {
+			return deleted, fmt.Errorf("broker: flush delete: %w", err)
+		}
+		deleted += int(n)
+	}
+	return deleted, nil
 }
 
 // IncrementInflight bumps the per-domain per-job inflight counter.

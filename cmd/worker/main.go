@@ -123,6 +123,25 @@ func main() {
 	pacer := broker.NewDomainPacer(redisClient, pacerCfg)
 	counters := broker.NewRunningCounters(redisClient)
 
+	// Flush accumulated per-domain adaptive-delay state on each boot.
+	// Pre-merge the DomainLimiter was in-memory and reset on every
+	// worker restart. Post-merge this state lives in Redis with a 24h
+	// TTL, so a brief run of 429s can throttle a domain for a full day
+	// even after the upstream target recovers. Wiping on boot mirrors
+	// the pre-merge behaviour without removing the adaptive growth
+	// during the worker's lifetime. Disable by setting
+	// GNH_PACER_FLUSH_ON_START=false.
+	if strings.TrimSpace(os.Getenv("GNH_PACER_FLUSH_ON_START")) != "false" {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		deleted, err := pacer.FlushAdaptiveDelays(flushCtx)
+		flushCancel()
+		if err != nil {
+			workerLog.Warn("pacer adaptive-delay flush failed", "error", err)
+		} else {
+			workerLog.Info("pacer adaptive-delay flush complete", "keys_deleted", deleted)
+		}
+	}
+
 	machineName := os.Getenv("FLY_MACHINE_ID")
 	if machineName == "" {
 		machineName, _ = os.Hostname()

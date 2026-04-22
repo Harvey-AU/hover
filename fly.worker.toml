@@ -60,6 +60,16 @@ primary_region = 'syd'
   GNH_SITEMAP_BATCH_DELAY_MS = "200"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
   GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
+  # Adaptive delay recovery tuning. Pre-merge the DomainLimiter reset
+  # in-memory on worker restart; post-merge state lives in Redis with a
+  # 24h TTL, so a transient 429 spike could throttle a domain for a day.
+  # SUCCESS_THRESHOLD=1 drops delay on the first successful request.
+  # DELAY_STEP_DOWN_MS=2000 shrinks 4× faster than it grows (500ms on
+  # rate-limit). Combined with FlushAdaptiveDelays on worker boot, this
+  # restores the "reset and retry" behaviour the previous architecture
+  # had implicitly.
+  GNH_RATE_LIMIT_SUCCESS_THRESHOLD = "1"
+  GNH_RATE_LIMIT_DELAY_STEP_DOWN_MS = "2000"
   # Floor on DomainPacer RetryAfter when the domain gate is held. Without
   # this the dispatcher re-fetches rate-limited tasks every tick (100ms)
   # and spins on push-back. Pre-merge this was domainDelayPause (100ms).

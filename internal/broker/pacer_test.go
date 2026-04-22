@@ -104,6 +104,10 @@ func TestDomainPacer_Release_AdaptiveDelay(t *testing.T) {
 	cfg := DefaultPacerConfig()
 	cfg.SuccessThreshold = 2
 	cfg.DelayStepMS = 100
+	// Match step-down to step-up for symmetric test expectations. In
+	// production these are decoupled so recovery can be faster than
+	// growth — see PacerConfig.DelayStepDownMS.
+	cfg.DelayStepDownMS = 100
 	pacer := NewDomainPacer(client, cfg)
 	ctx := context.Background()
 
@@ -128,4 +132,43 @@ func TestDomainPacer_Release_AdaptiveDelay(t *testing.T) {
 	adaptive, err = client.rdb.HGet(ctx, key, "adaptive_delay_ms").Result()
 	require.NoError(t, err)
 	assert.Equal(t, "300", adaptive) // 200 + 100
+}
+
+func TestDomainPacer_FlushAdaptiveDelays(t *testing.T) {
+	client := newTestClient(t)
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
+	ctx := context.Background()
+
+	// Seed several domains.
+	require.NoError(t, pacer.Seed(ctx, "a.example", 100, 500, 50))
+	require.NoError(t, pacer.Seed(ctx, "b.example", 100, 1000, 50))
+	require.NoError(t, pacer.Seed(ctx, "c.example", 100, 2000, 50))
+
+	// Inflight counters live under a different prefix and must survive.
+	require.NoError(t, pacer.IncrementInflight(ctx, "a.example", "j1"))
+
+	deleted, err := pacer.FlushAdaptiveDelays(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 3, deleted)
+
+	// Config hashes gone.
+	n, err := client.rdb.Exists(ctx, DomainConfigKey("a.example"),
+		DomainConfigKey("b.example"), DomainConfigKey("c.example")).Result()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
+
+	// Inflight hash untouched.
+	count, err := pacer.GetInflight(ctx, "a.example", "j1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestDomainPacer_FlushAdaptiveDelays_Empty(t *testing.T) {
+	client := newTestClient(t)
+	pacer := NewDomainPacer(client, DefaultPacerConfig())
+	ctx := context.Background()
+
+	deleted, err := pacer.FlushAdaptiveDelays(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, deleted)
 }
