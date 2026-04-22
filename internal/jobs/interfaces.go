@@ -32,4 +32,5 @@ type DbQueueInterface interface {
 	MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error
 	MarkArchiveSkipped(ctx context.Context, taskID string) error
 	MarkFullyArchivedJobs(ctx context.Context) (int64, error)
+	PromoteWaitingToPending(ctx context.Context, jobID string, limit int) (int, error)
 }

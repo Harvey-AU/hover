@@ -49,11 +49,12 @@ primary_region = 'syd'
   REDIS_CONSUMER_READ_COUNT = "10"
   REDIS_AUTOCLAIM_INTERVAL_S = "30"
   REDIS_COUNTER_SYNC_INTERVAL_S = "5"
-  # Outbox sweep: moves task_outbox rows into the Redis ZSET. At 1s ×
-  # 100 that caps ingest at 6k/min — fine until throughput climbs past
-  # that. Bumping batch to 500 keeps the pipeline fed when 30+ jobs
-  # discover links in parallel during the ramp-up.
-  OUTBOX_SWEEP_INTERVAL_MS = "1000"
+  # Outbox sweep: moves task_outbox rows into the Redis ZSET. At 200ms ×
+  # 500 this caps ingest at 150k/min — well above current peak and keeps
+  # newly-discovered siblings from waiting a full tick after a parent
+  # completes. The sweep is an index-only SKIP LOCKED query so the extra
+  # frequency is negligible.
+  OUTBOX_SWEEP_INTERVAL_MS = "200"
   OUTBOX_SWEEP_BATCH_SIZE = "500"
   GNH_BATCH_CHANNEL_SIZE = "5000"
   # Batch size matches pre-merge fly.toml (16). Was bumped to 32

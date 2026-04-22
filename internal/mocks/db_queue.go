@@ -114,3 +114,9 @@ func (m *MockDbQueue) UpdateTaskStatus(ctx context.Context, task *db.Task) error
 	args := m.Called(ctx, task)
 	return args.Error(0)
 }
+
+// PromoteWaitingToPending mocks the PromoteWaitingToPending method.
+func (m *MockDbQueue) PromoteWaitingToPending(ctx context.Context, jobID string, limit int) (int, error) {
+	args := m.Called(ctx, jobID, limit)
+	return args.Int(0), args.Error(1)
+}

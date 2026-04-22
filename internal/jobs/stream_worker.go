@@ -151,11 +151,11 @@ func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWo
 func (swp *StreamWorkerPool) Start(ctx context.Context) {
 	ctx, swp.cancel = context.WithCancel(ctx)
 
-	// Reconcile running counters from Postgres.
-	swp.reconcileCounters(ctx)
-
-	// Refresh active jobs immediately.
+	// Refresh active jobs first so reconcile knows which streams to probe.
 	swp.refreshActiveJobs(ctx)
+
+	// Reconcile running counters from the Redis PEL (XPENDING).
+	swp.reconcileCounters(ctx)
 
 	// Start consumer goroutines.
 	for i := range swp.opts.NumWorkers {
@@ -263,11 +263,18 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 		}
 
 		if !processed {
-			// No messages from any stream — block briefly on first stream.
-			if len(jobIDs) > 0 {
-				msgs, err := swp.consumer.Read(ctx, jobIDs[0])
+			// No messages from any stream — block briefly on one job.
+			//
+			// Previously every worker blocked on jobIDs[0] here, which meant
+			// under low load the first active job saw N workers queued on its
+			// stream while the other N-1 jobs saw none. Shard by workerID so
+			// workers spread across the active set instead, keeping BLOCK
+			// pressure evenly distributed.
+			if n := len(jobIDs); n > 0 {
+				target := jobIDs[workerID%n]
+				msgs, err := swp.consumer.Read(ctx, target)
 				if err != nil {
-					logger.Warn("blocking read error", "error", err)
+					logger.Warn("blocking read error", "error", err, "job_id", target)
 				}
 				for _, msg := range msgs {
 					dispatch(msg)
@@ -346,8 +353,26 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 	}
 
 	// Decrement running counter.
+	decrementedOK := true
 	if _, err := swp.counters.Decrement(ctx, msg.JobID); err != nil {
+		decrementedOK = false
 		jobsLog.Warn("counter decrement failed", "error", err, "job_id", msg.JobID)
+	}
+
+	// A concurrency slot just freed. Promote one waiting task for this
+	// job into pending so the freshly vacated slot doesn't sit idle
+	// until the next link-discovery burst arrives. Skipped when the
+	// decrement failed because the counter state is ambiguous and
+	// double-promotion on retry would exceed the concurrency cap.
+	//
+	// Intentionally synchronous: the promoter is a single UPDATE +
+	// INSERT and runs on the bulk lane, so adding a goroutine here
+	// would just introduce a race for no throughput benefit.
+	if decrementedOK && swp.dbQueue != nil {
+		if _, err := swp.dbQueue.PromoteWaitingToPending(ctx, msg.JobID, 1); err != nil {
+			jobsLog.Warn("waiting->pending promotion failed",
+				"error", err, "job_id", msg.JobID)
+		}
 	}
 
 	// Release domain pacer.
@@ -657,29 +682,54 @@ func (swp *StreamWorkerPool) fetchJobInfo(ctx context.Context, jobID string) (*J
 
 // --- counter reconciliation ---
 
+// reconcileCounters rebuilds the per-job RunningCounters HASH in Redis
+// from the authoritative stream PEL (XPENDING). The previous version
+// queried Postgres for tasks where status='running', but the batch
+// writer never transitions tasks through that status — they go
+// pending → completed/failed in one UPDATE — so the query always
+// returned zero and the reconcile silently wiped the counters,
+// stalling dispatch until the next decrement restored them.
+//
+// The PEL is the source of truth for in-flight work per job because
+// a message stays in the PEL from XREADGROUP delivery until XACK,
+// which brackets the worker's crawl + persist lifecycle.
 func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
-	counts := make(map[string]int64)
+	jobIDs := swp.getActiveJobs()
 
-	err := swp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT job_id, COUNT(*) FROM tasks WHERE status = 'running' GROUP BY job_id`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var jobID string
-			var count int64
-			if err := rows.Scan(&jobID, &count); err != nil {
-				return err
-			}
-			counts[jobID] = count
-		}
-		return rows.Err()
-	})
+	// Also include any job currently present in the Redis counters hash,
+	// in case refreshActiveJobs hasn't surfaced it yet (e.g. a job that
+	// just transitioned status).
+	existing, err := swp.counters.GetAll(ctx)
 	if err != nil {
-		jobsLog.Error("failed to query running task counts for reconciliation", "error", err)
-		return
+		jobsLog.Warn("failed to read existing running counters; continuing with active-job set only", "error", err)
+	} else {
+		seen := make(map[string]struct{}, len(jobIDs))
+		for _, id := range jobIDs {
+			seen[id] = struct{}{}
+		}
+		for id := range existing {
+			if _, ok := seen[id]; !ok {
+				jobIDs = append(jobIDs, id)
+			}
+		}
+	}
+
+	counts := make(map[string]int64, len(jobIDs))
+	for _, jobID := range jobIDs {
+		n, err := swp.consumer.PendingCount(ctx, jobID)
+		if err != nil {
+			jobsLog.Warn("PendingCount failed during reconcile; skipping job", "job_id", jobID, "error", err)
+			// Preserve the existing counter rather than zeroing it on a
+			// transient Redis hiccup — better to over-count briefly than
+			// to flood a job with extra dispatches.
+			if prev, ok := existing[jobID]; ok {
+				counts[jobID] = prev
+			}
+			continue
+		}
+		if n > 0 {
+			counts[jobID] = n
+		}
 	}
 
 	if err := swp.counters.Reconcile(ctx, counts); err != nil {
@@ -691,7 +741,10 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	for _, c := range counts {
 		total += c
 	}
-	jobsLog.Info("reconciled running counters", "total_running", total, "jobs", len(counts))
+	jobsLog.Info("reconciled running counters from PEL",
+		"total_running", total,
+		"jobs_probed", len(jobIDs),
+		"jobs_with_pel", len(counts))
 }
 
 // --- concurrency checking (for dispatcher) ---

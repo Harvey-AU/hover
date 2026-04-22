@@ -83,7 +83,7 @@ primary_region = "syd"
   ARCHIVE_CONCURRENCY = "5"
 
   # Outbox sweeper — mirror prod defaults.
-  OUTBOX_SWEEP_INTERVAL_MS = "1000"
+  OUTBOX_SWEEP_INTERVAL_MS = "200"
   OUTBOX_SWEEP_BATCH_SIZE = "100"
 
   # Explicitly source DATABASE_URL from secrets for parity with the API.
