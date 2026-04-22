@@ -1774,7 +1774,7 @@ func (q *DbQueue) PromoteWaitingToPending(ctx context.Context, jobID string, lim
 	var promoted int
 	err := q.Execute(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx,
-			`SELECT promote_waiting_with_outbox($1::uuid, $2::integer)`,
+			`SELECT promote_waiting_with_outbox($1::text, $2::integer)`,
 			jobID, limit,
 		).Scan(&promoted)
 	})
