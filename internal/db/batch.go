@@ -562,8 +562,10 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 			}
 		}
 
-		// Running task counters and waiting→pending promotion are handled by the
-		// Redis broker (counters + scheduler), not the batch manager.
+		// Running task counters are decremented by the stream worker on task
+		// outcome. Waiting→pending promotion is driven per-completion by
+		// DbQueue.PromoteWaitingToPending, invoked from the stream worker after
+		// the counter decrement succeeds.
 
 		return nil
 	})
@@ -707,6 +709,7 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 
 	// Build arrays for all fields
 	ids := make([]string, len(tasks))
+	startedAts := make([]time.Time, len(tasks))
 	completedAts := make([]time.Time, len(tasks))
 	statusCodes := make([]int, len(tasks))
 	responseTimes := make([]int64, len(tasks))
@@ -743,6 +746,13 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 
 	for i, task := range tasks {
 		ids[i] = task.ID
+		// StartedAt is populated by the stream worker when the task is dispatched.
+		// Fall back to CompletedAt so the column is never NULL for completed rows.
+		if !task.StartedAt.IsZero() {
+			startedAts[i] = task.StartedAt
+		} else {
+			startedAts[i] = task.CompletedAt
+		}
 		completedAts[i] = task.CompletedAt
 		statusCodes[i] = task.StatusCode
 		responseTimes[i] = task.ResponseTime
@@ -809,6 +819,7 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 	query := `
 		UPDATE tasks
 		SET status = 'completed',
+			started_at = COALESCE(tasks.started_at, updates.started_at),
 			completed_at = updates.completed_at,
 			status_code = updates.status_code,
 			response_time = updates.response_time,
@@ -877,7 +888,8 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 				unnest($31::bigint[]) AS html_size_bytes,
 				unnest($32::bigint[]) AS html_compressed_size_bytes,
 				unnest($33::text[]) AS html_sha256,
-				NULLIF(unnest($34::text[]), '')::timestamptz AS html_captured_at
+				NULLIF(unnest($34::text[]), '')::timestamptz AS html_captured_at,
+				unnest($35::timestamptz[]) AS started_at
 		) AS updates
 		WHERE tasks.id = updates.id
 	`
@@ -917,6 +929,7 @@ func (bm *BatchManager) batchUpdateCompleted(ctx context.Context, tx *sql.Tx, ta
 		pq.Array(htmlCompressedSizeBytes),
 		pq.Array(htmlSHA256s),
 		pq.Array(htmlCapturedAts),
+		pq.Array(startedAts),
 	)
 
 	if err != nil {
@@ -935,6 +948,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 	}
 
 	ids := make([]string, len(tasks))
+	startedAts := make([]time.Time, len(tasks))
 	completedAts := make([]time.Time, len(tasks))
 	errors := make([]string, len(tasks))
 	retryCounts := make([]int, len(tasks))
@@ -943,6 +957,11 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 
 	for i, task := range tasks {
 		ids[i] = task.ID
+		if !task.StartedAt.IsZero() {
+			startedAts[i] = task.StartedAt
+		} else {
+			startedAts[i] = task.CompletedAt
+		}
 		completedAts[i] = task.CompletedAt
 		errors[i] = task.Error
 		retryCounts[i] = task.RetryCount
@@ -957,6 +976,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 	query := `
 		UPDATE tasks
 		SET status = updates.status,
+			started_at = COALESCE(tasks.started_at, updates.started_at),
 			completed_at = updates.completed_at,
 			error = updates.error,
 			retry_count = updates.retry_count,
@@ -968,7 +988,8 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 				unnest($3::timestamptz[]) AS completed_at,
 				unnest($4::text[]) AS error,
 				unnest($5::integer[]) AS retry_count,
-				unnest($6::text[]) AS request_diagnostics
+				unnest($6::text[]) AS request_diagnostics,
+				unnest($7::timestamptz[]) AS started_at
 		) AS updates
 		WHERE tasks.id = updates.id
 	`
@@ -980,6 +1001,7 @@ func (bm *BatchManager) batchUpdateFailed(ctx context.Context, tx *sql.Tx, tasks
 		pq.Array(errors),
 		pq.Array(retryCounts),
 		pq.Array(requestDiagnostics),
+		pq.Array(startedAts),
 	)
 
 	if err != nil {

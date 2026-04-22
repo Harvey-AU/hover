@@ -23,9 +23,16 @@ type OutboxSweeperOpts struct {
 }
 
 // DefaultOutboxSweeperOpts returns sensible production defaults.
+//
+// The sweep interval was lowered from 5s to 500ms because the outbox
+// sits on the hot path between newly-authored tasks and the Redis
+// ZSET that dispatchers poll. At 5s, each just-completed task waited
+// up to 5s for its newly-discovered siblings to reach a worker, which
+// dominated end-to-end throughput on small jobs. The sweep is an
+// index-only SKIP LOCKED query; running it 10× more often is cheap.
 func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 	return OutboxSweeperOpts{
-		Interval:    5 * time.Second,
+		Interval:    500 * time.Millisecond,
 		BatchSize:   200,
 		BaseBackoff: 2 * time.Second,
 		MaxBackoff:  5 * time.Minute,
@@ -47,7 +54,7 @@ type Sweeper struct {
 // NewOutboxSweeper constructs a Sweeper.
 func NewOutboxSweeper(db *sql.DB, scheduler *Scheduler, opts OutboxSweeperOpts) *Sweeper {
 	if opts.Interval <= 0 {
-		opts.Interval = 5 * time.Second
+		opts.Interval = 500 * time.Millisecond
 	}
 	if opts.BatchSize <= 0 {
 		opts.BatchSize = 200

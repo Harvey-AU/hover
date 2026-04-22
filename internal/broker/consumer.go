@@ -281,6 +281,29 @@ func (c *Consumer) getDeliveryCount(ctx context.Context, streamKey, groupName, m
 	return pending[0].RetryCount, nil
 }
 
+// PendingCount returns the number of messages in the pending entries
+// list (PEL) for a job's consumer group — i.e. tasks that have been
+// delivered to a worker but not yet ACKed. This is the authoritative
+// source of "currently running" for a given job; the RunningCounters
+// HASH in Redis is a fast-path mirror that can drift under partial
+// failures. Returns 0 when the stream or group does not yet exist.
+func (c *Consumer) PendingCount(ctx context.Context, jobID string) (int64, error) {
+	streamKey := StreamKey(jobID)
+	groupName := ConsumerGroup(jobID)
+
+	summary, err := c.client.rdb.XPending(ctx, streamKey, groupName).Result()
+	if err != nil {
+		if isNoGroupErr(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("broker: XPENDING %s: %w", jobID, err)
+	}
+	if summary == nil {
+		return 0, nil
+	}
+	return summary.Count, nil
+}
+
 // isNoGroupErr returns true when Redis reports that the stream or
 // consumer group doesn't exist. This is expected before the
 // dispatcher first XADDs to a job's stream.

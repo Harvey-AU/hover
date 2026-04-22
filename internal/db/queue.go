@@ -1740,3 +1740,72 @@ func (q *DbQueue) UpdateDomainTechnologies(ctx context.Context, domainID int, te
 	}
 	return q.db.UpdateDomainTechnologies(ctx, domainID, technologies, headers, htmlPath)
 }
+
+// PromoteWaitingToPending moves up to `limit` waiting tasks for the job
+// into pending status and inserts matching task_outbox rows so the
+// OutboxSweeper picks them up on its next tick. Returns the number of
+// rows promoted.
+//
+// Called reactively after a counter decrement in the stream worker so a
+// freshly freed concurrency slot gets reused by a stranded waiting task
+// rather than sitting idle until the next link-discovery burst arrives.
+// Before this path existed, waiting rows never transitioned back to
+// pending (classifyEnqueuedTask only runs on INSERT), so crawls on
+// mature sites with heavy dedupe went idle with large waiting backlogs.
+//
+// The SELECT uses FOR UPDATE SKIP LOCKED so simultaneous promotions for
+// the same job cannot both pick the same row; task_outbox has a unique
+// index on task_id (migration 20260422112007) so the INSERT can rely on
+// ON CONFLICT DO NOTHING to collapse any remaining double-enqueue race
+// against the normal EnqueueURLs path.
+func (q *DbQueue) PromoteWaitingToPending(ctx context.Context, jobID string, limit int) (int, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+
+	var promoted int
+	err := q.Execute(ctx, func(tx *sql.Tx) error {
+		result, execErr := tx.ExecContext(ctx, `
+			WITH picked AS (
+				SELECT id
+				  FROM tasks
+				 WHERE job_id = $1
+				   AND status = 'waiting'
+				 ORDER BY priority_score DESC, created_at ASC
+				 LIMIT $2
+				 FOR UPDATE SKIP LOCKED
+			),
+			promoted AS (
+				UPDATE tasks t
+				   SET status = 'pending'
+				  FROM picked
+				 WHERE t.id = picked.id
+			 RETURNING t.id, t.job_id, t.page_id, t.host, t.path,
+					   t.priority_score, t.retry_count,
+					   t.source_type, COALESCE(t.source_url, ''),
+					   COALESCE(t.run_at, NOW())
+			)
+			INSERT INTO task_outbox (
+				task_id, job_id, page_id, host, path, priority,
+				retry_count, source_type, source_url, run_at,
+				attempts, created_at
+			)
+			SELECT id, job_id, page_id, host, path, priority_score,
+				   retry_count, source_type, source_url, run_at,
+				   0, NOW()
+			  FROM promoted
+		 ON CONFLICT (task_id) DO NOTHING
+		`, jobID, limit)
+		if execErr != nil {
+			return fmt.Errorf("promote waiting->pending for job %s: %w", jobID, execErr)
+		}
+
+		n, rowsErr := result.RowsAffected()
+		if rowsErr != nil {
+			return fmt.Errorf("promote waiting->pending rows affected for job %s: %w", jobID, rowsErr)
+		}
+		promoted = int(n)
+		return nil
+	})
+	return promoted, err
+}
