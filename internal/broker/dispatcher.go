@@ -161,10 +161,14 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		}
 		if !paceResult.Acquired {
 			// Domain in delay window — reschedule with estimated wait.
-			// Reschedule dual-writes the new run-at to Postgres so the
-			// pacing push-back survives a Redis flush.
+			// Redis-only: pacer push-back is ephemeral (hundreds of ms to
+			// a few seconds). Doing a synchronous Postgres UPDATE per
+			// paced op serialised the dispatcher and collapsed throughput
+			// on 2026-04-22 when "paced" dominated at 100 ops/s. If Redis
+			// loses state the OutboxSweeper rehydrates from tasks.run_at —
+			// a missed push-back just means one extra TryAcquire round-trip.
 			newRunAt := now.Add(paceResult.RetryAfter)
-			if err := d.scheduler.Reschedule(ctx, *entry, newRunAt); err != nil {
+			if err := d.scheduler.RescheduleZSet(ctx, *entry, newRunAt); err != nil {
 				brokerLog.Warn("reschedule failed", "error", err, "task_id", entry.TaskID)
 			}
 			observability.RecordBrokerDispatch(ctx, jobID, "paced")

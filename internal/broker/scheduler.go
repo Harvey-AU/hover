@@ -253,6 +253,26 @@ func (s *Scheduler) Reschedule(ctx context.Context, entry ScheduleEntry, newRunA
 		}
 	}
 
+	return s.rescheduleZSet(ctx, entry, newRunAt)
+}
+
+// RescheduleZSet is Reschedule without the Postgres mirror. Use this on
+// the hot pacer push-back path where every dispatcher iteration would
+// otherwise issue a synchronous UPDATE — at 100 paced ops/sec the
+// per-op DB latency stalled the single dispatcher goroutine and the ZSET
+// backed up to 80k+ entries on 2026-04-22.
+//
+// Safety: pacer push-back is ephemeral (seconds, not minutes). If Redis
+// loses the ZSET between a push-back and dispatch, OutboxSweeper rehydrates
+// from tasks.run_at. The authoritative run_at in Postgres is written on
+// initial enqueue; a missed push-back just means the task is re-attempted
+// slightly sooner than its pacer gate allows — the next TryAcquire will
+// push it back again. No task is lost.
+func (s *Scheduler) RescheduleZSet(ctx context.Context, entry ScheduleEntry, newRunAt time.Time) error {
+	return s.rescheduleZSet(ctx, entry, newRunAt)
+}
+
+func (s *Scheduler) rescheduleZSet(ctx context.Context, entry ScheduleEntry, newRunAt time.Time) error {
 	key := ScheduleKey(entry.JobID)
 	score := float64(newRunAt.UnixMilli())
 

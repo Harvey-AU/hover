@@ -71,16 +71,26 @@ primary_region = 'syd'
   GNH_SITEMAP_BATCH_SIZE = "100"
   GNH_SITEMAP_BATCH_DELAY_MS = "200"
   GNH_RATE_LIMIT_BASE_DELAY_MS = "50"
-  GNH_RATE_LIMIT_MAX_DELAY_MS = "60000"
-  # Adaptive delay recovery tuning. Pre-merge the DomainLimiter reset
+  # Cap adaptive delay at 10s (was 60s). With 30 jobs each hitting ~5
+  # domains, a pileup of 429s was pushing every active domain to the 60s
+  # floor — which collapses throughput to 1 req/min/domain. Grafana on
+  # 2026-04-22 showed dispatcher "paced" dominating at 100 ops/s vs "ok"
+  # at 10 ops/s with ZSET depth climbing to 80k+. 10s keeps the worst
+  # domain at 6 req/min so 30 active jobs × 5 domains × 6 = 900/min
+  # bottomed out, vs the pre-cap collapse to ~150/min.
+  GNH_RATE_LIMIT_MAX_DELAY_MS = "10000"
+  # Adaptive delay ramp tuning. Pre-merge the DomainLimiter reset
   # in-memory on worker restart; post-merge state lives in Redis with a
   # 24h TTL, so a transient 429 spike could throttle a domain for a day.
   # SUCCESS_THRESHOLD=1 drops delay on the first successful request.
-  # DELAY_STEP_DOWN_MS=2000 shrinks 4× faster than it grows (500ms on
-  # rate-limit). Combined with FlushAdaptiveDelays on worker boot, this
-  # restores the "reset and retry" behaviour the previous architecture
-  # had implicitly.
+  # DELAY_STEP_MS=100 (was 500 default): smaller steps so a cache_validation
+  # error burst doesn't jump a domain to 500ms gates in one tick; instead
+  # ramp-up is gradual and the recovery (step-down 2000) easily outpaces it.
+  # DELAY_STEP_DOWN_MS=2000 shrinks 20× faster than it grows. Combined
+  # with FlushAdaptiveDelays on worker boot, this restores the "reset
+  # and retry" behaviour the previous architecture had implicitly.
   GNH_RATE_LIMIT_SUCCESS_THRESHOLD = "1"
+  GNH_RATE_LIMIT_DELAY_STEP_MS = "100"
   GNH_RATE_LIMIT_DELAY_STEP_DOWN_MS = "2000"
   # Floor on DomainPacer RetryAfter when the domain gate is held. Without
   # this the dispatcher re-fetches rate-limited tasks every tick (100ms)
