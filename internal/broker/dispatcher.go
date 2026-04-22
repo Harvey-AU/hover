@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/observability"
@@ -20,6 +21,14 @@ type DispatcherOpts struct {
 	// BatchSize is the maximum number of ZSET entries fetched per job
 	// per scan tick. Default 50.
 	BatchSize int64
+
+	// ParallelJobs caps how many per-job dispatch goroutines run
+	// concurrently inside a single tick. Pre-change the tick processed
+	// jobs serially, which made the per-task Redis round-trip cost scale
+	// O(N_jobs × batch). Under a 100-job workload that serialised the
+	// dispatcher into a ~70× backlog. Default 32. Override via
+	// REDIS_DISPATCH_PARALLEL_JOBS.
+	ParallelJobs int
 }
 
 // DefaultDispatcherOpts returns production defaults, optionally
@@ -27,9 +36,11 @@ type DispatcherOpts struct {
 func DefaultDispatcherOpts() DispatcherOpts {
 	interval := time.Duration(envInt("REDIS_DISPATCH_INTERVAL_MS", 100)) * time.Millisecond
 	batch := int64(envInt("REDIS_DISPATCH_BATCH_SIZE", 50))
+	parallel := envInt("REDIS_DISPATCH_PARALLEL_JOBS", 32)
 	return DispatcherOpts{
 		ScanInterval: interval,
 		BatchSize:    batch,
+		ParallelJobs: parallel,
 	}
 }
 
@@ -56,6 +67,15 @@ type Dispatcher struct {
 	jobLister JobLister
 	concCheck ConcurrencyChecker
 	opts      DispatcherOpts
+
+	// groupEnsured remembers per-job consumer groups we have already
+	// created. XGroupCreateMkStream is idempotent but still a Redis
+	// round-trip; calling it once per dispatched task was the second
+	// biggest RTT cost in the serial tick. The map is never cleared
+	// intentionally — the keyspace is bounded by the number of jobs the
+	// worker has ever dispatched for, which is small in practice and
+	// released when the worker process exits.
+	groupEnsured sync.Map
 }
 
 // NewDispatcher creates a Dispatcher.
@@ -109,18 +129,51 @@ func (d *Dispatcher) tick(ctx context.Context) {
 	}
 
 	now := time.Now()
+
+	// Parallelise per-job dispatch. Each job operates on its own ZSET,
+	// Stream, and counter, and dispatchJob's only cross-job dependency
+	// is the shared Redis client (goroutine-safe) and pacer (likewise).
+	// A bounded semaphore keeps the fan-out predictable under 100+ jobs
+	// without opening the pool to unbounded goroutine growth.
+	concurrency := d.opts.ParallelJobs
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > len(jobIDs) {
+		concurrency = len(jobIDs)
+	}
+	if concurrency == 0 {
+		return
+	}
+
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+loop:
 	for _, jobID := range jobIDs {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		dispatched, err := d.dispatchJob(ctx, jobID, now)
-		if err != nil {
-			brokerLog.Error("dispatch error", "error", err, "job_id", jobID)
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			// `break` inside a select only exits the select; use a
+			// label so we actually stop fanning out new work.
+			break loop
 		}
-		if dispatched > 0 {
-			brokerLog.Debug("dispatched tasks", "job_id", jobID, "dispatched", dispatched)
-		}
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			dispatched, err := d.dispatchJob(ctx, id, now)
+			if err != nil {
+				brokerLog.Error("dispatch error", "error", err, "job_id", id)
+			}
+			if dispatched > 0 {
+				brokerLog.Debug("dispatched tasks", "job_id", id, "dispatched", dispatched)
+			}
+		}(jobID)
 	}
+	wg.Wait()
 }
 
 // dispatchJob moves due items from the job's ZSET to its Stream.
@@ -238,11 +291,20 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 
 // ensureConsumerGroup creates the consumer group if it doesn't exist.
 // Returns nil if the group already exists or was created successfully.
+//
+// Results are memoised per group name so the hot per-task path short-circuits
+// after the first successful create. XGroupCreateMkStream is idempotent but
+// even a BUSYGROUP reply still costs a full Redis RTT — under the serial
+// dispatcher that was the second largest per-task cost after the pacer.
 func (d *Dispatcher) ensureConsumerGroup(ctx context.Context, streamKey, groupName string) error {
+	if _, ok := d.groupEnsured.Load(groupName); ok {
+		return nil
+	}
 	err := d.client.rdb.XGroupCreateMkStream(ctx, streamKey, groupName, "0").Err()
 	if err != nil && !isGroupExistsErr(err) {
 		return err
 	}
+	d.groupEnsured.Store(groupName, struct{}{})
 	return nil
 }
 

@@ -105,46 +105,53 @@ func (p *DomainPacer) Seed(ctx context.Context, domain string, baseDelayMS, adap
 // TryAcquire attempts to set the domain time-gate. If the gate is
 // already held (domain was recently accessed), it returns the
 // remaining wait time. This is non-blocking.
+//
+// Implemented as a single Lua EVALSHA so the effective-delay read and
+// SET NX PX / PTTL fallback all execute server-side. The earlier
+// three-call version (HMGET → SET NX PX → PTTL) was the dominant
+// dispatcher round-trip cost under multi-job workloads.
 func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult, error) {
-	delayMS, err := p.effectiveDelayMS(ctx, domain)
+	cfgKey := DomainConfigKey(domain)
+	gateKey := DomainGateKey(domain)
+
+	raw, err := tryAcquireScript.Run(ctx, p.client.rdb, []string{cfgKey, gateKey}).Result()
 	if err != nil {
-		return PaceResult{}, err
+		return PaceResult{}, fmt.Errorf("broker: try acquire %s: %w", domain, err)
+	}
+
+	acquired, delayMS, ttlMS, err := parseTryAcquireResult(raw)
+	if err != nil {
+		return PaceResult{}, fmt.Errorf("broker: try acquire %s: %w", domain, err)
 	}
 
 	observability.RecordBrokerPacerDelay(ctx, domain, float64(delayMS))
 
-	// A zero delay means no pacing — always acquire.
-	if delayMS <= 0 {
+	if acquired {
 		return PaceResult{Acquired: true}, nil
 	}
 
-	gateKey := DomainGateKey(domain)
-
-	// SET NX PX: only succeeds if key doesn't exist.
-	err = p.client.rdb.SetArgs(ctx, gateKey, "1", redis.SetArgs{
-		Mode: "NX",
-		TTL:  time.Duration(delayMS) * time.Millisecond,
-	}).Err()
-	if err == nil {
-		// Key was set — domain is available.
-		return PaceResult{Acquired: true}, nil
-	}
-	if err != redis.Nil {
-		return PaceResult{}, fmt.Errorf("broker: gate SET NX %s: %w", domain, err)
-	}
-	// redis.Nil means key already existed — domain in delay window.
-
-	// Gate exists — get remaining TTL.
-	ttl, err := p.client.rdb.PTTL(ctx, gateKey).Result()
-	if err != nil {
-		return PaceResult{}, fmt.Errorf("broker: gate PTTL %s: %w", domain, err)
-	}
+	ttl := time.Duration(ttlMS) * time.Millisecond
 	if ttl <= 0 {
-		// Key expired between SET NX and PTTL — short retry.
-		return PaceResult{Acquired: false, RetryAfter: p.pushbackFloor(time.Duration(delayMS) * time.Millisecond)}, nil
+		// Gate TTL expired between the SET NX and the PTTL inside the
+		// script (rare, but possible under clock drift) — fall back to
+		// the full effective delay rather than zero so we still pause.
+		ttl = time.Duration(delayMS) * time.Millisecond
 	}
-
 	return PaceResult{Acquired: false, RetryAfter: p.pushbackFloor(ttl)}, nil
+}
+
+// parseTryAcquireResult extracts the {acquired, delay_ms, ttl_ms} tuple from a
+// tryAcquireScript return value. The go-redis driver decodes Lua arrays as
+// []interface{} with int64 elements.
+func parseTryAcquireResult(raw interface{}) (acquired bool, delayMS, ttlMS int64, err error) {
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 3 {
+		return false, 0, 0, fmt.Errorf("unexpected script result shape: %T %v", raw, raw)
+	}
+	ok0, _ := arr[0].(int64)
+	d, _ := arr[1].(int64)
+	t, _ := arr[2].(int64)
+	return ok0 == 1, d, t, nil
 }
 
 // pushbackFloor applies MinPushbackMS as a lower bound on pacer RetryAfter
@@ -264,46 +271,4 @@ func (p *DomainPacer) GetInflight(ctx context.Context, domain, jobID string) (in
 		return 0, nil
 	}
 	return val, err
-}
-
-// effectiveDelayMS returns the current effective delay for a domain,
-// combining base delay and adaptive delay.
-func (p *DomainPacer) effectiveDelayMS(ctx context.Context, domain string) (int, error) {
-	cfgKey := DomainConfigKey(domain)
-
-	vals, err := p.client.rdb.HMGet(ctx, cfgKey, "base_delay_ms", "adaptive_delay_ms").Result()
-	if err != nil {
-		return 0, fmt.Errorf("broker: effective delay %s: %w", domain, err)
-	}
-
-	baseMS := intFromHMGet(vals, 0, "base_delay_ms", domain)
-	adaptiveMS := intFromHMGet(vals, 1, "adaptive_delay_ms", domain)
-
-	// Take the larger of base and adaptive.
-	if adaptiveMS > baseMS {
-		return adaptiveMS, nil
-	}
-	return baseMS, nil
-}
-
-// intFromHMGet parses an HMGet slot as an integer, defaulting to 0 when the
-// value is missing, nil, or malformed. Malformed values are logged (but not
-// returned as errors) so bad config is visible without blocking the pacer.
-func intFromHMGet(vals []interface{}, idx int, field, domain string) int {
-	if idx >= len(vals) || vals[idx] == nil {
-		return 0
-	}
-	s, ok := vals[idx].(string)
-	if !ok {
-		brokerLog.Warn("pacer: non-string HMGet value, defaulting to 0",
-			"field", field, "domain", domain, "type", fmt.Sprintf("%T", vals[idx]))
-		return 0
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		brokerLog.Warn("pacer: malformed integer in HMGet value, defaulting to 0",
-			"field", field, "domain", domain, "value", s, "error", err)
-		return 0
-	}
-	return n
 }
