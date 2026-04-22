@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-APP="hover"
+APP="hover,hover-worker"
 INTERVAL=10
 SAMPLES=400
 ITERATIONS=1440  # 4 hours at 10s intervals
@@ -29,7 +29,8 @@ Automatic cleanup (enabled by default):
   - Use --no-cleanup to disable or --cleanup-mode delete to remove everything
 
 Options:
-  --app NAME            Fly application name (default: hover)
+  --app NAMES           Fly application name(s), comma-separated
+                        (default: hover,hover-worker)
   --interval SECONDS    Seconds to wait between samples (default: 60)
   --samples N           Number of log lines to request each run (default: 400)
   --iterations N        Number of iterations to perform (0 = run forever)
@@ -134,6 +135,16 @@ if [[ "$CLEANUP_MODE" != "zip" && "$CLEANUP_MODE" != "delete" ]]; then
     exit 1
 fi
 
+# Split APP into an array on commas (and strip whitespace around entries).
+IFS=',' read -r -a APPS <<< "$APP"
+for i in "${!APPS[@]}"; do
+    APPS[i]="${APPS[i]// /}"
+done
+if [[ ${#APPS[@]} -eq 0 || -z "${APPS[0]}" ]]; then
+    echo "at least one app name is required" >&2
+    exit 1
+fi
+
 # Resolve a working Python interpreter for log processing helpers.
 if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
     PYTHON_CMD="python3"
@@ -185,10 +196,12 @@ fi
 DATE_DIR="$OUTPUT_ROOT/$(date +"%Y%m%d")"
 TIME_PREFIX=$(date +"%H%M")
 RUN_DIR="$DATE_DIR/${TIME_PREFIX}_${RUN_ID}"
-RAW_DIR="$RUN_DIR/raw"
 LOG_FILE="$RUN_DIR/monitor.log"
 
-mkdir -p "$RAW_DIR"
+mkdir -p "$RUN_DIR"
+for app in "${APPS[@]}"; do
+    mkdir -p "$RUN_DIR/$app/raw"
+done
 
 # Cleanup old runs if requested
 if [[ "$CLEANUP_OLD" == "true" ]]; then
@@ -222,25 +235,25 @@ if [[ "$CLEANUP_OLD" == "true" ]]; then
             run_name=$(basename "$run_dir")
 
             if [[ "$CLEANUP_MODE" == "zip" ]]; then
-                # Zip mode: archive raw/ and iteration JSONs, keep summaries
-
-                # Skip if raw already zipped
-                if [[ -f "$run_dir/raw.zip" ]]; then
-                    continue
-                fi
-
-                # Check if raw/ directory exists
-                if [[ -d "$run_dir/raw" ]]; then
-                    echo "  Zipping raw logs: $date_dir/$run_name/raw" | tee -a "$LOG_FILE"
-                    (cd "$run_dir" && zip -q -r "raw.zip" "raw" && rm -rf "raw") || {
-                        echo "  Failed to zip raw directory in $run_dir" | tee -a "$LOG_FILE"
+                # Zip mode: archive any raw/ dirs and iteration JSONs, keep summaries.
+                # Handles both legacy layout ($run_dir/raw) and per-app layout
+                # ($run_dir/<app>/raw).
+                while IFS= read -r raw_dir; do
+                    [[ -z "$raw_dir" ]] && continue
+                    zip_parent=$(dirname "$raw_dir")
+                    [[ -f "$zip_parent/raw.zip" ]] && continue
+                    rel=${raw_dir#"$run_dir/"}
+                    echo "  Zipping raw logs: $date_dir/$run_name/$rel" | tee -a "$LOG_FILE"
+                    (cd "$zip_parent" && zip -q -r "raw.zip" "raw" && rm -rf "raw") || {
+                        echo "  Failed to zip raw directory $raw_dir" | tee -a "$LOG_FILE"
                     }
-                fi
+                done < <(find "$run_dir" -type d -name raw 2>/dev/null)
 
-                # Remove iteration JSON files (keep summary.md, summary.json, monitor.log)
-                if compgen -G "$run_dir/*_iter*.json" > /dev/null 2>&1; then
+                # Remove iteration JSONs anywhere under the run dir (keep summaries).
+                iter_files=$(find "$run_dir" -type f -name '*_iter*.json' 2>/dev/null)
+                if [[ -n "$iter_files" ]]; then
                     echo "  Removing iteration JSONs: $date_dir/$run_name" | tee -a "$LOG_FILE"
-                    rm -f "$run_dir"/*_iter*.json || {
+                    printf '%s\n' "$iter_files" | xargs rm -f || {
                         echo "  Failed to remove iteration JSONs in $run_dir" | tee -a "$LOG_FILE"
                     }
                 fi
@@ -258,37 +271,50 @@ if [[ "$CLEANUP_OLD" == "true" ]]; then
 fi
 
 echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Starting log monitor" | tee -a "$LOG_FILE"
-echo "App: $APP | Interval: ${INTERVAL}s | Samples: $SAMPLES | Iterations: $ITERATIONS" | tee -a "$LOG_FILE"
+echo "Apps: ${APPS[*]} | Interval: ${INTERVAL}s | Samples: $SAMPLES | Iterations: $ITERATIONS" | tee -a "$LOG_FILE"
 echo "Run directory: $RUN_DIR" | tee -a "$LOG_FILE"
-echo "Raw logs: $RAW_DIR" | tee -a "$LOG_FILE"
-echo "Summaries: $RUN_DIR" | tee -a "$LOG_FILE"
+for app in "${APPS[@]}"; do
+    echo "  [$app] raw: $RUN_DIR/$app/raw  summaries: $RUN_DIR/$app" | tee -a "$LOG_FILE"
+done
 if [[ -z "$PYTHON_CMD" ]]; then
     echo "Python not found; continuing with raw log capture only" | tee -a "$LOG_FILE"
 fi
+
+# capture_app APP_NAME TIMESTAMP ITER — fetch + process logs for a single app.
+capture_app() {
+    local app="$1" ts="$2" iter="$3"
+    local raw_file="$RUN_DIR/$app/raw/${ts}_iter${iter}.log"
+    local summary_file="$RUN_DIR/$app/${ts}_iter${iter}.json"
+
+    if ! flyctl logs --app "$app" --no-tail 2>&1 | tail -n "$SAMPLES" > "$raw_file"; then
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [$app] Failed to fetch logs from Fly; raw output stored in $raw_file" | tee -a "$LOG_FILE"
+        return
+    fi
+
+    if [[ -z "$PYTHON_CMD" ]]; then
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [$app] Captured raw logs only (Python unavailable)" | tee -a "$LOG_FILE"
+        return
+    fi
+
+    if ! env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/process_logs.py" "$raw_file" "$summary_file" >> "$LOG_FILE" 2>&1; then
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [$app] Failed to process logs (see output above)" | tee -a "$LOG_FILE"
+        return
+    fi
+
+    env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR/$app" >> "$LOG_FILE" 2>&1
+}
 
 iteration=0
 
 while true; do
     iteration=$((iteration + 1))
-
     ts=$(date -u +"%Y%m%dT%H%M%SZ")
-    raw_file="$RAW_DIR/${ts}_iter${iteration}.log"
-    summary_file="$RUN_DIR/${ts}_iter${iteration}.json"
 
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Iteration $iteration: capturing logs" | tee -a "$LOG_FILE"
 
-    if flyctl logs --app "$APP" --no-tail 2>&1 | tail -n "$SAMPLES" > "$raw_file"; then
-        if [[ -z "$PYTHON_CMD" ]]; then
-            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Captured raw logs only (Python unavailable)" | tee -a "$LOG_FILE"
-        elif ! env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/process_logs.py" "$raw_file" "$summary_file" >> "$LOG_FILE" 2>&1; then
-            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Failed to process logs (see output above)" | tee -a "$LOG_FILE"
-        else
-            # Run aggregation after each successful batch
-            env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
-        fi
-    else
-        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Failed to fetch logs from Fly; raw output stored in $raw_file" | tee -a "$LOG_FILE"
-    fi
+    for app in "${APPS[@]}"; do
+        capture_app "$app" "$ts" "$iteration"
+    done
 
     if [[ "$ITERATIONS" -ne 0 && "$iteration" -ge "$ITERATIONS" ]]; then
         break
@@ -299,11 +325,13 @@ done
 
 echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Monitoring finished after $iteration iteration(s)" | tee -a "$LOG_FILE"
 
-# Final aggregation
+# Final aggregation per app
 if [[ -z "$PYTHON_CMD" ]]; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Skipping aggregation (Python unavailable)" | tee -a "$LOG_FILE"
 else
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Running final aggregation..." | tee -a "$LOG_FILE"
-    env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR" >> "$LOG_FILE" 2>&1
+    for app in "${APPS[@]}"; do
+        env PYTHONUTF8=1 "$PYTHON_CMD" "${PYTHON_ARGS[@]+"${PYTHON_ARGS[@]}"}" "$SCRIPT_DIR/aggregate_logs.py" "$RUN_DIR/$app" >> "$LOG_FILE" 2>&1
+    done
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Aggregation complete" | tee -a "$LOG_FILE"
 fi
