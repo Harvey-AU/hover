@@ -245,6 +245,9 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 
 	cursor := "0-0"
 	totalSeen := 0
+	// Per-hop count must be clamped to the remaining sweep budget so a
+	// single XAUTOCLAIM call can never overshoot maxMessagesPerSweep, even
+	// if an operator mis-sets the pair (e.g. Count=100, MaxPerSweep=150).
 	// iterationCap guards against an unlikely infinite loop where Redis
 	// returns a non-terminal cursor with zero messages indefinitely. A
 	// legitimate walk does at most ceil(maxMessagesPerSweep / perCallCount)
@@ -261,13 +264,21 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 	iterations := 0
 
 	for {
+		remaining := int64(maxMessagesPerSweep) - int64(totalSeen)
+		if remaining <= 0 {
+			break
+		}
+		hopCount := perCallCount
+		if remaining < hopCount {
+			hopCount = remaining
+		}
 		msgs, next, claimErr := c.client.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 			Stream:   streamKey,
 			Group:    groupName,
 			Consumer: c.opts.ConsumerName,
 			MinIdle:  c.opts.MinIdleTime,
 			Start:    cursor,
-			Count:    perCallCount,
+			Count:    hopCount,
 		}).Result()
 		if claimErr != nil {
 			if isNoGroupErr(claimErr) {
@@ -285,7 +296,16 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 			if entry.unparseable {
 				continue
 			}
-			if delivered[entry.msg.MessageID] >= c.opts.MaxDeliveries {
+			cnt, ok := delivered[entry.msg.MessageID]
+			if !ok {
+				// Absent from XPENDING means the message has already been
+				// ACKed by another code path (typically a concurrent worker
+				// that finished the task between the XAUTOCLAIM page and
+				// our classification). Re-queuing it would re-execute
+				// already-completed work — skip (coderabbit PR #338).
+				continue
+			}
+			if cnt >= c.opts.MaxDeliveries {
 				deadLetter = append(deadLetter, entry.msg)
 			} else {
 				reclaimed = append(reclaimed, entry.msg)
@@ -428,9 +448,9 @@ func (c *Consumer) classifyBatch(
 			continue
 		}
 		if len(single) == 0 {
-			// Message has already been ACKed by another path — nothing
-			// to classify. Leaving it absent from delivered is safe because
-			// the caller only classifies parsed entries it still holds.
+			// Message has already been ACKed by another path — leave it
+			// absent from delivered. The caller treats absence as "skip,
+			// do not re-queue" (see ReclaimStale classify loop).
 			continue
 		}
 		delivered[single[0].ID] = single[0].RetryCount
