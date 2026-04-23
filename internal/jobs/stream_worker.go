@@ -444,14 +444,19 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 	ProcessDiscoveredLinks(ctx, deps, task, outcome.DiscoveredLinks, sourceURL, info.RobotsRules)
 }
 
-// reconcileInterval is how often the background loop rebuilds the
-// running-counters HASH from the authoritative XPENDING view. Two
-// minutes is a compromise between prompt drift recovery and XPENDING
-// cost across hundreds of active jobs.
-const reconcileInterval = 2 * time.Minute
+// defaultReconcileIntervalS is how often the background loop rebuilds
+// the running-counters HASH from the authoritative XPENDING view when
+// REDIS_COUNTER_RECONCILE_INTERVAL_S is unset. Two minutes is a
+// compromise between prompt drift recovery and XPENDING cost across
+// hundreds of active jobs.
+const defaultReconcileIntervalS = 120
+
+func reconcileInterval() time.Duration {
+	return time.Duration(envIntWithDefault("REDIS_COUNTER_RECONCILE_INTERVAL_S", defaultReconcileIntervalS)) * time.Second
+}
 
 func (swp *StreamWorkerPool) reconcileLoop(ctx context.Context) {
-	ticker := time.NewTicker(reconcileInterval)
+	ticker := time.NewTicker(reconcileInterval())
 	defer ticker.Stop()
 
 	for {

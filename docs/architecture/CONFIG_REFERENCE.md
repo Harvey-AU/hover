@@ -217,12 +217,19 @@ them onto streams, gated by concurrency + pacer.
 
 **Source:** `internal/broker/consumer.go`
 
-| Env var / constant           | Production value               | Default | What it controls                                                |
-| ---------------------------- | ------------------------------ | ------- | --------------------------------------------------------------- |
-| `REDIS_CONSUMER_BLOCK_MS`    | **2000ms** (`fly.worker.toml`) | 2000ms  | XREADGROUP BLOCK duration; `-1` internally means non-blocking   |
-| `REDIS_AUTOCLAIM_INTERVAL_S` | **30s** (`fly.worker.toml`)    | 30s     | XAUTOCLAIM sweep interval for reclaiming stale pending messages |
-| `MinIdleTime`                | hardcoded                      | 3 min   | Min pending-idle time before a message is eligible for reclaim  |
-| `MaxDeliveries`              | hardcoded                      | 3       | Dead-letter after this many deliveries                          |
+| Env var / constant               | Production value               | Default | What it controls                                                              |
+| -------------------------------- | ------------------------------ | ------- | ----------------------------------------------------------------------------- |
+| `REDIS_CONSUMER_BLOCK_MS`        | **2000ms** (`fly.worker.toml`) | 2000ms  | XREADGROUP BLOCK duration; `-1` internally means non-blocking                 |
+| `REDIS_CONSUMER_READ_COUNT`      | **10** (`fly.worker.toml`)     | 10      | Max messages per XREADGROUP call                                              |
+| `REDIS_AUTOCLAIM_INTERVAL_S`     | **30s** (`fly.worker.toml`)    | 30s     | XAUTOCLAIM sweep interval for reclaiming stale pending messages               |
+| `REDIS_AUTOCLAIM_COUNT`          | **100** (`fly.worker.toml`)    | 100     | Per-call XAUTOCLAIM COUNT — bounds a single round-trip                        |
+| `REDIS_AUTOCLAIM_MAX_PER_SWEEP`  | **1000** (`fly.worker.toml`)   | 1000    | Safety cap on messages reclaimed per tick so one hot job cannot starve others |
+| `REDIS_AUTOCLAIM_MIN_IDLE_S`     | **180s** (`fly.worker.toml`)   | 180s    | Min pending-idle time before a message is eligible for reclaim                |
+| `REDIS_AUTOCLAIM_MAX_DELIVERIES` | **3** (`fly.worker.toml`)      | 3       | Dead-letter after this many deliveries                                        |
+
+`ReclaimStale` loops the XAUTOCLAIM cursor to `"0-0"` within a single tick so
+bursts of stale messages drain in one sweep rather than across many ticks,
+subject to the per-tick safety cap.
 
 ### Running counters
 
@@ -232,12 +239,17 @@ Replaces the old in-memory batch increment loop. The per-job running-task count
 is incremented on receive, decremented on outcome, and synced to
 `jobs.running_tasks` on a timer.
 
-| Env var / constant              | Production value           | Default | What it controls                                      |
-| ------------------------------- | -------------------------- | ------- | ----------------------------------------------------- |
-| `REDIS_COUNTER_SYNC_INTERVAL_S` | **5s** (`fly.worker.toml`) | 5s      | Redis→Postgres sync interval for `jobs.running_tasks` |
+| Env var / constant                   | Production value             | Default | What it controls                                                                              |
+| ------------------------------------ | ---------------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `REDIS_COUNTER_SYNC_INTERVAL_S`      | **5s** (`fly.worker.toml`)   | 5s      | Redis→Postgres sync interval for `jobs.running_tasks`                                         |
+| `REDIS_COUNTER_RECONCILE_INTERVAL_S` | **120s** (`fly.worker.toml`) | 120s    | How often the worker rebuilds the Redis running-counters HASH from the authoritative XPENDING |
 
 Drift between Redis truth and the snapshot Postgres value is reported via
-`bee.broker.counter_sync_skew`.
+`bee.broker.counter_sync_skew`. Drift between the Redis HASH counter and the
+authoritative XPENDING at reconcile time is reported via
+`bee.broker.counter_pel_skew`. Jobs that have non-zero PEL but are absent from
+the worker's active-job set (frozen-dispatch smoking gun) are reported via
+`bee.broker.pel_without_consumer`.
 
 ### Outbox sweeper
 

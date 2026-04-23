@@ -49,6 +49,16 @@ type ConsumerOpts struct {
 	// MaxDeliveries is the maximum number of times a message can be
 	// delivered before it is treated as a permanent failure. Default 3.
 	MaxDeliveries int64
+
+	// AutoclaimCount is the per-call XAUTOCLAIM COUNT used by ReclaimStale.
+	// Default 100. Override via REDIS_AUTOCLAIM_COUNT.
+	AutoclaimCount int64
+
+	// AutoclaimMaxPerSweep is the safety cap on messages reclaimed per
+	// ReclaimStale invocation across the cursor loop, so one pathological
+	// job cannot starve the other jobs the reclaim loop still has to scan.
+	// Default 1000. Override via REDIS_AUTOCLAIM_MAX_PER_SWEEP.
+	AutoclaimMaxPerSweep int
 }
 
 // DefaultConsumerOpts returns production defaults.
@@ -63,10 +73,12 @@ func DefaultConsumerOpts(consumerName string) ConsumerOpts {
 		// batch to fan out through its semaphore before the next Redis
 		// round-trip, reducing tail latency without changing semantics.
 		// Override via REDIS_CONSUMER_READ_COUNT.
-		Count:         int64(envInt("REDIS_CONSUMER_READ_COUNT", 10)),
-		ClaimInterval: time.Duration(envInt("REDIS_AUTOCLAIM_INTERVAL_S", 30)) * time.Second,
-		MinIdleTime:   3 * time.Minute,
-		MaxDeliveries: 3,
+		Count:                int64(envInt("REDIS_CONSUMER_READ_COUNT", 10)),
+		ClaimInterval:        time.Duration(envInt("REDIS_AUTOCLAIM_INTERVAL_S", 30)) * time.Second,
+		MinIdleTime:          time.Duration(envInt("REDIS_AUTOCLAIM_MIN_IDLE_S", 180)) * time.Second,
+		MaxDeliveries:        int64(envInt("REDIS_AUTOCLAIM_MAX_DELIVERIES", 3)),
+		AutoclaimCount:       int64(envInt("REDIS_AUTOCLAIM_COUNT", 100)),
+		AutoclaimMaxPerSweep: envInt("REDIS_AUTOCLAIM_MAX_PER_SWEEP", 1000),
 	}
 }
 
@@ -218,14 +230,18 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 	streamKey := StreamKey(jobID)
 	groupName := ConsumerGroup(jobID)
 
-	const (
-		// perCallCount bounds a single XAUTOCLAIM RTT. 100 balances
-		// per-call work against wasted cursors when the PEL is small.
-		perCallCount int64 = 100
-		// maxMessagesPerSweep caps work per tick so one pathological job
-		// cannot starve the other jobs the reclaim loop still has to scan.
+	// perCallCount bounds a single XAUTOCLAIM RTT. maxMessagesPerSweep
+	// caps work per tick so one pathological job cannot starve the other
+	// jobs the reclaim loop still has to scan. Both are operator dials
+	// — see REDIS_AUTOCLAIM_COUNT and REDIS_AUTOCLAIM_MAX_PER_SWEEP.
+	perCallCount := c.opts.AutoclaimCount
+	if perCallCount <= 0 {
+		perCallCount = 100
+	}
+	maxMessagesPerSweep := c.opts.AutoclaimMaxPerSweep
+	if maxMessagesPerSweep <= 0 {
 		maxMessagesPerSweep = 1000
-	)
+	}
 
 	cursor := "0-0"
 	totalSeen := 0
