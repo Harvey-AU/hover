@@ -130,3 +130,52 @@ jobs:
         run:
           flyctl deploy --config fly.worker.toml --app hover-worker
           --remote-only
+
+      - name: Load Grafana annotation secrets
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GRAFANA_URL: op://Good Native/hover-runtime/GRAFANA_URL
+          GRAFANA_SA_TOKEN: op://Good Native/hover-runtime/GRAFANA_SA_TOKEN
+
+      - name: Post deploy annotation to Grafana
+        # Best-effort: a Grafana outage logs a warning but does not fail the
+        # deploy. The annotation is observability, not a release gate.
+        # Commit-message and ref are passed via env vars (not direct
+        # ${{ ... }} interpolation) to avoid shell-injection via crafted
+        # commit messages — see GitHub Actions injection guidance.
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          short_sha="${COMMIT_SHA:0:7}"
+          commit_url="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+          pr_number="$(printf '%s' "$COMMIT_MESSAGE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
+          pr_line=""
+          if [ -n "${pr_number}" ]; then
+            pr_line="$(printf '\nPR: https://github.com/%s/pull/%s' "$REPO" "$pr_number")"
+          fi
+          body_text="$(printf '**Deploy %s** — `%s`\n\n%s\n\nCommit: %s%s' \
+            "$REF_NAME" "$short_sha" "$COMMIT_MESSAGE" "$commit_url" "$pr_line")"
+          now_ms=$(($(date +%s) * 1000))
+          payload="$(jq -n \
+            --argjson time "$now_ms" \
+            --arg text "$body_text" \
+            --arg sha "$short_sha" \
+            --arg ref "$REF_NAME" \
+            '{time: $time,
+              tags: ["deploy","service:hover","service:hover-worker","env:production",
+                     ("ref:" + $ref), ("sha:" + $sha)],
+              text: $text}')"
+          if ! curl --fail --silent --show-error \
+            -X POST "${GRAFANA_URL%/}/api/annotations" \
+            -H "Authorization: Bearer ${GRAFANA_SA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload"; then
+            echo "::warning title=Grafana annotation failed::Deploy succeeded but annotation POST failed. Check GRAFANA_URL and GRAFANA_SA_TOKEN in 1Password."
+          fi
