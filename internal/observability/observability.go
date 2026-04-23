@@ -158,6 +158,13 @@ var (
 	brokerRedisPoolInUse  metric.Int64Gauge
 	brokerRedisPoolIdle   metric.Int64Gauge
 	brokerRedisPoolWait   metric.Int64Gauge
+
+	// Tier 2: counter-vs-PEL drift and orphan PEL detection. These catch
+	// the "job frozen with in-flight work" failure mode — historically
+	// invisible because the Postgres mirror happily reflected the stuck
+	// Redis counter.
+	brokerCounterPELSkewHistogram metric.Float64Histogram
+	brokerPELWithoutConsumerGauge metric.Int64Gauge
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -1103,6 +1110,22 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		"bee.broker.redis_pool.wait",
 		metric.WithDescription("Running total of pool acquisition waits"),
 	)
+	if err != nil {
+		return err
+	}
+
+	brokerCounterPELSkewHistogram, err = meter.Float64Histogram(
+		"bee.broker.counter_pel_skew",
+		metric.WithDescription("Absolute skew between the Redis running counter and the authoritative XPENDING count at reconcile time"),
+	)
+	if err != nil {
+		return err
+	}
+
+	brokerPELWithoutConsumerGauge, err = meter.Int64Gauge(
+		"bee.broker.pel_without_consumer",
+		metric.WithDescription("Count of jobs whose stream PEL is non-zero but which are absent from the worker's active-job set (frozen-job smoking gun)"),
+	)
 	return err
 }
 
@@ -1211,6 +1234,31 @@ func RecordBrokerCounterSyncSkew(ctx context.Context, jobID string, skew float64
 	}
 	brokerCounterSyncSkew.Record(ctx, skew,
 		metric.WithAttributes(attribute.String("job.id", jobID)))
+}
+
+// RecordBrokerCounterPELSkew records the absolute difference between the
+// Redis HASH counter for a job and the authoritative XPENDING count
+// observed during reconciliation. A persistent non-zero skew indicates
+// the counter leaked (drift fix shipped in fix-broker-counter-drift).
+// jobID retained for call-site stability; omitted from labels to keep
+// cardinality bounded.
+func RecordBrokerCounterPELSkew(ctx context.Context, jobID string, skew float64) {
+	_ = jobID
+	if brokerCounterPELSkewHistogram == nil {
+		return
+	}
+	brokerCounterPELSkewHistogram.Record(ctx, skew)
+}
+
+// RecordBrokerPELWithoutConsumer emits the number of jobs with a non-zero
+// stream PEL that are NOT in the worker's active-job set. In a healthy
+// system this is always zero — a non-zero reading means dispatch/consume
+// have diverged and those jobs' tasks are stalled.
+func RecordBrokerPELWithoutConsumer(ctx context.Context, count int64) {
+	if brokerPELWithoutConsumerGauge == nil {
+		return
+	}
+	brokerPELWithoutConsumerGauge.Record(ctx, count)
 }
 
 // RedisPoolSnapshot mirrors the subset of *redis.PoolStats we care about.

@@ -205,6 +205,11 @@ func (c *Consumer) Ack(ctx context.Context, jobID string, messageIDs ...string) 
 // messages. Messages that have been delivered more than MaxDeliveries
 // times are returned separately as dead-letter candidates.
 //
+// A single call sweeps the full PEL by following the XAUTOCLAIM cursor
+// until it returns to "0-0", so a burst of stuck messages drains in one
+// tick rather than one-batch-per-30s. Per-call safety caps keep any
+// single sweep bounded when the PEL is pathologically large.
+//
 // Note: ReclaimStale does NOT ACK messages in the returned deadLetter
 // slice. The caller owns final disposition and must ACK or NACK each
 // dead-letter message explicitly — otherwise the same messages will be
@@ -213,46 +218,73 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 	streamKey := StreamKey(jobID)
 	groupName := ConsumerGroup(jobID)
 
-	// Stream may not exist yet if no tasks have been dispatched.
-	msgs, start, err := c.client.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-		Stream:   streamKey,
-		Group:    groupName,
-		Consumer: c.opts.ConsumerName,
-		MinIdle:  c.opts.MinIdleTime,
-		Start:    "0-0",
-		Count:    10,
-	}).Result()
-	if err != nil {
-		if isNoGroupErr(err) {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("broker: XAUTOCLAIM %s: %w", jobID, err)
-	}
+	const (
+		// perCallCount bounds a single XAUTOCLAIM RTT. 100 balances
+		// per-call work against wasted cursors when the PEL is small.
+		perCallCount int64 = 100
+		// maxMessagesPerSweep caps work per tick so one pathological job
+		// cannot starve the other jobs the reclaim loop still has to scan.
+		maxMessagesPerSweep = 1000
+	)
 
-	_ = start // next cursor, unused for now — single pass per tick
+	cursor := "0-0"
+	totalSeen := 0
 
-	for _, xMsg := range msgs {
-		msg, parseErr := parseStreamMessage(xMsg)
-		if parseErr != nil {
-			brokerLog.Warn("dead-lettering unparseable reclaimed message", "error", parseErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
-			_ = c.Ack(ctx, jobID, xMsg.ID)
-			continue
-		}
-
-		// Check delivery count via XPENDING for this message.
-		deliveries, err := c.getDeliveryCount(ctx, streamKey, groupName, xMsg.ID)
-		if err != nil {
-			brokerLog.Warn("failed to check delivery count", "error", err, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
-			// Treat as reclaimable to avoid losing work.
-			reclaimed = append(reclaimed, msg)
-			continue
+	for {
+		msgs, next, claimErr := c.client.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream:   streamKey,
+			Group:    groupName,
+			Consumer: c.opts.ConsumerName,
+			MinIdle:  c.opts.MinIdleTime,
+			Start:    cursor,
+			Count:    perCallCount,
+		}).Result()
+		if claimErr != nil {
+			if isNoGroupErr(claimErr) {
+				return nil, nil, nil
+			}
+			return nil, nil, fmt.Errorf("broker: XAUTOCLAIM %s: %w", jobID, claimErr)
 		}
 
-		if deliveries >= c.opts.MaxDeliveries {
-			deadLetter = append(deadLetter, msg)
-		} else {
-			reclaimed = append(reclaimed, msg)
+		for _, xMsg := range msgs {
+			msg, parseErr := parseStreamMessage(xMsg)
+			if parseErr != nil {
+				brokerLog.Warn("dead-lettering unparseable reclaimed message", "error", parseErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
+				_ = c.Ack(ctx, jobID, xMsg.ID)
+				continue
+			}
+
+			// Check delivery count via XPENDING for this message.
+			deliveries, dErr := c.getDeliveryCount(ctx, streamKey, groupName, xMsg.ID)
+			if dErr != nil {
+				brokerLog.Warn("failed to check delivery count", "error", dErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
+				// Treat as reclaimable to avoid losing work.
+				reclaimed = append(reclaimed, msg)
+				continue
+			}
+
+			if deliveries >= c.opts.MaxDeliveries {
+				deadLetter = append(deadLetter, msg)
+			} else {
+				reclaimed = append(reclaimed, msg)
+			}
 		}
+
+		totalSeen += len(msgs)
+
+		// Redis returns "0-0" as the next cursor when the scan is done.
+		// Anything else means more stale messages remain. We also bail on
+		// any non-full batch (Redis sometimes returns early) and on the
+		// per-sweep cap so one hot job can't starve the rest.
+		if next == "0-0" || next == "" || len(msgs) == 0 {
+			break
+		}
+		if totalSeen >= maxMessagesPerSweep {
+			brokerLog.Warn("reclaim sweep hit per-tick cap; will resume next tick",
+				"job_id", jobID, "cap", maxMessagesPerSweep)
+			break
+		}
+		cursor = next
 	}
 
 	observability.RecordBrokerAutoclaim(ctx, jobID, "reclaimed", len(reclaimed))
