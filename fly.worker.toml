@@ -122,7 +122,10 @@ primary_region = 'syd'
   strategy = "immediate"
 
 [processes]
-  worker = "./worker"
+  # Launch via start.sh so the Alloy metrics sidecar runs alongside the
+  # worker binary. Running ./worker directly skips Alloy, which silently
+  # drops every bee.worker.* and bee.broker.* metric from this process.
+  worker = "./start.sh worker"
 
 # Always restart on exit. The worker has no [http_service] block, so Fly
 # has no health-check hook to wake it up, and the default on-failure

@@ -51,6 +51,18 @@ On merge, CI will:
   the same transaction, preventing stale rows from contributing to the backlog
   and oldest-age gauges.
 
+### Fixed
+
+- Worker Fly processes now launch via `scripts/start.sh` instead of running the
+  binary directly, so the Alloy metrics sidecar runs on every process. Without
+  this, `bee.worker.*` and `bee.broker.*` metrics from the prod `hover-worker`
+  app and every `hover-worker-pr-*` review app were silently dropped before
+  reaching Grafana Cloud.
+- `scripts/start.sh` now accepts the binary name as `$1` (default `main`), so a
+  single script launches either the API or the worker alongside Alloy. Both
+  `fly.worker.toml` and `.fly/review_apps.worker.toml` point at
+  `./start.sh worker`.
+
 ## Full changelog history
 
 ## [0.33.0] – 2026-04-21
