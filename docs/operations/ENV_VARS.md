@@ -99,6 +99,8 @@ the TOML `[env]` section. If it grants access to anything, it is a secret.
 | `SUPABASE_ACCESS_TOKEN`    | Supabase CLI authentication                                        | `hover-supabase` |
 | `CODECOV_TOKEN`            | Coverage upload token                                              | `hover-codecov`  |
 | `CODECOV_STATIC_TOKEN`     | Static analysis coverage token                                     | `hover-codecov`  |
+| `GRAFANA_URL`              | Grafana Cloud stack URL for deploy annotations                     | `hover-runtime`  |
+| `GRAFANA_SA_TOKEN`         | Grafana service account token for deploy annotations               | `hover-runtime`  |
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password Service Account (the only GitHub secret after migration) | —                |
 
 ---
@@ -112,8 +114,9 @@ the TOML `[env]` section. If it grants access to anything, it is a secret.
    (`hover-runtime` for app integrations, `hover-supabase` for database/auth),
    then run `1password-secrets fly import hover` to sync.
 4. **CI-only secret:** Add the field to the appropriate 1Password item
-   (`hover-fly`, `hover-supabase`, `hover-codecov`, or `hover-github`) and
-   reference it via `op://Good Native/<item>/<field>` in the workflow.
+   (`hover-fly`, `hover-supabase`, `hover-runtime`, `hover-codecov`, or
+   `hover-github`) and reference it via `op://Good Native/<item>/<field>` in the
+   workflow.
 5. **Update this document** with the new variable.
 
 ---
@@ -128,13 +131,13 @@ Account. This section documents initial setup — see
 
 The **"Good Native"** vault contains five Secure Notes, grouped by concern:
 
-| Item Name        | Fields                                                                                                                              |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `hover-fly`      | `FLY_API_TOKEN`                                                                                                                     |
-| `hover-runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS` |
-| `hover-supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                  |
-| `hover-codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                             |
-| `hover-github`   | `PAT_TOKEN`                                                                                                                         |
+| Item Name        | Fields                                                                                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hover-fly`      | `FLY_API_TOKEN`                                                                                                                                                        |
+| `hover-runtime`  | `SLACK_CLIENT_SECRET`, `WEBFLOW_CLIENT_SECRET`, `GOOGLE_CLIENT_SECRET`, `LOOPS_API_KEY`, `SENTRY_DSN`, `OTEL_EXPORTER_OTLP_HEADERS`, `GRAFANA_URL`, `GRAFANA_SA_TOKEN` |
+| `hover-supabase` | `DATABASE_URL`, `DATABASE_DIRECT_URL`, `DATABASE_QUEUE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ACCESS_TOKEN`                               |
+| `hover-codecov`  | `CODECOV_TOKEN`, `CODECOV_STATIC_TOKEN`                                                                                                                                |
+| `hover-github`   | `PAT_TOKEN`                                                                                                                                                            |
 
 ### Service Account
 
