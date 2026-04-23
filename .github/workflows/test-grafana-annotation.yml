@@ -92,9 +92,9 @@ jobs:
             --arg sha "$short_sha" \
             --argjson extra "$extra_tags_json" \
             --argjson commits "$commit_tags_json" \
-            '["deploy","service:hover","service:hover-worker","env:production",
+            '(["deploy","service:hover","service:hover-worker","env:production",
               "test","manual",
-              ("ref:" + $ref), ("sha:" + $sha)] + $extra + $commits')"
+              ("branch:" + $ref), ("commit:" + $sha)] + $extra + $commits) | unique')"
 
           now_ms=$(($(date +%s) * 1000))
           payload="$(jq -n \
