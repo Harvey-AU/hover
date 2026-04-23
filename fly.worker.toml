@@ -48,7 +48,20 @@ primary_region = 'syd'
   # worker's own sem still caps in-flight parallelism.
   REDIS_CONSUMER_READ_COUNT = "10"
   REDIS_AUTOCLAIM_INTERVAL_S = "30"
+  # Per-call XAUTOCLAIM COUNT and per-tick safety cap. With Count=100 and
+  # a cap of 1000, a single sweep can drain a stuck PEL without blowing
+  # out the tick when one job has thousands of stale messages.
+  REDIS_AUTOCLAIM_COUNT = "100"
+  REDIS_AUTOCLAIM_MAX_PER_SWEEP = "1000"
+  # XAUTOCLAIM min-idle-time (seconds). Messages pending longer than this
+  # are eligible for reclaim by another consumer. Matches pre-env default.
+  REDIS_AUTOCLAIM_MIN_IDLE_S = "180"
+  # Dead-letter a message after this many deliveries. Matches pre-env default.
+  REDIS_AUTOCLAIM_MAX_DELIVERIES = "3"
   REDIS_COUNTER_SYNC_INTERVAL_S = "5"
+  # How often the worker rebuilds the Redis running-counters HASH from the
+  # authoritative XPENDING view. Self-heals any mid-run drift.
+  REDIS_COUNTER_RECONCILE_INTERVAL_S = "120"
   # Outbox sweep: moves task_outbox rows into the Redis ZSET. At 200ms ×
   # 500 this caps ingest at 150k/min — well above current peak and keeps
   # newly-discovered siblings from waiting a full tick after a parent

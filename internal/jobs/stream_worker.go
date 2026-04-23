@@ -180,6 +180,17 @@ func (swp *StreamWorkerPool) Start(ctx context.Context) {
 		swp.activeJobsRefreshLoop(ctx)
 	}()
 
+	// Start periodic counter reconciliation. reconcileCounters was
+	// previously called only at Start, so any mid-run drift (e.g. missed
+	// decrement after a worker crash, or a stale counter left over from a
+	// dead stream) persisted until the next deploy. Run it every couple of
+	// minutes so the counters self-heal against the authoritative PEL.
+	swp.wg.Add(1)
+	go func() {
+		defer swp.wg.Done()
+		swp.reconcileLoop(ctx)
+	}()
+
 	jobsLog.Info("stream worker pool started", "workers", swp.opts.NumWorkers)
 }
 
@@ -433,6 +444,31 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 	ProcessDiscoveredLinks(ctx, deps, task, outcome.DiscoveredLinks, sourceURL, info.RobotsRules)
 }
 
+// defaultReconcileIntervalS is how often the background loop rebuilds
+// the running-counters HASH from the authoritative XPENDING view when
+// REDIS_COUNTER_RECONCILE_INTERVAL_S is unset. Two minutes is a
+// compromise between prompt drift recovery and XPENDING cost across
+// hundreds of active jobs.
+const defaultReconcileIntervalS = 120
+
+func reconcileInterval() time.Duration {
+	return time.Duration(envIntWithDefault("REDIS_COUNTER_RECONCILE_INTERVAL_S", defaultReconcileIntervalS)) * time.Second
+}
+
+func (swp *StreamWorkerPool) reconcileLoop(ctx context.Context) {
+	ticker := time.NewTicker(reconcileInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			swp.reconcileCounters(ctx)
+		}
+	}
+}
+
 // --- reclaim loop ---
 
 func (swp *StreamWorkerPool) reclaimLoop(ctx context.Context) {
@@ -545,6 +581,38 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 		// DB outage would otherwise flood Sentry with one event per tick.
 		jobsLog.Warn("failed to refresh active jobs", "error", err)
 		return
+	}
+
+	// Never evict a job whose Redis PEL still holds in-flight work. The active-
+	// list ordering + limit can shuffle a mid-flight job off the window, which
+	// freezes both dispatch (counter gate stuck at the cap) and consume (no
+	// worker reads that job's stream). Union the Postgres-derived set with any
+	// job that has a non-zero running_counters entry so those streams keep
+	// draining until the PEL is genuinely empty.
+	counters, counterErr := swp.counters.GetAll(ctx)
+	if counterErr != nil {
+		jobsLog.Warn("failed to read running counters for active-job merge", "error", counterErr)
+	} else if len(counters) > 0 {
+		seen := make(map[string]struct{}, len(jobIDs))
+		for _, id := range jobIDs {
+			seen[id] = struct{}{}
+		}
+		extra := 0
+		for id, n := range counters {
+			if n <= 0 {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			jobIDs = append(jobIDs, id)
+			seen[id] = struct{}{}
+			extra++
+		}
+		if extra > 0 {
+			jobsLog.Info("retained active jobs with in-flight work",
+				"retained", extra, "total_active", len(jobIDs))
+		}
 	}
 
 	swp.activeJobsMu.Lock()
@@ -694,7 +762,12 @@ func (swp *StreamWorkerPool) fetchJobInfo(ctx context.Context, jobID string) (*J
 // a message stays in the PEL from XREADGROUP delivery until XACK,
 // which brackets the worker's crawl + persist lifecycle.
 func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
-	jobIDs := swp.getActiveJobs()
+	activeSet := swp.getActiveJobs()
+	activeLookup := make(map[string]struct{}, len(activeSet))
+	for _, id := range activeSet {
+		activeLookup[id] = struct{}{}
+	}
+	jobIDs := append([]string(nil), activeSet...)
 
 	// Also include any job currently present in the Redis counters hash,
 	// in case refreshActiveJobs hasn't surfaced it yet (e.g. a job that
@@ -703,18 +776,15 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	if err != nil {
 		jobsLog.Warn("failed to read existing running counters; continuing with active-job set only", "error", err)
 	} else {
-		seen := make(map[string]struct{}, len(jobIDs))
-		for _, id := range jobIDs {
-			seen[id] = struct{}{}
-		}
 		for id := range existing {
-			if _, ok := seen[id]; !ok {
+			if _, ok := activeLookup[id]; !ok {
 				jobIDs = append(jobIDs, id)
 			}
 		}
 	}
 
 	counts := make(map[string]int64, len(jobIDs))
+	orphanPELCount := int64(0)
 	for _, jobID := range jobIDs {
 		n, err := swp.consumer.PendingCount(ctx, jobID)
 		if err != nil {
@@ -729,13 +799,33 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 		}
 		if n > 0 {
 			counts[jobID] = n
+			// A job with a non-zero PEL that isn't in the worker's active
+			// set is a stalled-dispatch smoking gun: no one will read from
+			// its stream, so those messages sit forever. Surface this as a
+			// dedicated metric so we can alert on it.
+			if _, isActive := activeLookup[jobID]; !isActive {
+				orphanPELCount++
+				jobsLog.Warn("job has pending work but is not in active-job set",
+					"job_id", jobID, "pending", n)
+			}
 		}
+		// Record the skew between the old Redis HASH value and the
+		// authoritative PEL so we can detect leaks continuously, not only
+		// by eyeballing Postgres.
+		prev := existing[jobID]
+		diff := prev - n
+		if diff < 0 {
+			diff = -diff
+		}
+		observability.RecordBrokerCounterPELSkew(ctx, jobID, float64(diff))
 	}
 
 	if err := swp.counters.Reconcile(ctx, counts); err != nil {
 		jobsLog.Error("failed to reconcile running counters in Redis", "error", err)
 		return
 	}
+
+	observability.RecordBrokerPELWithoutConsumer(ctx, orphanPELCount)
 
 	total := int64(0)
 	for _, c := range counts {
@@ -744,7 +834,8 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	jobsLog.Info("reconciled running counters from PEL",
 		"total_running", total,
 		"jobs_probed", len(jobIDs),
-		"jobs_with_pel", len(counts))
+		"jobs_with_pel", len(counts),
+		"orphan_pel_jobs", orphanPELCount)
 }
 
 // --- concurrency checking (for dispatcher) ---
