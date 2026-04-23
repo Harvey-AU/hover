@@ -11,11 +11,13 @@ primary_region = "syd"
 
 [build]
 
-# Override the Dockerfile CMD (./start.sh) to run the worker binary
-# directly. start.sh only launches ./main, so without this override the
-# worker container would run the API instead of the consumer.
+# Override the Dockerfile CMD to run start.sh with the worker binary.
+# Passing "worker" as the argument makes start.sh launch ./worker while
+# still starting the Alloy metrics sidecar, so review apps emit
+# bee.worker.* and bee.broker.* series tagged with
+# app=hover-worker-pr-<N> and environment=staging.
 [processes]
-  worker = "./worker"
+  worker = "./start.sh worker"
 
 # Environment overrides for preview. Scaled down from fly.worker.toml to
 # fit within the Supabase preview branch's shared pool (see the
