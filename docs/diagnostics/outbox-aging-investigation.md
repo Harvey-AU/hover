@@ -1,6 +1,10 @@
 # Outbox Oldest-Age Growth Investigation
 
-Status: open — investigation only, no code changes in this PR.
+Status: historical — investigation notes captured before the fixes landed in PR
+#340. Code pointers and line numbers refer to the pre-fix tree. The "Suggested
+fixes" section has all been implemented; see the Outcome section at the bottom
+for the mapping. Keep this document for ops context on _why_ those changes
+exist; use the current code as the source of truth for _what_ they do.
 
 ## Signal
 
@@ -208,3 +212,22 @@ ORDER BY a.xact_start NULLS LAST;
   point there).
 - ScheduleBatch producing duplicate ZADDs on retry (idempotent — ZADD overwrites
   the score, same member).
+
+## Outcome (PR #340)
+
+Every suggested fix above was implemented; this section records what landed so
+the doc stays useful as an ops reference.
+
+| Suggested fix                 | Implemented as                                                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Per-entry failure tracking | `*broker.BatchError` (`internal/broker/scheduler.go`) + partition-by-index in `Sweeper.Tick` (`internal/broker/outbox.go`).               |
+| 2. Dead-letter cap            | `OutboxSweeperOpts.MaxAttempts` (default 10) + `task_outbox_dead` table (migration `20260423132003_outbox_dead_letter.sql`).              |
+| 3. Cancel/archive cleanup     | `jobs.CancelJob` now deletes the job's `task_outbox` rows in the same tx (`internal/jobs/manager.go`).                                    |
+| 4. Per-outcome sweep counter  | `bee.broker.outbox_sweep_total{outcome=dispatched\|retried\|dead_lettered}` via `observability.RecordBrokerOutboxSweep`.                  |
+| (additional) Tick budget      | `OutboxSweeperOpts.StatementTimeout` (default 5 s) wraps the whole tick in `context.WithTimeout` and `SET LOCAL statement_timeout` in-tx. |
+
+The outcome counter is the primary signal for future triage: a rising `retried`
+rate with flat `dispatched` reproduces the H1 symptom without needing the SQL
+queries above. If `retried > 0` but age is still climbing and `dead_lettered` is
+flat, suspect H2 (SKIP LOCKED starvation) and run the
+`pg_stat_activity`/`pg_locks` query.

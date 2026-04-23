@@ -280,15 +280,16 @@ func TestOutboxSweeper_DeadLetter(t *testing.T) {
 	assert.NotEmpty(t, lastErr, "last_error must capture the ScheduleBatch failure")
 }
 
-// TestOutboxSweeper_PartialFailure verifies that when ScheduleBatch
-// reports a partial (*BatchError) failure, only the failed entries are
-// bumped for retry; the successful ones are DELETEd in the same tx.
-// Before the fix, every claimed row had attempts bumped regardless.
-func TestOutboxSweeper_PartialFailure(t *testing.T) {
-	// This case is hard to reproduce against miniredis because every
-	// ZADD succeeds or fails uniformly. The integration assertion here
-	// is that when no ScheduleBatch error occurs, attempts stays at 0
-	// on all rows — i.e. the new Tick path does not spuriously bump.
+// TestOutboxSweeper_HealthyMultiRow verifies the happy-path multi-row
+// sweep: with a healthy Redis, every claimed row is dispatched and
+// deleted in the same tx, and no spurious attempts bumps occur.
+//
+// A true per-entry failure path (where ScheduleBatch returns *BatchError)
+// is awkward to reproduce against miniredis because ZADDs succeed or
+// fail uniformly; that branch is exercised by the unit test for
+// ScheduleBatch. This test guards the sweeper's partition logic against
+// regressions that would blanket-bump attempts on a successful sweep.
+func TestOutboxSweeper_HealthyMultiRow(t *testing.T) {
 	db, _, scheduler, cleanup := outboxTestSetup(t)
 	defer cleanup()
 

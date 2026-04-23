@@ -130,18 +130,30 @@ type outboxRow struct {
 // can deterministically trigger a sweep without waiting for the
 // ticker.
 func (s *Sweeper) Tick(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Bound the whole tick — DB work and the Redis ScheduleBatch call —
+	// to StatementTimeout. SET LOCAL statement_timeout only fires while a
+	// SQL statement is executing, so if ScheduleBatch wedges on Redis the
+	// row locks would persist; a tx-level context deadline cancels the
+	// transaction and releases the locks instead.
+	tickCtx := ctx
+	cancel := func() {}
+	if s.opts.StatementTimeout > 0 {
+		tickCtx, cancel = context.WithTimeout(ctx, s.opts.StatementTimeout)
+	}
+	defer cancel()
+
+	tx, err := s.db.BeginTx(tickCtx, nil)
 	if err != nil {
 		return fmt.Errorf("outbox: begin tx: %w", err)
 	}
 	// Rollback is a no-op after successful commit.
 	defer func() { _ = tx.Rollback() }()
 
-	// Bound the tx's DB work so a wedged backend can't hold locks for
-	// longer than the sweeper's own budget — this keeps SKIP LOCKED
-	// starvation self-healing if the sweeper itself is the offender.
+	// Belt-and-braces: if the server somehow outlives the client context
+	// (e.g. pgbouncer masking cancellation), the DB-side timeout still
+	// aborts the statement.
 	if s.opts.StatementTimeout > 0 {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(tickCtx,
 			fmt.Sprintf(`SET LOCAL statement_timeout = %d`,
 				s.opts.StatementTimeout.Milliseconds()),
 		); err != nil {
@@ -149,7 +161,7 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		}
 	}
 
-	rows, err := tx.QueryContext(ctx, `
+	rows, err := tx.QueryContext(tickCtx, `
 		SELECT id, task_id, job_id, page_id, host, path,
 		       priority, retry_count, source_type, source_url,
 		       run_at, attempts
@@ -202,7 +214,7 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		})
 	}
 
-	schedErr := s.scheduler.ScheduleBatch(ctx, entries)
+	schedErr := s.scheduler.ScheduleBatch(tickCtx, entries)
 
 	// Partition the claimed rows into successes and failures based on
 	// what ScheduleBatch actually did:
@@ -261,7 +273,7 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	}
 
 	if len(succeeded) > 0 {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := tx.ExecContext(tickCtx,
 			`DELETE FROM task_outbox WHERE id = ANY($1)`,
 			pq.Array(succeeded),
 		); err != nil {
@@ -274,13 +286,13 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		retryIDs = append(retryIDs, r.id)
 	}
 	if len(retryIDs) > 0 {
-		if err := s.bumpAttempts(ctx, tx, retryIDs); err != nil {
+		if err := s.bumpAttempts(tickCtx, tx, retryIDs); err != nil {
 			return fmt.Errorf("outbox: bump attempts: %w", err)
 		}
 	}
 
 	if len(deadLetter) > 0 {
-		if err := s.moveToDeadLetter(ctx, tx, deadLetter, lastErrMsg); err != nil {
+		if err := s.moveToDeadLetter(tickCtx, tx, deadLetter, lastErrMsg); err != nil {
 			return fmt.Errorf("outbox: dead-letter: %w", err)
 		}
 	}
@@ -337,7 +349,7 @@ func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outbo
 		)
 		SELECT id, task_id, job_id, page_id, host, path,
 		       priority, retry_count, source_type, source_url,
-		       run_at, attempts, created_at, $2
+		       run_at, attempts + 1, created_at, $2
 		FROM task_outbox
 		WHERE id = ANY($1)
 	`, pq.Array(ids), lastErr); err != nil {
