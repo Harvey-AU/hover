@@ -1,0 +1,76 @@
+# Disposable test harness for the Grafana deploy-annotation flow.
+# Trigger manually from the Actions tab to verify the annotation lands in
+# Grafana without running a Fly deploy. Safe to delete once the real flow is
+# confirmed working.
+#
+# The `message` input is passed via env var (not direct `${{ ... }}`
+# interpolation in `run:`) to avoid shell injection via crafted inputs.
+
+name: Test Grafana Annotation
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Fake commit message (appears in annotation body)"
+        required: false
+        default: "Test annotation from workflow_dispatch"
+
+jobs:
+  annotate:
+    name: Post test annotation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load Grafana annotation secrets
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GRAFANA_URL: op://Good Native/hover-runtime/GRAFANA_URL
+          GRAFANA_SA_TOKEN: op://Good Native/hover-runtime/GRAFANA_SA_TOKEN
+
+      - name: Post test annotation to Grafana
+        continue-on-error: true
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ inputs.message }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -o pipefail
+          if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_SA_TOKEN:-}" ]; then
+            echo "::warning title=Grafana annotation skipped::GRAFANA_URL or GRAFANA_SA_TOKEN missing; skipping annotation."
+            exit 0
+          fi
+          short_sha="${COMMIT_SHA:0:7}"
+          commit_url="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+          pr_number="$(printf '%s' "$COMMIT_MESSAGE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
+          pr_line=""
+          if [ -n "${pr_number}" ]; then
+            pr_line="$(printf '\nPR: https://github.com/%s/pull/%s' "$REPO" "$pr_number")"
+          fi
+          body_text="$(printf '**TEST — Deploy %s** — `%s`\n\n%s\n\nCommit: %s%s' \
+            "$REF_NAME" "$short_sha" "$COMMIT_MESSAGE" "$commit_url" "$pr_line")"
+          now_ms=$(($(date +%s) * 1000))
+          payload="$(jq -n \
+            --argjson time "$now_ms" \
+            --arg text "$body_text" \
+            --arg sha "$short_sha" \
+            --arg ref "$REF_NAME" \
+            '{time: $time,
+              tags: ["deploy","service:hover","service:hover-worker","env:production",
+                     "test","manual",
+                     ("ref:" + $ref), ("sha:" + $sha)],
+              text: $text}')"
+          if ! curl --fail --silent --show-error \
+            --connect-timeout 5 --max-time 15 \
+            -X POST "${GRAFANA_URL%/}/api/annotations" \
+            -H "Authorization: Bearer ${GRAFANA_SA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload"; then
+            echo "::warning title=Grafana annotation failed::Annotation POST failed. Check GRAFANA_URL and GRAFANA_SA_TOKEN in 1Password."
+          else
+            echo "Annotation posted successfully."
+          fi
