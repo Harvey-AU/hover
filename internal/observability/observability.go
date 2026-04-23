@@ -725,25 +725,27 @@ func StartWorkerTaskSpan(ctx context.Context, info WorkerTaskSpanInfo) (context.
 }
 
 // RecordWorkerTask emits worker task metrics when instrumentation is initialised.
+//
+// Note: job.id is intentionally dropped from metric labels to keep Prometheus
+// active-series cardinality bounded. Use spans (which still carry job.id on
+// the worker.process_task span attributes) to pivot per-job when needed.
 func RecordWorkerTask(ctx context.Context, metrics WorkerTaskMetrics) {
+	attrs := metric.WithAttributes(attribute.String("task.status", metrics.Status))
+
 	if workerTaskDuration != nil {
-		workerTaskDuration.Record(ctx, float64(metrics.Duration.Milliseconds()),
-			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
+		workerTaskDuration.Record(ctx, float64(metrics.Duration.Milliseconds()), attrs)
 	}
 
 	if workerTaskQueueWait != nil {
-		workerTaskQueueWait.Record(ctx, float64(metrics.QueueWait.Milliseconds()),
-			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
+		workerTaskQueueWait.Record(ctx, float64(metrics.QueueWait.Milliseconds()), attrs)
 	}
 
 	if workerTaskTotalDuration != nil {
-		workerTaskTotalDuration.Record(ctx, float64(metrics.TotalDuration.Milliseconds()),
-			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
+		workerTaskTotalDuration.Record(ctx, float64(metrics.TotalDuration.Milliseconds()), attrs)
 	}
 
 	if workerTaskTotal != nil {
-		workerTaskTotal.Add(ctx, 1,
-			metric.WithAttributes(attribute.String("job.id", metrics.JobID), attribute.String("task.status", metrics.Status)))
+		workerTaskTotal.Add(ctx, 1, attrs)
 	}
 }
 
@@ -812,31 +814,31 @@ func RecordJobConcurrencySnapshot(ctx context.Context, jobID string, runningTask
 	}
 }
 
+// Note: jobID argument is retained for API stability and future span/trace
+// correlation, but is no longer attached as a metric label. See RecordWorkerTask.
 func RecordJobInfoCacheHit(ctx context.Context, jobID string) {
+	_ = jobID
 	if jobInfoCacheHitsCounter == nil {
 		return
 	}
-	jobInfoCacheHitsCounter.Add(ctx, 1,
-		metric.WithAttributes(attribute.String("job.id", jobID)))
+	jobInfoCacheHitsCounter.Add(ctx, 1)
 }
 
 func RecordJobInfoCacheMiss(ctx context.Context, jobID string) {
+	_ = jobID
 	if jobInfoCacheMissCounter == nil {
 		return
 	}
-	jobInfoCacheMissCounter.Add(ctx, 1,
-		metric.WithAttributes(attribute.String("job.id", jobID)))
+	jobInfoCacheMissCounter.Add(ctx, 1)
 }
 
 func RecordJobInfoCacheInvalidation(ctx context.Context, jobID, reason string) {
+	_ = jobID
 	if jobInfoCacheInvalidation == nil {
 		return
 	}
 	jobInfoCacheInvalidation.Add(ctx, 1,
-		metric.WithAttributes(
-			attribute.String("job.id", jobID),
-			attribute.String("cache.reason", reason),
-		))
+		metric.WithAttributes(attribute.String("cache.reason", reason)))
 }
 
 func RecordJobInfoCacheSize(ctx context.Context, size int) {
@@ -883,52 +885,42 @@ func RecordDBPoolStats(ctx context.Context, snapshot DBPoolSnapshot) {
 }
 
 // RecordTaskClaimAttempt records the latency of claiming a task from the queue.
+// jobID is retained for signature stability but not emitted as a label.
 func RecordTaskClaimAttempt(ctx context.Context, jobID string, latency time.Duration, status string) {
+	_ = jobID
 	if workerTaskClaimLatency != nil {
 		workerTaskClaimLatency.Record(ctx, float64(latency.Milliseconds()),
-			metric.WithAttributes(
-				attribute.String("job.id", jobID),
-				attribute.String("claim.status", status),
-			))
+			metric.WithAttributes(attribute.String("claim.status", status)))
 	}
 }
 
 // RecordWorkerTaskRetry records a retry attempt for a task.
 func RecordWorkerTaskRetry(ctx context.Context, jobID string, reason string) {
+	_ = jobID
 	if workerTaskRetryCounter != nil {
 		workerTaskRetryCounter.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("job.id", jobID),
-				attribute.String("task.retry_reason", reason),
-			))
+			metric.WithAttributes(attribute.String("task.retry_reason", reason)))
 	}
 }
 
 // RecordWorkerTaskFailure records a permanently failed task.
 func RecordWorkerTaskFailure(ctx context.Context, jobID string, reason string) {
+	_ = jobID
 	if workerTaskFailureCounter != nil {
 		workerTaskFailureCounter.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("job.id", jobID),
-				attribute.String("task.failure_reason", reason),
-			))
+			metric.WithAttributes(attribute.String("task.failure_reason", reason)))
 	}
 }
 
 // RecordTaskWaiting records when tasks move into the waiting queue along with the reason.
 func RecordTaskWaiting(ctx context.Context, jobID string, reason string, count int) {
+	_ = jobID
 	if workerTaskWaitingCounter == nil || count <= 0 {
 		return
 	}
 
-	attrs := []attribute.KeyValue{
-		attribute.String("task.waiting_reason", reason),
-	}
-	if jobID != "" {
-		attrs = append(attrs, attribute.String("job.id", jobID))
-	}
-
-	workerTaskWaitingCounter.Add(ctx, int64(count), metric.WithAttributes(attrs...))
+	workerTaskWaitingCounter.Add(ctx, int64(count),
+		metric.WithAttributes(attribute.String("task.waiting_reason", reason)))
 }
 
 // RecordDBPoolRejection increments the pool rejection counter when requests are rejected before acquiring a connection.
@@ -1156,61 +1148,59 @@ func RecordBrokerRedisPing(ctx context.Context, duration time.Duration, ok bool)
 
 // RecordBrokerDispatch increments the dispatch outcomes counter.
 // outcome values: "ok", "err", "capacity", "paced".
+// jobID is retained for call-site stability but not emitted as a label.
 func RecordBrokerDispatch(ctx context.Context, jobID, outcome string) {
+	_ = jobID
 	if brokerDispatchCounter == nil {
 		return
 	}
 	brokerDispatchCounter.Add(ctx, 1,
-		metric.WithAttributes(
-			attribute.String("job.id", jobID),
-			attribute.String("outcome", outcome),
-		))
+		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
 // RecordBrokerAutoclaim increments the autoclaim outcomes counter.
 // result values: "reclaimed", "dead_letter".
 func RecordBrokerAutoclaim(ctx context.Context, jobID, result string, count int) {
+	_ = jobID
 	if brokerAutoclaimCounter == nil || count <= 0 {
 		return
 	}
 	brokerAutoclaimCounter.Add(ctx, int64(count),
-		metric.WithAttributes(
-			attribute.String("job.id", jobID),
-			attribute.String("result", result),
-		))
+		metric.WithAttributes(attribute.String("result", result)))
 }
 
 // RecordBrokerMessageAge records how long a stream message sat pending
 // before a consumer received it. Call once per parsed XREADGROUP message.
 func RecordBrokerMessageAge(ctx context.Context, jobID string, ageMs float64) {
+	_ = jobID
 	if brokerMessageAgeHistogram == nil {
 		return
 	}
-	brokerMessageAgeHistogram.Record(ctx, ageMs,
-		metric.WithAttributes(attribute.String("job.id", jobID)))
+	brokerMessageAgeHistogram.Record(ctx, ageMs)
 }
 
 // RecordBrokerPacerPushback increments the pushback counter.
 // reason values: "gate" (domain-gate NX hold), "rate_limited" (release feedback).
+// domain is retained for call-site stability but not emitted as a label
+// (per-domain cardinality is unbounded at launch scale).
 func RecordBrokerPacerPushback(ctx context.Context, domain, reason string) {
+	_ = domain
 	if brokerPacerPushbackCounter == nil {
 		return
 	}
 	brokerPacerPushbackCounter.Add(ctx, 1,
-		metric.WithAttributes(
-			attribute.String("domain", domain),
-			attribute.String("reason", reason),
-		))
+		metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 // RecordBrokerPacerDelay records the effective per-domain pacing delay
-// observed at TryAcquire time.
+// observed at TryAcquire time. domain is retained for API stability but not
+// emitted as a label.
 func RecordBrokerPacerDelay(ctx context.Context, domain string, delayMs float64) {
+	_ = domain
 	if brokerPacerDelayHistogram == nil {
 		return
 	}
-	brokerPacerDelayHistogram.Record(ctx, delayMs,
-		metric.WithAttributes(attribute.String("domain", domain)))
+	brokerPacerDelayHistogram.Record(ctx, delayMs)
 }
 
 // RecordBrokerCounterSyncSkew records the absolute difference between
