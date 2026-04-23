@@ -38,6 +38,9 @@ jobs:
           COMMIT_MESSAGE: ${{ inputs.message }}
           REPO: ${{ github.repository }}
           REF_NAME: ${{ github.ref_name }}
+          WORKFLOW_FILE: fly-deploy.yml
+          COMMIT_TAG_CAP: "20"
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_SA_TOKEN:-}" ]; then
@@ -46,24 +49,59 @@ jobs:
           fi
           short_sha="${COMMIT_SHA:0:7}"
           commit_url="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+
           pr_number="$(printf '%s' "$COMMIT_MESSAGE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
-          pr_line=""
+          pr_section=""
+          extra_tags_json='[]'
           if [ -n "${pr_number}" ]; then
-            pr_line="$(printf '\nPR: https://github.com/%s/pull/%s' "$REPO" "$pr_number")"
+            pr_json="$(gh api "repos/${REPO}/pulls/${pr_number}" 2>/dev/null || true)"
+            if [ -n "$pr_json" ] && [ "$(printf '%s' "$pr_json" | jq -r '.number // empty')" = "$pr_number" ]; then
+              pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
+              pr_url="$(printf '%s' "$pr_json" | jq -r '.html_url')"
+              pr_section="$(printf '## PR\n%s\n%s\n\n' "$pr_title" "$pr_url")"
+              extra_tags_json="$(jq -cn --arg pr "pr:${pr_number}" '[$pr]')"
+            fi
           fi
-          body_text="$(printf '**TEST — Deploy %s** — `%s`\n\n%s\n\nCommit: %s%s' \
-            "$REF_NAME" "$short_sha" "$COMMIT_MESSAGE" "$commit_url" "$pr_line")"
+
+          # Commit range — same logic as real deploy: last successful deploy
+          # run on main → HEAD. Works even when triggered from a feature
+          # branch because we're comparing against main's last green deploy.
+          prev_sha="$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?branch=main&status=success&per_page=10" \
+            --jq "[.workflow_runs[] | select(.head_sha != \"${COMMIT_SHA}\")][0].head_sha" 2>/dev/null || true)"
+
+          commits_body=""
+          commit_tags_json='[]'
+          if [ -n "$prev_sha" ] && [ "$prev_sha" != "null" ]; then
+            compare_json="$(gh api "repos/${REPO}/compare/${prev_sha}...${COMMIT_SHA}" --paginate 2>/dev/null || true)"
+            if [ -n "$compare_json" ]; then
+              commits_body="$(printf '%s' "$compare_json" | jq -r '.commits[] | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"')"
+              commit_tags_json="$(printf '%s' "$compare_json" | jq -c --argjson cap "${COMMIT_TAG_CAP}" '[.commits[].sha[0:7] | "commit:" + .] | .[0:$cap]')"
+            fi
+          fi
+
+          if [ -z "$commits_body" ]; then
+            first_line="$(printf '%s' "$COMMIT_MESSAGE" | head -n1)"
+            commits_body="$(printf '%s %s' "$short_sha" "$first_line")"
+            commit_tags_json="$(jq -cn --arg t "commit:${short_sha}" '[$t]')"
+          fi
+
+          body_text="$(printf '**TEST** — %s## Commits\n%s\n%s' "$pr_section" "$commit_url" "$commits_body")"
+
+          tags_json="$(jq -cn \
+            --arg ref "$REF_NAME" \
+            --arg sha "$short_sha" \
+            --argjson extra "$extra_tags_json" \
+            --argjson commits "$commit_tags_json" \
+            '["deploy","service:hover","service:hover-worker","env:production",
+              "test","manual",
+              ("ref:" + $ref), ("sha:" + $sha)] + $extra + $commits')"
+
           now_ms=$(($(date +%s) * 1000))
           payload="$(jq -n \
             --argjson time "$now_ms" \
             --arg text "$body_text" \
-            --arg sha "$short_sha" \
-            --arg ref "$REF_NAME" \
-            '{time: $time,
-              tags: ["deploy","service:hover","service:hover-worker","env:production",
-                     "test","manual",
-                     ("ref:" + $ref), ("sha:" + $sha)],
-              text: $text}')"
+            --argjson tags "$tags_json" \
+            '{time: $time, tags: $tags, text: $text}')"
           if ! curl --fail --silent --show-error \
             --connect-timeout 5 --max-time 15 \
             -X POST "${GRAFANA_URL%/}/api/annotations" \
