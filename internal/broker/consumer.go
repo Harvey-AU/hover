@@ -377,12 +377,18 @@ func (c *Consumer) classifyBatch(
 		return delivered, parsed
 	}
 
+	// Request 2× len(parsed) so interleaved entries belonging to other
+	// consumers (fresh, not-yet-idle PEL entries that sit between our
+	// claimed IDs) don't push any of our IDs out of the page. XAUTOCLAIM
+	// only reassigns messages whose idle >= MinIdleTime, but XPENDING
+	// lists ALL pending entries in the range regardless of consumer or
+	// idle time, so the range can be sparser than the claimed slice.
 	pending, err := c.client.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: streamKey,
 		Group:  groupName,
 		Start:  firstID,
 		End:    lastID,
-		Count:  int64(len(parsed)),
+		Count:  int64(len(parsed)) * 2,
 	}).Result()
 	if err != nil {
 		// Treat as reclaimable — the caller's fallback path preserves
@@ -394,6 +400,40 @@ func (c *Consumer) classifyBatch(
 	}
 	for _, p := range pending {
 		delivered[p.ID] = p.RetryCount
+	}
+
+	// Any claimed ID missing from the batched response (because the
+	// range was too sparse even for the 2× budget, or because Redis
+	// returned an unexpectedly small page) must NOT silently default
+	// to delivery=0 — that would bypass the max-delivery gate and let
+	// a stuck message loop forever. Fall back to a per-ID XPENDING for
+	// stragglers so classification is never lossy (coderabbit PR #338).
+	for _, p := range parsed {
+		if p.unparseable {
+			continue
+		}
+		if _, ok := delivered[p.msg.MessageID]; ok {
+			continue
+		}
+		single, perErr := c.client.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
+			Stream: streamKey,
+			Group:  groupName,
+			Start:  p.msg.MessageID,
+			End:    p.msg.MessageID,
+			Count:  1,
+		}).Result()
+		if perErr != nil {
+			brokerLog.Warn("per-id delivery-count fallback failed; treating message as reclaimable",
+				"error", perErr, "job_id", jobID, "message_id", p.msg.MessageID)
+			continue
+		}
+		if len(single) == 0 {
+			// Message has already been ACKed by another path — nothing
+			// to classify. Leaving it absent from delivered is safe because
+			// the caller only classifies parsed entries it still holds.
+			continue
+		}
+		delivered[single[0].ID] = single[0].RetryCount
 	}
 	return delivered, parsed
 }
