@@ -245,6 +245,20 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 
 	cursor := "0-0"
 	totalSeen := 0
+	// iterationCap guards against an unlikely infinite loop where Redis
+	// returns a non-terminal cursor with zero messages indefinitely. A
+	// legitimate walk does at most ceil(maxMessagesPerSweep / perCallCount)
+	// productive iterations; we allow 3× that to absorb a few empty-batch
+	// gaps XAUTOCLAIM can produce when candidate messages fail the idle
+	// filter mid-walk (see coderabbit review on PR #338).
+	iterationCap := 0
+	if perCallCount > 0 {
+		iterationCap = int((int64(maxMessagesPerSweep)+perCallCount-1)/perCallCount) * 3
+	}
+	if iterationCap < 10 {
+		iterationCap = 10
+	}
+	iterations := 0
 
 	for {
 		msgs, next, claimErr := c.client.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
@@ -262,42 +276,41 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 			return nil, nil, fmt.Errorf("broker: XAUTOCLAIM %s: %w", jobID, claimErr)
 		}
 
-		for _, xMsg := range msgs {
-			msg, parseErr := parseStreamMessage(xMsg)
-			if parseErr != nil {
-				brokerLog.Warn("dead-lettering unparseable reclaimed message", "error", parseErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
-				_ = c.Ack(ctx, jobID, xMsg.ID)
+		// Classify the batch in one XPENDING round-trip instead of one
+		// round-trip per message. XAUTOCLAIM returns the messages in
+		// stream-id order, so their first/last IDs form a contiguous range
+		// XPENDING can answer in a single call.
+		delivered, parsed := c.classifyBatch(ctx, jobID, streamKey, groupName, msgs)
+		for _, entry := range parsed {
+			if entry.unparseable {
 				continue
 			}
-
-			// Check delivery count via XPENDING for this message.
-			deliveries, dErr := c.getDeliveryCount(ctx, streamKey, groupName, xMsg.ID)
-			if dErr != nil {
-				brokerLog.Warn("failed to check delivery count", "error", dErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
-				// Treat as reclaimable to avoid losing work.
-				reclaimed = append(reclaimed, msg)
-				continue
-			}
-
-			if deliveries >= c.opts.MaxDeliveries {
-				deadLetter = append(deadLetter, msg)
+			if delivered[entry.msg.MessageID] >= c.opts.MaxDeliveries {
+				deadLetter = append(deadLetter, entry.msg)
 			} else {
-				reclaimed = append(reclaimed, msg)
+				reclaimed = append(reclaimed, entry.msg)
 			}
 		}
 
 		totalSeen += len(msgs)
+		iterations++
 
-		// Redis returns "0-0" as the next cursor when the scan is done.
-		// Anything else means more stale messages remain. We also bail on
-		// any non-full batch (Redis sometimes returns early) and on the
-		// per-sweep cap so one hot job can't starve the rest.
-		if next == "0-0" || next == "" || len(msgs) == 0 {
+		// Redis signals end-of-walk with "0-0" (or empty) as the next
+		// cursor. Empty msgs batches mid-walk are legal — XAUTOCLAIM can
+		// return zero claimed entries when candidates in the range have
+		// dropped below the idle threshold between scan and claim — so we
+		// must NOT break on len(msgs) == 0 alone (coderabbit PR #338).
+		if next == "0-0" || next == "" {
 			break
 		}
 		if totalSeen >= maxMessagesPerSweep {
 			brokerLog.Warn("reclaim sweep hit per-tick cap; will resume next tick",
 				"job_id", jobID, "cap", maxMessagesPerSweep)
+			break
+		}
+		if iterations >= iterationCap {
+			brokerLog.Warn("reclaim sweep hit iteration cap; will resume next tick",
+				"job_id", jobID, "iterations", iterations, "seen", totalSeen)
 			break
 		}
 		cursor = next
@@ -309,25 +322,85 @@ func (c *Consumer) ReclaimStale(ctx context.Context, jobID string) (reclaimed []
 	return reclaimed, deadLetter, nil
 }
 
-// getDeliveryCount returns how many times a specific message has been
-// delivered to consumers.
-func (c *Consumer) getDeliveryCount(ctx context.Context, streamKey, groupName, messageID string) (int64, error) {
-	// XPENDING with a specific range of just this message ID.
+// classifiedMessage carries both the parsed message and a flag indicating
+// it was already ACKed as unparseable.
+type classifiedMessage struct {
+	msg         StreamMessage
+	unparseable bool
+}
+
+// classifyBatch parses the raw XAUTOCLAIM batch and fetches delivery
+// counts for every parseable message in a single XPENDING range call.
+// Returns a map of message ID → delivery count and the parsed messages
+// in the same order as the input.
+//
+// Pre-batching, the reclaim loop issued one XPENDING per message, which
+// at Count=100 meant 100 extra Redis RTTs per sweep. For large stuck
+// PELs this dominated tick time and starved other jobs — coderabbit
+// flagged this on PR #338.
+func (c *Consumer) classifyBatch(
+	ctx context.Context,
+	jobID, streamKey, groupName string,
+	msgs []redis.XMessage,
+) (map[string]int64, []classifiedMessage) {
+	parsed := make([]classifiedMessage, 0, len(msgs))
+	for _, xMsg := range msgs {
+		m, parseErr := parseStreamMessage(xMsg)
+		if parseErr != nil {
+			brokerLog.Warn("dead-lettering unparseable reclaimed message",
+				"error", parseErr, "message_id", xMsg.ID, "consumer", c.opts.ConsumerName)
+			_ = c.Ack(ctx, jobID, xMsg.ID)
+			parsed = append(parsed, classifiedMessage{unparseable: true})
+			continue
+		}
+		parsed = append(parsed, classifiedMessage{msg: m})
+	}
+
+	// Nothing to classify — avoid the XPENDING RTT on an empty batch.
+	var firstID, lastID string
+	any := false
+	for _, p := range parsed {
+		if p.unparseable {
+			continue
+		}
+		if !any {
+			firstID, lastID = p.msg.MessageID, p.msg.MessageID
+			any = true
+			continue
+		}
+		// XAUTOCLAIM preserves stream-ID order, so first and last form
+		// the enclosing range for the XPENDING lookup.
+		lastID = p.msg.MessageID
+	}
+	delivered := make(map[string]int64, len(parsed))
+	if !any {
+		return delivered, parsed
+	}
+
 	pending, err := c.client.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: streamKey,
 		Group:  groupName,
-		Start:  messageID,
-		End:    messageID,
-		Count:  1,
+		Start:  firstID,
+		End:    lastID,
+		Count:  int64(len(parsed)),
 	}).Result()
 	if err != nil {
-		return 0, err
+		// Treat as reclaimable — the caller's fallback path preserves
+		// the pre-batch safety net (over-count briefly rather than drop
+		// work). A delivery count of 0 maps to reclaimed, not dead-letter.
+		brokerLog.Warn("batched delivery-count lookup failed; treating batch as reclaimable",
+			"error", err, "job_id", jobID, "batch_size", len(parsed))
+		return delivered, parsed
 	}
-	if len(pending) == 0 {
-		return 0, nil
+	for _, p := range pending {
+		delivered[p.ID] = p.RetryCount
 	}
-	return pending[0].RetryCount, nil
+	return delivered, parsed
 }
+
+// (getDeliveryCount was removed when the reclaim path was batched — the
+// single-message path was its only caller. Use XPendingExt directly with
+// Start=End=messageID if a single-message lookup is ever needed again.)
 
 // PendingCount returns the number of messages in the pending entries
 // list (PEL) for a job's consumer group — i.e. tasks that have been
