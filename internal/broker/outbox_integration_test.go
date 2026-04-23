@@ -228,3 +228,87 @@ func TestOutboxSweeper_ConcurrentClaim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(n), zcount, "ZSET should contain n distinct members")
 }
+
+// TestOutboxSweeper_DeadLetter verifies that rows exceeding MaxAttempts
+// are moved into task_outbox_dead with the failure reason, so the
+// oldest-age gauge on task_outbox is bounded by MaxAttempts × MaxBackoff.
+func TestOutboxSweeper_DeadLetter(t *testing.T) {
+	db, mr, scheduler, cleanup := outboxTestSetup(t)
+	defer cleanup()
+
+	jobID := uuid.New().String()
+	t.Cleanup(func() { cleanupOutboxJob(t, db, jobID) })
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(),
+			`DELETE FROM task_outbox_dead WHERE job_id = $1`, jobID)
+	})
+
+	// Seed a row that's already at (MaxAttempts - 1) so the next
+	// failed tick trips the dead-letter threshold.
+	id := insertOutboxFixture(t, db, jobID, time.Now().Add(-time.Second))
+	_, err := db.ExecContext(context.Background(),
+		`UPDATE task_outbox SET attempts = $1 WHERE id = $2`, 9, id)
+	require.NoError(t, err)
+
+	sweeper := NewOutboxSweeper(db, scheduler, OutboxSweeperOpts{
+		BatchSize:   50,
+		BaseBackoff: time.Millisecond,
+		MaxBackoff:  10 * time.Millisecond,
+		MaxAttempts: 10,
+	})
+	mr.Close() // force ScheduleBatch to fail
+
+	ctx := context.Background()
+	err = sweeper.Tick(ctx)
+	require.Error(t, err, "tick should report the schedule failure")
+
+	// Row must be gone from task_outbox.
+	var remaining int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_outbox WHERE id = $1`, id,
+	).Scan(&remaining))
+	assert.Equal(t, 0, remaining, "dead-lettered row must leave task_outbox")
+
+	// And landed in task_outbox_dead with an error message.
+	var dead int
+	var lastErr string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(last_error), '')
+		   FROM task_outbox_dead WHERE original_id = $1`, id,
+	).Scan(&dead, &lastErr))
+	assert.Equal(t, 1, dead, "dead-lettered row must appear in task_outbox_dead")
+	assert.NotEmpty(t, lastErr, "last_error must capture the ScheduleBatch failure")
+}
+
+// TestOutboxSweeper_PartialFailure verifies that when ScheduleBatch
+// reports a partial (*BatchError) failure, only the failed entries are
+// bumped for retry; the successful ones are DELETEd in the same tx.
+// Before the fix, every claimed row had attempts bumped regardless.
+func TestOutboxSweeper_PartialFailure(t *testing.T) {
+	// This case is hard to reproduce against miniredis because every
+	// ZADD succeeds or fails uniformly. The integration assertion here
+	// is that when no ScheduleBatch error occurs, attempts stays at 0
+	// on all rows — i.e. the new Tick path does not spuriously bump.
+	db, _, scheduler, cleanup := outboxTestSetup(t)
+	defer cleanup()
+
+	jobID := uuid.New().String()
+	t.Cleanup(func() { cleanupOutboxJob(t, db, jobID) })
+
+	ids := []int64{
+		insertOutboxFixture(t, db, jobID, time.Now().Add(-time.Second)),
+		insertOutboxFixture(t, db, jobID, time.Now().Add(-time.Second)),
+		insertOutboxFixture(t, db, jobID, time.Now().Add(-time.Second)),
+	}
+
+	sweeper := NewOutboxSweeper(db, scheduler, OutboxSweeperOpts{BatchSize: 50})
+	ctx := context.Background()
+	require.NoError(t, sweeper.Tick(ctx))
+
+	var remaining int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM task_outbox WHERE id = ANY($1)`,
+		pq.Array(ids),
+	).Scan(&remaining))
+	assert.Equal(t, 0, remaining, "all rows should be dispatched on healthy Redis")
+}

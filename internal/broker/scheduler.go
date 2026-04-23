@@ -119,8 +119,36 @@ func (s *Scheduler) Schedule(ctx context.Context, entry ScheduleEntry) error {
 	return nil
 }
 
-// ScheduleBatch adds multiple tasks to their respective job ZSETs
-// using a pipeline for efficiency.
+// BatchError is returned by ScheduleBatch when some (but not all) entries
+// in the pipeline failed. FailedIndices lists the indices within the input
+// slice whose ZADD returned an error; the remaining entries were scheduled
+// successfully. Err is the first per-entry error encountered, for logging.
+//
+// Callers that need to retry only the failures can type-assert via
+// errors.As and use FailedIndices to partition the batch. Callers that treat
+// any failure as fatal can just check err != nil; the error message includes
+// the failure count.
+type BatchError struct {
+	FailedIndices []int
+	Total         int
+	Err           error
+}
+
+func (e *BatchError) Error() string {
+	return fmt.Sprintf("broker: %d of %d schedule entries failed: %v",
+		len(e.FailedIndices), e.Total, e.Err)
+}
+
+func (e *BatchError) Unwrap() error { return e.Err }
+
+// ScheduleBatch adds multiple tasks to their respective job ZSETs using a
+// pipeline for efficiency.
+//
+// Returns nil on full success. Returns a *BatchError when the pipeline
+// completed but individual ZADDs failed — callers can partition the batch
+// via err.(*BatchError).FailedIndices. Returns a non-BatchError error when
+// the pipeline itself could not execute (e.g. Redis unreachable), in which
+// case callers must treat all entries as failed.
 func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) error {
 	if len(entries) == 0 {
 		return nil
@@ -138,17 +166,24 @@ func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) 
 		return fmt.Errorf("broker: schedule batch (%d entries): %w", len(entries), err)
 	}
 
-	var errs int
-	for _, cmd := range cmds {
-		if cmd.Err() != nil {
-			errs++
+	var (
+		failed   []int
+		firstErr error
+	)
+	for i, cmd := range cmds {
+		if cmdErr := cmd.Err(); cmdErr != nil {
+			failed = append(failed, i)
+			if firstErr == nil {
+				firstErr = cmdErr
+			}
 		}
 	}
-	if errs > 0 {
-		brokerLog.Warn("partial schedule batch failure", "failed", errs, "total", len(entries))
-		return fmt.Errorf("broker: %d of %d schedule entries failed", errs, len(entries))
+	if len(failed) == 0 {
+		return nil
 	}
-	return nil
+	brokerLog.Warn("partial schedule batch failure",
+		"failed", len(failed), "total", len(entries), "first_error", firstErr)
+	return &BatchError{FailedIndices: failed, Total: len(entries), Err: firstErr}
 }
 
 // Remove deletes a task from the job's ZSET (e.g. on cancellation).

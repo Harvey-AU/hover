@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -80,6 +81,29 @@ func TestScheduleBatch(t *testing.T) {
 	c2, err := s.PendingCount(ctx, "j2")
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), c2)
+}
+
+// TestScheduleBatch_PipelineFailure verifies that when the underlying
+// Redis connection dies mid-pipeline, callers receive a non-BatchError
+// so they know to treat the entire batch as failed. A *BatchError is
+// only returned when the pipeline actually ran and some entries failed.
+func TestScheduleBatch_PipelineFailure(t *testing.T) {
+	client, mr := newTestClientWithMiniredis(t)
+	s := NewScheduler(client)
+	ctx := context.Background()
+
+	mr.Close() // force pipeline to fail
+
+	entries := []ScheduleEntry{
+		{TaskID: "t1", JobID: "j1", PageID: 1, Host: "a.com", Path: "/a", RunAt: time.Now()},
+	}
+
+	err := s.ScheduleBatch(ctx, entries)
+	require.Error(t, err)
+
+	var be *BatchError
+	require.False(t, errors.As(err, &be),
+		"pipeline-level failure must not be a *BatchError — callers need to treat all entries as failed")
 }
 
 func TestDueItems(t *testing.T) {

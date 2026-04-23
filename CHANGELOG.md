@@ -28,7 +28,28 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Added
+
+- `bee.broker.outbox_sweep_total` counter with
+  `outcome={dispatched, retried, dead_lettered}` labels so partial-failure and
+  dead-letter rates are visible without a database session.
+- `task_outbox_dead` table capturing rows whose `attempts` exceeded the retry
+  cap (default 10), with `dead_lettered_at` and `last_error` for triage.
+- Outbox investigation notes at `docs/diagnostics/outbox-aging-investigation.md`
+  covering the oldest-age growth pattern, ranked hypotheses, and diagnostic
+  queries.
+
+### Changed
+
+- `Scheduler.ScheduleBatch` now returns a typed `*BatchError` on partial
+  pipeline failure, exposing `FailedIndices` so the outbox sweeper can `DELETE`
+  the succeeded rows and only bump the failed ones. Previously every row in a
+  500-row batch had attempts bumped whenever any single ZADD failed.
+- Outbox sweeper bounds each tick's DB work with `SET LOCAL statement_timeout`
+  (default 5 s) to keep a wedged backend from holding locks indefinitely.
+- `JobManager.CancelJob` now deletes `task_outbox` rows for the cancelled job in
+  the same transaction, preventing stale rows from contributing to the backlog
+  and oldest-age gauges.
 
 ## Full changelog history
 
