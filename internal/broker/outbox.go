@@ -229,14 +229,14 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		lastErrMsg string
 	)
 
+	var be *BatchError
 	switch {
 	case schedErr == nil:
 		succeeded = make([]int64, 0, len(claimed))
 		for _, r := range claimed {
 			succeeded = append(succeeded, r.id)
 		}
-	case isBatchError(schedErr):
-		be := schedErr.(*BatchError) //nolint:errcheck // checked by isBatchError
+	case errors.As(schedErr, &be):
 		failedSet := make(map[int]struct{}, len(be.FailedIndices))
 		for _, idx := range be.FailedIndices {
 			failedSet[idx] = struct{}{}
@@ -320,11 +320,6 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	brokerLog.Debug("outbox sweep tick dispatched",
 		"dispatched", len(succeeded))
 	return nil
-}
-
-func isBatchError(err error) bool {
-	var be *BatchError
-	return errors.As(err, &be)
 }
 
 // moveToDeadLetter copies the given rows into task_outbox_dead with the
