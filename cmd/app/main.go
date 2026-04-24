@@ -444,9 +444,15 @@ func main() {
 	)
 
 	if config.ObservabilityEnabled {
+		// Derive service.name from FLY_APP_NAME so traces from review apps
+		// (e.g. hover-pr-342) are distinguishable from production.
+		serviceName := strings.TrimSpace(os.Getenv("FLY_APP_NAME"))
+		if serviceName == "" {
+			serviceName = "hover"
+		}
 		obsProviders, err = observability.Init(context.Background(), observability.Config{
 			Enabled:        true,
-			ServiceName:    "hover",
+			ServiceName:    serviceName,
 			Environment:    config.Env,
 			OTLPEndpoint:   strings.TrimSpace(config.OTLPEndpoint),
 			OTLPHeaders:    observability.ParseOTLPHeaders(config.OTLPHeaders),
