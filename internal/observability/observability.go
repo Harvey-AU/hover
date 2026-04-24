@@ -145,6 +145,11 @@ var (
 	// Tier 1: dispatch outcomes counter.
 	brokerDispatchCounter metric.Int64Counter
 
+	// Tier 1: outbox sweep outcomes. Labelled by outcome so the shape of
+	// sweeper failures (partial vs total vs dead-letter) is visible without
+	// an ad-hoc DB session.
+	brokerOutboxSweepCounter metric.Int64Counter
+
 	// Tier 2: autoclaim + message age.
 	brokerAutoclaimCounter    metric.Int64Counter
 	brokerMessageAgeHistogram metric.Float64Histogram
@@ -1047,6 +1052,14 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return err
 	}
 
+	brokerOutboxSweepCounter, err = meter.Int64Counter(
+		"bee.broker.outbox_sweep_total",
+		metric.WithDescription("Outbox sweep outcomes grouped by result (dispatched|retried|dead_lettered)"),
+	)
+	if err != nil {
+		return err
+	}
+
 	// --- Tier 2 ---
 	brokerAutoclaimCounter, err = meter.Int64Counter(
 		"bee.broker.autoclaim_total",
@@ -1159,6 +1172,22 @@ func RecordBrokerOutbox(ctx context.Context, backlog int64, oldestAgeSeconds flo
 	if brokerOutboxAgeGauge != nil {
 		brokerOutboxAgeGauge.Record(ctx, oldestAgeSeconds)
 	}
+}
+
+// RecordBrokerOutboxSweep increments the outbox sweep outcomes counter.
+//
+// outcome values (mutually exclusive, per-row):
+//   - "dispatched": row was ZADDed to Redis and DELETEd from task_outbox
+//   - "retried": ScheduleBatch failed for this entry (or at pipeline level)
+//     and attempts/run_at were bumped
+//   - "dead_lettered": attempts exceeded the cap and the row was moved to
+//     task_outbox_dead
+func RecordBrokerOutboxSweep(ctx context.Context, outcome string, count int) {
+	if brokerOutboxSweepCounter == nil || count <= 0 {
+		return
+	}
+	brokerOutboxSweepCounter.Add(ctx, int64(count),
+		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
 // RecordBrokerRedisPing emits the periodic Redis PING RTT.
