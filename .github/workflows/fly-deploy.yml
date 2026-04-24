@@ -208,7 +208,7 @@ jobs:
             commit_tags_json="$(jq -cn --arg t "commit:${short_sha}" '[$t]')"
           fi
 
-          body_text="$(printf '%s## Commits\n%s\n%s' "$pr_section" "$commit_url" "$commits_body")"
+          body_text="$(printf '%s## Commits\n%s\n%s' "$pr_section" "$commits_body" "$commit_url")"
 
           tags_json="$(jq -cn \
             --arg ref "$REF_NAME" \
