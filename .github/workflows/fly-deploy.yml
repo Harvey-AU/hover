@@ -219,22 +219,25 @@ jobs:
           fi
 
           service_tags_json='[]'
-          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/hover/|internal/api/|web/)'; then
+          # cmd/app is the API server; cmd/hover is the CLI tool.
+          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/app/|internal/(api|archive|auth|cache|loops|notifications|storage|techdetect|util)/|web/)'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover"]')"
           fi
-          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/worker/|internal/crawler/)'; then
+          if printf '%s\n' "$changed_files" | grep -qE '^cmd/worker/'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-worker"]')"
           fi
-          if printf '%s\n' "$changed_files" | grep -qE '^(webflow-designer-extension-cli/|npm/)'; then
+          # Shared internal packages used by both the API server and worker.
+          if printf '%s\n' "$changed_files" | grep -qE '^internal/(broker|crawler|db|jobs|logging|observability)/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover","service:hover-worker"]')"
+          fi
+          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/hover/|webflow-designer-extension-cli/|npm/)'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-cli"]')"
           fi
           if printf '%s\n' "$changed_files" | grep -qE '^(grafana/|\.github/|scripts/)'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:grafana"]')"
           fi
-          # Shared internal packages and DB migrations affect both main services.
-          # Exclude api/ and crawler/ which are exclusively hover and hover-worker.
-          if printf '%s\n' "$changed_files" | grep -E '^(internal/|supabase/)' | grep -qvE '^internal/(api|crawler)/'; then
-            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover","service:hover-worker"]')"
+          if printf '%s\n' "$changed_files" | grep -qE '^supabase/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:supabase"]')"
           fi
           # Fallback — unrecognised paths: tag both main services conservatively.
           if [ "$service_tags_json" = "[]" ]; then
