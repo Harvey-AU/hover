@@ -130,3 +130,105 @@ jobs:
         run:
           flyctl deploy --config fly.worker.toml --app hover-worker
           --remote-only
+
+      - name: Load Grafana annotation secrets
+        # Annotation is observability, not a release gate. If 1Password is
+        # unreachable or the items are missing, log a warning and move on —
+        # the deploy itself has already succeeded by this point.
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GRAFANA_URL: op://Good Native/hover-runtime/GRAFANA_URL
+          GRAFANA_SA_TOKEN: op://Good Native/hover-runtime/GRAFANA_SA_TOKEN
+
+      - name: Post deploy annotation to Grafana
+        # Best-effort: a Grafana outage logs a warning but does not fail the
+        # deploy. The annotation is observability, not a release gate.
+        # Commit-message and ref are passed via env vars (not direct
+        # ${{ ... }} interpolation) to avoid shell-injection via crafted
+        # commit messages — see GitHub Actions injection guidance.
+        continue-on-error: true
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          WORKFLOW_FILE: fly-deploy.yml
+          COMMIT_TAG_CAP: "20"
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_SA_TOKEN:-}" ]; then
+            echo "::warning title=Grafana annotation skipped::GRAFANA_URL or GRAFANA_SA_TOKEN missing; skipping annotation."
+            exit 0
+          fi
+          short_sha="${COMMIT_SHA:0:7}"
+          commit_url="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+
+          # PR detection — merge commits from GitHub include "(#NNN)" in the
+          # subject. Look up the PR via gh api so we get the canonical title
+          # rather than whatever shorthand appeared in the commit message.
+          pr_number="$(printf '%s' "$COMMIT_MESSAGE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
+          pr_section=""
+          extra_tags_json='[]'
+          if [ -n "${pr_number}" ]; then
+            pr_json="$(gh api "repos/${REPO}/pulls/${pr_number}" 2>/dev/null || true)"
+            if [ -n "$pr_json" ] && [ "$(printf '%s' "$pr_json" | jq -r '.number // empty')" = "$pr_number" ]; then
+              pr_title="$(printf '%s' "$pr_json" | jq -r '.title')"
+              pr_url="$(printf '%s' "$pr_json" | jq -r '.html_url')"
+              pr_section="$(printf '## PR\n%s\n%s\n\n' "$pr_title" "$pr_url")"
+              extra_tags_json="$(jq -cn --arg pr "pr:${pr_number}" '[$pr]')"
+            fi
+          fi
+
+          # Commit range since previous successful deploy — walk workflow runs
+          # for this workflow file on main and pick the most recent success
+          # that isn't the current commit.
+          prev_sha="$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?branch=main&status=success&per_page=10" \
+            --jq "[.workflow_runs[] | select(.head_sha != \"${COMMIT_SHA}\")][0].head_sha" 2>/dev/null || true)"
+
+          commits_body=""
+          commit_tags_json='[]'
+          if [ -n "$prev_sha" ] && [ "$prev_sha" != "null" ]; then
+            compare_json="$(gh api "repos/${REPO}/compare/${prev_sha}...${COMMIT_SHA}" --paginate 2>/dev/null || true)"
+            if [ -n "$compare_json" ]; then
+              commits_body="$(printf '%s' "$compare_json" | jq -r '.commits[] | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"')"
+              commit_tags_json="$(printf '%s' "$compare_json" | jq -c --argjson cap "${COMMIT_TAG_CAP}" '[.commits[].sha[0:7] | "commit:" + .] | .[0:$cap]')"
+            fi
+          fi
+
+          # Fallback — first deploy, or compare API unavailable: show the
+          # head commit only.
+          if [ -z "$commits_body" ]; then
+            first_line="$(printf '%s' "$COMMIT_MESSAGE" | head -n1)"
+            commits_body="$(printf '%s %s' "$short_sha" "$first_line")"
+            commit_tags_json="$(jq -cn --arg t "commit:${short_sha}" '[$t]')"
+          fi
+
+          body_text="$(printf '%s## Commits\n%s\n%s' "$pr_section" "$commit_url" "$commits_body")"
+
+          tags_json="$(jq -cn \
+            --arg ref "$REF_NAME" \
+            --arg sha "$short_sha" \
+            --argjson extra "$extra_tags_json" \
+            --argjson commits "$commit_tags_json" \
+            '(["deploy","service:hover","service:hover-worker","env:production",
+              ("branch:" + $ref), ("commit:" + $sha)] + $extra + $commits) | unique')"
+
+          now_ms=$(($(date +%s) * 1000))
+          payload="$(jq -n \
+            --argjson time "$now_ms" \
+            --arg text "$body_text" \
+            --argjson tags "$tags_json" \
+            '{time: $time, tags: $tags, text: $text}')"
+          if ! curl --fail --silent --show-error \
+            --connect-timeout 5 --max-time 15 \
+            -X POST "${GRAFANA_URL%/}/api/annotations" \
+            -H "Authorization: Bearer ${GRAFANA_SA_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$payload"; then
+            echo "::warning title=Grafana annotation failed::Deploy succeeded but annotation POST failed. Check GRAFANA_URL and GRAFANA_SA_TOKEN in 1Password."
+          fi
