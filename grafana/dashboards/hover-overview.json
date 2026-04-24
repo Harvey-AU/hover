@@ -1517,9 +1517,9 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "editorMode": "builder",
-                        "expr": "bee_db_pool_usage_ratio{app=~\"$app\",environment=~\"$environment\"}",
-                        "legendFormat": "__auto",
+                        "editorMode": "code",
+                        "expr": "max by (app, environment) (bee_db_pool_usage_ratio{app=~\"$app\",environment=~\"$environment\"}) > 0",
+                        "legendFormat": "{{app}} / {{environment}}",
                         "range": true
                       },
                       "version": "v0"
@@ -1532,7 +1532,7 @@
               "transformations": []
             }
           },
-          "description": "bee_db_pool_usage_ratio",
+          "description": "Max DB connection pool usage across instances, per environment. Only shown when > 0.",
           "id": 20,
           "links": [],
           "title": "DB Pool Usage Ratio",
@@ -1545,6 +1545,7 @@
                   "color": {
                     "mode": "thresholds"
                   },
+                  "unit": "percentunit",
                   "thresholds": {
                     "mode": "percentage",
                     "steps": [
@@ -1563,21 +1564,7 @@
                     ]
                   }
                 },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "{__name__=\"bee_db_pool_usage_ratio\", deployment_environment=\"production\", job=\"hover\", service_name=\"hover\"}",
-                      "scope": "series"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "percentunit"
-                      }
-                    ]
-                  }
-                ]
+                "overrides": []
               },
               "options": {
                 "barShape": "flat",
