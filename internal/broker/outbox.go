@@ -3,11 +3,19 @@ package broker
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/lib/pq"
 )
+
+// DefaultOutboxMaxAttempts is the retry cap before a row is dead-lettered.
+// Chosen so the worst-case age of a row stuck in backoff is bounded by
+// MaxAttempts × MaxBackoff — at the defaults, 10 × 5 min = 50 min, which
+// caps the oldest-age gauge even if a subset of rows can never be dispatched.
+const DefaultOutboxMaxAttempts = 10
 
 // OutboxSweeperOpts configures a Sweeper.
 type OutboxSweeperOpts struct {
@@ -20,6 +28,13 @@ type OutboxSweeperOpts struct {
 	BaseBackoff time.Duration
 	// MaxBackoff caps the retry delay. Default: 5 minutes.
 	MaxBackoff time.Duration
+	// MaxAttempts is the retry cap before a row is moved to
+	// task_outbox_dead. Default: 10.
+	MaxAttempts int
+	// StatementTimeout bounds each sweep tick's total DB work. Guards
+	// against a pathological sweeper tx holding locks indefinitely. 0
+	// leaves the DB's default in place. Default: 5s.
+	StatementTimeout time.Duration
 }
 
 // DefaultOutboxSweeperOpts returns sensible production defaults.
@@ -32,10 +47,12 @@ type OutboxSweeperOpts struct {
 // index-only SKIP LOCKED query; running it 10× more often is cheap.
 func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 	return OutboxSweeperOpts{
-		Interval:    500 * time.Millisecond,
-		BatchSize:   200,
-		BaseBackoff: 2 * time.Second,
-		MaxBackoff:  5 * time.Minute,
+		Interval:         500 * time.Millisecond,
+		BatchSize:        200,
+		BaseBackoff:      2 * time.Second,
+		MaxBackoff:       5 * time.Minute,
+		MaxAttempts:      DefaultOutboxMaxAttempts,
+		StatementTimeout: 5 * time.Second,
 	}
 }
 
@@ -64,6 +81,9 @@ func NewOutboxSweeper(db *sql.DB, scheduler *Scheduler, opts OutboxSweeperOpts) 
 	}
 	if opts.MaxBackoff <= 0 {
 		opts.MaxBackoff = 5 * time.Minute
+	}
+	if opts.MaxAttempts <= 0 {
+		opts.MaxAttempts = DefaultOutboxMaxAttempts
 	}
 	return &Sweeper{db: db, scheduler: scheduler, opts: opts}
 }
@@ -110,14 +130,38 @@ type outboxRow struct {
 // can deterministically trigger a sweep without waiting for the
 // ticker.
 func (s *Sweeper) Tick(ctx context.Context) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Bound the whole tick — DB work and the Redis ScheduleBatch call —
+	// to StatementTimeout. SET LOCAL statement_timeout only fires while a
+	// SQL statement is executing, so if ScheduleBatch wedges on Redis the
+	// row locks would persist; a tx-level context deadline cancels the
+	// transaction and releases the locks instead.
+	tickCtx := ctx
+	cancel := func() {}
+	if s.opts.StatementTimeout > 0 {
+		tickCtx, cancel = context.WithTimeout(ctx, s.opts.StatementTimeout)
+	}
+	defer cancel()
+
+	tx, err := s.db.BeginTx(tickCtx, nil)
 	if err != nil {
 		return fmt.Errorf("outbox: begin tx: %w", err)
 	}
 	// Rollback is a no-op after successful commit.
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.QueryContext(ctx, `
+	// Belt-and-braces: if the server somehow outlives the client context
+	// (e.g. pgbouncer masking cancellation), the DB-side timeout still
+	// aborts the statement.
+	if s.opts.StatementTimeout > 0 {
+		if _, err := tx.ExecContext(tickCtx,
+			fmt.Sprintf(`SET LOCAL statement_timeout = %d`,
+				s.opts.StatementTimeout.Milliseconds()),
+		); err != nil {
+			return fmt.Errorf("outbox: set statement_timeout: %w", err)
+		}
+	}
+
+	rows, err := tx.QueryContext(tickCtx, `
 		SELECT id, task_id, job_id, page_id, host, path,
 		       priority, retry_count, source_type, source_url,
 		       run_at, attempts
@@ -170,36 +214,150 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		})
 	}
 
-	ids := make([]int64, 0, len(claimed))
-	for _, r := range claimed {
-		ids = append(ids, r.id)
+	schedErr := s.scheduler.ScheduleBatch(tickCtx, entries)
+
+	// Partition the claimed rows into successes and failures based on
+	// what ScheduleBatch actually did:
+	//   * nil error:     every ZADD succeeded — delete all rows.
+	//   * *BatchError:   pipeline completed but some entries failed —
+	//                    delete the succeeded ones, bump the failed ones.
+	//   * other error:   pipeline could not execute — treat all as failed.
+	var (
+		succeeded  []int64     // task_outbox.id values to DELETE
+		retry      []outboxRow // rows to bump attempts / run_at
+		deadLetter []outboxRow // rows at or over MaxAttempts
+		lastErrMsg string
+	)
+
+	var be *BatchError
+	switch {
+	case schedErr == nil:
+		succeeded = make([]int64, 0, len(claimed))
+		for _, r := range claimed {
+			succeeded = append(succeeded, r.id)
+		}
+	case errors.As(schedErr, &be):
+		failedSet := make(map[int]struct{}, len(be.FailedIndices))
+		for _, idx := range be.FailedIndices {
+			failedSet[idx] = struct{}{}
+		}
+		succeeded = make([]int64, 0, len(claimed)-len(failedSet))
+		retry = make([]outboxRow, 0, len(failedSet))
+		for i, r := range claimed {
+			if _, bad := failedSet[i]; bad {
+				retry = append(retry, r)
+				continue
+			}
+			succeeded = append(succeeded, r.id)
+		}
+		lastErrMsg = be.Err.Error()
+	default:
+		retry = append([]outboxRow(nil), claimed...)
+		lastErrMsg = schedErr.Error()
 	}
 
-	if err := s.scheduler.ScheduleBatch(ctx, entries); err != nil {
-		// Bump attempts + push run_at forward with exponential backoff.
-		// Rows stay claimed under the tx lock until commit; other
-		// replicas cannot pick them up until then.
-		if updErr := s.bumpAttempts(ctx, tx, ids); updErr != nil {
-			return fmt.Errorf("outbox: bump attempts after schedule failure: %w (schedule err: %v)", updErr, err)
+	// Classify retries over the attempts cap as dead-letters. We check
+	// attempts+1 because the retry path is about to perform a +1 bump,
+	// so a row currently at MaxAttempts-1 would reach MaxAttempts this
+	// tick and should be terminal.
+	if len(retry) > 0 && s.opts.MaxAttempts > 0 {
+		kept := retry[:0]
+		for _, r := range retry {
+			if r.attempts+1 >= s.opts.MaxAttempts {
+				deadLetter = append(deadLetter, r)
+				continue
+			}
+			kept = append(kept, r)
 		}
-		if cmErr := tx.Commit(); cmErr != nil {
-			return fmt.Errorf("outbox: commit backoff update: %w (schedule err: %v)", cmErr, err)
-		}
-		return fmt.Errorf("outbox: schedule batch: %w", err)
+		retry = kept
 	}
 
-	// Success: delete the rows we just dispatched.
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM task_outbox WHERE id = ANY($1)
-	`, pq.Array(ids)); err != nil {
-		return fmt.Errorf("outbox: delete dispatched rows: %w", err)
+	if len(succeeded) > 0 {
+		if _, err := tx.ExecContext(tickCtx,
+			`DELETE FROM task_outbox WHERE id = ANY($1)`,
+			pq.Array(succeeded),
+		); err != nil {
+			return fmt.Errorf("outbox: delete dispatched rows: %w", err)
+		}
 	}
+
+	retryIDs := make([]int64, 0, len(retry))
+	for _, r := range retry {
+		retryIDs = append(retryIDs, r.id)
+	}
+	if len(retryIDs) > 0 {
+		if err := s.bumpAttempts(tickCtx, tx, retryIDs); err != nil {
+			return fmt.Errorf("outbox: bump attempts: %w", err)
+		}
+	}
+
+	if len(deadLetter) > 0 {
+		if err := s.moveToDeadLetter(tickCtx, tx, deadLetter, lastErrMsg); err != nil {
+			return fmt.Errorf("outbox: dead-letter: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("outbox: commit dispatch: %w", err)
+		return fmt.Errorf("outbox: commit: %w", err)
+	}
+
+	// Per-row outcomes are mutually exclusive. A pipeline-level failure
+	// shows up as all rows in `retried` (or `dead_lettered` if capped);
+	// it is not emitted as a separate row-count to avoid double counting.
+	observability.RecordBrokerOutboxSweep(ctx, "dispatched", len(succeeded))
+	observability.RecordBrokerOutboxSweep(ctx, "retried", len(retry))
+	observability.RecordBrokerOutboxSweep(ctx, "dead_lettered", len(deadLetter))
+
+	if schedErr != nil {
+		brokerLog.Debug("outbox sweep tick partial",
+			"dispatched", len(succeeded),
+			"retried", len(retry),
+			"dead_lettered", len(deadLetter),
+			"schedule_err", schedErr)
+		return fmt.Errorf("outbox: schedule batch: %w", schedErr)
 	}
 
 	brokerLog.Debug("outbox sweep tick dispatched",
-		"dispatched", len(entries))
+		"dispatched", len(succeeded))
+	return nil
+}
+
+// moveToDeadLetter copies the given rows into task_outbox_dead with the
+// failing error message attached, and deletes them from task_outbox. Runs
+// in the caller's tx so the move is atomic with the rest of the sweep.
+func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outboxRow, lastErr string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.id)
+	}
+	// Copy first, delete second. The SELECT filters by id rather than
+	// re-scanning so rows we never claimed (locked by another replica)
+	// are not touched.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO task_outbox_dead (
+			original_id, task_id, job_id, page_id, host, path,
+			priority, retry_count, source_type, source_url,
+			run_at, attempts, created_at, last_error
+		)
+		SELECT id, task_id, job_id, page_id, host, path,
+		       priority, retry_count, source_type, source_url,
+		       run_at, attempts + 1, created_at, $2
+		FROM task_outbox
+		WHERE id = ANY($1)
+	`, pq.Array(ids), lastErr); err != nil {
+		return fmt.Errorf("insert dead rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM task_outbox WHERE id = ANY($1)`,
+		pq.Array(ids),
+	); err != nil {
+		return fmt.Errorf("delete dead rows: %w", err)
+	}
+	brokerLog.Warn("outbox rows dead-lettered",
+		"count", len(ids), "last_error", lastErr)
 	return nil
 }
 

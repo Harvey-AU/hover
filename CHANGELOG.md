@@ -32,6 +32,50 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.1] – 2026-04-24
+
+### Added
+
+- `bee.broker.outbox_sweep_total` counter with
+  `outcome={dispatched, retried, dead_lettered}` labels so partial-failure and
+  dead-letter rates are visible without a database session.
+- `task_outbox_dead` table capturing rows whose `attempts` exceeded the retry
+  cap (default 10), with `dead_lettered_at` and `last_error` for triage.
+- Outbox investigation notes at `docs/diagnostics/outbox-aging-investigation.md`
+  covering the oldest-age growth pattern, ranked hypotheses, and diagnostic
+  queries.
+
+### Changed
+
+- `Scheduler.ScheduleBatch` now returns a typed `*BatchError` on partial
+  pipeline failure, exposing `FailedIndices` so the outbox sweeper can `DELETE`
+  the succeeded rows and only bump the failed ones. Previously every row in a
+  500-row batch had attempts bumped whenever any single ZADD failed.
+- Outbox sweeper bounds each tick's DB work with `SET LOCAL statement_timeout`
+  (default 5 s) to keep a wedged backend from holding locks indefinitely.
+- `JobManager.CancelJob` now deletes `task_outbox` rows for the cancelled job in
+  the same transaction, preventing stale rows from contributing to the backlog
+  and oldest-age gauges.
+
+### Fixed
+
+- Running-counter DB sync now uses `tx.ExecContext` instead of
+  `tx.PrepareContext`, so the sync loop no longer fails with
+  `prepared statement "stmt_…" already exists` (SQLSTATE 42P05) when the worker
+  shares Supabase's pgbouncer with the API. The explicit prepare was creating
+  deterministically named server-side statements that collided across pooled
+  backends; the pool-level `default_query_exec_mode=simple_protocol` setting
+  already in place for pooler URLs now takes effect.
+- Worker Fly processes now launch via `scripts/start.sh` instead of running the
+  binary directly, so the Alloy metrics sidecar runs on every process. Without
+  this, `bee.worker.*` and `bee.broker.*` metrics from the prod `hover-worker`
+  app and every `hover-worker-pr-*` review app were silently dropped before
+  reaching Grafana Cloud.
+- `scripts/start.sh` now accepts the binary name as `$1` (default `main`), so a
+  single script launches either the API or the worker alongside Alloy. Both
+  `fly.worker.toml` and `.fly/review_apps.worker.toml` point at
+  `./start.sh worker`.
+
 ## [0.33.0] – 2026-04-21
 
 ### Added

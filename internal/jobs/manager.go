@@ -694,6 +694,18 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 			SET status = $1
 			WHERE job_id = $2 AND status IN ($3, $4)
 		`, TaskStatusSkipped, job.ID, TaskStatusPending, TaskStatusWaiting)
+		if err != nil {
+			return err
+		}
+
+		// Drop any task_outbox rows for this job so the sweeper does
+		// not waste work ZADDing tasks whose status has just flipped
+		// to skipped. Without this, outbox rows for cancelled jobs
+		// linger until their next sweep and inflate the outbox backlog
+		// and oldest-age gauges.
+		_, err = tx.ExecContext(ctx, `
+			DELETE FROM task_outbox WHERE job_id = $1
+		`, job.ID)
 
 		return err
 	})
