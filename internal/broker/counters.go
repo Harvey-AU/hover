@@ -182,16 +182,19 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 			}
 		}
 
-		stmt, err := tx.PrepareContext(ctx,
-			`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`)
-		if err != nil {
-			return fmt.Errorf("prepare stmt: %w", err)
-		}
-		defer stmt.Close()
-
+		// Intentionally not using tx.PrepareContext: under Supabase's
+		// pgbouncer transaction pooling, the backend connection is shared
+		// across logical clients, so deterministic prepared-statement names
+		// (pgx v5 hashes the SQL to stmt_<md5>) collide with prior prepares
+		// left on the backend by another worker. That surfaces as
+		// "prepared statement already exists" (SQLSTATE 42P05) and kills
+		// the sync tick. ExecContext honours default_query_exec_mode=
+		// simple_protocol set on the pool, avoiding PREPARE entirely.
 		jobIDs := make([]string, 0, len(counts))
 		for jobID, count := range counts {
-			if _, err := stmt.ExecContext(ctx, count, jobID); err != nil {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`,
+				count, jobID); err != nil {
 				return fmt.Errorf("update job %s: %w", jobID, err)
 			}
 			jobIDs = append(jobIDs, jobID)

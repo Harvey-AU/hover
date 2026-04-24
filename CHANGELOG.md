@@ -28,7 +28,15 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Running-counter DB sync now uses `tx.ExecContext` instead of
+  `tx.PrepareContext`, so the sync loop no longer fails with
+  `prepared statement "stmt_…" already exists` (SQLSTATE 42P05) when the worker
+  shares Supabase's pgbouncer with the API. The explicit prepare was creating
+  deterministically named server-side statements that collided across pooled
+  backends; the pool-level `default_query_exec_mode=simple_protocol` setting
+  already in place for pooler URLs now takes effect.
 
 ## Full changelog history
 
