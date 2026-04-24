@@ -363,21 +363,7 @@ func New(config *Config, id ...string) *Crawler {
 	metricsMap := &sync.Map{}
 
 	// Set up base transport with SSRF-safe dialer.
-	// ForceAttemptHTTP2 disabled: under sustained crawl load some upstreams
-	// (notably misbehaving HTTP/2 servers) trigger Go's net/http2 stream
-	// state machine to log "received DATA after END_STREAM" by the
-	// thousand. Falling back to ALPN-negotiated HTTP/1.1 removes the noise
-	// without measurable throughput impact for short-lived single-page
-	// fetches.
-	baseTransport := &http.Transport{
-		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
-		MaxIdleConnsPerHost: 25,
-		MaxConnsPerHost:     50,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableCompression:  true,
-		ForceAttemptHTTP2:   false,
-	}
+	baseTransport := newBaseHTTPTransport()
 
 	// Add SSRF-safe DialContext if protection is enabled
 	// This validates IPs at connection time to prevent DNS rebinding attacks
@@ -1211,16 +1197,7 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 		timeout = c.config.DefaultTimeout
 	}
 
-	// ForceAttemptHTTP2 disabled — see baseTransport above.
-	transport := &http.Transport{
-		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
-		MaxIdleConnsPerHost: 25,
-		MaxConnsPerHost:     50,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableCompression:  true,
-		ForceAttemptHTTP2:   false,
-	}
+	transport := newBaseHTTPTransport()
 
 	// Add SSRF-safe DialContext if protection is enabled
 	if !c.config.SkipSSRFCheck {
@@ -1230,6 +1207,27 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
+	}
+}
+
+// newBaseHTTPTransport returns the shared *http.Transport tuning used by
+// both the colly crawler and CreateHTTPClient. Callers are responsible for
+// attaching SSRF-safe DialContext and any wrapping round trippers.
+//
+// ForceAttemptHTTP2 is disabled: under sustained crawl load some upstreams
+// (notably misbehaving HTTP/2 servers) trigger Go's net/http2 stream state
+// machine to log "received DATA after END_STREAM" by the thousand. Falling
+// back to ALPN-negotiated HTTP/1.1 removes the noise without measurable
+// throughput impact for short-lived single-page fetches.
+func newBaseHTTPTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
+		MaxIdleConnsPerHost: 25,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     120 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   false,
 	}
 }
 
