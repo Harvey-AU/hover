@@ -318,7 +318,7 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "expr": "avg(go_memstats_heap_inuse_bytes{ })",
+                        "expr": "avg(go_memstats_heap_inuse_bytes{app=~\"$app\",environment=~\"$environment\"})",
                         "fromExploreMetrics": false,
                         "legendFormat": "avg"
                       },
@@ -559,7 +559,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "bee_db_pressure_ema_ms_milliseconds",
+                        "expr": "bee_db_pressure_ema_ms_milliseconds{app=~\"$app\",environment=~\"$environment\"}",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -580,7 +580,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "bee_db_pressure_limit",
+                        "expr": "bee_db_pressure_limit{app=~\"$app\",environment=~\"$environment\"}",
                         "instant": false,
                         "legendFormat": "__auto",
                         "range": true
@@ -734,7 +734,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(bee_db_pressure_adjustments_total{direction=\"up\"}[1m])",
+                        "expr": "rate(bee_db_pressure_adjustments_total{direction=\"up\",app=~\"$app\",environment=~\"$environment\"}[1m])",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -755,7 +755,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "rate(bee_db_pressure_adjustments_total{direction=\"down\"}[1m])",
+                        "expr": "rate(bee_db_pressure_adjustments_total{direction=\"down\",app=~\"$app\",environment=~\"$environment\"}[1m])",
                         "instant": false,
                         "legendFormat": "__auto",
                         "range": true
@@ -908,7 +908,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "histogram_quantile(0.95, sum by (le) (rate(bee_db_semaphore_wait_ms_milliseconds_bucket[$__rate_interval])))\n",
+                        "expr": "histogram_quantile(0.95, sum by (le) (rate(bee_db_semaphore_wait_ms_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])))\n",
                         "instant": false,
                         "legendFormat": "p95 wait",
                         "range": true
@@ -1046,7 +1046,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "bee_db_pool_in_use",
+                        "expr": "bee_db_pool_in_use{app=~\"$app\",environment=~\"$environment\"}",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -1067,7 +1067,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "bee_db_pool_idle",
+                        "expr": "bee_db_pool_idle{app=~\"$app\",environment=~\"$environment\"}",
                         "instant": false,
                         "legendFormat": "__auto",
                         "range": true
@@ -1226,7 +1226,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (task_failure_reason) (rate(bee_worker_task_failures_total[5m]))\n",
+                        "expr": "sum by (task_failure_reason) (rate(bee_worker_task_failures_total{app=~\"$app\",environment=~\"$environment\"}[5m]))\n",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -1497,7 +1497,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "builder",
-                        "expr": "bee_db_pool_usage_ratio",
+                        "expr": "bee_db_pool_usage_ratio{app=~\"$app\",environment=~\"$environment\"}",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -1610,7 +1610,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "histogram_quantile(0.95, sum by (le) (rate(bee_crawler_phase_duration_ms_milliseconds_bucket[$__rate_interval])))",
+                        "expr": "histogram_quantile(0.95, sum by (le) (rate(bee_crawler_phase_duration_ms_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])))",
                         "instant": false,
                         "legendFormat": "crawler p95",
                         "range": true
@@ -1734,7 +1734,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (crawler_phase, crawler_outcome) (rate(bee_crawler_phase_total[$__rate_interval]))",
+                        "expr": "sum by (crawler_phase, crawler_outcome) (rate(bee_crawler_phase_total{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "instant": false,
                         "legendFormat": "{{crawler_phase}} / {{crawler_outcome}}",
                         "range": true
@@ -1850,7 +1850,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(\n  rate(bee_worker_task_outcomes_total[$__rate_interval])\n)\n",
+                        "expr": "sum(\n  rate(bee_worker_task_outcomes_total{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n)\n",
                         "legendFormat": "worker outcomes/s",
                         "range": true
                       },
@@ -1969,7 +1969,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (crawler_phase, crawler_outcome) (\n  increase(bee_crawler_phase_total[1h])\n)\n",
+                        "expr": "sum by (crawler_phase, crawler_outcome) (\n  increase(bee_crawler_phase_total{app=~\"$app\",environment=~\"$environment\"}[1h])\n)\n",
                         "legendFormat": "{{crawler_phase}} / {{crawler_outcome}}",
                         "range": true
                       },
@@ -2092,7 +2092,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (task_outcome, task_reason) (\n  rate(bee_worker_task_outcomes_total{task_outcome!=\"domain_delay_requeue\"}[$__rate_interval])\n)\n",
+                        "expr": "sum by (task_outcome, task_reason) (\n  rate(bee_worker_task_outcomes_total{task_outcome!=\"domain_delay_requeue\",app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n)\n",
                         "legendFormat": "{{task_outcome}} / {{task_reason}}",
                         "range": true
                       },
@@ -2211,7 +2211,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le, task_outcome, task_reason) (\n    rate(bee_worker_task_outcome_duration_ms_milliseconds_bucket{task_outcome!=\"\",task_reason!=\"\"}[$__rate_interval])\n  )\n)\n",
+                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le, task_outcome, task_reason) (\n    rate(bee_worker_task_outcome_duration_ms_milliseconds_bucket{task_outcome!=\"\",task_reason!=\"\",app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n  )\n)\n",
                         "legendFormat": "{{task_outcome}} / {{task_reason}} p95",
                         "range": true
                       },
@@ -2601,7 +2601,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le) (\n    rate(db_sql_latency_milliseconds_bucket[$__rate_interval])\n  )\n)\n",
+                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le) (\n    rate(db_sql_latency_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n  )\n)\n",
                         "legendFormat": "db p95",
                         "range": true
                       },
@@ -2720,7 +2720,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (le) (\n  rate(db_sql_latency_milliseconds_bucket[$__rate_interval])\n)\n",
+                        "expr": "sum by (le) (\n  rate(db_sql_latency_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n)\n",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -2820,7 +2820,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (outcome) (rate(bee_broker_dispatch_total[$__rate_interval]))",
+                        "expr": "sum by (outcome) (rate(bee_broker_dispatch_total{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "legendFormat": "{{outcome}}",
                         "range": true
                       },
@@ -2943,7 +2943,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(rate(bee_broker_dispatch_total{outcome=\"ok\"}[$__rate_interval]))\n/\nsum(rate(bee_broker_dispatch_total{outcome=~\"ok|err\"}[$__rate_interval]))",
+                        "expr": "sum(rate(bee_broker_dispatch_total{outcome=\"ok\",app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))\n/\nsum(rate(bee_broker_dispatch_total{outcome=~\"ok|err\",app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "legendFormat": "{{outcome}}",
                         "range": true
                       },
@@ -3043,7 +3043,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (job_id) (rate(bee_broker_dispatch_total{outcome=\"ok\"}[$__rate_interval]))",
+                        "expr": "sum by (job_id) (rate(bee_broker_dispatch_total{outcome=\"ok\",app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "legendFormat": "{{job_id}}",
                         "range": true
                       },
@@ -3162,7 +3162,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max(bee_broker_outbox_backlog)",
+                        "expr": "max(bee_broker_outbox_backlog{app=~\"$app\",environment=~\"$environment\"})",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -3284,7 +3284,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(bee_broker_scheduled_zset_depth)",
+                        "expr": "sum(bee_broker_scheduled_zset_depth{app=~\"$app\",environment=~\"$environment\"})",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -3406,7 +3406,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum(bee_broker_consumer_pending)",
+                        "expr": "sum(bee_broker_consumer_pending{app=~\"$app\",environment=~\"$environment\"})",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -3528,7 +3528,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max(bee_broker_outbox_age_seconds)",
+                        "expr": "max(bee_broker_outbox_age_seconds{app=~\"$app\",environment=~\"$environment\"})",
                         "legendFormat": "Max",
                         "range": true
                       },
@@ -3795,7 +3795,7 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "expr": "sum by (le) (rate(http_server_request_duration_seconds_bucket{ }[$__rate_interval]))",
+                        "expr": "sum by (le) (rate(http_server_request_duration_seconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "format": "heatmap",
                         "fromExploreMetrics": false
                       },
@@ -3899,7 +3899,7 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "expr": "sum(rate(http_status_codes_total{ }[$__rate_interval]))",
+                        "expr": "sum(rate(http_status_codes_total{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
                         "fromExploreMetrics": false,
                         "legendFormat": "sum(rate)"
                       },
@@ -4019,7 +4019,7 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "expr": "avg(go_goroutines{ })",
+                        "expr": "avg(go_goroutines{app=~\"$app\",environment=~\"$environment\"})",
                         "fromExploreMetrics": false,
                         "legendFormat": "avg"
                       },
@@ -4846,20 +4846,73 @@
     "title": "App Performance Metrics",
     "variables": [
       {
-        "datasource": {
-          "name": "grafanacloud-prom"
-        },
-        "group": "prometheus",
-        "kind": "AdhocVariable",
+        "kind": "QueryVariable",
         "spec": {
-          "allowCustomValue": true,
-          "baseFilters": [],
-          "defaultKeys": [],
-          "enableGroupBy": false,
-          "filters": [],
+          "name": "app",
+          "label": "App",
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
           "hide": "dontHide",
-          "name": "Environment",
-          "skipUrlSync": false
+          "refresh": "onTimeRangeChanged",
+          "skipUrlSync": false,
+          "datasource": {
+            "name": "grafanacloud-prom"
+          },
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "spec": {
+              "qryType": 1,
+              "query": "label_values(bee_db_pool_in_use, app)",
+              "refId": "PrometheusVariableQueryEditor-VariableQuery"
+            }
+          },
+          "regex": "",
+          "regexApplyTo": "value",
+          "sort": "alphabeticalAsc",
+          "definition": "label_values(bee_db_pool_in_use, app)",
+          "options": [],
+          "multi": true,
+          "includeAll": true,
+          "allowCustomValue": true
+        }
+      },
+      {
+        "kind": "QueryVariable",
+        "spec": {
+          "name": "environment",
+          "label": "Environment",
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "hide": "dontHide",
+          "refresh": "onTimeRangeChanged",
+          "skipUrlSync": false,
+          "datasource": {
+            "name": "grafanacloud-prom"
+          },
+          "query": {
+            "kind": "DataQuery",
+            "group": "prometheus",
+            "version": "v0",
+            "spec": {
+              "qryType": 1,
+              "query": "label_values(bee_db_pool_in_use, environment)",
+              "refId": "PrometheusVariableQueryEditor-VariableQuery"
+            }
+          },
+          "regex": "",
+          "regexApplyTo": "value",
+          "sort": "alphabeticalAsc",
+          "definition": "label_values(bee_db_pool_in_use, environment)",
+          "options": [],
+          "multi": true,
+          "includeAll": true,
+          "allowCustomValue": true
         }
       }
     ]
