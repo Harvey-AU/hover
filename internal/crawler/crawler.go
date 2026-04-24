@@ -406,13 +406,14 @@ func New(config *Config, id ...string) *Crawler {
 
 	// Build a shared probe transport for cache-status HEAD requests.
 	// Reusing a single client avoids leaking a new http.Transport per probe call.
-	probeTransport := &http.Transport{
-		MaxIdleConns:        20,
-		MaxIdleConnsPerHost: 5,
-		MaxConnsPerHost:     10,
-		IdleConnTimeout:     30 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
+	// Derived from newBaseHTTPTransport so the H2 + compression posture stays
+	// consistent across the three crawler clients; only the pool sizes and
+	// idle timeout differ (probes are HEAD-only and can run with a smaller pool).
+	probeTransport := newBaseHTTPTransport()
+	probeTransport.MaxIdleConns = 20
+	probeTransport.MaxIdleConnsPerHost = 5
+	probeTransport.MaxConnsPerHost = 10
+	probeTransport.IdleConnTimeout = 30 * time.Second
 	if !config.SkipSSRFCheck {
 		probeTransport.DialContext = ssrfSafeDialContext()
 	}
