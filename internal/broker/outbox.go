@@ -45,6 +45,13 @@ type OutboxSweeperOpts struct {
 // up to 5s for its newly-discovered siblings to reach a worker, which
 // dominated end-to-end throughput on small jobs. The sweep is an
 // index-only SKIP LOCKED query; running it 10× more often is cheap.
+//
+// StatementTimeout was raised from 5s to 15s after HOVER-K3: when the
+// shared queue pool saturates under bulk-lane load, pool acquire alone
+// can eat several seconds of the tick budget, leaving sub-second
+// headroom for the actual SELECT/UPDATE work and surfacing as
+// "bump attempts: context deadline exceeded". 15s is comfortably
+// shorter than session/idle timeouts but tolerates pool wait spikes.
 func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 	return OutboxSweeperOpts{
 		Interval:         500 * time.Millisecond,
@@ -52,7 +59,7 @@ func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 		BaseBackoff:      2 * time.Second,
 		MaxBackoff:       5 * time.Minute,
 		MaxAttempts:      DefaultOutboxMaxAttempts,
-		StatementTimeout: 5 * time.Second,
+		StatementTimeout: 15 * time.Second,
 	}
 }
 
