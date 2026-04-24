@@ -764,13 +764,34 @@
                     },
                     "refId": "B"
                   }
+                },
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "hidden": false,
+                    "query": {
+                      "datasource": {
+                        "name": "grafanacloud-prom"
+                      },
+                      "group": "prometheus",
+                      "kind": "DataQuery",
+                      "spec": {
+                        "editorMode": "code",
+                        "expr": "bee_db_pressure_ema_ms_milliseconds{app=~\"$app\",environment=~\"$environment\"}",
+                        "legendFormat": "EMA (ms)",
+                        "range": true
+                      },
+                      "version": "v0"
+                    },
+                    "refId": "C"
+                  }
                 }
               ],
               "queryOptions": {},
               "transformations": []
             }
           },
-          "description": "",
+          "description": "Scale-up/down events are only recorded when pressure thresholds are crossed. EMA shows ongoing DB query time context.",
           "id": 14,
           "links": [],
           "title": "Pressure Adjustments",
@@ -2601,8 +2622,8 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le) (\n    rate(db_sql_latency_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n  )\n)\n",
-                        "legendFormat": "db p95",
+                        "expr": "histogram_quantile(\n  0.95,\n  sum by (le) (\n    rate(bee_db_semaphore_wait_ms_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n  )\n)\n",
+                        "legendFormat": "semaphore wait p95",
                         "range": true
                       },
                       "version": "v0"
@@ -2618,7 +2639,7 @@
           "description": "",
           "id": 28,
           "links": [],
-          "title": "DB SQL p95 latency",
+          "title": "DB Semaphore Wait p95",
           "vizConfig": {
             "group": "timeseries",
             "kind": "VizConfig",
@@ -2720,7 +2741,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (le) (\n  rate(db_sql_latency_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n)\n",
+                        "expr": "sum by (le) (\n  rate(bee_db_semaphore_wait_ms_milliseconds_bucket{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval])\n)\n",
                         "legendFormat": "__auto",
                         "range": true
                       },
@@ -2734,10 +2755,10 @@
               "transformations": []
             }
           },
-          "description": "Raw DB SQL latency bucket distribution",
+          "description": "DB queue semaphore wait time distribution (recorded on every acquire)",
           "id": 29,
           "links": [],
-          "title": "DB SQL Latency Heatmap",
+          "title": "DB Semaphore Wait Heatmap",
           "vizConfig": {
             "group": "heatmap",
             "kind": "VizConfig",
@@ -3899,13 +3920,12 @@
                       "group": "prometheus",
                       "kind": "DataQuery",
                       "spec": {
-                        "expr": "sum(rate(http_status_codes_total{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
-                        "fromExploreMetrics": false,
-                        "legendFormat": "sum(rate)"
+                        "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{app=~\"$app\",environment=~\"$environment\"}[$__rate_interval]))",
+                        "legendFormat": "{{http_response_status_code}}"
                       },
                       "version": "v0"
                     },
-                    "refId": "http_status_codes_total-sum(rate)"
+                    "refId": "A"
                   }
                 }
               ],
@@ -3915,10 +3935,10 @@
               "transformations": []
             }
           },
-          "description": "filter to 5xx rate. Catches errors that don't appear in task logs.",
+          "description": "HTTP request rate by status code. Catches errors that don't appear in task logs.",
           "id": 6,
           "links": [],
-          "title": "http_status_codes_total",
+          "title": "HTTP Requests by Status Code",
           "vizConfig": {
             "group": "timeseries",
             "kind": "VizConfig",
