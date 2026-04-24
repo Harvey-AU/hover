@@ -5,7 +5,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -55,12 +58,17 @@ func main() {
 		if serviceName == "" {
 			serviceName = "hover-worker"
 		}
+		metricsAddr := os.Getenv("METRICS_ADDR")
+		if metricsAddr == "" {
+			metricsAddr = ":9464"
+		}
 		providers, err := observability.Init(context.Background(), observability.Config{
-			Enabled:      true,
-			ServiceName:  serviceName,
-			Environment:  appEnv,
-			OTLPEndpoint: strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
-			OTLPHeaders:  observability.ParseOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+			Enabled:        true,
+			ServiceName:    serviceName,
+			Environment:    appEnv,
+			OTLPEndpoint:   strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+			OTLPHeaders:    observability.ParseOTLPHeaders(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")),
+			MetricsAddress: metricsAddr,
 		})
 		if err != nil {
 			workerLog.Warn("failed to initialise observability", "error", err)
@@ -70,6 +78,36 @@ func main() {
 				defer cancel()
 				_ = providers.Shutdown(ctx)
 			}()
+
+			// Expose the Prometheus registry on METRICS_ADDR so the Alloy
+			// sidecar (alloy.river) can scrape it and add app/environment
+			// labels. Without this the worker's metrics only reach Grafana
+			// via OTLP push and the dashboard's app filter excludes them.
+			if providers.MetricsHandler != nil && metricsAddr != "" {
+				metricsSrv := &http.Server{
+					Addr:              metricsAddr,
+					Handler:           providers.MetricsHandler,
+					ReadHeaderTimeout: 5 * time.Second,
+				}
+				metricsListener, err := net.Listen("tcp", metricsAddr)
+				if err != nil {
+					workerLog.Error("metrics server failed to bind", "error", err, "addr", metricsAddr)
+				} else {
+					go func() {
+						workerLog.Info("metrics server listening", "addr", metricsAddr)
+						if err := metricsSrv.Serve(metricsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							workerLog.Error("metrics server failed", "error", err)
+						}
+					}()
+					defer func() {
+						ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						defer cancel()
+						if err := metricsSrv.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+							workerLog.Warn("graceful shutdown of metrics server failed", "error", err)
+						}
+					}()
+				}
+			}
 		}
 	}
 
