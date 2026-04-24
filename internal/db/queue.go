@@ -694,7 +694,7 @@ func (q *DbQueue) ensurePoolCapacity(ctx context.Context, lane queueLane) (func(
 		semWaitStart := time.Now()
 		select {
 		case semaphore <- struct{}{}:
-			observability.RecordSemaphoreWait(ctx, float64(time.Since(semWaitStart).Milliseconds()))
+			observability.RecordSemaphoreWait(ctx, float64(time.Since(semWaitStart))/float64(time.Millisecond))
 			release = func() { <-semaphore }
 		case <-ctx.Done():
 			// Explicitly log pool rejections when context expires before acquiring semaphore
