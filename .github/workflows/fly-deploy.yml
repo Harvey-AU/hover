@@ -208,6 +208,42 @@ jobs:
             commit_tags_json="$(jq -cn --arg t "commit:${short_sha}" '[$t]')"
           fi
 
+          # Derive service tags from the files changed in this deploy range.
+          # Falls back to the single-commit API when no compare range is available.
+          changed_files=""
+          if [ -n "$compare_json" ]; then
+            changed_files="$(printf '%s' "$compare_json" | jq -r '.files[].filename' 2>/dev/null || true)"
+          fi
+          if [ -z "$changed_files" ]; then
+            changed_files="$(gh api "repos/${REPO}/commits/${COMMIT_SHA}" --jq '.files[].filename' 2>/dev/null || true)"
+          fi
+
+          service_tags_json='[]'
+          # cmd/app is the API server; cmd/hover is the CLI tool.
+          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/app/|internal/(api|archive|auth|cache|loops|notifications|storage|techdetect|util)/|web/)'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover"]')"
+          fi
+          if printf '%s\n' "$changed_files" | grep -qE '^cmd/worker/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-worker"]')"
+          fi
+          # Shared internal packages used by both the API server and worker.
+          if printf '%s\n' "$changed_files" | grep -qE '^internal/(broker|crawler|db|jobs|logging|observability)/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover","service:hover-worker"]')"
+          fi
+          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/hover/|webflow-designer-extension-cli/|npm/)'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-cli"]')"
+          fi
+          if printf '%s\n' "$changed_files" | grep -qE '^(grafana/|\.github/|scripts/)'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:grafana"]')"
+          fi
+          if printf '%s\n' "$changed_files" | grep -qE '^supabase/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:supabase"]')"
+          fi
+          # Fallback — unrecognised paths: tag both main services conservatively.
+          if [ "$service_tags_json" = "[]" ]; then
+            service_tags_json='["service:hover","service:hover-worker"]'
+          fi
+
           body_text="$(printf '%s## Commits\n%s\n%s' "$pr_section" "$commits_body" "$commit_url")"
 
           tags_json="$(jq -cn \
@@ -215,8 +251,9 @@ jobs:
             --arg sha "$short_sha" \
             --argjson extra "$extra_tags_json" \
             --argjson commits "$commit_tags_json" \
-            '(["deploy","service:hover","service:hover-worker","env:production",
-              ("branch:" + $ref), ("commit:" + $sha)] + $extra + $commits) | unique')"
+            --argjson services "$service_tags_json" \
+            '(["deploy","env:production",
+              ("branch:" + $ref), ("commit:" + $sha)] + $services + $extra + $commits) | unique')"
 
           now_ms=$(($(date +%s) * 1000))
           payload="$(jq -n \
