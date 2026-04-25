@@ -134,8 +134,19 @@ type StreamWorkerPool struct {
 	// pool headroom for promotion, counter sync, and the outbox sweeper.
 	linkDiscoverySem chan struct{}
 
+	// heartbeat, when set, is ticked on each completed task outcome so
+	// the watchdog can detect a wedged worker. Optional — nil when no
+	// watchdog is wired (e.g. in tests).
+	heartbeat interface{ Tick() }
+
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+}
+
+// SetHeartbeat installs a heartbeat sink that is ticked once per task
+// outcome. Wire this from cmd/worker so the watchdog can detect a stall.
+func (swp *StreamWorkerPool) SetHeartbeat(h interface{ Tick() }) {
+	swp.heartbeat = h
 }
 
 // defaultLinkDiscoveryMaxInflight: at 32 the cap throttled production
@@ -355,6 +366,14 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 
 	// Act on the outcome.
 	swp.handleOutcome(ctx, msg, outcome)
+
+	// Tick the watchdog heartbeat AFTER handleOutcome returns so we
+	// only count fully-handled outcomes as forward progress. A wedge
+	// inside handleOutcome will leave the heartbeat flat and the
+	// watchdog will trip.
+	if swp.heartbeat != nil {
+		swp.heartbeat.Tick()
+	}
 }
 
 func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.StreamMessage, outcome *TaskOutcome) {

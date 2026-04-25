@@ -195,10 +195,15 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		// transaction pooling — pgx v5 hashes SQL to deterministic
 		// stmt_<md5> names that clash across logical clients sharing the
 		// same backend.
+		//
+		// GREATEST(0, $1) clamps any transient negative Redis counter
+		// (a race between HIncrBy returning -1 and HDel cleaning the
+		// entry) so we don't violate the jobs_running_tasks_non_negative
+		// CHECK constraint and abort the rest of the sync (HOVER-K4).
 		for _, jobID := range jobIDs {
 			count := counts[jobID]
 			if _, err := sqlDB.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = $1
+				`UPDATE jobs SET running_tasks = GREATEST(0, $1)
 				   WHERE id = $2 AND status IN ('running', 'pending')`,
 				count, jobID); err != nil {
 				return fmt.Errorf("update job %s: %w", jobID, err)
@@ -207,18 +212,19 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 				math.Abs(float64(count-priorCounts[jobID])))
 		}
 
-		// Zero out any active jobs whose counters are no longer tracked
-		// (they finished between sync intervals). Single statement —
-		// holds locks only for the duration of the UPDATE.
-		if _, err := sqlDB.ExecContext(ctx,
-			`UPDATE jobs SET running_tasks = 0
-			   WHERE running_tasks > 0
-			     AND status IN ('running', 'pending')
-			     AND id != ALL($1)`,
-			pq.Array(jobIDs),
-		); err != nil {
-			return fmt.Errorf("zero stale running_tasks: %w", err)
-		}
+		// NOTE: previous versions also issued a wide
+		//   UPDATE jobs SET running_tasks = 0
+		//      WHERE running_tasks > 0 AND id != ALL($1) ...
+		// to zero out finished jobs whose counters are no longer
+		// tracked. That UPDATE walks an index range and acquires row
+		// locks across many jobs, deadlocking with the AFTER trigger
+		// update_job_queue_counters fired by concurrent task UPDATEs.
+		// The reconcile loop (REDIS_COUNTER_RECONCILE_INTERVAL_S=120)
+		// authoritatively rebuilds the Redis HASH from XPENDING every
+		// two minutes, so missing this sweep merely delays the
+		// running_tasks=0 reflection in PG by at most one reconcile
+		// interval — acceptable in exchange for eliminating the
+		// deadlock class.
 
 		return nil
 	}
