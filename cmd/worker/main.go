@@ -50,6 +50,7 @@ func main() {
 
 	// --- logging (slog + sentry fanout) ---
 	logging.Setup(logging.ParseLevel(os.Getenv("LOG_LEVEL")), appEnv)
+	defer flushAsyncLogs()
 
 	workerLog.Info("hover worker starting")
 
@@ -381,12 +382,29 @@ func main() {
 
 // --- helpers ---
 
+// flushAsyncLogs drains the async stdout buffer (if installed) so
+// logs queued at process exit reach the platform log shipper.
+// Idempotent and safe in dev mode (StdoutAsync returns nil).
+func flushAsyncLogs() {
+	if a := logging.StdoutAsync(); a != nil {
+		a.Close()
+	}
+}
+
 // startWatchdog wires the wedge watchdog using the stream worker's
 // active-jobs view as the "should be working" signal. Extracted from
 // main to keep main's cyclomatic complexity bounded.
+//
+// StallThreshold is sized to comfortably exceed the per-task context
+// timeout in stream_worker.processTask (2 minutes). Heartbeat ticks
+// only fire after handleOutcome returns, so a single long-running task
+// — or a brief pacer-throttled idle while jobs are alive — can leave
+// the heartbeat flat for up to one task budget. 3 minutes provides
+// 60s margin against the worst single-task case while still catching
+// genuine wedges within minutes.
 func startWatchdog(ctx context.Context, hb *watchdog.Heartbeat, swp *jobs.StreamWorkerPool) {
 	watchdog.Run(ctx, hb, watchdog.Options{
-		StallThreshold: 90 * time.Second,
+		StallThreshold: 3 * time.Minute,
 		CheckInterval:  15 * time.Second,
 		GracePeriod:    2 * time.Minute,
 		HasWork: func(checkCtx context.Context) bool {

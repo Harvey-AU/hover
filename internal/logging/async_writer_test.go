@@ -145,6 +145,49 @@ func TestAsyncWriter_CopiesPayload(t *testing.T) {
 	}
 }
 
+func TestAsyncWriter_ConcurrentWriteAndClose(t *testing.T) {
+	t.Parallel()
+
+	// Many concurrent writers racing with Close must never panic and
+	// every Write must return without blocking. Reproduces the
+	// send-on-closed-channel and double-close races that the previous
+	// implementation could trip.
+	for round := 0; round < 50; round++ {
+		aw := NewAsyncWriter(writeFn(func(p []byte) (int, error) { return len(p), nil }), 32)
+
+		var wg sync.WaitGroup
+		const writers = 32
+		wg.Add(writers)
+		for i := 0; i < writers; i++ {
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 200; j++ {
+					_, _ = aw.Write([]byte("racing\n"))
+				}
+			}()
+		}
+
+		// Concurrent closers: must be idempotent.
+		var closeWg sync.WaitGroup
+		closeWg.Add(4)
+		for c := 0; c < 4; c++ {
+			go func() {
+				defer closeWg.Done()
+				aw.Close()
+			}()
+		}
+
+		wg.Wait()
+		closeWg.Wait()
+
+		// Sanity: at least one write was either delivered or dropped
+		// — never blocked.
+		if aw.Written()+aw.Dropped() == 0 {
+			t.Fatalf("round %d: no writes accounted for", round)
+		}
+	}
+}
+
 // writeFn adapts a function into an io.Writer.
 type writeFn func(p []byte) (int, error)
 
