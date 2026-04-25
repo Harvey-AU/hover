@@ -38,8 +38,8 @@ INSERT INTO plans (name, display_name, daily_page_limit, monthly_price_cents, so
     ('free', 'Free', 500, 0, 0),
     ('starter', 'Starter', 2000, 5000, 10),
     ('pro', 'Pro', 5000, 8000, 20),
-    ('business', 'Business', 10000, 15000, 30),
-    ('enterprise', 'Enterprise', 100000, 40000, 40)
+    ('business', 'Business', 100000, 15000, 30),
+    ('enterprise', 'Enterprise', 1000000, 40000, 40)
 ON CONFLICT (name) DO NOTHING;
 
 -- =============================================================================
