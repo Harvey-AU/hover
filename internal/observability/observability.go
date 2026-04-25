@@ -1029,7 +1029,7 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	brokerOutboxAgeGauge, err = meter.Float64Gauge(
 		"bee.broker.outbox_age_seconds",
 		metric.WithUnit("s"),
-		metric.WithDescription("Age of the oldest due task_outbox row (NOW - MIN(run_at))"),
+		metric.WithDescription("Dwell time of the oldest due task_outbox row (NOW - MIN(created_at))"),
 	)
 	if err != nil {
 		return err

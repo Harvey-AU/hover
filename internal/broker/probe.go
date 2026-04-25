@@ -115,11 +115,16 @@ func (p *Probe) probeOutbox(ctx context.Context) {
 	)
 	// Only count rows that are actually due. Future-scheduled rows
 	// (retry backoff, throttled reschedule) aren't a backlog — counting
-	// them inflates the gauge and, worse, MIN(run_at) would be in the
-	// future and produce a negative age.
+	// them inflates the gauge.
+	//
+	// Age is measured against created_at, not run_at: run_at is the
+	// "earliest dispatch time" and may be inherited from a long-waiting
+	// parent task at insert time, which would inflate the gauge to the
+	// task's queue age rather than the row's outbox dwell time. created_at
+	// is set to NOW() on insert and is monotonic w.r.t. row arrival.
 	row := p.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)::bigint,
-		       EXTRACT(EPOCH FROM NOW() - MIN(run_at))
+		       EXTRACT(EPOCH FROM NOW() - MIN(created_at))
 		  FROM task_outbox
 		 WHERE run_at <= NOW()
 	`)
