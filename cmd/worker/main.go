@@ -296,8 +296,18 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Persister gets a context decoupled from the main cancel: when
+	// SIGTERM fires we cancel the stream worker first (so no new outcomes
+	// arrive), then drain the persister under its own live context, only
+	// tearing it down once Stop() returns. If the persister shared `ctx`,
+	// its upload workers would exit on the very first cancel() and any
+	// HTML payload enqueued during swp.Stop would land in a queue with
+	// no readers — silent data loss.
+	persisterCtx, persisterCancel := context.WithCancel(context.Background())
+	defer persisterCancel()
+
 	if htmlPersister != nil {
-		htmlPersister.Start(ctx)
+		htmlPersister.Start(persisterCtx)
 	}
 	swp.Start(ctx)
 	go dispatcher.Run(ctx)
@@ -326,11 +336,14 @@ func main() {
 		swp.Stop()
 		// Stop the persister AFTER the worker pool has drained so any
 		// final outcomes still in flight reach the queue before we close
-		// it. Persister.Stop waits for in-flight uploads + the final
-		// metadata flush.
+		// it. Persister.Stop runs under persisterCtx (still live), waits
+		// for in-flight uploads + the final metadata flush, then tears
+		// down its own ctx. We then release persisterCancel so any leaks
+		// on a Stop bug don't survive shutdown.
 		if htmlPersister != nil {
 			htmlPersister.Stop()
 		}
+		persisterCancel()
 		close(done)
 	}()
 

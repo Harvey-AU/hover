@@ -36,6 +36,12 @@ On merge, CI will:
   per-call timeout), then signals the probe loop and cancels the shared context.
   Previously a `Stop()` race could silently drop up to `QueueSize` task bodies
   on every restart.
+- `cmd/worker` now starts the persister under a context decoupled from the main
+  shutdown `cancel()`. The persister and its upload workers stay live while
+  `swp.Stop()` drains the stream worker, so final HTML payloads enqueued during
+  drain reach an active reader. Previously the shared context meant SIGTERM
+  cancelled the persister's workers immediately, leaving any payload enqueued
+  during drain stuck in a queue with no readers.
 - HTML metadata flush failures no longer discard the in-memory batch. Transient
   DB errors retain the batch for retry on the next tick/size flush so
   just-uploaded R2 objects keep their metadata pointer; sustained failure caps
