@@ -32,6 +32,21 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.3] – 2026-04-25
+
+### Changed
+
+- CLI (`hover jobs generate`) test domain list updated — removed 12 domains with
+  confirmed high failure rates (dead DNS, TLS mismatches, blanket 429/403 or
+  bot-blocking): `lovethelabel.com.au`, `eucalyptus.com.au`, `frank-body.com`,
+  `cottonon.com`, `lululemon.com`, `carawayhome.com`, `siteinspire.com`,
+  `webdesignerdepot.com`, `officeworks.com.au`, `commandbar.com`, `remix.run`,
+  `noice.com.au`. Failure root causes confirmed via Supabase job task data.
+- CLI test domain list expanded from ~203 to ~403 domains — added 200 sites
+  across 26 new categories (cloud infra, CI/CD, auth, databases, search,
+  payments, CMS, feature flags, Go/Rust/Python ecosystems, more Australian
+  businesses, AI/ML tools, open standards, and more).
+
 ## [0.33.2] – 2026-04-25
 
 ### Added
