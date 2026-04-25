@@ -215,10 +215,28 @@ func (h *fanoutHandler) WithGroup(name string) slog.Handler {
 	return &fanoutHandler{handlers: handlers}
 }
 
+// stdoutAsync is the active async wrapper around os.Stdout, set by
+// Setup. Exposed via StdoutAsync so callers (e.g. metrics surface)
+// can read drop/written counters.
+var stdoutAsync *AsyncWriter
+
+// StdoutAsync returns the AsyncWriter wrapping os.Stdout, or nil if
+// Setup has not been called or async logging is disabled (development).
+func StdoutAsync() *AsyncWriter { return stdoutAsync }
+
 // Setup configures the global slog default with both stdout output and
 // Sentry capture. Call this after sentry.Init() during application startup.
 //
-// In development, logs are human-readable text. In production, JSON.
+// In development, logs are human-readable text written synchronously to
+// stdout (so test output is deterministic).
+//
+// In production, logs are JSON written through an AsyncWriter: every
+// slog.Write enqueues into a bounded channel and returns immediately, so
+// no goroutine can wedge inside slog.Handler.Handle waiting on the OS
+// stdout pipe. When the platform log shipper backpressures the pipe,
+// log lines are dropped (with a counter) rather than blocking caller
+// goroutines that may hold DB transactions or other resources.
+//
 // Error-level logs are auto-captured to Sentry with component tags
 // and static fingerprints.
 func Setup(level slog.Level, env string) {
@@ -229,7 +247,8 @@ func Setup(level slog.Level, env string) {
 	if env == "development" {
 		outputHandler = slog.NewTextHandler(os.Stdout, opts)
 	} else {
-		outputHandler = slog.NewJSONHandler(os.Stdout, opts)
+		stdoutAsync = NewAsyncWriter(os.Stdout, 8192)
+		outputHandler = slog.NewJSONHandler(stdoutAsync, opts)
 	}
 
 	sentryHandler := sentryslog.Option{
