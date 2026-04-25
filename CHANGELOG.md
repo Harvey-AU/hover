@@ -79,6 +79,9 @@ On merge, CI will:
   `pressure.go` already defaults the initial limit to `DB_QUEUE_MAX_CONCURRENCY`
   (the safe maximum), so setting it explicitly only invited drift and the
   "exceeds queue cap" clamp warning when the two values got out of sync.
+- Production API `LOG_LEVEL` lowered from `debug` to `info` in `fly.toml`, now
+  matching the worker. Debug verbosity was retained while we were chasing the
+  load-test issues and is no longer needed; review apps stay on `debug`.
 
 ## Full changelog history
 
