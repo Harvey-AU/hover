@@ -540,7 +540,11 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 	}
 
 	if len(result.Body) > maxHTMLUploadBodyBytes {
-		jobsLog.Warn("Skipping HTML archive upload: body exceeds size cap",
+		// Demoted from Warn to Debug: the skip is safe (no archive is
+		// uploaded but crawl results still propagate) and a single large
+		// site can spam thousands of these per job. Volume metrics already
+		// surface the skip count at the dashboard level.
+		jobsLog.Debug("Skipping HTML archive upload: body exceeds size cap",
 			"task_id", task.ID,
 			"size_bytes", len(result.Body),
 			"cap_bytes", maxHTMLUploadBodyBytes,

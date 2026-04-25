@@ -28,7 +28,60 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- `promote_waiting_with_outbox` now sorts the picked CTE with `id ASC` as a
+  tie-breaker and orders the outbox `INSERT … SELECT` by `id`, making concurrent
+  promoters lock task rows in a deterministic sequence. The AFTER trigger
+  `trg_update_job_queue_counters` then updates the parent `jobs` row on top of
+  an acyclic lock graph, so the 40P01 deadlock that fired ~3,000 times during
+  the 2026-04-24 overnight load test (Sentry HOVER-K2) cannot form. Migration
+  `20260425000001_promote_waiting_deterministic_lock_order`.
+- `broker.DefaultDBSyncFunc` now sorts `jobIDs` before issuing per-job
+  `UPDATE jobs SET running_tasks = …` and wraps the zero-stale UPDATE in a
+  `WITH targets AS (… ORDER BY id FOR UPDATE) UPDATE jobs … FROM targets` CTE.
+  Previously the sync loop iterated a Go map (random order), so two worker VMs
+  ticking concurrently locked `jobs` rows in different sequences and deadlocked
+  (Sentry HOVER-K4, ~2,000 events/12h, escalating).
+- `StreamWorkerPool.handleDiscoveredLinks` now acquires from a bounded semaphore
+  (`JOBS_LINK_DISCOVERY_MAX_INFLIGHT`, default 32) before each link is enqueued.
+  Previously the fan-out was unbounded; one Sentry event captured 2,153 live
+  goroutines in the worker (HOVER-KG, ~2,500 events/12h).
+- Outbox sweeper `StatementTimeout` raised from 5 s to 15 s and made
+  env-overridable via `OUTBOX_SWEEP_STATEMENT_TIMEOUT_MS`, so the
+  `bump attempts` UPDATE no longer hits the context deadline when the shedding
+  pool is under pressure (Sentry HOVER-K3).
+
+### Changed
+
+- Per-job `job.id` label removed from the broker stream-depth gauges
+  (`bee.broker.stream_length`, `bee.broker.scheduled_zset_depth`,
+  `bee.broker.consumer_pending`), the running-tasks / concurrency-limit gauges
+  (`bee.jobs.running_tasks`, `bee.jobs.concurrency_limit`), and the counter-sync
+  skew histogram (`bee.broker.counter_sync_skew`). The probe loop now sums
+  per-job depths across all active jobs and emits one aggregate per tick, so
+  dashboard `sum(...)` queries continue to render the correct totals while Mimir
+  series cardinality drops from `6N + 1` to `7` per worker (≈85× reduction at
+  100 jobs × 30 workers). Per-job drill-down on these metrics is intentionally
+  gone — use trace spans (which still carry `task.domain` / `task.id` /
+  `job.id`) for that.
+- Crawler `http.Transport` configuration centralised in `newBaseHTTPTransport`.
+  Both `CreateHTTPClient` and the colly base transport now derive from the
+  helper, and the probe-only HEAD client derives from it too with overrides for
+  its smaller pool. Among other things this makes `ForceAttemptHTTP2: false`
+  apply uniformly across the three clients.
+- `ForceAttemptHTTP2: false` on crawler transports silences ~1,200
+  `received DATA after END_STREAM` log lines per heavy-load window; ALPN still
+  negotiates HTTP/1.1 and per-request throughput is unchanged.
+- HTML body-cap skip log demoted from Warn to Debug — a single large domain was
+  producing thousands of warns per job.
+- `GNH_PRESSURE_INITIAL_LIMIT` removed from `fly.toml` and `fly.worker.toml`.
+  `pressure.go` already defaults the initial limit to `DB_QUEUE_MAX_CONCURRENCY`
+  (the safe maximum), so setting it explicitly only invited drift and the
+  "exceeds queue cap" clamp warning when the two values got out of sync.
+- Production API `LOG_LEVEL` lowered from `debug` to `info` in `fly.toml`, now
+  matching the worker. Debug verbosity was retained while we were chasing the
+  load-test issues and is no longer needed; review apps stay on `debug`.
 
 ## Full changelog history
 

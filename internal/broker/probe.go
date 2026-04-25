@@ -144,18 +144,31 @@ func (p *Probe) probeJobs(ctx context.Context) {
 		return
 	}
 
+	// Accumulate totals across all active jobs. Per-job labels were removed
+	// from the gauges to bound Mimir series cardinality — we emit the
+	// aggregate once per tick so dashboard sum(...) queries keep working.
+	var totals observability.BrokerStreamStats
 	for _, jobID := range jobIDs {
 		if ctx.Err() != nil {
 			return
 		}
-		p.probeJob(ctx, jobID)
+		streamLen, zDepth, pendingCount, ok := p.probeJob(ctx, jobID)
+		if !ok {
+			continue
+		}
+		totals.StreamLength += streamLen
+		totals.ScheduledDepth += zDepth
+		totals.Pending += pendingCount
 	}
+	observability.RecordBrokerStreamStats(ctx, totals)
 }
 
 // probeJob issues XLEN, ZCARD, and XLEN-of-pending via XPENDING for a
 // single job. The three calls are issued in one pipeline so the probe
-// adds one round-trip per job rather than three.
-func (p *Probe) probeJob(ctx context.Context, jobID string) {
+// adds one round-trip per job rather than three. Returns ok=false when
+// the pipeline errored with anything other than NOGROUP so the caller
+// skips accumulation rather than polluting the aggregate with zeroes.
+func (p *Probe) probeJob(ctx context.Context, jobID string) (streamLen, zDepth, pendingCount int64, ok bool) {
 	pipe := p.client.rdb.Pipeline()
 	streamLenCmd := pipe.XLen(ctx, StreamKey(jobID))
 	zsetCmd := pipe.ZCard(ctx, ScheduleKey(jobID))
@@ -170,22 +183,15 @@ func (p *Probe) probeJob(ctx context.Context, jobID string) {
 		// masquerade as a healthy empty queue.
 		if !isNoGroupErr(err) {
 			brokerLog.Debug("broker probe pipeline error", "error", err, "job_id", jobID)
-			return
+			return 0, 0, 0, false
 		}
 	}
 
-	streamLen, _ := streamLenCmd.Result()
-	zDepth, _ := zsetCmd.Result()
+	streamLen, _ = streamLenCmd.Result()
+	zDepth, _ = zsetCmd.Result()
 
-	var pendingCount int64
 	if pending, err := pendingCmd.Result(); err == nil && pending != nil {
 		pendingCount = pending.Count
 	}
-
-	observability.RecordBrokerStreamStats(ctx, observability.BrokerStreamStats{
-		JobID:          jobID,
-		StreamLength:   streamLen,
-		ScheduledDepth: zDepth,
-		Pending:        pendingCount,
-	})
+	return streamLen, zDepth, pendingCount, true
 }
