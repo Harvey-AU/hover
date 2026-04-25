@@ -32,6 +32,13 @@ On merge, CI will:
 
 - Grafana deploy annotations posted on every main merge; dashboards synced from
   repo; panels and traces scoped by app
+- HTML persister pool (`internal/jobs/html_persister.go`) streaming completed
+  task HTML directly to Cloudflare R2 with a metadata-only batch UPDATE; tunable
+  via `HTML_PERSIST_WORKERS`, `HTML_PERSIST_QUEUE`, `HTML_PERSIST_BATCH_SIZE`,
+  `HTML_PERSIST_FLUSH_INTERVAL`, and `HTML_PERSIST_UPLOAD_TIMEOUT`.
+- New `bee.html_persist.*` metrics: `upload_total{outcome}`, `upload_ms`,
+  `queue_depth`, and `body_bytes`, so persister throughput, latency,
+  backpressure, and payload size are dashboarded.
 
 ### Fixed
 
@@ -42,10 +49,22 @@ On merge, CI will:
 - Worker metrics now scraped by Alloy sidecar (added to Docker build); four
   broken Grafana panels restored after metrics rename; semaphore wait corrected
   to µs
+- Restored task HTML capture, which had silently dropped on the post-Redis
+  worker rewrite (no rows persisted since 2026-04-14). New writes go straight to
+  R2 with `html_archived_at` stamped at write time, so the archive sweep no
+  longer surfaces them as no-op candidates.
 
 ### Changed
 
 - Go bumped to 1.26.2 for security fixes
+- Task HTML now persists direct-to-R2 from the worker (issue #332), skipping the
+  Supabase Storage hop entirely. The R2 paths land in `html_storage_*`; the
+  `html_archive_*` columns are reserved for a future deep-cold-storage tier.
+
+### Removed
+
+- `internal/storage` package (Supabase Storage client) and its tests — the
+  direct-to-R2 persister supersedes it and there were no remaining callers.
 
 ## Full changelog history
 

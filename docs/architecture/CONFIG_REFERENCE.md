@@ -320,14 +320,21 @@ priority is at or above the threshold. Deeper body-link expansion stops once
 
 ## HTML persistence
 
-**Source:** `internal/jobs/stream_worker.go`
+**Source:** `internal/jobs/html_persister.go`, `cmd/worker/main.go`
 
-Async pool for uploading raw HTML to Supabase Storage after task completion.
+Direct-to-R2 async pool for uploading raw HTML after task completion. The
+persister streams payloads straight to R2 (no Supabase Storage hop) and stamps
+storage metadata onto the task row in a batched UPDATE. The R2 bucket and
+provider come from the shared archive config (`ARCHIVE_BUCKET`,
+`ARCHIVE_PROVIDER`).
 
-| Env var / constant            | Production value      | Default | What it controls                        |
-| ----------------------------- | --------------------- | ------- | --------------------------------------- |
-| `GNH_HTML_PERSIST_WORKERS`    | **32** (`fly.toml`)   | 8       | Goroutines uploading HTML concurrently  |
-| `GNH_HTML_PERSIST_QUEUE_SIZE` | **2048** (`fly.toml`) | 64      | Channel buffer for pending HTML uploads |
+| Env var                       | Default | What it controls                                                                            |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `HTML_PERSIST_WORKERS`        | 8       | Goroutines uploading HTML concurrently                                                      |
+| `HTML_PERSIST_QUEUE`          | 256     | Channel buffer for pending HTML uploads. Full queue drops the payload (best-effort capture) |
+| `HTML_PERSIST_BATCH_SIZE`     | 16      | Successful uploads accumulated per worker before a metadata UPDATE flush                    |
+| `HTML_PERSIST_FLUSH_INTERVAL` | `250ms` | Forced flush cadence so a quiet tail doesn't sit on staged metadata rows                    |
+| `HTML_PERSIST_UPLOAD_TIMEOUT` | `30s`   | Per-PUT timeout against R2 — caps how long a stalled connection can occupy a worker         |
 
 ---
 

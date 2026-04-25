@@ -64,8 +64,9 @@ type TaskOutcome struct {
 }
 
 // TaskHTMLUpload holds the data needed to upload HTML to storage.
+// The destination bucket is owned by the persister (built from the
+// archive provider's config), so we don't bake it into the payload.
 type TaskHTMLUpload struct {
-	Bucket              string
 	Path                string
 	ContentType         string
 	UploadContentType   string
@@ -262,13 +263,12 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 		outcome.DiscoveredLinks = cloneDiscoveredLinks(result.Links)
 	}
 
-	// HTML upload: we stage the upload payload on outcome.HTMLUpload so a
-	// future persistence loop in cmd/worker can pick it up. Metadata
-	// (bucket/path/checksum) is deliberately NOT applied to the task row
-	// here — the storage upload isn't wired through Stage 3 yet, so
-	// populating those fields would leave dangling references to objects
-	// that never exist. Call applyHTMLMetadata only after a successful
-	// upload in the persistence loop.
+	// HTML upload: stage the payload on outcome.HTMLUpload so the
+	// HTML persister in the worker can stream it directly to R2. The
+	// task row is persisted by the batch manager without any HTML
+	// metadata; the persister stamps the html_* columns in a separate
+	// metadata-only UPDATE once the R2 upload has succeeded, so we
+	// never leave dangling references to objects that don't exist.
 	if upload, ok := buildHTMLUpload(dbTask, result, now); ok {
 		outcome.HTMLUpload = upload
 	}
@@ -516,16 +516,16 @@ func populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
 // --- HTML helpers ---
 
 const (
-	htmlStorageBucket   = "task-html"
 	htmlContentEncoding = "gzip"
 
 	// maxHTMLUploadBodyBytes caps the body size we will stage for the
-	// archive upload. The raw body and its gzipped copy are held on the
-	// TaskOutcome until the persistence loop runs, so a high cap multiplied
+	// R2 upload. The raw body and its gzipped copy are held on the
+	// TaskOutcome until the persister flushes, so a high cap multiplied
 	// across a wide worker pool can materially inflate RSS. The crawler
-	// itself does not bound CrawlResult.Body, so this is the point at which
-	// we refuse oversized pages rather than archive them. 8 MiB covers the
-	// long tail of modern HTML without opening a memory-exhaustion vector.
+	// itself does not bound CrawlResult.Body, so this is the point at
+	// which we refuse oversized pages rather than archive them. 8 MiB
+	// covers the long tail of modern HTML without opening a
+	// memory-exhaustion vector.
 	maxHTMLUploadBodyBytes = 8 * 1024 * 1024
 )
 
@@ -561,7 +561,6 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 	checksum := sha256.Sum256(result.Body)
 
 	return &TaskHTMLUpload{
-		Bucket:              htmlStorageBucket,
 		Path:                archive.TaskHTMLObjectPath(task.JobID, task.ID),
 		ContentType:         normalisedHTMLContentType(result.ContentType),
 		UploadContentType:   uploadCT,
@@ -573,31 +572,6 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 		Payload:             payload,
 	}, true
 }
-
-// applyHTMLMetadata stamps the archive metadata onto a task row after the
-// HTML payload has been successfully uploaded to storage. Intentionally
-// not called by the executor: the task row is persisted by the batch
-// manager before any upload happens, so calling this pre-upload would
-// leave dangling references to objects that never exist. The Stage 2
-// persistence loop in cmd/worker will call this once the upload
-// succeeds.
-func applyHTMLMetadata(task *db.Task, upload *TaskHTMLUpload) {
-	if task == nil || upload == nil {
-		return
-	}
-	task.HTMLStorageBucket = upload.Bucket
-	task.HTMLStoragePath = upload.Path
-	task.HTMLContentType = upload.ContentType
-	task.HTMLContentEncoding = upload.ContentEncoding
-	task.HTMLSizeBytes = upload.SizeBytes
-	task.HTMLCompressedSizeBytes = upload.CompressedSizeBytes
-	task.HTMLSHA256 = upload.SHA256
-	task.HTMLCapturedAt = upload.CapturedAt
-}
-
-// Suppress "unused function" lint: applyHTMLMetadata is intentionally
-// retained for the Stage 2 HTML upload persistence loop.
-var _ = applyHTMLMetadata
 
 func canonicalHTMLContentType(ct string) string {
 	trimmed := strings.TrimSpace(ct)

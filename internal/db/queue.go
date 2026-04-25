@@ -848,6 +848,17 @@ type TaskHTMLMetadata struct {
 	CompressedSizeBytes int64
 	SHA256              string
 	CapturedAt          time.Time
+	// ArchivedAt, when non-zero, marks the row as already in cold storage.
+	// Direct-to-R2 writes set this to CapturedAt so the archive sweep
+	// candidate query skips the row immediately.
+	ArchivedAt time.Time
+}
+
+// TaskHTMLMetadataRow pairs a task ID with its HTML metadata for batch
+// UPDATE calls.
+type TaskHTMLMetadataRow struct {
+	TaskID   string
+	Metadata TaskHTMLMetadata
 }
 
 // ArchiveCandidate represents a task whose HTML is eligible for cold-storage archival.
@@ -1728,6 +1739,93 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			default:
 				return fmt.Errorf("task %s is not eligible for HTML metadata updates in status %q", taskID, status)
 			}
+		}
+		return nil
+	})
+}
+
+// BatchUpsertTaskHTMLMetadata stamps storage metadata onto multiple completed
+// tasks in a single UPDATE. Used by the direct-to-R2 HTML persister so the
+// metadata write is amortised across the batch of payloads it just uploaded.
+//
+// Only the html_* columns are touched — the surrounding completed-task batch
+// UPDATE has already persisted status, timing and response data. ArchivedAt
+// is intentionally stamped at write time so the archive sweep's candidate
+// query (html_archived_at IS NULL) skips these rows.
+func (q *DbQueue) BatchUpsertTaskHTMLMetadata(ctx context.Context, rows []TaskHTMLMetadataRow) error {
+	if q == nil || len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(rows))
+	buckets := make([]string, len(rows))
+	paths := make([]string, len(rows))
+	contentTypes := make([]string, len(rows))
+	encodings := make([]string, len(rows))
+	sizes := make([]int64, len(rows))
+	compressedSizes := make([]int64, len(rows))
+	sha256s := make([]string, len(rows))
+	capturedAts := make([]string, len(rows))
+	archivedAts := make([]string, len(rows))
+
+	for i, row := range rows {
+		ids[i] = row.TaskID
+		buckets[i] = row.Metadata.StorageBucket
+		paths[i] = row.Metadata.StoragePath
+		contentTypes[i] = row.Metadata.ContentType
+		encodings[i] = row.Metadata.ContentEncoding
+		sizes[i] = row.Metadata.SizeBytes
+		compressedSizes[i] = row.Metadata.CompressedSizeBytes
+		sha256s[i] = row.Metadata.SHA256
+		if !row.Metadata.CapturedAt.IsZero() {
+			capturedAts[i] = row.Metadata.CapturedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !row.Metadata.ArchivedAt.IsZero() {
+			archivedAts[i] = row.Metadata.ArchivedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(txCtx, `
+			UPDATE tasks
+			SET html_storage_bucket      = COALESCE(NULLIF(updates.html_storage_bucket, ''), tasks.html_storage_bucket),
+				html_storage_path        = COALESCE(NULLIF(updates.html_storage_path, ''), tasks.html_storage_path),
+				html_content_type        = COALESCE(NULLIF(updates.html_content_type, ''), tasks.html_content_type),
+				html_content_encoding    = COALESCE(NULLIF(updates.html_content_encoding, ''), tasks.html_content_encoding),
+				html_size_bytes          = CASE WHEN updates.html_size_bytes > 0 THEN updates.html_size_bytes ELSE tasks.html_size_bytes END,
+				html_compressed_size_bytes = CASE WHEN updates.html_compressed_size_bytes > 0 THEN updates.html_compressed_size_bytes ELSE tasks.html_compressed_size_bytes END,
+				html_sha256              = COALESCE(NULLIF(updates.html_sha256, ''), tasks.html_sha256),
+				html_captured_at         = COALESCE(updates.html_captured_at, tasks.html_captured_at),
+				html_archived_at         = COALESCE(updates.html_archived_at, tasks.html_archived_at)
+			FROM (
+				SELECT
+					unnest($1::text[]) AS id,
+					unnest($2::text[]) AS html_storage_bucket,
+					unnest($3::text[]) AS html_storage_path,
+					unnest($4::text[]) AS html_content_type,
+					unnest($5::text[]) AS html_content_encoding,
+					unnest($6::bigint[]) AS html_size_bytes,
+					unnest($7::bigint[]) AS html_compressed_size_bytes,
+					unnest($8::text[]) AS html_sha256,
+					NULLIF(unnest($9::text[]), '')::timestamptz AS html_captured_at,
+					NULLIF(unnest($10::text[]), '')::timestamptz AS html_archived_at
+			) AS updates
+			WHERE tasks.id = updates.id
+			  AND tasks.status IN ('running', 'completed')
+		`,
+			pq.Array(ids),
+			pq.Array(buckets),
+			pq.Array(paths),
+			pq.Array(contentTypes),
+			pq.Array(encodings),
+			pq.Array(sizes),
+			pq.Array(compressedSizes),
+			pq.Array(sha256s),
+			pq.Array(capturedAts),
+			pq.Array(archivedAts),
+		)
+		if err != nil {
+			return fmt.Errorf("batch upsert task html metadata: %w", err)
 		}
 		return nil
 	})

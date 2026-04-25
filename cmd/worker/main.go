@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
@@ -217,40 +218,16 @@ func main() {
 	batchManager := db.NewBatchManager(dbQueue)
 	defer batchManager.Stop()
 
+	// --- html persister (direct-to-R2) ---
+	// Built only when ARCHIVE_PROVIDER + ARCHIVE_BUCKET are set; without
+	// those the worker still runs but completed tasks persist without
+	// HTML. This keeps local dev (no R2 creds) functional and matches
+	// the existing scheduler's "feature disabled when env unset" idiom.
+	htmlPersister := buildHTMLPersister(workerLog, dbQueue)
+
 	// --- job manager (for EnqueueJobURLs + OnTasksEnqueued callback) ---
 	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
-	// Respect each entry's RunAt so waiting/retry rows keep their backoff
-	// deadline instead of being scheduled as ready-now.
-	jobManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
-		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
-		for _, e := range entries {
-			if e.Status == "skipped" {
-				continue
-			}
-			runAt := e.RunAt
-			if runAt.IsZero() {
-				runAt = time.Now()
-			}
-			schedEntries = append(schedEntries, broker.ScheduleEntry{
-				TaskID:     e.TaskID,
-				JobID:      jobID,
-				PageID:     e.PageID,
-				Host:       e.Host,
-				Path:       e.Path,
-				Priority:   e.Priority,
-				RetryCount: e.RetryCount,
-				SourceType: e.SourceType,
-				SourceURL:  e.SourceURL,
-				RunAt:      runAt,
-			})
-		}
-		if len(schedEntries) > 0 {
-			if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
-				workerLog.Error("failed to schedule tasks into Redis",
-					"error", err, "job_id", jobID, "count", len(schedEntries))
-			}
-		}
-	}
+	jobManager.OnTasksEnqueued = makeTasksEnqueuedHandler(scheduler, workerLog)
 
 	// --- stream worker pool ---
 	swpOpts := jobs.StreamWorkerOpts{
@@ -260,14 +237,15 @@ func main() {
 	}
 
 	swp := jobs.NewStreamWorkerPool(jobs.StreamWorkerDeps{
-		Consumer:     consumer,
-		Scheduler:    scheduler,
-		Counters:     counters,
-		Pacer:        pacer,
-		Executor:     executor,
-		BatchManager: batchManager,
-		DBQueue:      dbQueue,
-		JobManager:   jobManager,
+		Consumer:      consumer,
+		Scheduler:     scheduler,
+		Counters:      counters,
+		Pacer:         pacer,
+		Executor:      executor,
+		BatchManager:  batchManager,
+		DBQueue:       dbQueue,
+		JobManager:    jobManager,
+		HTMLPersister: htmlPersister,
 	}, swpOpts)
 
 	// --- dispatcher ---
@@ -315,6 +293,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	if htmlPersister != nil {
+		htmlPersister.Start(ctx)
+	}
 	swp.Start(ctx)
 	go dispatcher.Run(ctx)
 	go counters.StartDBSync(ctx, syncInterval, syncFn)
@@ -340,6 +321,13 @@ func main() {
 	done := make(chan struct{})
 	go func() {
 		swp.Stop()
+		// Stop the persister AFTER the worker pool has drained so any
+		// final outcomes still in flight reach the queue before we close
+		// it. Persister.Stop waits for in-flight uploads + the final
+		// metadata flush.
+		if htmlPersister != nil {
+			htmlPersister.Stop()
+		}
 		close(done)
 	}()
 
@@ -363,6 +351,125 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envDuration parses a Go duration string (e.g. "250ms", "5s") from the
+// environment, falling back to def for missing or unparseable values.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
+}
+
+// makeTasksEnqueuedHandler returns the JobManager.OnTasksEnqueued callback
+// that translates jobs.TaskScheduleEntry into broker.ScheduleEntry and pushes
+// them onto the Redis ZSET. Pulled out of main() so the boot sequence stays
+// under the cyclomatic-complexity budget; callers are not expected to share
+// this handler.
+//
+// Respects each entry's RunAt so waiting/retry rows keep their backoff
+// deadline instead of being scheduled as ready-now.
+func makeTasksEnqueuedHandler(scheduler *broker.Scheduler, log *logging.Logger) func(context.Context, string, []jobs.TaskScheduleEntry) {
+	return func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
+		schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Status == "skipped" {
+				continue
+			}
+			runAt := e.RunAt
+			if runAt.IsZero() {
+				runAt = time.Now()
+			}
+			schedEntries = append(schedEntries, broker.ScheduleEntry{
+				TaskID:     e.TaskID,
+				JobID:      jobID,
+				PageID:     e.PageID,
+				Host:       e.Host,
+				Path:       e.Path,
+				Priority:   e.Priority,
+				RetryCount: e.RetryCount,
+				SourceType: e.SourceType,
+				SourceURL:  e.SourceURL,
+				RunAt:      runAt,
+			})
+		}
+		if len(schedEntries) == 0 {
+			return
+		}
+		if err := scheduler.ScheduleBatch(ctx, schedEntries); err != nil {
+			log.Error("failed to schedule tasks into Redis",
+				"error", err, "job_id", jobID, "count", len(schedEntries))
+		}
+	}
+}
+
+// buildHTMLPersister constructs the direct-to-R2 HTML persister, or returns
+// nil when the archive env is unset (local dev) or the cold-storage provider
+// can't be built. Extracted from main() to keep the boot sequence's
+// cyclomatic complexity within the linter budget — the persister setup has
+// its own cluster of nested branches that don't belong inline.
+func buildHTMLPersister(log *logging.Logger, dbQueue *db.DbQueue) *jobs.HTMLPersister {
+	archCfg := archive.ConfigFromEnv()
+	if archCfg == nil {
+		log.Info("ARCHIVE_PROVIDER unset — html persister disabled")
+		return nil
+	}
+
+	coldProvider, err := archive.ProviderFromEnv()
+	if err != nil {
+		log.Fatal("failed to construct cold storage provider for html persister", "error", err)
+	}
+	if coldProvider == nil {
+		log.Warn("ARCHIVE_PROVIDER set but provider construction returned nil; html persistence disabled")
+		return nil
+	}
+
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer pingCancel()
+	if err := coldProvider.Ping(pingCtx, archCfg.Bucket); err != nil {
+		log.Fatal("html persister bucket ping failed", "error", err, "bucket", archCfg.Bucket)
+	}
+
+	cfg := jobs.DefaultHTMLPersisterConfig()
+	cfg.Bucket = archCfg.Bucket
+	cfg.Provider = coldProvider.Provider()
+	if v := envInt("HTML_PERSIST_WORKERS", 0); v > 0 {
+		cfg.Workers = v
+	}
+	if v := envInt("HTML_PERSIST_QUEUE", 0); v > 0 {
+		cfg.QueueSize = v
+	}
+	if v := envInt("HTML_PERSIST_BATCH_SIZE", 0); v > 0 {
+		cfg.BatchSize = v
+	}
+	if d := envDuration("HTML_PERSIST_FLUSH_INTERVAL", 0); d > 0 {
+		cfg.FlushInterval = d
+	}
+	if d := envDuration("HTML_PERSIST_UPLOAD_TIMEOUT", 0); d > 0 {
+		cfg.UploadTimeout = d
+	}
+
+	persister, err := jobs.NewHTMLPersister(cfg, jobs.HTMLPersisterDeps{
+		Provider: coldProvider,
+		DBQueue:  dbQueue,
+	})
+	if err != nil {
+		log.Fatal("failed to construct html persister", "error", err)
+	}
+	log.Info("html persister wired",
+		"bucket", cfg.Bucket,
+		"provider", cfg.Provider,
+		"workers", cfg.Workers,
+		"queue", cfg.QueueSize,
+		"batch_size", cfg.BatchSize,
+	)
+	return persister
 }
 
 // Compile-time interface checks.

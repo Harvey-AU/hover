@@ -70,6 +70,13 @@ type StreamWorkerDeps struct {
 	BatchManager *db.BatchManager
 	DBQueue      DbQueueInterface
 	JobManager   JobManagerInterface
+
+	// HTMLPersister, when non-nil, receives the HTML payload from each
+	// completed task and is responsible for streaming it directly to R2
+	// before stamping the storage metadata back onto the task row. Left
+	// nil when ARCHIVE_PROVIDER is unset (e.g. local dev without R2),
+	// in which case completed tasks persist without HTML.
+	HTMLPersister *HTMLPersister
 }
 
 // StreamWorkerOpts holds tunables for the stream worker pool.
@@ -107,15 +114,16 @@ type cachedJobInfo struct {
 // via the TaskExecutor, and acts on the returned TaskOutcome
 // (ack, reschedule, persist results).
 type StreamWorkerPool struct {
-	consumer     *broker.Consumer
-	scheduler    *broker.Scheduler
-	counters     *broker.RunningCounters
-	pacer        *broker.DomainPacer
-	executor     *TaskExecutor
-	batchManager *db.BatchManager
-	dbQueue      DbQueueInterface
-	jobManager   JobManagerInterface
-	opts         StreamWorkerOpts
+	consumer      *broker.Consumer
+	scheduler     *broker.Scheduler
+	counters      *broker.RunningCounters
+	pacer         *broker.DomainPacer
+	executor      *TaskExecutor
+	batchManager  *db.BatchManager
+	dbQueue       DbQueueInterface
+	jobManager    JobManagerInterface
+	htmlPersister *HTMLPersister
+	opts          StreamWorkerOpts
 
 	// Job info cache with TTL eviction.
 	jobInfoCache map[string]*cachedJobInfo
@@ -133,16 +141,17 @@ type StreamWorkerPool struct {
 // NewStreamWorkerPool creates a StreamWorkerPool.
 func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWorkerPool {
 	return &StreamWorkerPool{
-		consumer:     deps.Consumer,
-		scheduler:    deps.Scheduler,
-		counters:     deps.Counters,
-		pacer:        deps.Pacer,
-		executor:     deps.Executor,
-		batchManager: deps.BatchManager,
-		dbQueue:      deps.DBQueue,
-		jobManager:   deps.JobManager,
-		opts:         opts,
-		jobInfoCache: make(map[string]*cachedJobInfo),
+		consumer:      deps.Consumer,
+		scheduler:     deps.Scheduler,
+		counters:      deps.Counters,
+		pacer:         deps.Pacer,
+		executor:      deps.Executor,
+		batchManager:  deps.BatchManager,
+		dbQueue:       deps.DBQueue,
+		jobManager:    deps.JobManager,
+		htmlPersister: deps.HTMLPersister,
+		opts:          opts,
+		jobInfoCache:  make(map[string]*cachedJobInfo),
 	}
 }
 
@@ -391,17 +400,20 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 		jobsLog.Warn("pacer release failed", "error", err, "domain", domain)
 	}
 
-	// Queue task update for batch persistence.
+	// Queue task update for batch persistence. Hand the payload to the
+	// HTML persister BEFORE queueing the row so the persister always sees
+	// a fresh *db.Task pointer — the batch manager mutates the row in
+	// place under its own lock, and the persister reads only the IDs we
+	// captured at Enqueue time.
+	if outcome.HTMLUpload != nil && swp.htmlPersister != nil {
+		swp.htmlPersister.Enqueue(ctx, outcome.Task, outcome.HTMLUpload)
+	}
 	swp.batchManager.QueueTaskUpdate(outcome.Task)
 
 	// Handle discovered links — enqueue to Postgres then schedule.
 	if len(outcome.DiscoveredLinks) > 0 {
 		swp.handleDiscoveredLinks(ctx, outcome)
 	}
-
-	// HTML upload: metadata is already applied to outcome.Task by the
-	// executor via applyHTMLMetadata. The actual upload to storage will
-	// be wired through a persistence loop in cmd/worker (Stage 2).
 }
 
 func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome *TaskOutcome) {
