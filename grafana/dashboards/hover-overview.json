@@ -2341,7 +2341,7 @@
                         "editorMode": "code",
                         "format": "table",
                         "rawQuery": true,
-                        "rawSql": "SELECT\n  $__timeGroup(completed_at, $__interval) as time,\n  COUNT(*) FILTER (WHERE status = 'completed') as \"Completed\",\n  COUNT(*) FILTER (WHERE status = 'failed') as \"Failed\",\n  COUNT(*) FILTER (WHERE status = 'skipped') as \"Skipped\"\nFROM tasks\nWHERE $__timeFilter(completed_at)\n  AND completed_at IS NOT NULL\nGROUP BY time\nORDER BY time;",
+                        "rawSql": "SELECT\n  $__timeGroup(completed_at, $__interval) as time,\n  COUNT(*) FILTER (WHERE status = 'completed') as \"Completed\",\n  COUNT(*) FILTER (WHERE status = 'failed') as \"Failed\",\n  COUNT(*) FILTER (WHERE status = 'skipped') as \"Skipped\",\n  COUNT(DISTINCT job_id) FILTER (WHERE status = 'completed') as \"Jobs\"\nFROM tasks\nWHERE $__timeFilter(completed_at)\n  AND completed_at IS NOT NULL\nGROUP BY time\nORDER BY time;",
                         "sql": {
                           "columns": [
                             {
@@ -2380,46 +2380,7 @@
                         "editorMode": "code",
                         "format": "table",
                         "rawQuery": true,
-                        "rawSql": "SELECT\n  $__timeGroup(completed_at, $__interval) AS time,\n  COUNT(DISTINCT job_id) AS \"Jobs\"\nFROM tasks\nWHERE $__timeFilter(completed_at)\n  AND completed_at IS NOT NULL\n  AND status = 'completed'\nGROUP BY time\nORDER BY time;\n",
-                        "sql": {
-                          "columns": [
-                            {
-                              "parameters": [],
-                              "type": "function"
-                            }
-                          ],
-                          "groupBy": [
-                            {
-                              "property": {
-                                "type": "string"
-                              },
-                              "type": "groupBy"
-                            }
-                          ],
-                          "limit": 50
-                        }
-                      },
-                      "version": "v0"
-                    },
-                    "refId": "Jobs tasks completed"
-                  }
-                },
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "hidden": false,
-                    "query": {
-                      "datasource": {
-                        "name": "cf25r8u3za6tcd"
-                      },
-                      "group": "grafana-postgresql-datasource",
-                      "kind": "DataQuery",
-                      "spec": {
-                        "dataset": "postgres",
-                        "editorMode": "code",
-                        "format": "table",
-                        "rawQuery": true,
-                        "rawSql": "WITH params AS (\n  SELECT (interval '1 millisecond') * $__interval_ms AS step\n),\nbuckets AS (\n  SELECT generate_series(\n    date_bin((SELECT step FROM params), $__timeFrom()::timestamptz, TIMESTAMPTZ '1970-01-01'),\n    $__timeTo()::timestamptz,\n    (SELECT step FROM params)\n  ) AS time\n),\nalive AS (\n  SELECT b.time, j.id AS job_id\n  FROM buckets b\n  JOIN jobs j\n    ON j.started_at \u003c= b.time\n   AND (j.completed_at IS NULL OR j.completed_at \u003e b.time)\n),\nproducing AS (\n  SELECT\n    date_bin((SELECT step FROM params), completed_at, TIMESTAMPTZ '1970-01-01') AS time,\n    job_id\n  FROM tasks\n  WHERE $__timeFilter(completed_at)\n    AND status IN ('completed','failed','skipped')\n  GROUP BY 1, 2\n)\nSELECT\n  a.time,\n  COUNT(DISTINCT a.job_id) FILTER (WHERE p.job_id IS NULL) AS \"Jobs idle (no task activity)\",\n  COUNT(DISTINCT a.job_id) AS \"Jobs alive\"\nFROM alive a\nLEFT JOIN producing p\n  ON p.time = a.time AND p.job_id = a.job_id\nGROUP BY a.time\nORDER BY a.time;",
+                        "rawSql": "WITH params AS (\n  SELECT (interval '1 millisecond') * $__interval_ms AS step\n),\nbuckets AS (\n  SELECT generate_series(\n    date_bin((SELECT step FROM params), $__timeFrom()::timestamptz, TIMESTAMPTZ '1970-01-01'),\n    $__timeTo()::timestamptz,\n    (SELECT step FROM params)\n  ) AS time\n),\nalive AS (\n  SELECT b.time, j.id AS job_id\n  FROM buckets b\n  JOIN jobs j\n    ON j.started_at \u003c= b.time\n   AND (j.completed_at IS NULL OR j.completed_at \u003e b.time)\n),\nproducing AS (\n  SELECT\n    date_bin((SELECT step FROM params), completed_at, TIMESTAMPTZ '1970-01-01') AS time,\n    job_id\n  FROM tasks\n  WHERE $__timeFilter(completed_at)\n    AND status IN ('completed','failed','skipped')\n  GROUP BY 1, 2\n)\nSELECT\n  a.time,\n  COUNT(*) FILTER (WHERE p.job_id IS NULL) AS \"Jobs idle (no task activity)\",\n  COUNT(*) AS \"Jobs alive\"\nFROM alive a\nLEFT JOIN producing p\n  ON p.time = a.time AND p.job_id = a.job_id\nGROUP BY a.time\nORDER BY a.time;",
                         "sql": {
                           "columns": [
                             {
