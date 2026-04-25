@@ -28,6 +28,12 @@ On merge, CI will:
 
 ## [Unreleased]
 
+_Add unreleased changes here._
+
+## Full changelog history
+
+## [0.33.4] – 2026-04-25
+
 ### Fixed
 
 - `promote_waiting_with_outbox` now sorts the picked CTE with `id ASC` as a
@@ -82,8 +88,6 @@ On merge, CI will:
 - Production API `LOG_LEVEL` lowered from `debug` to `info` in `fly.toml`, now
   matching the worker. Debug verbosity was retained while we were chasing the
   load-test issues and is no longer needed; review apps stay on `debug`.
-
-## Full changelog history
 
 ## [0.33.3] – 2026-04-25
 
