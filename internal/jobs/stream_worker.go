@@ -138,7 +138,12 @@ type StreamWorkerPool struct {
 	cancel context.CancelFunc
 }
 
-const defaultLinkDiscoveryMaxInflight = 32
+// defaultLinkDiscoveryMaxInflight: at 32 the cap throttled production
+// throughput to ~3–3.5k tasks/min (each call is bulk-pool-bound, so the
+// semaphore ceiling becomes the global enqueue ceiling). 128 keeps fan-out
+// well clear of the 2k+ goroutine event that motivated the cap while
+// restoring headroom above the previous 4k tasks/min run rate.
+const defaultLinkDiscoveryMaxInflight = 128
 
 // linkDiscoveryMaxInflight returns the configured cap on concurrent
 // in-flight ProcessDiscoveredLinks executions.

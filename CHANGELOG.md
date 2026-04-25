@@ -28,7 +28,24 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Worker counter sync no longer wraps per-job UPDATEs in an outer transaction.
+  The previous design (15d146f3) held row locks on every job in the batch until
+  commit, serialising against the `update_job_queue_counters` AFTER trigger
+  fired by concurrent `promote_waiting_with_outbox` calls. Live
+  `pg_stat_activity` showed a single counter-sync UPDATE blocking promoters for
+  unrelated jobs, dragging tx duration past 2s and saturating the bulk DB pool.
+  Each statement now runs in its own implicit transaction so row-lock hold time
+  drops to milliseconds.
+
+### Changed
+
+- Lift `JOBS_LINK_DISCOVERY_MAX_INFLIGHT` default from 32 to 128 and pin it on
+  `fly.worker.toml`. The 32-cap was the throughput ceiling driving the ~3–3.5k
+  tasks/min plateau in production; with the counter-sync fix the bulk pool
+  clears fast enough for the higher cap to stay well below the
+  goroutine-explosion event that motivated the original limit.
 
 ## Full changelog history
 
