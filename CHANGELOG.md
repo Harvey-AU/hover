@@ -32,6 +32,31 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.5] – 2026-04-25
+
+### Added
+
+- Grafana deploy annotations posted on every main merge; dashboards synced from
+  repo; panels and traces scoped by app
+
+### Fixed
+
+- Post-redis-broker-merge throughput regression resolved — pacer, FIFO ordering,
+  and domain-delay defaults restored
+- Broker counter drift stabilised with configurable env vars; reclaim
+  classification hardened; metric label cardinality reduced
+- Worker metrics now scraped by Alloy sidecar (added to Docker build); four
+  broken Grafana panels restored after metrics rename; semaphore wait corrected
+  to µs
+- `hover` CLI on Windows: replaced `/bin/sh` stub with a Node launcher so
+  `npm install -g @harvey-au/hover` produces a working `hover.cmd`/`hover.ps1`
+  shim; install script now extracts the Go binary as `hover-bin[.exe]` to avoid
+  a filename collision with the launcher
+
+### Changed
+
+- Go bumped to 1.26.2 for security fixes
+
 ## [0.33.4] – 2026-04-25
 
 ### Fixed

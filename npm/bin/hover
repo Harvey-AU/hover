@@ -1,8 +1,32 @@
-#!/bin/sh
-echo "Error: hover binary is missing or failed to extract during installation." >&2
-echo "Please try the following repair commands:" >&2
-echo "  npm rebuild @harvey-au/hover" >&2
-echo "  npm install --verbose" >&2
-echo "" >&2
-echo "If the issue persists, check your npm install/rebuild logs and PATH configuration." >&2
-exit 1
+#!/usr/bin/env node
+"use strict";
+
+const { spawnSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+const binary = path.join(
+  __dirname,
+  process.platform === "win32" ? "hover-bin.exe" : "hover-bin"
+);
+
+if (!fs.existsSync(binary)) {
+  console.error(
+    "hover binary is missing or failed to extract during installation."
+  );
+  console.error("Try: npm rebuild -g @harvey-au/hover");
+  process.exit(1);
+}
+
+const result = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });
+
+if (result.error) {
+  console.error(`Failed to run hover: ${result.error.message}`);
+  process.exit(1);
+}
+
+if (result.signal) {
+  process.kill(process.pid, result.signal);
+}
+
+process.exit(result.status ?? 1);

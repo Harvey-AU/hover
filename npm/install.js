@@ -8,8 +8,9 @@ const path = require("path");
 
 const REPO = "Harvey-AU/hover";
 const BIN_DIR = path.join(__dirname, "bin");
-const BIN_NAME = process.platform === "win32" ? "hover.exe" : "hover";
+const BIN_NAME = process.platform === "win32" ? "hover-bin.exe" : "hover-bin";
 const BIN_PATH = path.join(BIN_DIR, BIN_NAME);
+const ARCHIVE_BIN_NAME = process.platform === "win32" ? "hover.exe" : "hover";
 
 const PLATFORM_MAP = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
@@ -71,29 +72,58 @@ async function main() {
 
   // Write archive to temp file and extract.
   fs.mkdirSync(BIN_DIR, { recursive: true });
+  const tmpFile = path.join(
+    BIN_DIR,
+    isWindows() ? "_download.zip" : "_download.tar.gz"
+  );
+  const tempDir = fs.mkdtempSync(path.join(BIN_DIR, "_extract-"));
 
-  if (isWindows()) {
-    const tmpFile = path.join(BIN_DIR, "_download.zip");
+  try {
     fs.writeFileSync(tmpFile, buffer);
-    execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Force -Path '${tmpFile}' -DestinationPath '${BIN_DIR}'`,
-      ],
-      { stdio: "ignore" }
-    );
-    fs.unlinkSync(tmpFile);
-  } else {
-    const tmpFile = path.join(BIN_DIR, "_download.tar.gz");
-    fs.writeFileSync(tmpFile, buffer);
-    execFileSync("tar", ["xzf", tmpFile, "-C", BIN_DIR], { stdio: "ignore" });
-    fs.unlinkSync(tmpFile);
-    fs.chmodSync(BIN_PATH, 0o755);
+
+    if (isWindows()) {
+      execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          `Expand-Archive -Force -Path '${tmpFile}' -DestinationPath '${tempDir}'`,
+        ],
+        { stdio: "ignore" }
+      );
+    } else {
+      execFileSync("tar", ["xzf", tmpFile, "-C", tempDir], { stdio: "ignore" });
+    }
+
+    // The release archive ships the binary as `hover` / `hover.exe`, which
+    // collides with the Node shim at `bin/hover`. Stage extraction elsewhere,
+    // then move only the native binary into place.
+    const extracted = path.join(tempDir, ARCHIVE_BIN_NAME);
+    if (!fs.existsSync(extracted)) {
+      throw new Error(`Binary not found after extraction: ${extracted}`);
+    }
+
+    try {
+      fs.renameSync(extracted, BIN_PATH);
+    } catch (err) {
+      if (
+        !err ||
+        (err.code !== "EEXIST" && err.code !== "EPERM" && err.code !== "EXDEV")
+      ) {
+        throw err;
+      }
+      fs.copyFileSync(extracted, BIN_PATH);
+      fs.unlinkSync(extracted);
+    }
+  } finally {
+    if (fs.existsSync(tmpFile)) {
+      fs.unlinkSync(tmpFile);
+    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  if (!fs.existsSync(BIN_PATH)) {
-    throw new Error(`Binary not found after extraction: ${BIN_PATH}`);
+
+  if (!isWindows()) {
+    fs.chmodSync(BIN_PATH, 0o755);
   }
   console.log("hover installed successfully.");
 }
