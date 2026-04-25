@@ -434,8 +434,21 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 	// a fresh *db.Task pointer — the batch manager mutates the row in
 	// place under its own lock, and the persister reads only the IDs we
 	// captured at Enqueue time.
+	//
+	// Enqueue is non-blocking by design: HTML capture is best-effort and
+	// must not back-pressure the stream worker (queueing an HTML payload
+	// must never gate task completion). When the queue is saturated the
+	// persister already increments the "skipped" outcome counter; we add
+	// a callsite warn so an operator can correlate the drop with the
+	// specific task without combing the persister logs.
 	if outcome.HTMLUpload != nil && swp.htmlPersister != nil {
-		swp.htmlPersister.Enqueue(ctx, outcome.Task, outcome.HTMLUpload)
+		if !swp.htmlPersister.Enqueue(ctx, outcome.Task, outcome.HTMLUpload) {
+			jobsLog.Warn("html persister queue saturated — payload dropped",
+				"task_id", outcome.Task.ID,
+				"job_id", outcome.Task.JobID,
+				"queue_depth", swp.htmlPersister.QueueDepth(),
+			)
+		}
 	}
 	swp.batchManager.QueueTaskUpdate(outcome.Task)
 

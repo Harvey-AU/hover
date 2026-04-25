@@ -418,10 +418,25 @@ func makeTasksEnqueuedHandler(scheduler *broker.Scheduler, log *logging.Logger) 
 // cyclomatic complexity within the linter budget — the persister setup has
 // its own cluster of nested branches that don't belong inline.
 func buildHTMLPersister(log *logging.Logger, dbQueue *db.DbQueue) *jobs.HTMLPersister {
+	// Distinguish "fully disabled" (both unset — legitimate local dev) from
+	// "partially configured" (one unset — almost certainly a deploy typo).
+	// Treating partial config as disabled would silently recreate the
+	// missing-capture failure mode this stage is meant to fix.
+	provider := strings.TrimSpace(os.Getenv("ARCHIVE_PROVIDER"))
+	bucket := strings.TrimSpace(os.Getenv("ARCHIVE_BUCKET"))
+	switch {
+	case provider == "" && bucket == "":
+		log.Info("ARCHIVE_PROVIDER/ARCHIVE_BUCKET unset — html persister disabled")
+		return nil
+	case provider == "" || bucket == "":
+		log.Fatal("html persister misconfigured — set both ARCHIVE_PROVIDER and ARCHIVE_BUCKET, or neither",
+			"archive_provider_set", provider != "",
+			"archive_bucket_set", bucket != "")
+	}
+
 	archCfg := archive.ConfigFromEnv()
 	if archCfg == nil {
-		log.Info("ARCHIVE_PROVIDER unset — html persister disabled")
-		return nil
+		log.Fatal("html persister: ConfigFromEnv returned nil despite provider+bucket set")
 	}
 
 	coldProvider, err := archive.ProviderFromEnv()

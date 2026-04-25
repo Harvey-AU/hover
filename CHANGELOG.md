@@ -28,7 +28,27 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- HTML persister now drains accepted uploads on graceful shutdown instead of
+  abandoning queued payloads when `Stop()` is called. Stop rejects further
+  Enqueue calls, closes the queue, lets workers drain (uploads keep their
+  per-call timeout), then signals the probe loop and cancels the shared context.
+  Previously a `Stop()` race could silently drop up to `QueueSize` task bodies
+  on every restart.
+- HTML metadata flush failures no longer discard the in-memory batch. Transient
+  DB errors retain the batch for retry on the next tick/size flush so
+  just-uploaded R2 objects keep their metadata pointer; sustained failure caps
+  the retained batch at 8× `BatchSize` and drops oldest, with a `flush_err`
+  outcome on the existing persister upload counter.
+- `cmd/worker` now fails loudly when only one of `ARCHIVE_PROVIDER` /
+  `ARCHIVE_BUCKET` is set. A deploy typo previously fell through to the "feature
+  disabled" branch and silently recreated the missing-capture failure mode this
+  stage is meant to fix.
+- Stream worker now logs a warning when an HTML payload is dropped because the
+  persister queue is saturated, in addition to the persister's `skipped` outcome
+  metric — so an operator can correlate a drop with the specific task without
+  combing persister logs.
 
 ## Full changelog history
 

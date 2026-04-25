@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/archive"
@@ -82,8 +83,20 @@ type HTMLPersister struct {
 
 	queue chan persistJob
 
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
+	// uploadWG tracks the upload workers separately from probeWG so Stop
+	// can wait for the queue to drain before tearing down the probe loop
+	// and cancelling the shared context.
+	uploadWG sync.WaitGroup
+	probeWG  sync.WaitGroup
+	cancel   context.CancelFunc
+
+	// stopped gates Enqueue once Stop begins, so callers see a clean false
+	// instead of a panic on a closed channel.
+	stopped atomic.Bool
+
+	// stopCh signals the probe loop to exit; closed during Stop after the
+	// queue has drained. Worker loops use the closed-queue signal instead.
+	stopCh chan struct{}
 
 	// startOnce / stopOnce keep Start/Stop idempotent so a graceful
 	// shutdown that races with a context cancellation can't panic on
@@ -124,9 +137,10 @@ func NewHTMLPersister(cfg HTMLPersisterConfig, deps HTMLPersisterDeps) (*HTMLPer
 	}
 
 	return &HTMLPersister{
-		cfg:   cfg,
-		deps:  deps,
-		queue: make(chan persistJob, cfg.QueueSize),
+		cfg:    cfg,
+		deps:   deps,
+		queue:  make(chan persistJob, cfg.QueueSize),
+		stopCh: make(chan struct{}),
 	}, nil
 }
 
@@ -137,16 +151,16 @@ func (p *HTMLPersister) Start(ctx context.Context) {
 		ctx, p.cancel = context.WithCancel(ctx)
 
 		for i := 0; i < p.cfg.Workers; i++ {
-			p.wg.Add(1)
+			p.uploadWG.Add(1)
 			go func(id int) {
-				defer p.wg.Done()
+				defer p.uploadWG.Done()
 				p.workerLoop(ctx, id)
 			}(i)
 		}
 
-		p.wg.Add(1)
+		p.probeWG.Add(1)
 		go func() {
-			defer p.wg.Done()
+			defer p.probeWG.Done()
 			p.probeLoop(ctx)
 		}()
 
@@ -159,16 +173,32 @@ func (p *HTMLPersister) Start(ctx context.Context) {
 	})
 }
 
-// Stop signals shutdown and waits for in-flight work to drain.
-// Pending queue entries are processed best-effort; once the context is
-// cancelled, workers exit at the next select and any unflushed metadata
-// rows are flushed under a fresh background context.
+// Stop drains already-accepted uploads before exiting. New Enqueue calls
+// are rejected immediately; the upload workers consume the rest of the
+// queue under the live context (so per-upload timeouts still apply), then
+// the probe loop is signalled and the shared context is cancelled.
+//
+// If the parent ctx passed to Start is cancelled externally before Stop
+// returns, in-flight uploads abort via uploadCtx and the remaining queue
+// is dropped — that is the unavoidable hard-exit path.
 func (p *HTMLPersister) Stop() {
 	p.stopOnce.Do(func() {
+		// Reject further Enqueue calls before closing the channel so a
+		// concurrent send can't race with the close and panic.
+		p.stopped.Store(true)
+		close(p.queue)
+
+		// Workers see ok=false on the queue read once it's drained, flush
+		// their final batch, and exit. uploadWG.Wait blocks until then.
+		p.uploadWG.Wait()
+
+		// Now that no upload work remains, tear down the probe loop and
+		// the shared context together.
+		close(p.stopCh)
 		if p.cancel != nil {
 			p.cancel()
 		}
-		p.wg.Wait()
+		p.probeWG.Wait()
 		jobsLog.Info("html persister stopped")
 	})
 }
@@ -179,6 +209,10 @@ func (p *HTMLPersister) Stop() {
 // sustained backpressure. Returns true when the payload was accepted.
 func (p *HTMLPersister) Enqueue(ctx context.Context, task *db.Task, upload *TaskHTMLUpload) bool {
 	if p == nil || task == nil || upload == nil {
+		return false
+	}
+	if p.stopped.Load() {
+		observability.RecordHTMLPersistUpload(ctx, "skipped")
 		return false
 	}
 	job := persistJob{
@@ -212,6 +246,12 @@ func (p *HTMLPersister) workerLoop(ctx context.Context, workerID int) {
 	ticker := time.NewTicker(p.cfg.FlushInterval)
 	defer ticker.Stop()
 
+	// Cap the retained-on-error batch so a sustained DB outage can't grow
+	// per-worker memory without bound. Once we exceed this, drop the
+	// oldest rows (best-effort: R2 still has the payload, we just lose
+	// the metadata pointer for those).
+	maxRetained := p.cfg.BatchSize * 8
+
 	flush := func(reason string) {
 		if len(batch) == 0 {
 			return
@@ -224,12 +264,22 @@ func (p *HTMLPersister) workerLoop(ctx context.Context, workerID int) {
 		flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := p.deps.DBQueue.BatchUpsertTaskHTMLMetadata(flushCtx, batch); err != nil {
-			log.Error("html metadata flush failed",
+			// Keep the batch so the next tick/size flush retries — losing
+			// the metadata UPDATE here would orphan the just-uploaded R2
+			// objects (no row pointer back to them).
+			observability.RecordHTMLPersistUpload(flushCtx, "flush_err")
+			log.Error("html metadata flush failed — retaining batch for retry",
 				"error", err, "rows", len(batch), "reason", reason)
-		} else {
-			log.Debug("html metadata flushed",
-				"rows", len(batch), "reason", reason)
+			if len(batch) > maxRetained {
+				dropped := len(batch) - maxRetained
+				batch = append(batch[:0], batch[dropped:]...)
+				log.Warn("html metadata retained batch capped — oldest rows dropped",
+					"dropped", dropped, "kept", len(batch))
+			}
+			return
 		}
+		log.Debug("html metadata flushed",
+			"rows", len(batch), "reason", reason)
 		batch = batch[:0]
 	}
 
@@ -327,6 +377,8 @@ func (p *HTMLPersister) probeLoop(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		select {
+		case <-p.stopCh:
+			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
