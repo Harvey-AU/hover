@@ -42,6 +42,10 @@ On merge, CI will:
 - Worker metrics now scraped by Alloy sidecar (added to Docker build); four
   broken Grafana panels restored after metrics rename; semaphore wait corrected
   to µs
+- `hover` CLI on Windows: replaced `/bin/sh` stub with a Node launcher so
+  `npm install -g @harvey-au/hover` produces a working `hover.cmd`/`hover.ps1`
+  shim; install script now extracts the Go binary as `hover-bin[.exe]` to avoid
+  a filename collision with the launcher
 
 ### Changed
 

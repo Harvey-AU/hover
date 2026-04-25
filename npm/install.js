@@ -8,8 +8,9 @@ const path = require("path");
 
 const REPO = "Harvey-AU/hover";
 const BIN_DIR = path.join(__dirname, "bin");
-const BIN_NAME = process.platform === "win32" ? "hover.exe" : "hover";
+const BIN_NAME = process.platform === "win32" ? "hover-bin.exe" : "hover-bin";
 const BIN_PATH = path.join(BIN_DIR, BIN_NAME);
+const ARCHIVE_BIN_NAME = process.platform === "win32" ? "hover.exe" : "hover";
 
 const PLATFORM_MAP = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
@@ -90,10 +91,18 @@ async function main() {
     fs.writeFileSync(tmpFile, buffer);
     execFileSync("tar", ["xzf", tmpFile, "-C", BIN_DIR], { stdio: "ignore" });
     fs.unlinkSync(tmpFile);
-    fs.chmodSync(BIN_PATH, 0o755);
   }
-  if (!fs.existsSync(BIN_PATH)) {
-    throw new Error(`Binary not found after extraction: ${BIN_PATH}`);
+
+  // The release archive ships the binary as `hover` / `hover.exe`, which
+  // collides with the Node shim at `bin/hover`. Rename it so the shim and the
+  // real binary can coexist.
+  const extracted = path.join(BIN_DIR, ARCHIVE_BIN_NAME);
+  if (!fs.existsSync(extracted)) {
+    throw new Error(`Binary not found after extraction: ${extracted}`);
+  }
+  fs.renameSync(extracted, BIN_PATH);
+  if (!isWindows()) {
+    fs.chmodSync(BIN_PATH, 0o755);
   }
   console.log("hover installed successfully.");
 }
