@@ -28,7 +28,24 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Added
+
+- Grafana deploy annotations posted on every main merge; dashboards synced from
+  repo; panels and traces scoped by app
+
+### Fixed
+
+- Post-redis-broker-merge throughput regression resolved — pacer, FIFO ordering,
+  and domain-delay defaults restored
+- Broker counter drift stabilised with configurable env vars; reclaim
+  classification hardened; metric label cardinality reduced
+- Worker metrics now scraped by Alloy sidecar (added to Docker build); four
+  broken Grafana panels restored after metrics rename; semaphore wait corrected
+  to µs
+
+### Changed
+
+- Go bumped to 1.26.2 for security fixes
 
 ## Full changelog history
 
