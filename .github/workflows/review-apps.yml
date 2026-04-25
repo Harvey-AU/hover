@@ -323,6 +323,7 @@ jobs:
             ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
             ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
             ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            ARCHIVE_PATH_PREFIX="$PR_NUMBER" \
             GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
             GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
             --app $WORKER_APP_NAME --stage
@@ -331,10 +332,11 @@ jobs:
             --app $WORKER_APP_NAME \
             --config .fly/review_apps.worker.toml \
             --local-only \
-            --image hover-worker-pr-${{ github.event.number }}
+            --image "hover-worker-pr-$PR_NUMBER"
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
+          PR_NUMBER: ${{ github.event.number }}
 
       - name: Deploy Review App
         id: deploy

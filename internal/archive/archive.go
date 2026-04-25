@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -101,8 +102,19 @@ func ConfigFromEnv() *Config {
 
 // TaskHTMLObjectPath returns the canonical object path for a task HTML blob in
 // both hot storage and cold storage.
+//
+// When ARCHIVE_PATH_PREFIX is set, it is prepended (with a single "/" join)
+// so review-app deployments can land in their own R2 sub-tree without
+// touching the production bucket layout — e.g. ARCHIVE_PATH_PREFIX=347 on
+// a review app produces "347/jobs/<job>/tasks/<task>/page-content.html.gz".
+// Empty prefix preserves the original production path exactly.
 func TaskHTMLObjectPath(jobID, taskID string) string {
-	return fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
+	base := fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
+	prefix := strings.Trim(strings.TrimSpace(os.Getenv("ARCHIVE_PATH_PREFIX")), "/")
+	if prefix == "" {
+		return base
+	}
+	return prefix + "/" + base
 }
 
 // ColdKey returns the canonical cold-storage object key for a task HTML blob.

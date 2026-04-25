@@ -28,6 +28,22 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Added
+
+- `ARCHIVE_PATH_PREFIX` env var on the worker. When set, `TaskHTMLObjectPath`
+  prepends the prefix to every persisted HTML key — so review-app deployments
+  can land in their own R2 sub-tree and be cleaned out as a single sweep. Empty
+  prefix preserves the production path layout exactly.
+
+### Changed
+
+- Review-app workers now write HTML to a dedicated bucket
+  `native-hover-archive-review` with an `<pr-number>/` prefix
+  (`native-hover-archive-review/<pr>/jobs/<job>/tasks/<task>/...`). Cleanup
+  becomes a single bucket purge (or R2 lifecycle rule) instead of per-PR prefix
+  surgery on the production bucket. The bucket itself must be pre-created in R2
+  — credentials in 1Password already carry write access.
+
 ### Fixed
 
 - HTML persister now drains accepted uploads on graceful shutdown instead of
