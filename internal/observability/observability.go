@@ -821,19 +821,19 @@ func RecordWorkerConcurrency(ctx context.Context, workerID int, delta int64, cap
 	}
 }
 
-// RecordJobConcurrencySnapshot captures the running task count and concurrency limit for a job.
+// RecordJobConcurrencySnapshot captures the running task count and concurrency
+// limit for a job. jobID is retained in the signature for call-site stability
+// but omitted from metric labels — per-job cardinality is unbounded at launch
+// scale and these gauges are intended for worker-wide snapshots.
 func RecordJobConcurrencySnapshot(ctx context.Context, jobID string, runningTasks int64, concurrencyLimit int64, unlimited bool) {
+	_ = jobID
 	if jobRunningTasksGauge != nil {
-		jobRunningTasksGauge.Record(ctx, runningTasks,
-			metric.WithAttributes(attribute.String("job.id", jobID)))
+		jobRunningTasksGauge.Record(ctx, runningTasks)
 	}
 
 	if jobConcurrencyLimitGauge != nil {
 		jobConcurrencyLimitGauge.Record(ctx, concurrencyLimit,
-			metric.WithAttributes(
-				attribute.String("job.id", jobID),
-				attribute.Bool("job.concurrency_unlimited", unlimited),
-			))
+			metric.WithAttributes(attribute.Bool("job.concurrency_unlimited", unlimited)))
 	}
 }
 
@@ -1040,7 +1040,7 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	brokerOutboxAgeGauge, err = meter.Float64Gauge(
 		"bee.broker.outbox_age_seconds",
 		metric.WithUnit("s"),
-		metric.WithDescription("Age of the oldest due task_outbox row (NOW - MIN(run_at))"),
+		metric.WithDescription("Dwell time of the oldest due task_outbox row (NOW - MIN(created_at))"),
 	)
 	if err != nil {
 		return err
@@ -1153,25 +1153,29 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	return err
 }
 
-// BrokerStreamStats captures per-job broker depth probed from Redis.
+// BrokerStreamStats captures worker-wide broker depth, aggregated across all
+// active jobs. Previously emitted per-job with a job.id label; the label was
+// removed to keep Mimir series cardinality bounded as job counts grow. The
+// original dashboard queries used sum(...) across the per-job series, so
+// emitting the pre-aggregated total preserves the dashboard semantics.
 type BrokerStreamStats struct {
-	JobID          string
 	StreamLength   int64
 	ScheduledDepth int64
 	Pending        int64
 }
 
-// RecordBrokerStreamStats emits Tier 1 per-job depth gauges.
+// RecordBrokerStreamStats emits Tier 1 broker depth gauges aggregated across
+// all active jobs in the probe tick. Per-job drill-down is intentionally
+// unavailable — use traces or logs (which carry job_id) for that.
 func RecordBrokerStreamStats(ctx context.Context, s BrokerStreamStats) {
-	attrs := metric.WithAttributes(attribute.String("job.id", s.JobID))
 	if brokerStreamLengthGauge != nil {
-		brokerStreamLengthGauge.Record(ctx, s.StreamLength, attrs)
+		brokerStreamLengthGauge.Record(ctx, s.StreamLength)
 	}
 	if brokerScheduledDepthGauge != nil {
-		brokerScheduledDepthGauge.Record(ctx, s.ScheduledDepth, attrs)
+		brokerScheduledDepthGauge.Record(ctx, s.ScheduledDepth)
 	}
 	if brokerConsumerPendingGauge != nil {
-		brokerConsumerPendingGauge.Record(ctx, s.Pending, attrs)
+		brokerConsumerPendingGauge.Record(ctx, s.Pending)
 	}
 }
 
@@ -1268,12 +1272,15 @@ func RecordBrokerPacerDelay(ctx context.Context, domain string, delayMs float64)
 
 // RecordBrokerCounterSyncSkew records the absolute difference between
 // the Redis running counter and Postgres running_tasks at sync time.
+// jobID retained for call-site stability; omitted from labels to keep
+// cardinality bounded — the histogram captures the distribution across
+// all jobs, which is the signal dashboards care about.
 func RecordBrokerCounterSyncSkew(ctx context.Context, jobID string, skew float64) {
+	_ = jobID
 	if brokerCounterSyncSkew == nil {
 		return
 	}
-	brokerCounterSyncSkew.Record(ctx, skew,
-		metric.WithAttributes(attribute.String("job.id", jobID)))
+	brokerCounterSyncSkew.Record(ctx, skew)
 }
 
 // RecordBrokerCounterPELSkew records the absolute difference between the

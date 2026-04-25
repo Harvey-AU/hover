@@ -398,12 +398,12 @@ func refreshDomainStatuses(ctx context.Context, states []domainRunState, apiURL,
 	}
 }
 
-// Test domains — 215 diverse real-world sites across many categories.
+// Test domains — ~400 diverse real-world sites across many categories.
 var testDomains = []string{
-	// Australian businesses (10)
+	// Australian businesses (9)
 	"bankaust.com.au", "bunnings.com.au",
 	"responsibleinvestment.org", "envirotecture.com.au", "cpsn.org.au", "teamharvey.co", "goodnative.co",
-	"jbhifi.com.au", "kmart.com.au", "officeworks.com.au",
+	"jbhifi.com.au", "kmart.com.au",
 
 	// E-commerce & retail (7)
 	"merrypeople.com", "allbirds.com", "everlane.com", "warbyparker.com",
@@ -412,20 +412,19 @@ var testDomains = []string{
 	// Tech blogs & publications (5)
 	"csswizardry.com", "heydesigner.com", "sidebar.io", "stefanjudis.com", "smolblog.com",
 
-	// WordPress blogs & design sites (10)
-	"smashingmagazine.com", "css-tricks.com", "webdesignerdepot.com", "sitepoint.com", "alistapart.com",
+	// WordPress blogs & design sites (9)
+	"smashingmagazine.com", "css-tricks.com", "sitepoint.com", "alistapart.com",
 	"designmodo.com", "creativebloq.com", "awwwards.com", "onextrapixel.com", "hongkiat.com",
 
-	// Small business / agency sites (5)
-	"zeroseven.com.au", "noice.com.au", "willandco.com.au",
-	"tworedshoes.com.au",
+	// Small business / agency sites (3)
+	"zeroseven.com.au", "willandco.com.au", "tworedshoes.com.au",
 
 	// Developer docs & tools (8)
 	"fly.io", "railway.app", "render.com", "tailwindcss.com",
 	"nextjs.org", "react.dev", "astro.build", "svelte.dev",
 
 	// Additional dev frameworks & tooling (25)
-	"vitejs.dev", "nuxt.com", "remix.run", "qwik.dev",
+	"vitejs.dev", "nuxt.com", "qwik.dev",
 	"parceljs.org", "rollupjs.org", "esbuild.github.io", "bun.sh", "deno.com",
 	"cypress.io", "vitest.dev", "pnpm.io", "turbo.build",
 	"nx.dev", "oclif.io", "temporal.io", "directus.io", "strapi.io",
@@ -440,11 +439,11 @@ var testDomains = []string{
 	// Niche e-commerce & DTC brands (14)
 	"feals.com", "magicspoon.com", "atlascoffeeclub.com",
 	"blueland.com", "outerknown.com", "grovemade.com",
-	"ridgewallet.com", "ouraring.com", "carawayhome.com",
+	"ridgewallet.com", "ouraring.com",
 	"bellroy.com", "ritual.com", "cuyana.com", "thesill.com", "parachutehome.com",
 
-	// Indie analytics & SaaS (7)
-	"plausible.io", "simpleanalytics.com", "savvycal.com", "commandbar.com",
+	// Indie analytics & SaaS (6)
+	"plausible.io", "simpleanalytics.com", "savvycal.com",
 	"pirsch.io", "clarityflow.com", "swapcard.com",
 
 	// Programming languages (8)
@@ -472,7 +471,7 @@ var testDomains = []string{
 
 	// Design & UX resources (7)
 	"framer.com", "nngroup.com", "typewolf.com",
-	"fontsinuse.com", "siteinspire.com", "mobbin.com", "lookup.design",
+	"fontsinuse.com", "mobbin.com", "lookup.design",
 
 	// Learning & developer community (8)
 	"freecodecamp.org", "theodinproject.com", "exercism.org",
@@ -483,16 +482,15 @@ var testDomains = []string{
 	"ghost.org", "beehiiv.com", "buttondown.email",
 	"obsidian.md", "standardnotes.com",
 
-	// Australian & NZ lifestyle brands (8)
-	"frank-body.com", "afends.com", "rollas.com.au", "surfstitch.com",
-	"thankyou.co", "cottonon.com", "lovethelabel.com.au", "eucalyptus.com.au",
+	// Australian & NZ lifestyle brands (4)
+	"afends.com", "rollas.com.au", "surfstitch.com", "thankyou.co",
 
 	// Tech media & personal blogs (7)
 	"arstechnica.com", "thenextweb.com", "paulgraham.com",
 	"daringfireball.net", "simonwillison.net", "tonsky.me", "fasterthanli.me",
 
-	// DTC & lifestyle brands (9)
-	"lululemon.com", "cotopaxi.com", "patagonia.com",
+	// DTC & lifestyle brands (8)
+	"cotopaxi.com", "patagonia.com",
 	"mejuri.com", "ugmonk.com", "framebridge.com",
 	"ruggable.com", "prose.com", "maude.com",
 
@@ -502,6 +500,104 @@ var testDomains = []string{
 
 	// Editors & dev environments (2)
 	"zed.dev", "helix-editor.com",
+
+	// Cloud & infrastructure (10)
+	"cloudflare.com", "digitalocean.com", "hetzner.com", "linode.com", "vultr.com",
+	"scaleway.com", "ovhcloud.com", "backblaze.com", "bunny.net", "fastly.com",
+
+	// CI/CD & DevOps (10)
+	"circleci.com", "travisci.com", "semaphoreci.com", "harness.io", "buildkite.com",
+	"earthly.dev", "depot.dev", "codemagic.io", "bitrise.io", "woodpecker-ci.org",
+
+	// Monitoring & observability (10)
+	"datadog.com", "newrelic.com", "dynatrace.com", "honeycomb.io", "signoz.io",
+	"highlight.io", "cronitor.io", "uptimerobot.com", "betterstack.com", "checkly.com",
+
+	// Auth & identity (10)
+	"auth0.com", "okta.com", "keycloak.org", "ory.sh", "zitadel.com",
+	"logto.io", "fusionauth.io", "supertokens.com", "permit.io", "cerbos.dev",
+
+	// Databases & data (13)
+	"mongodb.com", "mariadb.org", "mysql.com", "clickhouse.com", "timescale.com",
+	"questdb.io", "duckdb.org", "motherduck.com", "arangodb.com",
+	"hasura.io", "prisma.io", "drizzle.team", "sqlc.dev",
+
+	// Search (5)
+	"algolia.com", "meilisearch.com", "typesense.org", "elastic.co", "opensearch.org",
+
+	// Email & messaging (8)
+	"sendgrid.com", "mailgun.com", "postmarkapp.com", "mailchimp.com",
+	"convertkit.com", "brevo.com", "loops.so", "emailoctopus.com",
+
+	// Payments & billing (7)
+	"stripe.com", "paddle.com", "lemonsqueezy.com", "gumroad.com",
+	"chargebee.com", "recurly.com", "revenuecat.com",
+
+	// CMS & headless (7)
+	"contentful.com", "prismic.io", "storyblok.com", "tina.io",
+	"keystatic.com", "decapcms.org", "builder.io",
+
+	// Documentation tools (8)
+	"readme.com", "stoplight.io", "bump.sh", "redocly.com",
+	"swagger.io", "postman.com", "hoppscotch.io", "httpie.io",
+
+	// Feature flags & experimentation (7)
+	"launchdarkly.com", "flagsmith.com", "growthbook.io", "unleash.io",
+	"statsig.com", "flipt.io", "openfeature.dev",
+
+	// Frontend tooling (7)
+	"storybook.js.org", "chromatic.com", "bundlephobia.com", "packagephobia.com",
+	"jsr.io", "npmjs.com", "socket.dev",
+
+	// Go ecosystem (6)
+	"go.dev", "pkg.go.dev", "gobyexample.com", "gorm.io", "echo.labstack.com", "gofiber.io",
+
+	// Rust ecosystem (4)
+	"crates.io", "docs.rs", "lib.rs", "blessed.rs",
+
+	// Python ecosystem (6)
+	"pypi.org", "pydantic.dev", "sqlalchemy.org", "rye.astral.sh", "uv.astral.sh", "python-poetry.org",
+
+	// More Australian businesses (20)
+	"canva.com", "atlassian.com", "seek.com.au", "realestate.com.au", "carsales.com.au",
+	"domain.com.au", "abc.net.au", "woolworths.com.au", "coles.com.au",
+	"harveynorman.com.au", "bigw.com.au", "myer.com.au", "davidjones.com",
+	"rebel.com.au", "afl.com.au", "nrl.com.au", "cricket.com.au",
+	"gumtree.com.au", "redbubble.com", "envato.com",
+
+	// Tech news & blogs (10)
+	"techcrunch.com", "theverge.com", "ycombinator.com", "indiehackers.com", "hackernoon.com",
+	"tldr.tech", "javascriptweekly.com", "golangweekly.com", "rubyweekly.com", "postgresweekly.com",
+
+	// Open source tools (9)
+	"brew.sh", "nixos.org", "archlinux.org", "ubuntu.com", "debian.org",
+	"fedoraproject.org", "alpinelinux.org", "freebsd.org", "openbsd.org",
+
+	// Security & compliance (6)
+	"semgrep.dev", "falco.org", "openpolicyagent.org", "infisical.com", "doppler.com", "vaultproject.io",
+
+	// AI & ML tools (9)
+	"huggingface.co", "langchain.com", "llamaindex.ai", "ollama.com", "replicate.com",
+	"modal.com", "together.ai", "fireworks.ai", "groq.com",
+
+	// APIs & GraphQL (3)
+	"graphql.org", "apollographql.com", "trpc.io",
+
+	// Creative & gaming (4)
+	"godotengine.org", "blender.org", "itch.io", "gamedev.net",
+
+	// More productivity & SaaS (8)
+	"notion.so", "airtable.com", "monday.com", "asana.com",
+	"clickup.com", "todoist.com", "producthunt.com", "substack.com",
+
+	// Version control & code tools (4)
+	"gitlab.com", "bitbucket.org", "sourcehut.org", "codeberg.org",
+
+	// Design & accessibility (5)
+	"figma.com", "sketch.com", "zeplin.io", "a11yproject.com", "webaim.org",
+
+	// Open standards (4)
+	"w3.org", "whatwg.org", "tc39.es", "ecma-international.org",
 }
 
 func printJobHeader(id *identity, totalRuns, domainCount int, cfg *jobsConfig) {

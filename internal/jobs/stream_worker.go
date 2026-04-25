@@ -134,24 +134,53 @@ type StreamWorkerPool struct {
 	activeJobs   []string
 	activeJobsMu sync.RWMutex
 
+	// linkDiscoverySem caps concurrent calls into ProcessDiscoveredLinks.
+	// Each link-discovery call runs CreatePageRecords + EnqueueJobURLs on
+	// the bulk DB lane, so under heavy load all NumWorkers × TasksPerWorker
+	// goroutines used to pile onto the pool simultaneously and saturate it
+	// (HOVER-KG, 2k+ goroutines at one event). Capping this path leaves
+	// pool headroom for promotion, counter sync, and the outbox sweeper.
+	linkDiscoverySem chan struct{}
+
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
+}
+
+// defaultLinkDiscoveryMaxInflight: at 32 the cap throttled production
+// throughput to ~3–3.5k tasks/min (each call is bulk-pool-bound, so the
+// semaphore ceiling becomes the global enqueue ceiling). 128 keeps fan-out
+// well clear of the 2k+ goroutine event that motivated the cap while
+// restoring headroom above the previous 4k tasks/min run rate.
+const defaultLinkDiscoveryMaxInflight = 128
+
+// linkDiscoveryMaxInflight returns the configured cap on concurrent
+// in-flight ProcessDiscoveredLinks executions.
+func linkDiscoveryMaxInflight() int {
+	if v := strings.TrimSpace(os.Getenv("JOBS_LINK_DISCOVERY_MAX_INFLIGHT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+		jobsLog.Warn("invalid JOBS_LINK_DISCOVERY_MAX_INFLIGHT, using default",
+			"value", v, "default", defaultLinkDiscoveryMaxInflight)
+	}
+	return defaultLinkDiscoveryMaxInflight
 }
 
 // NewStreamWorkerPool creates a StreamWorkerPool.
 func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWorkerPool {
 	return &StreamWorkerPool{
-		consumer:      deps.Consumer,
-		scheduler:     deps.Scheduler,
-		counters:      deps.Counters,
-		pacer:         deps.Pacer,
-		executor:      deps.Executor,
-		batchManager:  deps.BatchManager,
-		dbQueue:       deps.DBQueue,
-		jobManager:    deps.JobManager,
-		htmlPersister: deps.HTMLPersister,
-		opts:          opts,
-		jobInfoCache:  make(map[string]*cachedJobInfo),
+		consumer:         deps.Consumer,
+		scheduler:        deps.Scheduler,
+		counters:         deps.Counters,
+		pacer:            deps.Pacer,
+		executor:         deps.Executor,
+		batchManager:     deps.BatchManager,
+		dbQueue:          deps.DBQueue,
+		jobManager:       deps.JobManager,
+		htmlPersister:    deps.HTMLPersister,
+		opts:             opts,
+		jobInfoCache:     make(map[string]*cachedJobInfo),
+		linkDiscoverySem: make(chan struct{}, linkDiscoveryMaxInflight()),
 	}
 }
 
@@ -419,6 +448,19 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome *TaskOutcome) {
 	if swp.jobManager == nil || len(outcome.DiscoveredLinks) == 0 {
 		return
+	}
+
+	// Cap concurrent link-discovery DB chains so the bulk pool isn't
+	// drained by every worker hitting CreatePageRecords + EnqueueJobURLs
+	// simultaneously (HOVER-KG). Block on the semaphore so the caller
+	// goroutine backpressures naturally; ctx cancellation aborts the wait.
+	if swp.linkDiscoverySem != nil {
+		select {
+		case swp.linkDiscoverySem <- struct{}{}:
+			defer func() { <-swp.linkDiscoverySem }()
+		case <-ctx.Done():
+			return
+		}
 	}
 
 	// Build a Task with the fields ProcessDiscoveredLinks needs.

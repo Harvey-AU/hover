@@ -141,81 +141,85 @@ func (rc *RunningCounters) StartDBSync(ctx context.Context, interval time.Durati
 
 // DefaultDBSyncFunc returns a DBSyncFunc that updates the jobs table
 // running_tasks column using the provided *sql.DB.
+//
+// Each statement runs in its own implicit transaction — there is no outer
+// BEGIN/COMMIT. Wrapping the per-job UPDATEs in a single tx (the previous
+// design) held row locks on every job in the batch until commit, and the
+// AFTER trigger update_job_queue_counters fires from concurrent task status
+// changes and also writes to those jobs rows. The two paths serialised on
+// the same row locks, dragging tx duration to several seconds and saturating
+// the bulk DB pool.
+//
+// Issuing each UPDATE outside an outer tx keeps row-lock hold time to a
+// single statement — milliseconds — so concurrent counter syncs and trigger
+// writes interleave instead of queuing. The skew metric loses its tx-level
+// snapshot consistency, but the value was already approximate (Redis and PG
+// drift between ticks anyway), so the trade-off is fine.
 func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 	return func(ctx context.Context, counts map[string]int64) error {
 		// When counts is empty all jobs have finished — reset any stale
 		// positive running_tasks left in Postgres.
 		if len(counts) == 0 {
 			_, err := sqlDB.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = 0 WHERE running_tasks > 0 AND status IN ('running', 'pending')`)
+				`UPDATE jobs SET running_tasks = 0
+				   WHERE running_tasks > 0
+				     AND status IN ('running', 'pending')`)
 			return err
 		}
 
-		tx, err := sqlDB.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("begin tx: %w", err)
+		jobIDs := make([]string, 0, len(counts))
+		for jobID := range counts {
+			jobIDs = append(jobIDs, jobID)
 		}
-		defer func() { _ = tx.Rollback() }()
 
 		// Snapshot PG running_tasks before writing so we can emit the
-		// Redis-vs-PG skew per job. A consistent skew > small noise
-		// usually means a counter leak (increment/decrement imbalance)
-		// or a sync lag spike.
-		jobIDsForSnapshot := make([]string, 0, len(counts))
-		for jobID := range counts {
-			jobIDsForSnapshot = append(jobIDsForSnapshot, jobID)
-		}
-		priorCounts := make(map[string]int64, len(counts))
-		if len(jobIDsForSnapshot) > 0 {
-			rows, qerr := tx.QueryContext(ctx,
-				`SELECT id, running_tasks FROM jobs WHERE id = ANY($1)`,
-				pq.Array(jobIDsForSnapshot))
-			if qerr == nil {
-				for rows.Next() {
-					var id string
-					var rt int64
-					if scanErr := rows.Scan(&id, &rt); scanErr == nil {
-						priorCounts[id] = rt
-					}
+		// Redis-vs-PG skew per job. Read-only, runs outside any tx.
+		priorCounts := make(map[string]int64, len(jobIDs))
+		rows, qerr := sqlDB.QueryContext(ctx,
+			`SELECT id, running_tasks FROM jobs WHERE id = ANY($1)`,
+			pq.Array(jobIDs))
+		if qerr == nil {
+			for rows.Next() {
+				var id string
+				var rt int64
+				if scanErr := rows.Scan(&id, &rt); scanErr == nil {
+					priorCounts[id] = rt
 				}
-				_ = rows.Close()
 			}
+			_ = rows.Close()
 		}
 
-		// Intentionally not using tx.PrepareContext: under Supabase's
-		// pgbouncer transaction pooling, the backend connection is shared
-		// across logical clients, so deterministic prepared-statement names
-		// (pgx v5 hashes the SQL to stmt_<md5>) collide with prior prepares
-		// left on the backend by another worker. That surfaces as
-		// "prepared statement already exists" (SQLSTATE 42P05) and kills
-		// the sync tick. ExecContext honours default_query_exec_mode=
-		// simple_protocol set on the pool, avoiding PREPARE entirely.
-		jobIDs := make([]string, 0, len(counts))
-		for jobID, count := range counts {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`,
+		// Per-job UPDATEs as independent statements. ExecContext (rather
+		// than PrepareContext) avoids the SQLSTATE 42P05 "prepared
+		// statement already exists" collision under Supabase's pgbouncer
+		// transaction pooling — pgx v5 hashes SQL to deterministic
+		// stmt_<md5> names that clash across logical clients sharing the
+		// same backend.
+		for _, jobID := range jobIDs {
+			count := counts[jobID]
+			if _, err := sqlDB.ExecContext(ctx,
+				`UPDATE jobs SET running_tasks = $1
+				   WHERE id = $2 AND status IN ('running', 'pending')`,
 				count, jobID); err != nil {
 				return fmt.Errorf("update job %s: %w", jobID, err)
 			}
-			jobIDs = append(jobIDs, jobID)
 			observability.RecordBrokerCounterSyncSkew(ctx, jobID,
 				math.Abs(float64(count-priorCounts[jobID])))
 		}
 
 		// Zero out any active jobs whose counters are no longer tracked
-		// (they finished between sync intervals).
-		if len(jobIDs) > 0 {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = 0
-				 WHERE running_tasks > 0
-				   AND status IN ('running', 'pending')
-				   AND id != ALL($1)`,
-				pq.Array(jobIDs),
-			); err != nil {
-				return fmt.Errorf("zero stale running_tasks: %w", err)
-			}
+		// (they finished between sync intervals). Single statement —
+		// holds locks only for the duration of the UPDATE.
+		if _, err := sqlDB.ExecContext(ctx,
+			`UPDATE jobs SET running_tasks = 0
+			   WHERE running_tasks > 0
+			     AND status IN ('running', 'pending')
+			     AND id != ALL($1)`,
+			pq.Array(jobIDs),
+		); err != nil {
+			return fmt.Errorf("zero stale running_tasks: %w", err)
 		}
 
-		return tx.Commit()
+		return nil
 	}
 }

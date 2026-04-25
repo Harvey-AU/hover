@@ -28,6 +28,147 @@ On merge, CI will:
 
 ## [Unreleased]
 
+_Add unreleased changes here._
+
+## Full changelog history
+
+## [0.33.7] – 2026-04-25
+
+### Fixed
+
+- `promote_waiting_with_outbox` no longer inherits `tasks.run_at` into newly-
+  inserted `task_outbox` rows. Waiting tasks always carry `run_at = created_at`,
+  so promoting a task that had been waiting for hours/days baked an ancient
+  timestamp into the outbox row. Production ran ~881k waiting tasks with
+  `run_at` more than 30 minutes old (oldest > 3 days), causing the
+  `bee.broker.outbox_age_seconds` gauge to climb past 5 hours despite actual
+  outbox dwell times being sub-second. Outbox rows now use `NOW()` for `run_at`
+  on initial insert; retry/back-off paths in `Sweeper.bumpAttempts` continue to
+  set future `run_at` values.
+- `bee.broker.outbox_age_seconds` gauge now measures actual outbox dwell time
+  (`NOW() - MIN(created_at)` over due rows) instead of staleness of the
+  inherited `run_at` value.
+
+## [0.33.6] – 2026-04-25
+
+### Fixed
+
+- Worker counter sync no longer wraps per-job UPDATEs in an outer transaction.
+  The previous design (15d146f3) held row locks on every job in the batch until
+  commit, serialising against the `update_job_queue_counters` AFTER trigger
+  fired by concurrent `promote_waiting_with_outbox` calls. Live
+  `pg_stat_activity` showed a single counter-sync UPDATE blocking promoters for
+  unrelated jobs, dragging tx duration past 2s and saturating the bulk DB pool.
+  Each statement now runs in its own implicit transaction so row-lock hold time
+  drops to milliseconds.
+
+### Changed
+
+- Lift `JOBS_LINK_DISCOVERY_MAX_INFLIGHT` default from 32 to 128 and pin it on
+  `fly.worker.toml`. The 32-cap was the throughput ceiling driving the ~3–3.5k
+  tasks/min plateau in production; with the counter-sync fix the bulk pool
+  clears fast enough for the higher cap to stay well below the
+  goroutine-explosion event that motivated the original limit.
+
+## [0.33.5] – 2026-04-25
+
+### Added
+
+- Grafana deploy annotations posted on every main merge; dashboards synced from
+  repo; panels and traces scoped by app
+
+### Fixed
+
+- Post-redis-broker-merge throughput regression resolved — pacer, FIFO ordering,
+  and domain-delay defaults restored
+- Broker counter drift stabilised with configurable env vars; reclaim
+  classification hardened; metric label cardinality reduced
+- Worker metrics now scraped by Alloy sidecar (added to Docker build); four
+  broken Grafana panels restored after metrics rename; semaphore wait corrected
+  to µs
+- `hover` CLI on Windows: replaced `/bin/sh` stub with a Node launcher so
+  `npm install -g @harvey-au/hover` produces a working `hover.cmd`/`hover.ps1`
+  shim; install script now extracts the Go binary as `hover-bin[.exe]` to avoid
+  a filename collision with the launcher
+
+### Changed
+
+- Go bumped to 1.26.2 for security fixes
+
+## [0.33.4] – 2026-04-25
+
+### Fixed
+
+- `promote_waiting_with_outbox` now sorts the picked CTE with `id ASC` as a
+  tie-breaker and orders the outbox `INSERT … SELECT` by `id`, making concurrent
+  promoters lock task rows in a deterministic sequence. The AFTER trigger
+  `trg_update_job_queue_counters` then updates the parent `jobs` row on top of
+  an acyclic lock graph, so the 40P01 deadlock that fired ~3,000 times during
+  the 2026-04-24 overnight load test (Sentry HOVER-K2) cannot form. Migration
+  `20260425000001_promote_waiting_deterministic_lock_order`.
+- `broker.DefaultDBSyncFunc` now sorts `jobIDs` before issuing per-job
+  `UPDATE jobs SET running_tasks = …` and wraps the zero-stale UPDATE in a
+  `WITH targets AS (… ORDER BY id FOR UPDATE) UPDATE jobs … FROM targets` CTE.
+  Previously the sync loop iterated a Go map (random order), so two worker VMs
+  ticking concurrently locked `jobs` rows in different sequences and deadlocked
+  (Sentry HOVER-K4, ~2,000 events/12h, escalating).
+- `StreamWorkerPool.handleDiscoveredLinks` now acquires from a bounded semaphore
+  (`JOBS_LINK_DISCOVERY_MAX_INFLIGHT`, default 32) before each link is enqueued.
+  Previously the fan-out was unbounded; one Sentry event captured 2,153 live
+  goroutines in the worker (HOVER-KG, ~2,500 events/12h).
+- Outbox sweeper `StatementTimeout` raised from 5 s to 15 s and made
+  env-overridable via `OUTBOX_SWEEP_STATEMENT_TIMEOUT_MS`, so the
+  `bump attempts` UPDATE no longer hits the context deadline when the shedding
+  pool is under pressure (Sentry HOVER-K3).
+
+### Changed
+
+- Per-job `job.id` label removed from the broker stream-depth gauges
+  (`bee.broker.stream_length`, `bee.broker.scheduled_zset_depth`,
+  `bee.broker.consumer_pending`), the running-tasks / concurrency-limit gauges
+  (`bee.jobs.running_tasks`, `bee.jobs.concurrency_limit`), and the counter-sync
+  skew histogram (`bee.broker.counter_sync_skew`). The probe loop now sums
+  per-job depths across all active jobs and emits one aggregate per tick, so
+  dashboard `sum(...)` queries continue to render the correct totals while Mimir
+  series cardinality drops from `6N + 1` to `7` per worker (≈85× reduction at
+  100 jobs × 30 workers). Per-job drill-down on these metrics is intentionally
+  gone — use trace spans (which still carry `task.domain` / `task.id` /
+  `job.id`) for that.
+- Crawler `http.Transport` configuration centralised in `newBaseHTTPTransport`.
+  Both `CreateHTTPClient` and the colly base transport now derive from the
+  helper, and the probe-only HEAD client derives from it too with overrides for
+  its smaller pool. Among other things this makes `ForceAttemptHTTP2: false`
+  apply uniformly across the three clients.
+- `ForceAttemptHTTP2: false` on crawler transports silences ~1,200
+  `received DATA after END_STREAM` log lines per heavy-load window; ALPN still
+  negotiates HTTP/1.1 and per-request throughput is unchanged.
+- HTML body-cap skip log demoted from Warn to Debug — a single large domain was
+  producing thousands of warns per job.
+- `GNH_PRESSURE_INITIAL_LIMIT` removed from `fly.toml` and `fly.worker.toml`.
+  `pressure.go` already defaults the initial limit to `DB_QUEUE_MAX_CONCURRENCY`
+  (the safe maximum), so setting it explicitly only invited drift and the
+  "exceeds queue cap" clamp warning when the two values got out of sync.
+- Production API `LOG_LEVEL` lowered from `debug` to `info` in `fly.toml`, now
+  matching the worker. Debug verbosity was retained while we were chasing the
+  load-test issues and is no longer needed; review apps stay on `debug`.
+
+## [0.33.3] – 2026-04-25
+
+### Changed
+
+- CLI (`hover jobs generate`) test domain list updated — removed 12 domains with
+  confirmed high failure rates (dead DNS, TLS mismatches, blanket 429/403 or
+  bot-blocking): `lovethelabel.com.au`, `eucalyptus.com.au`, `frank-body.com`,
+  `cottonon.com`, `lululemon.com`, `carawayhome.com`, `siteinspire.com`,
+  `webdesignerdepot.com`, `officeworks.com.au`, `commandbar.com`, `remix.run`,
+  `noice.com.au`. Failure root causes confirmed via Supabase job task data.
+- CLI test domain list expanded from ~203 to ~403 domains — added 200 sites
+  across 26 new categories (cloud infra, CI/CD, auth, databases, search,
+  payments, CMS, feature flags, Go/Rust/Python ecosystems, more Australian
+  businesses, AI/ML tools, open standards, and more).
+
+## [0.33.2] – 2026-04-25
+
 ### Added
 
 - Grafana deploy annotations posted on every main merge; dashboards synced from
@@ -65,8 +206,6 @@ On merge, CI will:
 
 - `internal/storage` package (Supabase Storage client) and its tests — the
   direct-to-R2 persister supersedes it and there were no remaining callers.
-
-## Full changelog history
 
 ## [0.33.1] – 2026-04-24
 
