@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -145,9 +146,19 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 	return func(ctx context.Context, counts map[string]int64) error {
 		// When counts is empty all jobs have finished — reset any stale
 		// positive running_tasks left in Postgres.
+		// ORDER BY id ensures deterministic row-lock order; without it
+		// concurrent sync ticks across worker VMs deadlock (HOVER-K4).
 		if len(counts) == 0 {
 			_, err := sqlDB.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = 0 WHERE running_tasks > 0 AND status IN ('running', 'pending')`)
+				`WITH targets AS (
+				   SELECT id FROM jobs
+				    WHERE running_tasks > 0
+				      AND status IN ('running', 'pending')
+				    ORDER BY id
+				    FOR UPDATE
+				 )
+				 UPDATE jobs SET running_tasks = 0
+				   FROM targets WHERE jobs.id = targets.id`)
 			return err
 		}
 
@@ -161,10 +172,14 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		// Redis-vs-PG skew per job. A consistent skew > small noise
 		// usually means a counter leak (increment/decrement imbalance)
 		// or a sync lag spike.
+		// Sorted job IDs give every worker the same row-lock order
+		// when the per-job UPDATEs below run inside this transaction
+		// (fixes 40P01 deadlock, HOVER-K4).
 		jobIDsForSnapshot := make([]string, 0, len(counts))
 		for jobID := range counts {
 			jobIDsForSnapshot = append(jobIDsForSnapshot, jobID)
 		}
+		sort.Strings(jobIDsForSnapshot)
 		priorCounts := make(map[string]int64, len(counts))
 		if len(jobIDsForSnapshot) > 0 {
 			rows, qerr := tx.QueryContext(ctx,
@@ -190,26 +205,35 @@ func DefaultDBSyncFunc(sqlDB *sql.DB) DBSyncFunc {
 		// "prepared statement already exists" (SQLSTATE 42P05) and kills
 		// the sync tick. ExecContext honours default_query_exec_mode=
 		// simple_protocol set on the pool, avoiding PREPARE entirely.
-		jobIDs := make([]string, 0, len(counts))
-		for jobID, count := range counts {
+		// Iterate jobs in sorted order so every worker takes per-row
+		// locks in the same sequence (fixes HOVER-K4 deadlock).
+		jobIDs := jobIDsForSnapshot
+		for _, jobID := range jobIDs {
+			count := counts[jobID]
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE jobs SET running_tasks = $1 WHERE id = $2 AND status IN ('running', 'pending')`,
 				count, jobID); err != nil {
 				return fmt.Errorf("update job %s: %w", jobID, err)
 			}
-			jobIDs = append(jobIDs, jobID)
 			observability.RecordBrokerCounterSyncSkew(ctx, jobID,
 				math.Abs(float64(count-priorCounts[jobID])))
 		}
 
 		// Zero out any active jobs whose counters are no longer tracked
-		// (they finished between sync intervals).
+		// (they finished between sync intervals). ORDER BY id keeps the
+		// row-lock order deterministic across concurrent sync ticks.
 		if len(jobIDs) > 0 {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE jobs SET running_tasks = 0
-				 WHERE running_tasks > 0
-				   AND status IN ('running', 'pending')
-				   AND id != ALL($1)`,
+				`WITH targets AS (
+				   SELECT id FROM jobs
+				    WHERE running_tasks > 0
+				      AND status IN ('running', 'pending')
+				      AND id != ALL($1)
+				    ORDER BY id
+				    FOR UPDATE
+				 )
+				 UPDATE jobs SET running_tasks = 0
+				   FROM targets WHERE jobs.id = targets.id`,
 				pq.Array(jobIDs),
 			); err != nil {
 				return fmt.Errorf("zero stale running_tasks: %w", err)

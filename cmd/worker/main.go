@@ -298,6 +298,9 @@ func main() {
 	if v := envInt("OUTBOX_SWEEP_BATCH_SIZE", 0); v > 0 {
 		outboxOpts.BatchSize = v
 	}
+	if v := envInt("OUTBOX_SWEEP_STATEMENT_TIMEOUT_MS", 0); v > 0 {
+		outboxOpts.StatementTimeout = time.Duration(v) * time.Millisecond
+	}
 	// Sweeper reads task_outbox, which is written in the same tx as tasks
 	// — so it belongs on queueDB in split deployments.
 	outboxSweeper := broker.NewOutboxSweeper(queueDB.GetDB(), scheduler, outboxOpts)

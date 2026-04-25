@@ -362,16 +362,8 @@ func New(config *Config, id ...string) *Crawler {
 	// Create metrics map for this crawler instance
 	metricsMap := &sync.Map{}
 
-	// Set up base transport with SSRF-safe dialer
-	baseTransport := &http.Transport{
-		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
-		MaxIdleConnsPerHost: 25,
-		MaxConnsPerHost:     50,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableCompression:  true,
-		ForceAttemptHTTP2:   true,
-	}
+	// Set up base transport with SSRF-safe dialer.
+	baseTransport := newBaseHTTPTransport()
 
 	// Add SSRF-safe DialContext if protection is enabled
 	// This validates IPs at connection time to prevent DNS rebinding attacks
@@ -414,13 +406,14 @@ func New(config *Config, id ...string) *Crawler {
 
 	// Build a shared probe transport for cache-status HEAD requests.
 	// Reusing a single client avoids leaking a new http.Transport per probe call.
-	probeTransport := &http.Transport{
-		MaxIdleConns:        20,
-		MaxIdleConnsPerHost: 5,
-		MaxConnsPerHost:     10,
-		IdleConnTimeout:     30 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-	}
+	// Derived from newBaseHTTPTransport so the H2 + compression posture stays
+	// consistent across the three crawler clients; only the pool sizes and
+	// idle timeout differ (probes are HEAD-only and can run with a smaller pool).
+	probeTransport := newBaseHTTPTransport()
+	probeTransport.MaxIdleConns = 20
+	probeTransport.MaxIdleConnsPerHost = 5
+	probeTransport.MaxConnsPerHost = 10
+	probeTransport.IdleConnTimeout = 30 * time.Second
 	if !config.SkipSSRFCheck {
 		probeTransport.DialContext = ssrfSafeDialContext()
 	}
@@ -1205,15 +1198,7 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 		timeout = c.config.DefaultTimeout
 	}
 
-	transport := &http.Transport{
-		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
-		MaxIdleConnsPerHost: 25,
-		MaxConnsPerHost:     50,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DisableCompression:  true,
-		ForceAttemptHTTP2:   true,
-	}
+	transport := newBaseHTTPTransport()
 
 	// Add SSRF-safe DialContext if protection is enabled
 	if !c.config.SkipSSRFCheck {
@@ -1223,6 +1208,27 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
+	}
+}
+
+// newBaseHTTPTransport returns the shared *http.Transport tuning used by
+// both the colly crawler and CreateHTTPClient. Callers are responsible for
+// attaching SSRF-safe DialContext and any wrapping round trippers.
+//
+// ForceAttemptHTTP2 is disabled: under sustained crawl load some upstreams
+// (notably misbehaving HTTP/2 servers) trigger Go's net/http2 stream state
+// machine to log "received DATA after END_STREAM" by the thousand. Falling
+// back to ALPN-negotiated HTTP/1.1 removes the noise without measurable
+// throughput impact for short-lived single-page fetches.
+func newBaseHTTPTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
+		MaxIdleConnsPerHost: 25,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     120 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DisableCompression:  true,
+		ForceAttemptHTTP2:   false,
 	}
 }
 

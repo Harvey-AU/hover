@@ -95,7 +95,7 @@
           "description": "convert to CPU % (inverted idle rate). Your primary bottleneck signal.",
           "id": 1,
           "links": [],
-          "title": "CPU Busy %",
+          "title": "Fly CPU Busy % [Hover]",
           "vizConfig": {
             "group": "timeseries",
             "kind": "VizConfig",
@@ -176,7 +176,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -296,7 +296,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -416,7 +416,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -536,7 +536,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -711,7 +711,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -906,7 +906,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1044,7 +1044,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1224,7 +1224,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1375,7 +1375,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1495,7 +1495,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1518,7 +1518,7 @@
                       "kind": "DataQuery",
                       "spec": {
                         "editorMode": "code",
-                        "expr": "max by (app, environment) (bee_db_pool_usage_ratio{app=~\"$app\",environment=~\"$environment\"}) > 0",
+                        "expr": "max by (app, environment) (bee_db_pool_usage_ratio{app=~\"$app\",environment=~\"$environment\"}) \u003e 0",
                         "legendFormat": "{{app}} / {{environment}}",
                         "range": true
                       },
@@ -1532,7 +1532,7 @@
               "transformations": []
             }
           },
-          "description": "Max DB connection pool usage across instances, per environment. Only shown when > 0.",
+          "description": "Max DB connection pool usage across instances, per environment. Only shown when \u003e 0.",
           "id": 20,
           "links": [],
           "title": "DB Pool Usage Ratio",
@@ -1545,7 +1545,6 @@
                   "color": {
                     "mode": "thresholds"
                   },
-                  "unit": "percentunit",
                   "thresholds": {
                     "mode": "percentage",
                     "steps": [
@@ -1562,7 +1561,8 @@
                         "value": 85
                       }
                     ]
-                  }
+                  },
+                  "unit": "percentunit"
                 },
                 "overrides": []
               },
@@ -1595,7 +1595,7 @@
                 "textMode": "auto"
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1719,7 +1719,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1835,7 +1835,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -1954,7 +1954,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2077,7 +2077,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2196,7 +2196,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2315,7 +2315,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2586,7 +2586,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2705,7 +2705,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2805,7 +2805,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -2928,7 +2928,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3028,7 +3028,7 @@
                 "textMode": "auto"
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3147,7 +3147,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3269,7 +3269,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3391,7 +3391,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3513,7 +3513,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3661,7 +3661,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3781,7 +3781,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -3885,7 +3885,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -4004,7 +4004,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -4124,7 +4124,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -4244,7 +4244,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       },
@@ -4364,7 +4364,7 @@
                 }
               }
             },
-            "version": "13.1.0-24655759693"
+            "version": "13.1.0-24779284961"
           }
         }
       }
@@ -4831,7 +4831,7 @@
     "preload": false,
     "tags": [],
     "timeSettings": {
-      "autoRefresh": "",
+      "autoRefresh": "auto",
       "autoRefreshIntervals": [
         "5s",
         "10s",
@@ -4845,7 +4845,7 @@
         "1d"
       ],
       "fiscalYearStartMonth": 0,
-      "from": "now-6h",
+      "from": "now-15m",
       "hideTimepicker": false,
       "timezone": "browser",
       "to": "now"
@@ -4855,71 +4855,71 @@
       {
         "kind": "QueryVariable",
         "spec": {
-          "name": "app",
-          "label": "App",
+          "allowCustomValue": true,
           "current": {
             "text": "All",
-            "value": "$__all"
+            "value": [
+              "$__all"
+            ]
           },
+          "definition": "label_values(bee_db_pool_in_use, app)",
           "hide": "dontHide",
-          "refresh": "onTimeRangeChanged",
-          "skipUrlSync": false,
-          "datasource": {
-            "name": "grafanacloud-prom"
-          },
+          "includeAll": true,
+          "label": "App",
+          "multi": true,
+          "name": "app",
+          "options": [],
           "query": {
-            "kind": "DataQuery",
             "group": "prometheus",
-            "version": "v0",
+            "kind": "DataQuery",
             "spec": {
               "qryType": 1,
               "query": "label_values(bee_db_pool_in_use, app)",
               "refId": "PrometheusVariableQueryEditor-VariableQuery"
-            }
+            },
+            "version": "v0"
           },
+          "refresh": "onTimeRangeChanged",
           "regex": "",
           "regexApplyTo": "value",
-          "sort": "alphabeticalAsc",
-          "definition": "label_values(bee_db_pool_in_use, app)",
-          "options": [],
-          "multi": true,
-          "includeAll": true,
-          "allowCustomValue": true
+          "skipUrlSync": false,
+          "sort": "alphabeticalAsc"
         }
       },
       {
         "kind": "QueryVariable",
         "spec": {
-          "name": "environment",
-          "label": "Environment",
+          "allowCustomValue": true,
           "current": {
-            "text": "All",
-            "value": "$__all"
+            "text": [
+              "production"
+            ],
+            "value": [
+              "production"
+            ]
           },
+          "definition": "label_values(bee_db_pool_in_use, environment)",
           "hide": "dontHide",
-          "refresh": "onTimeRangeChanged",
-          "skipUrlSync": false,
-          "datasource": {
-            "name": "grafanacloud-prom"
-          },
+          "includeAll": true,
+          "label": "Environment",
+          "multi": true,
+          "name": "environment",
+          "options": [],
           "query": {
-            "kind": "DataQuery",
             "group": "prometheus",
-            "version": "v0",
+            "kind": "DataQuery",
             "spec": {
               "qryType": 1,
               "query": "label_values(bee_db_pool_in_use, environment)",
               "refId": "PrometheusVariableQueryEditor-VariableQuery"
-            }
+            },
+            "version": "v0"
           },
+          "refresh": "onTimeRangeChanged",
           "regex": "",
           "regexApplyTo": "value",
-          "sort": "alphabeticalAsc",
-          "definition": "label_values(bee_db_pool_in_use, environment)",
-          "options": [],
-          "multi": true,
-          "includeAll": true,
-          "allowCustomValue": true
+          "skipUrlSync": false,
+          "sort": "alphabeticalAsc"
         }
       }
     ]
