@@ -106,6 +106,12 @@ primary_region = 'syd'
   # this the dispatcher re-fetches rate-limited tasks every tick (100ms)
   # and spins on push-back. Pre-merge this was domainDelayPause (100ms).
   GNH_DOMAIN_DELAY_PAUSE_MS = "100"
+  # Cap on concurrent ProcessDiscoveredLinks calls. Set to 128 to lift the
+  # ~3–3.5k tasks/min ceiling the original 32-cap (15d146f3) imposed on the
+  # bulk DB lane. Still well below the 2k+ goroutine event that motivated
+  # the cap, since each call now releases its bulk-pool slot in milliseconds
+  # rather than seconds (counter-sync no longer holds wide row locks).
+  JOBS_LINK_DISCOVERY_MAX_INFLIGHT = "128"
   LOG_LEVEL = "info"
   OBSERVABILITY_ENABLED = "true"
   # Push metrics + traces to Grafana Cloud. Without this, the worker
