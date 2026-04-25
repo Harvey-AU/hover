@@ -290,12 +290,22 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 
 	initOnce.Do(func() {
 		workerTracer = tracerProvider.Tracer("hover/worker")
-		_ = initWorkerInstruments(meterProvider)
-		_ = initCrawlerInstruments(meterProvider)
-		_ = initJobInstruments(meterProvider)
-		_ = initDBPoolInstruments(meterProvider)
-		_ = initBrokerInstruments(meterProvider)
-		_ = initHTMLPersistInstruments(meterProvider)
+		// Surface instrument-registration failures to stderr so a missing
+		// metric group doesn't disappear silently — without this, an
+		// upstream change that breaks one of these registrations would
+		// only show up as "the dashboard panel went flat", much harder
+		// to diagnose than a one-line boot warning.
+		warnInit := func(name string, err error) {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: failed to initialise %s instruments: %v\n", name, err)
+			}
+		}
+		warnInit("worker", initWorkerInstruments(meterProvider))
+		warnInit("crawler", initCrawlerInstruments(meterProvider))
+		warnInit("jobs", initJobInstruments(meterProvider))
+		warnInit("db pool", initDBPoolInstruments(meterProvider))
+		warnInit("broker", initBrokerInstruments(meterProvider))
+		warnInit("html persister", initHTMLPersistInstruments(meterProvider))
 	})
 
 	shutdown := func(ctx context.Context) error {
