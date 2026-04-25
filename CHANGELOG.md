@@ -32,6 +32,23 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.7] – 2026-04-25
+
+### Fixed
+
+- `promote_waiting_with_outbox` no longer inherits `tasks.run_at` into newly-
+  inserted `task_outbox` rows. Waiting tasks always carry `run_at = created_at`,
+  so promoting a task that had been waiting for hours/days baked an ancient
+  timestamp into the outbox row. Production ran ~881k waiting tasks with
+  `run_at` more than 30 minutes old (oldest > 3 days), causing the
+  `bee.broker.outbox_age_seconds` gauge to climb past 5 hours despite actual
+  outbox dwell times being sub-second. Outbox rows now use `NOW()` for `run_at`
+  on initial insert; retry/back-off paths in `Sweeper.bumpAttempts` continue to
+  set future `run_at` values.
+- `bee.broker.outbox_age_seconds` gauge now measures actual outbox dwell time
+  (`NOW() - MIN(created_at)` over due rows) instead of staleness of the
+  inherited `run_at` value.
+
 ## [0.33.6] – 2026-04-25
 
 ### Fixed
