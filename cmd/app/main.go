@@ -437,6 +437,14 @@ func main() {
 	}
 
 	setupLogging(config)
+	defer func() {
+		// Flush any buffered log lines before the process exits.
+		// Idempotent, safe even if the async writer wasn't installed
+		// (e.g. dev mode, where StdoutAsync returns nil).
+		if a := logging.StdoutAsync(); a != nil {
+			a.Close()
+		}
+	}()
 
 	var (
 		obsProviders *observability.Providers

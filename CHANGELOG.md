@@ -58,6 +58,50 @@ On merge, CI will:
 
 ## Full changelog history
 
+## [0.33.8] – 2026-04-25
+
+### Added
+
+- `internal/watchdog`: heartbeat-based wedge detector. The stream worker pool
+  ticks the heartbeat per task outcome; a background loop forces `os.Exit(1)` if
+  the heartbeat goes flat for 90s while jobs are alive, triggering Fly's restart
+  policy. Last-resort recovery for Go-side wedges (blocked stdout, exhausted
+  resource pool, mutex deadlock) that no in-process recovery can clear.
+- `internal/logging.AsyncWriter`: bounded non-blocking `io.Writer` wrapping
+  `os.Stdout` in production. slog handlers enqueue records into a
+  drop-on-overflow channel rather than synchronously writing to the pipe.
+  Prevents goroutines that hold DB transactions or other resources from wedging
+  on platform log-shipper backpressure.
+- pprof endpoints exposed on the worker's metrics port (`:9464`) alongside
+  `/metrics`. Enables `fly proxy 9464 -a hover-worker` to capture goroutine
+  dumps without redeploying.
+
+### Changed
+
+- `executeOnceWithContext` now calls `tx.Rollback()` immediately on error from
+  either `applyLocalStatementTimeout` or `fn`, before any logging or other
+  downstream work, with the deferred rollback suppressed via `committed=true`.
+  Production observed Go goroutines wedging between query-error and the deferred
+  rollback (e.g. inside a blocking slog write), leaving Postgres sessions in
+  `idle in transaction (aborted)` for 20+ minutes. Eager rollback releases the
+  connection regardless of what blocks afterwards.
+- `DefaultDBSyncFunc` clamps Redis counter values to ≥0 via `GREATEST(0, $1)`
+  before writing `running_tasks`. Eliminates the 6/min
+  `jobs_running_tasks_non_negative` constraint violations (HOVER-K4) caused by a
+  transient Redis underflow race between `HIncrBy(-1)` and the cleanup `HDel`.
+
+### Removed
+
+- The post-batch wide
+  `UPDATE jobs SET running_tasks = 0 WHERE running_tasks > 0 AND id != ALL(...)`
+  in `DefaultDBSyncFunc`. Walking job rows in index order acquired locks that
+  deadlocked against the AFTER trigger `update_job_queue_counters` fired by
+  concurrent task UPDATEs. The reconcile loop
+  (`REDIS_COUNTER_RECONCILE_INTERVAL_S=120`) authoritatively rebuilds Redis
+  state every two minutes, so missing this sweep only delays the
+  `running_tasks=0` reflection in PG by at most one reconcile interval —
+  acceptable in exchange for eliminating the deadlock class.
+
 ## [0.33.7] – 2026-04-25
 
 ### Fixed

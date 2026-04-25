@@ -27,6 +27,11 @@ type archivedTask struct {
 
 func main() {
 	logging.Setup(logging.ParseLevel("info"), "production")
+	defer func() {
+		if a := logging.StdoutAsync(); a != nil {
+			a.Close()
+		}
+	}()
 
 	var (
 		apply = flag.Bool("apply", false, "apply the migration; default is dry run")

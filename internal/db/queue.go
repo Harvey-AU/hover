@@ -413,12 +413,28 @@ func (q *DbQueue) executeOnceWithContext(ctx context.Context, fn func(context.Co
 	}()
 
 	if err := applyLocalStatementTimeout(ctx, tx); err != nil {
+		// Roll back eagerly for the same reason as the fn() error
+		// path below — don't depend on the deferred Rollback firing
+		// promptly when intervening code (caller, logging) could
+		// block.
+		_ = tx.Rollback()
+		committed = true
 		return err
 	}
 
 	queryStart := time.Now()
 	if err := fn(ctx, tx); err != nil {
 		queryDuration := time.Since(queryStart)
+		// Roll back IMMEDIATELY, before any logging or other downstream
+		// work. Production has shown the goroutine can wedge between an
+		// error return and the deferred Rollback (e.g. on a blocked
+		// stdout pipe inside slog), leaving Postgres sessions in
+		// `idle in transaction (aborted)` for tens of minutes. Calling
+		// Rollback eagerly releases the connection regardless of what
+		// happens afterwards; the deferred Rollback is suppressed via
+		// committed=true so it won't fire again.
+		_ = tx.Rollback()
+		committed = true
 		// Log slow queries even when they fail
 		if queryDuration > 5*time.Second {
 			queueLog.Warn("Slow query failed in transaction",

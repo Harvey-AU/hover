@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
@@ -23,6 +25,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
+	"github.com/Harvey-AU/hover/internal/watchdog"
 	"github.com/getsentry/sentry-go"
 )
 
@@ -48,6 +51,7 @@ func main() {
 
 	// --- logging (slog + sentry fanout) ---
 	logging.Setup(logging.ParseLevel(os.Getenv("LOG_LEVEL")), appEnv)
+	defer flushAsyncLogs()
 
 	workerLog.Info("hover worker starting")
 
@@ -84,10 +88,22 @@ func main() {
 			// sidecar (alloy.river) can scrape it and add app/environment
 			// labels. Without this the worker's metrics only reach Grafana
 			// via OTLP push and the dashboard's app filter excludes them.
+			//
+			// Also mount /debug/pprof on the same port so a wedged worker
+			// can be debugged via `fly proxy 9464` without redeploying. The
+			// metrics port is on Fly's internal network only, so no auth
+			// guard is required.
 			if providers.MetricsHandler != nil && metricsAddr != "" {
+				mux := http.NewServeMux()
+				mux.Handle("/metrics", providers.MetricsHandler)
+				mux.HandleFunc("/debug/pprof/", pprof.Index)
+				mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+				mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+				mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+				mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 				metricsSrv := &http.Server{
 					Addr:              metricsAddr,
-					Handler:           providers.MetricsHandler,
+					Handler:           mux,
 					ReadHeaderTimeout: 5 * time.Second,
 				}
 				metricsListener, err := net.Listen("tcp", metricsAddr)
@@ -248,6 +264,14 @@ func main() {
 		HTMLPersister: htmlPersister,
 	}, swpOpts)
 
+	// Wedge watchdog: tick the heartbeat per task outcome and exit the
+	// process if the heartbeat goes flat with active jobs. This is the
+	// last-resort recovery when a Go-side wedge (blocked stdout, exhausted
+	// resource, mutex deadlock) prevents in-process recovery. Fly's
+	// restart=always policy brings the worker back with fresh state.
+	heartbeat := &watchdog.Heartbeat{}
+	swp.SetHeartbeat(heartbeat)
+
 	// --- dispatcher ---
 	dispatcherOpts := broker.DefaultDispatcherOpts()
 	dispatcher := broker.NewDispatcher(
@@ -315,6 +339,8 @@ func main() {
 	go outboxSweeper.Run(ctx)
 	go probe.Run(ctx)
 
+	go startWatchdog(ctx, heartbeat, swp)
+
 	workerLog.Info("hover worker ready",
 		"workers", numWorkers,
 		"tasks_per_worker", tasksPerWorker,
@@ -356,6 +382,46 @@ func main() {
 }
 
 // --- helpers ---
+
+// flushAsyncLogs drains the async stdout buffer (if installed) so
+// logs queued at process exit reach the platform log shipper.
+// Idempotent and safe in dev mode (StdoutAsync returns nil).
+func flushAsyncLogs() {
+	if a := logging.StdoutAsync(); a != nil {
+		a.Close()
+	}
+}
+
+// startWatchdog wires the wedge watchdog using the stream worker's
+// active-jobs view as the "should be working" signal. Extracted from
+// main to keep main's cyclomatic complexity bounded.
+//
+// StallThreshold is sized to comfortably exceed the per-task context
+// timeout in stream_worker.processTask (2 minutes). Heartbeat ticks
+// only fire after handleOutcome returns, so a single long-running task
+// — or a brief pacer-throttled idle while jobs are alive — can leave
+// the heartbeat flat for up to one task budget. 3 minutes provides
+// 60s margin against the worst single-task case while still catching
+// genuine wedges within minutes.
+func startWatchdog(ctx context.Context, hb *watchdog.Heartbeat, swp *jobs.StreamWorkerPool) {
+	watchdog.Run(ctx, hb, watchdog.Options{
+		StallThreshold: 3 * time.Minute,
+		CheckInterval:  15 * time.Second,
+		GracePeriod:    2 * time.Minute,
+		HasWork: func(checkCtx context.Context) bool {
+			ids, err := swp.ActiveJobIDs(checkCtx)
+			if err != nil {
+				// Treat unknown work state as "yes": false-trip is
+				// safer than missing a real wedge. The check has its
+				// own 5s context timeout in the watchdog so this
+				// can't itself wedge.
+				return true
+			}
+			return len(ids) > 0
+		},
+		Logger: slog.Default().With("component", "watchdog"),
+	})
+}
 
 func envInt(key string, def int) int {
 	v := os.Getenv(key)
