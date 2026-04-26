@@ -1,67 +1,33 @@
-// Package archive moves aged data from hot storage (Supabase) to cold
-// storage (R2, S3, B2, etc.) to stay within quota limits.
+// Package archive uploads task HTML to cold object storage (R2, S3, B2)
+// and exposes the canonical key layout used by the live HTML persister.
+//
+// The legacy hot-to-cold sweep (Supabase Storage → R2) was removed once
+// R2 became the hot store. Only the cold-storage provider plumbing and
+// the path constructors remain.
 package archive
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"strconv"
-	"time"
+	"strings"
 )
 
-// Config controls the archiver's runtime behaviour.
+// Config controls the cold-storage provider used by the HTML persister.
 type Config struct {
-	Provider      string        // "r2", "s3", "b2"
-	Bucket        string        // cold-storage bucket name
-	RetentionJobs int           // keep this many recent jobs hot per domain/org
-	Interval      time.Duration // time between archive sweeps
-	BatchSize     int           // candidates per sweep
-	Concurrency   int           // parallel upload workers
-}
-
-// ArchiveCandidate represents a single item eligible for archival.
-type ArchiveCandidate struct {
-	TaskID              string
-	JobID               string
-	StorageBucket       string
-	StoragePath         string
-	SHA256              string
-	CompressedSizeBytes int64
-	ContentType         string
-	ContentEncoding     string
-}
-
-// ArchiveSource abstracts a category of data that can be archived.
-// Each implementation knows how to find candidates and mark them done.
-type ArchiveSource interface {
-	// Name returns a human-readable label, e.g. "task_html".
-	Name() string
-	// FindCandidates returns up to batchSize items eligible for archival.
-	FindCandidates(ctx context.Context, batchSize int) ([]ArchiveCandidate, error)
-	// OnArchived is called after the candidate has been safely persisted
-	// in cold storage and verified.
-	OnArchived(ctx context.Context, candidate ArchiveCandidate, provider, bucket, key string) error
-	// MarkSkipped permanently excludes a candidate from future sweeps.
-	// Called when both hot and cold storage return a permanent 404 — retrying
-	// would waste resources with no chance of success.
-	MarkSkipped(ctx context.Context, candidate ArchiveCandidate) error
+	Provider string // "r2", "s3", "b2"
+	Bucket   string // cold-storage bucket name
 }
 
 // DefaultConfig returns sensible defaults, overridable via environment.
 func DefaultConfig() Config {
 	return Config{
-		Provider:      "r2",
-		Bucket:        "native-hover-archive",
-		RetentionJobs: 3,
-		Interval:      1 * time.Minute,
-		BatchSize:     50,
-		Concurrency:   5,
+		Provider: "r2",
+		Bucket:   "native-hover-archive",
 	}
 }
 
 // ConfigFromEnv builds a Config from ARCHIVE_* environment variables.
-// Returns nil if ARCHIVE_PROVIDER is unset (feature disabled).
+// Returns nil if ARCHIVE_PROVIDER or ARCHIVE_BUCKET is unset (feature disabled).
 func ConfigFromEnv() *Config {
 	provider := os.Getenv("ARCHIVE_PROVIDER")
 	if provider == "" {
@@ -75,34 +41,23 @@ func ConfigFromEnv() *Config {
 	cfg := DefaultConfig()
 	cfg.Provider = provider
 	cfg.Bucket = bucket
-	if v := os.Getenv("ARCHIVE_RETENTION_JOBS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.RetentionJobs = n
-		}
-	}
-	if v := os.Getenv("ARCHIVE_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			cfg.Interval = d
-		}
-	}
-	if v := os.Getenv("ARCHIVE_BATCH_SIZE"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.BatchSize = n
-		}
-	}
-	if v := os.Getenv("ARCHIVE_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			cfg.Concurrency = n
-		}
-	}
-
 	return &cfg
 }
 
-// TaskHTMLObjectPath returns the canonical object path for a task HTML blob in
-// both hot storage and cold storage.
+// TaskHTMLObjectPath returns the canonical object path for a task HTML blob.
+//
+// When ARCHIVE_PATH_PREFIX is set, it is prepended (with a single "/" join)
+// so review-app deployments can land in their own R2 sub-tree without
+// touching the production bucket layout — e.g. ARCHIVE_PATH_PREFIX=347 on
+// a review app produces "347/jobs/<job>/tasks/<task>/page-content.html.gz".
+// Empty prefix preserves the original production path exactly.
 func TaskHTMLObjectPath(jobID, taskID string) string {
-	return fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
+	base := fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
+	prefix := strings.Trim(strings.TrimSpace(os.Getenv("ARCHIVE_PATH_PREFIX")), "/")
+	if prefix == "" {
+		return base
+	}
+	return prefix + "/" + base
 }
 
 // ColdKey returns the canonical cold-storage object key for a task HTML blob.

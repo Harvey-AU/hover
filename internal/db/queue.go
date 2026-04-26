@@ -864,161 +864,17 @@ type TaskHTMLMetadata struct {
 	CompressedSizeBytes int64
 	SHA256              string
 	CapturedAt          time.Time
+	// ArchivedAt, when non-zero, marks the row as already in cold storage.
+	// Direct-to-R2 writes set this to CapturedAt so the archive sweep
+	// candidate query skips the row immediately.
+	ArchivedAt time.Time
 }
 
-// ArchiveCandidate represents a task whose HTML is eligible for cold-storage archival.
-type ArchiveCandidate struct {
-	TaskID              string
-	JobID               string
-	StorageBucket       string
-	StoragePath         string
-	SHA256              string
-	CompressedSizeBytes int64
-	ContentType         string
-	ContentEncoding     string
-}
-
-// FindArchiveCandidates returns tasks whose HTML should be moved to cold storage.
-// retentionJobs controls how many recent completed/failed/cancelled jobs per
-// (domain_id, organisation_id) are kept hot. Tasks beyond that threshold are
-// candidates.
-func (q *DbQueue) FindArchiveCandidates(ctx context.Context, retentionJobs, limit int) ([]ArchiveCandidate, error) {
-	var candidates []ArchiveCandidate
-
-	err := q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		rows, err := tx.QueryContext(txCtx, `
-			WITH ranked AS (
-				SELECT j.id,
-					   ROW_NUMBER() OVER (
-						   PARTITION BY j.domain_id, j.organisation_id
-						   ORDER BY COALESCE(j.completed_at, j.created_at) DESC
-					   ) AS rn
-				FROM jobs j
-				WHERE j.status IN ('completed', 'failed', 'cancelled')
-			)
-			SELECT t.id, t.job_id, t.html_storage_bucket, t.html_storage_path,
-				   COALESCE(t.html_sha256, ''), COALESCE(t.html_compressed_size_bytes, 0),
-				   COALESCE(t.html_content_type, ''), COALESCE(t.html_content_encoding, '')
-			FROM tasks t
-			JOIN ranked r ON r.id = t.job_id
-			WHERE r.rn > $1
-			  AND t.html_storage_bucket IS NOT NULL
-			  AND t.html_storage_path IS NOT NULL
-			  AND t.html_archived_at IS NULL
-			LIMIT $2
-		`, retentionJobs, limit)
-		if err != nil {
-			return fmt.Errorf("archive candidate query failed: %w", err)
-		}
-		defer rows.Close()
-
-		// Reset slice so retried Execute callbacks don't accumulate duplicates.
-		candidates = candidates[:0]
-
-		for rows.Next() {
-			var c ArchiveCandidate
-			if err := rows.Scan(&c.TaskID, &c.JobID, &c.StorageBucket, &c.StoragePath,
-				&c.SHA256, &c.CompressedSizeBytes, &c.ContentType, &c.ContentEncoding); err != nil {
-				return fmt.Errorf("scanning archive candidate: %w", err)
-			}
-			candidates = append(candidates, c)
-		}
-		return rows.Err()
-	})
-
-	return candidates, err
-}
-
-// MarkTaskArchived records that a task's HTML has been moved to cold storage
-// and clears the hot-storage reference so it can be reclaimed.
-func (q *DbQueue) MarkTaskArchived(ctx context.Context, taskID, provider, bucket, key string) error {
-	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		result, err := tx.ExecContext(txCtx, `
-			UPDATE tasks
-			SET html_archive_provider = $2,
-				html_archive_bucket   = $3,
-				html_archive_key      = $4,
-				html_archived_at      = NOW(),
-				html_storage_bucket   = NULL,
-				html_storage_path     = NULL
-			WHERE id = $1
-			  AND html_archived_at IS NULL
-		`, taskID, provider, bucket, key)
-		if err != nil {
-			return fmt.Errorf("mark task %s archived: %w", taskID, err)
-		}
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("mark task %s archived: reading rows affected: %w", taskID, err)
-		}
-		if rowsAffected == 0 {
-			// Already archived or task doesn't exist — check which.
-			var exists bool
-			err = tx.QueryRowContext(txCtx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE id = $1 AND html_archived_at IS NOT NULL)`, taskID).Scan(&exists)
-			if err != nil {
-				return fmt.Errorf("mark task %s archived: existence check: %w", taskID, err)
-			}
-			if exists {
-				return nil // already archived — idempotent success
-			}
-			return fmt.Errorf("mark task %s archived: task not found", taskID)
-		}
-		return nil
-	})
-}
-
-// MarkArchiveSkipped sets html_archived_at on a task to exclude it from future
-// archive sweeps. Used when both hot and cold storage return a permanent 404 —
-// the data is irrecoverably gone and retrying wastes resources.
-func (q *DbQueue) MarkArchiveSkipped(ctx context.Context, taskID string) error {
-	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(txCtx, `
-			UPDATE tasks
-			SET html_archived_at    = NOW(),
-			    html_storage_bucket = NULL,
-			    html_storage_path   = NULL
-			WHERE id = $1
-			  AND html_archived_at IS NULL
-		`, taskID)
-		if err != nil {
-			return fmt.Errorf("mark archive skipped for task %s: %w", taskID, err)
-		}
-		return nil
-	})
-}
-
-// MarkFullyArchivedJobs transitions terminal jobs to 'archived' when all their
-// HTML has been moved to cold storage. Returns the number of jobs marked.
-func (q *DbQueue) MarkFullyArchivedJobs(ctx context.Context) (int64, error) {
-	var rowsAffected int64
-
-	err := q.ExecuteMaintenance(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `
-			UPDATE jobs
-			SET status = 'archived'
-			WHERE status IN ('completed', 'failed', 'cancelled')
-			  AND NOT EXISTS (
-				SELECT 1 FROM tasks t
-				WHERE t.job_id = jobs.id
-				  AND t.html_storage_path IS NOT NULL
-			  )
-			  AND EXISTS (
-				SELECT 1 FROM tasks t
-				WHERE t.job_id = jobs.id
-				  AND t.html_archived_at IS NOT NULL
-			  )
-		`)
-		if err != nil {
-			return fmt.Errorf("mark fully archived jobs: %w", err)
-		}
-		rowsAffected, err = result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("mark fully archived jobs: reading rows affected: %w", err)
-		}
-		return nil
-	})
-
-	return rowsAffected, err
+// TaskHTMLMetadataRow pairs a task ID with its HTML metadata for batch
+// UPDATE calls.
+type TaskHTMLMetadataRow struct {
+	TaskID   string
+	Metadata TaskHTMLMetadata
 }
 
 // enqueueJobConfig holds configuration fetched from the database for task enqueueing
@@ -1744,6 +1600,93 @@ func (q *DbQueue) UpdateTaskHTMLMetadata(ctx context.Context, taskID string, met
 			default:
 				return fmt.Errorf("task %s is not eligible for HTML metadata updates in status %q", taskID, status)
 			}
+		}
+		return nil
+	})
+}
+
+// BatchUpsertTaskHTMLMetadata stamps storage metadata onto multiple completed
+// tasks in a single UPDATE. Used by the direct-to-R2 HTML persister so the
+// metadata write is amortised across the batch of payloads it just uploaded.
+//
+// Only the html_* columns are touched — the surrounding completed-task batch
+// UPDATE has already persisted status, timing and response data. ArchivedAt
+// is intentionally stamped at write time so the archive sweep's candidate
+// query (html_archived_at IS NULL) skips these rows.
+func (q *DbQueue) BatchUpsertTaskHTMLMetadata(ctx context.Context, rows []TaskHTMLMetadataRow) error {
+	if q == nil || len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]string, len(rows))
+	buckets := make([]string, len(rows))
+	paths := make([]string, len(rows))
+	contentTypes := make([]string, len(rows))
+	encodings := make([]string, len(rows))
+	sizes := make([]int64, len(rows))
+	compressedSizes := make([]int64, len(rows))
+	sha256s := make([]string, len(rows))
+	capturedAts := make([]string, len(rows))
+	archivedAts := make([]string, len(rows))
+
+	for i, row := range rows {
+		ids[i] = row.TaskID
+		buckets[i] = row.Metadata.StorageBucket
+		paths[i] = row.Metadata.StoragePath
+		contentTypes[i] = row.Metadata.ContentType
+		encodings[i] = row.Metadata.ContentEncoding
+		sizes[i] = row.Metadata.SizeBytes
+		compressedSizes[i] = row.Metadata.CompressedSizeBytes
+		sha256s[i] = row.Metadata.SHA256
+		if !row.Metadata.CapturedAt.IsZero() {
+			capturedAts[i] = row.Metadata.CapturedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !row.Metadata.ArchivedAt.IsZero() {
+			archivedAts[i] = row.Metadata.ArchivedAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+
+	return q.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(txCtx, `
+			UPDATE tasks
+			SET html_storage_bucket      = COALESCE(NULLIF(updates.html_storage_bucket, ''), tasks.html_storage_bucket),
+				html_storage_path        = COALESCE(NULLIF(updates.html_storage_path, ''), tasks.html_storage_path),
+				html_content_type        = COALESCE(NULLIF(updates.html_content_type, ''), tasks.html_content_type),
+				html_content_encoding    = COALESCE(NULLIF(updates.html_content_encoding, ''), tasks.html_content_encoding),
+				html_size_bytes          = CASE WHEN updates.html_size_bytes > 0 THEN updates.html_size_bytes ELSE tasks.html_size_bytes END,
+				html_compressed_size_bytes = CASE WHEN updates.html_compressed_size_bytes > 0 THEN updates.html_compressed_size_bytes ELSE tasks.html_compressed_size_bytes END,
+				html_sha256              = COALESCE(NULLIF(updates.html_sha256, ''), tasks.html_sha256),
+				html_captured_at         = COALESCE(updates.html_captured_at, tasks.html_captured_at),
+				html_archived_at         = COALESCE(updates.html_archived_at, tasks.html_archived_at)
+			FROM (
+				SELECT
+					unnest($1::text[]) AS id,
+					unnest($2::text[]) AS html_storage_bucket,
+					unnest($3::text[]) AS html_storage_path,
+					unnest($4::text[]) AS html_content_type,
+					unnest($5::text[]) AS html_content_encoding,
+					unnest($6::bigint[]) AS html_size_bytes,
+					unnest($7::bigint[]) AS html_compressed_size_bytes,
+					unnest($8::text[]) AS html_sha256,
+					NULLIF(unnest($9::text[]), '')::timestamptz AS html_captured_at,
+					NULLIF(unnest($10::text[]), '')::timestamptz AS html_archived_at
+			) AS updates
+			WHERE tasks.id = updates.id
+			  AND tasks.status IN ('running', 'completed')
+		`,
+			pq.Array(ids),
+			pq.Array(buckets),
+			pq.Array(paths),
+			pq.Array(contentTypes),
+			pq.Array(encodings),
+			pq.Array(sizes),
+			pq.Array(compressedSizes),
+			pq.Array(sha256s),
+			pq.Array(capturedAts),
+			pq.Array(archivedAts),
+		)
+		if err != nil {
+			return fmt.Errorf("batch upsert task html metadata: %w", err)
 		}
 		return nil
 	})
