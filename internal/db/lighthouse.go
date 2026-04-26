@@ -303,31 +303,38 @@ func (db *DB) ListLighthouseRunsByJob(ctx context.Context, jobID string) ([]Ligh
 	return runs, nil
 }
 
-// GetLighthouseRunPageIDs returns the set of page IDs already queued
-// for a job. Used by the sampler to dedupe across milestones.
-func (db *DB) GetLighthouseRunPageIDs(ctx context.Context, jobID string) (map[int]struct{}, error) {
+// GetLighthouseRunPageBands returns the page IDs already queued for a
+// job, mapped to the band they were scheduled under. Used by the
+// sampler to enforce the per-band global cap (count existing
+// fastest/slowest rows when deciding how much to top up at each
+// milestone) and to dedupe page IDs across milestones regardless of
+// band.
+func (db *DB) GetLighthouseRunPageBands(ctx context.Context, jobID string) (map[int]LighthouseSelectionBand, error) {
 	const q = `
-		SELECT page_id
+		SELECT page_id, selection_band
 		  FROM lighthouse_runs
 		 WHERE job_id = $1
 	`
 
 	rows, err := db.client.QueryContext(ctx, q, jobID)
 	if err != nil {
-		return nil, fmt.Errorf("list lighthouse run page ids: %w", err)
+		return nil, fmt.Errorf("list lighthouse run page bands: %w", err)
 	}
 	defer rows.Close()
 
-	seen := make(map[int]struct{})
+	seen := make(map[int]LighthouseSelectionBand)
 	for rows.Next() {
-		var pageID int
-		if err := rows.Scan(&pageID); err != nil {
-			return nil, fmt.Errorf("scan page id: %w", err)
+		var (
+			pageID int
+			band   string
+		)
+		if err := rows.Scan(&pageID, &band); err != nil {
+			return nil, fmt.Errorf("scan page band: %w", err)
 		}
-		seen[pageID] = struct{}{}
+		seen[pageID] = LighthouseSelectionBand(band)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate page ids: %w", err)
+		return nil, fmt.Errorf("iterate page bands: %w", err)
 	}
 	return seen, nil
 }

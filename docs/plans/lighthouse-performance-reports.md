@@ -99,6 +99,15 @@ Lighthouse runs for both bands.
 | 10,000  | 15 (cap)  | 30           | 0.3%      |
 | 20,000+ | 15 (cap)  | 30           | ≤0.15%    |
 
+The cap is **global per-job, not per-milestone.** At each 10% boundary the
+sampler tops up only the band slots that haven't been filled yet — once the
+quota is met it returns no further picks for the rest of the job. PR #357
+shipped a sampler that deduped by `page_id` only and re-spent the per-band quota
+at every milestone, accumulating ≈30 rows on a 337-page job (4 such jobs
+produced 110 audits in production when the cap should have held them to ~14).
+Fixed in the follow-up PR by counting existing band rows and only requesting
+`max(0, target - existing)` per band per call.
+
 Properties: floor of 1 per band means even a 5-page site gets 1 fastest + 1
 slowest. The square-root curve gives small/medium sites generous coverage while
 keeping the audit fleet sub-linear. Cap of 15 binds at exactly 10,000 pages,
