@@ -85,6 +85,11 @@ On merge, CI will:
   persister queue is saturated, in addition to the persister's `skipped` outcome
   metric — so an operator can correlate a drop with the specific task without
   combing persister logs.
+- Observability instrument-registration failures now write a `WARN:` line to
+  stderr instead of being silently swallowed by `_ =`. Surfaces a missing metric
+  group at boot rather than as a flat dashboard panel later. Applied to all six
+  init calls (worker, crawler, jobs, db pool, broker, html persister) for
+  consistency.
 
 ## Full changelog history
 
