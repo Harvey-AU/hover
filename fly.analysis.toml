@@ -3,9 +3,9 @@
 # populated by the crawl-side dispatcher and writes audit results back
 # to lighthouse_runs.
 #
-# Phase 2 ships a stub-runner default. Phase 3 layers Chromium and the
-# lighthouse npm package into Dockerfile.analysis and flips
-# LIGHTHOUSE_RUNNER to "local".
+# Phase 3 ships real Chromium audits via the local runner. Image is
+# Debian bookworm + chromium + lighthouse@12.2.1, ~2 GB. Review apps
+# stay on the stub runner — see .fly/review_apps.analysis.toml.
 
 app = 'hover-analysis'
 primary_region = 'syd'
@@ -15,9 +15,15 @@ primary_region = 'syd'
 
 [env]
   APP_ENV = "production"
-  # Phase 2 default: in-process stub runner. Phase 3 will switch to
-  # "local" once Chromium + lighthouse@<pinned> are baked into the image.
-  LIGHTHOUSE_RUNNER = "stub"
+  # Phase 3: real Chromium + lighthouse@12.2.1 baked into the image
+  # via Dockerfile.analysis. Boot fails loud if ARCHIVE_* secrets are
+  # missing, so a misconfiguration surfaces before any audit is queued
+  # rather than as silent failures on lighthouse_runs rows.
+  #
+  # Rollback: `fly secrets set LIGHTHOUSE_RUNNER=stub --app hover-analysis`
+  # — instant, no redeploy needed. Stub returns canned metrics so the
+  # producer pipeline keeps working while the runtime is investigated.
+  LIGHTHOUSE_RUNNER = "local"
   # Concurrency cap on simultaneous audits. v1 starts conservative
   # (1 per machine) and tunes up after observing real Chromium memory
   # pressure during Phase 3.
