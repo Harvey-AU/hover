@@ -28,32 +28,7 @@ On merge, CI will:
 
 ## [Unreleased]
 
-### Changed
-
-- Parallelised the Fly deploy pipeline. `fly-deploy.yml` now splits image build
-  from app release: the shared `hover` image (API + worker, baked together by
-  `Dockerfile`) is built once instead of twice, and the `hover-analysis` image
-  builds in parallel with it. Releases fan out for API and analysis, with worker
-  release gated on analysis being healthy to preserve the
-  consumer-before-producer invariant on the per-job lighthouse stream. Expected
-  wall-clock: ~9.5 min → ~4.5 min.
-- Mirrored the same build-once + parallel structure in `review-apps.yml`, so PR
-  review apps now exercise the production deploy logic. Provision job sets up
-  the per-PR Fly apps, Upstash Redis, and Supabase preview branch and stages
-  secrets onto the three apps; build/release jobs pin to the staged image via
-  `flyctl deploy --image …`. Shared setup (Go, flyctl, 1Password) lives in a new
-  `.github/actions/fly-setup` composite.
-- Tightened the `Changelog Check` workflow to fail PRs that don't add a new
-  entry under `## [Unreleased]`. Removed the `.github/**` exclusion so workflow
-  changes also require a changelog entry.
-
-### Fixed
-
-- `.fly/review_apps.analysis.toml` now pins
-  `dockerfile = "../Dockerfile.analysis"` under `[build]`, matching
-  `fly.analysis.toml`. Without it, flyctl defaulted to the root `Dockerfile` and
-  would have shipped the wrong binary in `hover-analysis-pr-N`. CodeRabbit
-  caught this on PR #361.
+_Add unreleased changes here._
 
 ## Full changelog history
 
