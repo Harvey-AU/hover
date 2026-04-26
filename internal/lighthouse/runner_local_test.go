@@ -37,7 +37,10 @@ func (f *fakeProvider) Upload(_ context.Context, bucket, key string, data io.Rea
 	if f.uploadErr != nil {
 		return f.uploadErr
 	}
-	body, _ := io.ReadAll(data)
+	body, err := io.ReadAll(data)
+	if err != nil {
+		return fmt.Errorf("fake provider: read upload payload: %w", err)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.uploads = append(f.uploads, fakeUpload{bucket: bucket, key: key, payload: body, opts: opts})
@@ -401,6 +404,9 @@ exit 1
 }
 
 func TestLocalRunner_TimeoutCancelsAndKillsProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake unsupported on windows")
+	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "sleep.sh")
 	// #nosec G306 -- test fixture: the fake binary must be executable.

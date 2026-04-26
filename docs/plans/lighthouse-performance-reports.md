@@ -752,10 +752,13 @@ against an in-process consumer before the new app's CI surface lands.
 
 - **Image base switched to Debian (`node:20-slim`)**, not Alpine. Alpine's
   `chromium` package consistently lags upstream; Debian bookworm tracks Chromium
-  stable within days, so the security/stability call goes to Debian. Pinned:
-  `chromium 147.0.7727.116` (whatever bookworm currently ships) and
-  `lighthouse@12.2.1`. Image size lands at ~2 GB — within Fly's pull window but
-  worth a future trim pass.
+  stable within days, so the security/stability call goes to Debian. Currently
+  resolved versions: Chromium 147.0.7727.116 (the version Debian bookworm
+  shipped at first build — `apt-get install chromium` is intentionally unpinned
+  for now, with a `TODO(phase3)` in `Dockerfile.analysis` to capture the exact
+  pin once the first prod build resolves it) and pinned `lighthouse@12.2.1`.
+  Image size lands at ~2 GB — within Fly's pull window but worth a future trim
+  pass.
 - **`source_task_id` plumbed via DB rather than the wire format.**
   `MarkLighthouseRunRunning` was changed to `RETURNING source_task_id` so the
   consumer learns the parent task at audit start time. The Phase 2 ZSET wire
