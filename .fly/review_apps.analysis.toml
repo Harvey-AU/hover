@@ -1,0 +1,64 @@
+# Fly Review Apps Configuration — Analysis Service (lighthouse audits).
+#
+# Deployed alongside the worker review app (.fly/review_apps.worker.toml)
+# so the preview exercises the full producer → Redis → analysis flow.
+# The analysis app consumes per-job lighthouse streams populated by the
+# crawl-side dispatcher and writes audit results back to lighthouse_runs.
+#
+# Production equivalent: fly.analysis.toml.
+# Per-PR app name: hover-analysis-pr-<PR_NUMBER>.
+
+primary_region = "syd"
+
+[build]
+
+# Override the Dockerfile CMD to run start-analysis.sh, which boots the
+# Alloy metrics sidecar alongside the analysis binary so review apps emit
+# bee.lighthouse.* and bee.broker.* tagged with
+# app=hover-analysis-pr-<N> and environment=staging.
+[processes]
+  analysis = "./start.sh"
+
+[env]
+  APP_ENV = "staging"
+
+  # Stub runner — review apps don't pack Chromium yet (Phase 3).
+  LIGHTHOUSE_RUNNER = "stub"
+  LIGHTHOUSE_MAX_CONCURRENCY = "1"
+  LIGHTHOUSE_AUDIT_TIMEOUT_MS = "90000"
+  LIGHTHOUSE_POLL_INTERVAL_MS = "1000"
+  LIGHTHOUSE_RECLAIM_INTERVAL_S = "60"
+  LIGHTHOUSE_RECLAIM_MIN_IDLE_S = "180"
+
+  # Leave headroom for the API + worker apps on the shared Supabase pool.
+  DB_MAX_OPEN_CONNS = "5"
+  DB_MAX_IDLE_CONNS = "2"
+  DB_QUEUE_MAX_CONCURRENCY = "5"
+  DB_TX_MAX_RETRIES = "3"
+
+  # Redis pool kept small — the analysis app issues XReadGroup +
+  # XAck plus the occasional metric scrape; nothing heavy.
+  REDIS_POOL_SIZE = "10"
+
+  # Observability.
+  LOG_LEVEL = "debug"
+  OBSERVABILITY_ENABLED = "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
+
+  # Explicitly source DATABASE_URL from secrets for parity with API and worker.
+  DATABASE_URL = { from_secret = "DATABASE_URL" }
+
+[deploy]
+  strategy = "immediate"
+
+# Keep the machine restarting after crashes — see fly.analysis.toml for
+# the rationale.
+[[restart]]
+  policy = "always"
+
+# Preview-sized machine. Stub runner doesn't need Chromium-class memory;
+# the smallest shared-cpu instance is plenty.
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 2

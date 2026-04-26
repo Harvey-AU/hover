@@ -193,6 +193,15 @@ type QueueExecutor interface {
 	ExecuteWithContext(ctx context.Context, fn func(context.Context, *sql.Tx) error) error
 }
 
+// BatchFlushCallback is invoked after each successful flush with the
+// distinct job IDs touched by the batch. Used by the lighthouse
+// scheduler to opportunistically check for progress-milestone crossings
+// without internal/db importing internal/jobs (which would create a
+// cycle: jobs already depends on db). Fire-and-forget — implementations
+// must return promptly and own their own goroutines for any work that
+// runs longer than a few milliseconds.
+type BatchFlushCallback func(ctx context.Context, jobIDs []string)
+
 // BatchManager coordinates batching of database operations
 type BatchManager struct {
 	queue            QueueExecutor
@@ -204,6 +213,18 @@ type BatchManager struct {
 	overflowMu       sync.Mutex
 	overflow         map[string]*TaskUpdate
 	lastOverflowLog  time.Time
+
+	// onBatchFlushed is invoked after each successful flush. Set via
+	// SetOnBatchFlushed at bootstrap. nil callback is allowed.
+	onBatchFlushed BatchFlushCallback
+}
+
+// SetOnBatchFlushed registers a callback fired once after each
+// successful flush with the set of distinct job IDs touched. Safe to
+// call once at startup; not safe to mutate concurrently with
+// processUpdateBatches.
+func (bm *BatchManager) SetOnBatchFlushed(cb BatchFlushCallback) {
+	bm.onBatchFlushed = cb
 }
 
 // NewBatchManager creates a new batch manager
@@ -594,7 +615,62 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 		"duration", duration,
 	)
 
+	// Notify post-flush observers (e.g. the lighthouse scheduler watching
+	// for progress-milestone crossings) with the distinct job IDs whose
+	// terminal task counts changed. Only completed/failed/skipped move the
+	// numerator of the progress fraction, so retries (pending/waiting) are
+	// excluded — they can't cross a milestone on their own.
+	//
+	// The callback runs on this goroutine; implementations are expected to
+	// dispatch any meaningful work to a goroutine of their own so the next
+	// flush isn't blocked.
+	if bm.onBatchFlushed != nil {
+		jobIDs := uniqueJobIDsForMilestone(completedTasks, failedTasks, skippedTasks)
+		if len(jobIDs) > 0 {
+			// Wrap the external callback in a panic guard. A panic
+			// inside onBatchFlushed (e.g. a milestone scheduler bug)
+			// would otherwise unwind the batch loop goroutine and
+			// silently halt every subsequent flush, since the outer
+			// processUpdateBatches loop has no recover() above it.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						batchLog.Error("onBatchFlushed callback panicked",
+							"panic", r,
+							"job_count", len(jobIDs),
+						)
+					}
+				}()
+				bm.onBatchFlushed(ctx, jobIDs)
+			}()
+		}
+	}
+
 	return nil
+}
+
+// uniqueJobIDsForMilestone returns the set of distinct job IDs touched
+// by the completed/failed/skipped buckets. Pending/waiting buckets are
+// intentionally excluded — only terminal transitions advance progress.
+func uniqueJobIDsForMilestone(completed, failed, skipped []*Task) []string {
+	seen := make(map[string]struct{}, len(completed)+len(failed)+len(skipped))
+	for _, t := range completed {
+		seen[t.JobID] = struct{}{}
+	}
+	for _, t := range failed {
+		seen[t.JobID] = struct{}{}
+	}
+	for _, t := range skipped {
+		seen[t.JobID] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out
 }
 
 // incrementDailyUsageForTasks increments the daily usage counter for completed/failed tasks.

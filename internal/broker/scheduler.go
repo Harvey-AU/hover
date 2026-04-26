@@ -15,25 +15,40 @@ import (
 // the Redis ZSET. The entry is stored as a pipe-delimited member
 // string; the score is the earliest unix-millisecond timestamp at
 // which the task may run.
+//
+// TaskType routes the entry to the correct Redis stream:
+//   - "crawl"      -> StreamKey(jobID)            (default, legacy)
+//   - "lighthouse" -> LighthouseStreamKey(jobID)  (Phase 2+)
+//
+// LighthouseRunID is populated only when TaskType == "lighthouse"; it
+// links the stream message back to the lighthouse_runs row that the
+// analysis app updates on completion.
 type ScheduleEntry struct {
-	TaskID     string
-	JobID      string
-	PageID     int
-	Host       string
-	Path       string
-	Priority   float64
-	RetryCount int
-	SourceType string
-	SourceURL  string
-	RunAt      time.Time
+	TaskID          string
+	JobID           string
+	PageID          int
+	Host            string
+	Path            string
+	Priority        float64
+	RetryCount      int
+	SourceType      string
+	SourceURL       string
+	RunAt           time.Time
+	TaskType        string
+	LighthouseRunID int64
 }
 
 // Member returns the pipe-delimited string stored in the ZSET.
 func (e ScheduleEntry) Member() string {
+	taskType := e.TaskType
+	if taskType == "" {
+		taskType = "crawl"
+	}
 	return FormatScheduleEntry(
 		e.TaskID, e.JobID, e.PageID,
 		e.Host, e.Path, e.Priority,
 		e.RetryCount, e.SourceType, e.SourceURL,
+		taskType, e.LighthouseRunID,
 	)
 }
 
@@ -44,9 +59,13 @@ func (e ScheduleEntry) Score() float64 {
 
 // ParseScheduleEntry reconstructs a ScheduleEntry from its
 // pipe-delimited ZSET member string plus the score.
+//
+// Accepts both the 9-field legacy format (pre-Phase-2) and the 11-field
+// current format. Legacy members are returned with TaskType="crawl" and
+// LighthouseRunID=0 so a rolling deploy can drain the ZSET without a flush.
 func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
-	parts := strings.SplitN(member, "|", 9)
-	if len(parts) != 9 {
+	parts := strings.SplitN(member, "|", 11)
+	if len(parts) != 9 && len(parts) != 11 {
 		return ScheduleEntry{}, fmt.Errorf("broker: malformed schedule entry: %q", member)
 	}
 
@@ -63,17 +82,34 @@ func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
 		return ScheduleEntry{}, fmt.Errorf("broker: bad retry_count in entry: %w", err)
 	}
 
+	taskType := "crawl"
+	var lighthouseRunID int64
+	if len(parts) == 11 {
+		taskType = parts[9]
+		if taskType == "" {
+			taskType = "crawl"
+		}
+		if parts[10] != "" {
+			lighthouseRunID, err = strconv.ParseInt(parts[10], 10, 64)
+			if err != nil {
+				return ScheduleEntry{}, fmt.Errorf("broker: bad lighthouse_run_id in entry: %w", err)
+			}
+		}
+	}
+
 	return ScheduleEntry{
-		TaskID:     parts[0],
-		JobID:      parts[1],
-		PageID:     pageID,
-		Host:       parts[3],
-		Path:       parts[4],
-		Priority:   priority,
-		RetryCount: retryCount,
-		SourceType: parts[7],
-		SourceURL:  parts[8],
-		RunAt:      time.UnixMilli(int64(score)),
+		TaskID:          parts[0],
+		JobID:           parts[1],
+		PageID:          pageID,
+		Host:            parts[3],
+		Path:            parts[4],
+		Priority:        priority,
+		RetryCount:      retryCount,
+		SourceType:      parts[7],
+		SourceURL:       parts[8],
+		RunAt:           time.UnixMilli(int64(score)),
+		TaskType:        taskType,
+		LighthouseRunID: lighthouseRunID,
 	}, nil
 }
 

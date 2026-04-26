@@ -28,7 +28,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           echo "Listing all preview apps..."
-          APPS=$(flyctl apps list --json | jq -r '.[] | select(.Name | startswith("hover-pr-")) | .Name')
+          # Match every preview-app prefix used by the review-apps workflow.
+          # The PR-number extraction below uses longest-prefix-first sed
+          # rules so hover-analysis-pr-12 is not mis-classified as
+          # hover-pr-... by a naive substring strip.
+          APPS=$(flyctl apps list --json | jq -r '
+            .[] | select(
+              (.Name | startswith("hover-pr-")) or
+              (.Name | startswith("hover-worker-pr-")) or
+              (.Name | startswith("hover-analysis-pr-"))
+            ) | .Name')
 
           if [ -z "$APPS" ]; then
             echo "No preview apps found"
@@ -40,8 +49,12 @@ jobs:
           echo ""
 
           for APP in $APPS; do
-            # Extract PR number from app name (hover-pr-123 -> 123)
-            PR_NUMBER=$(echo "$APP" | sed 's/hover-pr-//')
+            # Extract PR number, longest prefix first so the analysis and
+            # worker variants are stripped before the bare hover-pr- form.
+            PR_NUMBER=$(echo "$APP" \
+              | sed -e 's/^hover-analysis-pr-//' \
+                    -e 's/^hover-worker-pr-//' \
+                    -e 's/^hover-pr-//')
 
             echo "Checking PR #$PR_NUMBER for app $APP..."
 

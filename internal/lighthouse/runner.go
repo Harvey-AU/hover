@@ -3,6 +3,7 @@ package lighthouse
 import (
 	"context"
 	"errors"
+	"net/url"
 	"time"
 )
 
@@ -90,9 +91,21 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	const simulated = 50 * time.Millisecond
 	start := time.Now()
 
+	lighthouseLog.Debug("stub runner audit started",
+		"run_id", req.RunID,
+		"job_id", req.JobID,
+		"page_id", req.PageID,
+		"profile", string(req.Profile),
+		"url", SanitiseAuditURL(req.URL),
+	)
+
 	select {
 	case <-time.After(simulated):
 	case <-ctx.Done():
+		lighthouseLog.Debug("stub runner audit cancelled",
+			"run_id", req.RunID, "job_id", req.JobID,
+			"reason", ctx.Err(),
+		)
 		return AuditResult{}, ctx.Err()
 	}
 
@@ -106,7 +119,7 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	cls := 0.080
 	bytes := int64(1_500_000)
 
-	return AuditResult{
+	result := AuditResult{
 		PerformanceScore: &score,
 		LCPMs:            &lcp,
 		CLS:              &cls,
@@ -118,5 +131,35 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 		TotalByteWeight:  &bytes,
 		ReportKey:        "",
 		Duration:         time.Since(start),
-	}, nil
+	}
+
+	lighthouseLog.Debug("stub runner audit completed",
+		"run_id", req.RunID,
+		"job_id", req.JobID,
+		"page_id", req.PageID,
+		"duration_ms", result.Duration.Milliseconds(),
+	)
+
+	return result, nil
+}
+
+// SanitiseAuditURL strips query strings and fragments before logging.
+// Lighthouse audit URLs come from customer crawls and can carry session
+// tokens, signed-link tokens, or other low-entropy PII in the query
+// string; the runner does not need them in central logs. Exported so
+// the analysis service (cmd/analysis) can apply the same rule to its
+// own info-level logs without redefining the helper.
+func SanitiseAuditURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Don't risk leaking the unparsed string — fall back to host
+		// only if we can extract one heuristically; otherwise drop.
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }

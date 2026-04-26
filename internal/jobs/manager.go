@@ -91,6 +91,23 @@ type JobManager struct {
 	// Set by the API server or worker service to schedule tasks into Redis.
 	OnTasksEnqueued TaskScheduleCallback
 
+	// OnProgressMilestone is called after a batch flush observes the
+	// per-job progress crossing a 10% boundary (floor(new/10) > floor(old/10)).
+	// Set by the lighthouse scheduler so audits can be enqueued progressively
+	// while the crawl runs. Fire-and-forget: never returns an error and must
+	// not block the batch loop. Nil callback is allowed (production deploys
+	// without the analysis app, tests).
+	OnProgressMilestone ProgressMilestoneCallback
+
+	// lastMilestoneFired is the in-process record of the last 10%
+	// boundary that has been signalled per job, gating MaybeFireMilestones
+	// against duplicate fires within this replica. Multiple replicas may
+	// each fire the same milestone independently — the lighthouse
+	// scheduler dedupes via lighthouse_runs.UNIQUE(job_id, page_id), so
+	// at-most-once-per-replica is acceptable.
+	milestoneMu        sync.Mutex
+	lastMilestoneFired map[string]int // jobID -> milestone (0,10,20...100)
+
 	// Map to track which pages have been processed for each job
 	processedPages map[string]struct{} // Key format: "jobID_pageID"
 	pagesMutex     sync.RWMutex        // Mutex for thread-safe access
@@ -98,15 +115,120 @@ type JobManager struct {
 	sitemapSem chan struct{} // limits concurrent sitemap batch insertions across all jobs
 }
 
+// ProgressMilestoneCallback is invoked when a job's progress crosses a
+// 10% boundary. oldPct and newPct are the integer percentages before
+// and after the flush that triggered the milestone. The callback is
+// fire-and-forget and runs on the batch flusher's goroutine, so
+// implementations must return promptly — long-running work belongs in a
+// goroutine inside the callback.
+type ProgressMilestoneCallback func(ctx context.Context, jobID string, oldPct, newPct int)
+
 // NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
 	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
-		db:             db,
-		dbQueue:        dbQueue,
-		crawler:        crawler,
-		processedPages: make(map[string]struct{}),
-		sitemapSem:     make(chan struct{}, sitemapConcurrency),
+		db:                 db,
+		dbQueue:            dbQueue,
+		crawler:            crawler,
+		processedPages:     make(map[string]struct{}),
+		lastMilestoneFired: make(map[string]int),
+		sitemapSem:         make(chan struct{}, sitemapConcurrency),
+	}
+}
+
+// MaybeFireMilestones inspects each job's current progress and, if its
+// 10% milestone has advanced since the last fire on this replica,
+// invokes the registered OnProgressMilestone callback once. Designed to
+// be wired as the BatchFlushCallback on a db.BatchManager:
+//
+//	batchMgr.SetOnBatchFlushed(jobsManager.MaybeFireMilestones)
+//
+// Cheap when no callback is set or when no milestones have changed —
+// the path is a single SELECT plus a map lookup per job.
+//
+// Multi-replica safety: multiple workers may each compute the same
+// milestone and fire concurrently. Downstream dedupe (lighthouse_runs
+// UNIQUE(job_id, page_id) for the lighthouse case) makes this safe; the
+// in-process map merely keeps a single replica from re-firing on every
+// flush.
+func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) {
+	if jm == nil || jm.OnProgressMilestone == nil || len(jobIDs) == 0 {
+		return
+	}
+
+	rows, err := jm.db.QueryContext(ctx, `
+		SELECT id, total_tasks,
+		       COALESCE(completed_tasks, 0) + COALESCE(failed_tasks, 0) + COALESCE(skipped_tasks, 0)
+		  FROM jobs
+		 WHERE id = ANY($1)
+	`, pq.Array(jobIDs))
+	if err != nil {
+		jobsLog.Warn("milestone progress read failed", "error", err, "job_count", len(jobIDs))
+		return
+	}
+	defer rows.Close()
+
+	type pending struct {
+		jobID  string
+		oldPct int
+		newPct int
+	}
+	var fires []pending
+
+	for rows.Next() {
+		var (
+			jobID                  string
+			total, finishedTaskCnt int
+		)
+		if err := rows.Scan(&jobID, &total, &finishedTaskCnt); err != nil {
+			jobsLog.Warn("milestone progress scan failed", "error", err)
+			continue
+		}
+		if total <= 0 {
+			continue
+		}
+		// Integer percent (0..100). Saturate at 100 in case triggers ever
+		// over-count.
+		newPct := finishedTaskCnt * 100 / total
+		if newPct > 100 {
+			newPct = 100
+		}
+		newMilestone := (newPct / 10) * 10
+
+		jm.milestoneMu.Lock()
+		oldMilestone, ok := jm.lastMilestoneFired[jobID]
+		if ok && newMilestone <= oldMilestone {
+			jm.milestoneMu.Unlock()
+			continue
+		}
+		// 0% is not a milestone — every fresh job sits at 0% before
+		// any tasks complete, and the first batch flush would otherwise
+		// emit a spurious (0, 0) callback on the very first observation
+		// (where ok is false). The lighthouse scheduler handles 0%
+		// fine via the no-completed-tasks branch, but the noise drowns
+		// the milestone signal in logs and metrics.
+		if newMilestone == 0 {
+			jm.lastMilestoneFired[jobID] = 0
+			jm.milestoneMu.Unlock()
+			continue
+		}
+		jm.lastMilestoneFired[jobID] = newMilestone
+		jm.milestoneMu.Unlock()
+
+		fires = append(fires, pending{
+			jobID:  jobID,
+			oldPct: oldMilestone, // 0 if first observation
+			newPct: newMilestone,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		jobsLog.Warn("milestone progress iterate failed", "error", err)
+	}
+
+	for _, f := range fires {
+		jobsLog.Debug("milestone crossed",
+			"job_id", f.jobID, "old_pct", f.oldPct, "new_pct", f.newPct)
+		jm.OnProgressMilestone(ctx, f.jobID, f.oldPct, f.newPct)
 	}
 }
 
@@ -539,6 +661,16 @@ func (jm *JobManager) clearProcessedPages(jobID string) {
 	}
 }
 
+// clearMilestoneState removes the in-process milestone tracker entry for a
+// job. Called when the job reaches a terminal state so the map doesn't
+// grow unboundedly on a long-running worker that has serviced many jobs.
+// Idempotent — a missing entry is a no-op.
+func (jm *JobManager) clearMilestoneState(jobID string) {
+	jm.milestoneMu.Lock()
+	defer jm.milestoneMu.Unlock()
+	delete(jm.lastMilestoneFired, jobID)
+}
+
 // EnqueueJobURLs is a wrapper around dbQueue.EnqueueURLs that adds duplicate detection
 func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error {
 	span := sentry.StartSpan(ctx, "manager.enqueue_job_urls")
@@ -719,6 +851,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 
 	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
+	jm.clearMilestoneState(job.ID)
 
 	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 
@@ -1041,7 +1174,7 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 
 // UpdateJobStatus updates the status of a job with appropriate timestamps
 func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error {
-	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		var query string
 		var args []any
 
@@ -1059,7 +1192,21 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 
 		_, err := tx.Exec(query, args...)
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Drop in-process state once the job is terminal so long-running
+	// workers do not accumulate per-job map entries indefinitely.
+	// CancelJob has always cleared processedPages on cancellation; the
+	// completed / failed / archived paths previously relied on a worker
+	// restart to free those entries, so they are bundled here too.
+	switch status {
+	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived:
+		jm.clearProcessedPages(jobID)
+		jm.clearMilestoneState(jobID)
+	}
+	return nil
 }
 
 // updateJobWithError updates a job with an error message

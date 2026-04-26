@@ -23,6 +23,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/crawler"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
+	"github.com/Harvey-AU/hover/internal/lighthouse"
 	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/Harvey-AU/hover/internal/watchdog"
@@ -244,6 +245,28 @@ func main() {
 	// --- job manager (for EnqueueJobURLs + OnTasksEnqueued callback) ---
 	jobManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 	jobManager.OnTasksEnqueued = makeTasksEnqueuedHandler(scheduler, workerLog)
+
+	// --- lighthouse scheduler ---
+	// The scheduler runs in-process on the worker so the producer side
+	// of the lighthouse pipeline shares the same DB pool as the crawl
+	// path. The consumer side (hover-analysis) lives in a separate Fly
+	// app; only the scheduler bits are wired here.
+	lhScheduler := lighthouse.NewScheduler(pgDB, dbQueue)
+	jobManager.OnProgressMilestone = func(ctx context.Context, jobID string, oldPct, newPct int) {
+		// JobManager exposes the full crossing (oldPct, newPct) for
+		// future consumers; the lighthouse scheduler only needs the
+		// milestone it should sample at, which is newPct.
+		if err := lhScheduler.OnMilestone(ctx, jobID, newPct); err != nil {
+			workerLog.Warn("lighthouse scheduler OnMilestone failed",
+				"error", err, "job_id", jobID, "milestone", newPct)
+		}
+	}
+
+	// Wire the milestone hook through the batch flusher so progress
+	// crossings are checked off the same code path that updates job
+	// stats. SetOnBatchFlushed is a fire-and-forget signal — failures
+	// inside MaybeFireMilestones are logged, never returned.
+	batchManager.SetOnBatchFlushed(jobManager.MaybeFireMilestones)
 
 	// --- stream worker pool ---
 	swpOpts := jobs.StreamWorkerOpts{

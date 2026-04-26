@@ -105,6 +105,35 @@ jobs:
       - name: Deploy API app
         run: flyctl deploy --remote-only
 
+      - name: Sync secrets to Fly (analysis app)
+        run: |
+          # hover-analysis consumes the per-job lighthouse streams written by
+          # the dispatcher and writes audit metrics back to lighthouse_runs.
+          # Only secrets actually referenced by the analysis binary are
+          # synced; user-facing auth secrets are deliberately excluded.
+          flyctl secrets set \
+            --app hover-analysis \
+            DATABASE_URL="$DATABASE_URL" \
+            DATABASE_DIRECT_URL="$DATABASE_DIRECT_URL" \
+            REDIS_URL="$REDIS_URL" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            --stage
+
+      - name: Deploy analysis app
+        # Analysis (lighthouse consumer) deploys BEFORE worker (lighthouse
+        # producer) so the per-job lighthouse stream has a reader before the
+        # worker starts XADDing audit jobs onto it. Mirrors the existing
+        # consumer-before-producer rule from the worker/API split.
+        run:
+          flyctl deploy --config fly.analysis.toml --app hover-analysis
+          --remote-only
+
       - name: Sync secrets to Fly (worker app)
         run: |
           # hover-worker consumes Redis streams, executes crawls, persists to
@@ -226,9 +255,19 @@ jobs:
           if printf '%s\n' "$changed_files" | grep -qE '^cmd/worker/'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-worker"]')"
           fi
-          # Shared internal packages used by both the API server and worker.
-          if printf '%s\n' "$changed_files" | grep -qE '^internal/(broker|crawler|db|jobs|logging|observability)/'; then
-            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover","service:hover-worker"]')"
+          # hover-analysis surface: the analysis binary itself, its image
+          # config, fly app config, and the lighthouse package modules that
+          # only it consumes (runner). The shared lighthouse pieces
+          # (sampler, scheduler) are picked up by the broader internal/...
+          # clause below since the worker imports them too.
+          if printf '%s\n' "$changed_files" | grep -qE '^(cmd/analysis/|Dockerfile\.analysis|fly\.analysis\.toml|\.fly/review_apps\.analysis\.toml|internal/lighthouse/runner\.go)'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-analysis"]')"
+          fi
+          # Shared internal packages used by every service. Lighthouse
+          # producer code lives in internal/lighthouse and is imported by
+          # the worker; the consumer (analysis) imports the runner.
+          if printf '%s\n' "$changed_files" | grep -qE '^internal/(broker|crawler|db|jobs|lighthouse|logging|observability)/'; then
+            service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover","service:hover-worker","service:hover-analysis"]')"
           fi
           if printf '%s\n' "$changed_files" | grep -qE '^(cmd/hover/|webflow-designer-extension-cli/|npm/)'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-cli"]')"
@@ -239,9 +278,9 @@ jobs:
           if printf '%s\n' "$changed_files" | grep -qE '^supabase/'; then
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:supabase"]')"
           fi
-          # Fallback — unrecognised paths: tag both main services conservatively.
+          # Fallback — unrecognised paths: tag every service conservatively.
           if [ "$service_tags_json" = "[]" ]; then
-            service_tags_json='["service:hover","service:hover-worker"]'
+            service_tags_json='["service:hover","service:hover-worker","service:hover-analysis"]'
           fi
 
           body_text="$(printf '%s## Commits\n%s\n%s' "$pr_section" "$commits_body" "$commit_url")"
