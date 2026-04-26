@@ -122,7 +122,7 @@ func run(ctx context.Context, cfg config) error {
 	if maxConns < 0 || maxConns > 1<<30 {
 		maxConns = 16
 	}
-	pool.Config().MaxConns = int32(maxConns)
+	pool.Config().MaxConns = int32(maxConns) // #nosec G115 -- maxConns clamped to [0, 1<<30] above
 
 	taskIDs, err := setup(ctx, pool, cfg)
 	if err != nil {
