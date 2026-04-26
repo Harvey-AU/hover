@@ -661,6 +661,16 @@ func (jm *JobManager) clearProcessedPages(jobID string) {
 	}
 }
 
+// clearMilestoneState removes the in-process milestone tracker entry for a
+// job. Called when the job reaches a terminal state so the map doesn't
+// grow unboundedly on a long-running worker that has serviced many jobs.
+// Idempotent — a missing entry is a no-op.
+func (jm *JobManager) clearMilestoneState(jobID string) {
+	jm.milestoneMu.Lock()
+	defer jm.milestoneMu.Unlock()
+	delete(jm.lastMilestoneFired, jobID)
+}
+
 // EnqueueJobURLs is a wrapper around dbQueue.EnqueueURLs that adds duplicate detection
 func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error {
 	span := sentry.StartSpan(ctx, "manager.enqueue_job_urls")
@@ -841,6 +851,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 
 	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
+	jm.clearMilestoneState(job.ID)
 
 	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 
@@ -1163,7 +1174,7 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 
 // UpdateJobStatus updates the status of a job with appropriate timestamps
 func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error {
-	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		var query string
 		var args []any
 
@@ -1181,7 +1192,18 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 
 		_, err := tx.Exec(query, args...)
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Drop in-process state once the job is terminal so long-running
+	// workers do not accumulate per-job map entries indefinitely. Same
+	// rationale as the existing clearProcessedPages call in CancelJob.
+	switch status {
+	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived:
+		jm.clearMilestoneState(jobID)
+	}
+	return nil
 }
 
 // updateJobWithError updates a job with an error message

@@ -102,6 +102,27 @@ func TestMaybeFireMilestones_NoCallbackIsNoOp(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet(), "no DB query should have been issued")
 }
 
+// TestClearMilestoneState_RemovesEntry pins the cleanup contract that
+// terminal job transitions rely on so the in-process tracker doesn't
+// grow unboundedly on a long-running worker.
+func TestClearMilestoneState_RemovesEntry(t *testing.T) {
+	jm := &JobManager{
+		lastMilestoneFired: map[string]int{
+			"job-a": 30,
+			"job-b": 100,
+		},
+	}
+
+	jm.clearMilestoneState("job-a")
+	_, stillThere := jm.lastMilestoneFired["job-a"]
+	assert.False(t, stillThere, "cleared job must be removed from tracker")
+	assert.Equal(t, 100, jm.lastMilestoneFired["job-b"], "other jobs untouched")
+
+	// Idempotent — clearing a missing entry is a no-op.
+	jm.clearMilestoneState("never-existed")
+	assert.Len(t, jm.lastMilestoneFired, 1)
+}
+
 // TestMaybeFireMilestones_ZeroTotalSkipped guards against the divide-by-zero
 // path: a brand-new job with total_tasks=0 must not fire a milestone.
 func TestMaybeFireMilestones_ZeroTotalSkipped(t *testing.T) {
