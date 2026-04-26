@@ -110,7 +110,7 @@ func (f *fakeDBQueue) ExecuteControlWithContext(_ context.Context, _ func(contex
 func (f *fakeDBQueue) ExecuteMaintenance(_ context.Context, _ func(*sql.Tx) error) error {
 	return nil
 }
-func (f *fakeDBQueue) SetConcurrencyOverride(_ db.ConcurrencyOverrideFunc)                 {}
+func (f *fakeDBQueue) SetConcurrencyOverride(_ db.ConcurrencyOverrideFunc) {}
 func (f *fakeDBQueue) UpdateDomainTechnologies(_ context.Context, _ int, _, _ []byte, _ string) error {
 	return nil
 }
@@ -612,9 +612,9 @@ func (b *blockingProvider) Upload(ctx context.Context, _, _ string, _ io.Reader,
 	}
 	return nil
 }
-func (b *blockingProvider) Ping(_ context.Context, _ string) error                   { return nil }
+func (b *blockingProvider) Ping(_ context.Context, _ string) error { return nil }
 func (b *blockingProvider) Download(_ context.Context, _, _ string) (io.ReadCloser, error) {
 	return nil, errors.New("not implemented")
 }
 func (b *blockingProvider) Exists(_ context.Context, _, _ string) (bool, error) { return true, nil }
-func (b *blockingProvider) Provider() string                                     { return "blocking" }
+func (b *blockingProvider) Provider() string                                    { return "blocking" }
