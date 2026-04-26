@@ -76,7 +76,7 @@ function handleDashboardAction(action, element) {
         element.getAttribute("gnh-id") ||
         element.getAttribute("gnh-data-job-id");
       if (jobId) {
-        cancelJob(jobId);
+        cancelJob(jobId, element);
       }
       break;
     }
@@ -120,7 +120,19 @@ async function restartJob(jobId) {
   }
 }
 
-async function cancelJob(jobId) {
+const cancelJobInflight = new Set();
+
+async function cancelJob(jobId, triggerElement) {
+  if (cancelJobInflight.has(jobId)) {
+    return;
+  }
+  cancelJobInflight.add(jobId);
+  let originalLabel = null;
+  if (triggerElement) {
+    originalLabel = triggerElement.textContent;
+    triggerElement.disabled = true;
+    triggerElement.textContent = "Cancelling…";
+  }
   try {
     await window.dataBinder.fetchData(`/v1/jobs/${jobId}/cancel`, {
       method: "POST",
@@ -132,6 +144,14 @@ async function cancelJob(jobId) {
   } catch (error) {
     console.error("Failed to cancel job:", error);
     showDashboardError("Failed to cancel job");
+    if (triggerElement) {
+      triggerElement.disabled = false;
+      if (originalLabel !== null) {
+        triggerElement.textContent = originalLabel;
+      }
+    }
+  } finally {
+    cancelJobInflight.delete(jobId);
   }
 }
 
