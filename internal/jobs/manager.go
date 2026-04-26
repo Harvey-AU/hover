@@ -1197,10 +1197,13 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 	}
 
 	// Drop in-process state once the job is terminal so long-running
-	// workers do not accumulate per-job map entries indefinitely. Same
-	// rationale as the existing clearProcessedPages call in CancelJob.
+	// workers do not accumulate per-job map entries indefinitely.
+	// CancelJob has always cleared processedPages on cancellation; the
+	// completed / failed / archived paths previously relied on a worker
+	// restart to free those entries, so they are bundled here too.
 	switch status {
 	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived:
+		jm.clearProcessedPages(jobID)
 		jm.clearMilestoneState(jobID)
 	}
 	return nil
