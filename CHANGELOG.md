@@ -44,6 +44,20 @@ On merge, CI will:
   surgery on the production bucket. The bucket itself must be pre-created in R2
   — credentials in 1Password already carry write access.
 
+### Removed
+
+- Legacy hot-to-cold archive sweep (`internal/archive/scheduler.go`,
+  `internal/archive/task_html.go`, `archive.Archiver`, `archive.ArchiveSource`,
+  `archive.ArchiveCandidate`) and the corresponding DB methods
+  `FindArchiveCandidates` / `MarkTaskArchived` / `MarkArchiveSkipped` /
+  `MarkFullyArchivedJobs`. The sweep moved data Supabase Storage → R2; with R2
+  now serving as the hot store, nothing was wired to call any of it. Nothing in
+  the runtime referenced these symbols. `ARCHIVE_RETENTION_JOBS`,
+  `ARCHIVE_INTERVAL`, `ARCHIVE_BATCH_SIZE`, `ARCHIVE_CONCURRENCY` env vars
+  removed from `fly.toml`, `fly.worker.toml`, `.fly/review_apps.toml`,
+  `.fly/review_apps.worker.toml` for the same reason. DB schema is unchanged —
+  `tasks.html_archive_*` columns stay reserved for a future deep-cold tier.
+
 ### Fixed
 
 - HTML persister now drains accepted uploads on graceful shutdown instead of

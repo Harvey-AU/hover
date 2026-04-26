@@ -121,10 +121,6 @@ primary_region = 'syd'
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
   ARCHIVE_PROVIDER = "r2"
   ARCHIVE_BUCKET = "native-hover-archive"
-  ARCHIVE_RETENTION_JOBS = "3"
-  ARCHIVE_INTERVAL = "1m"
-  ARCHIVE_BATCH_SIZE = "100"
-  ARCHIVE_CONCURRENCY = "5"
 
 [deploy]
   strategy = "immediate"

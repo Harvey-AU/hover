@@ -84,10 +84,6 @@ primary_region = "syd"
   # native-hover-archive-review/<pr>/jobs/<job>/tasks/<task>/...
   ARCHIVE_PROVIDER = "r2"
   ARCHIVE_BUCKET = "native-hover-archive-review"
-  ARCHIVE_RETENTION_JOBS = "3"
-  ARCHIVE_INTERVAL = "1m"
-  ARCHIVE_BATCH_SIZE = "100"
-  ARCHIVE_CONCURRENCY = "5"
 
   # Outbox sweeper — mirror prod defaults.
   OUTBOX_SWEEP_INTERVAL_MS = "200"
