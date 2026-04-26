@@ -17,7 +17,7 @@ import (
 // full Postgres pool.
 type SchedulerDB interface {
 	GetCompletedTasksForLighthouseSampling(ctx context.Context, jobID string) ([]db.CompletedTaskForSampling, error)
-	GetLighthouseRunPageIDs(ctx context.Context, jobID string) (map[int]struct{}, error)
+	GetLighthouseRunPageBands(ctx context.Context, jobID string) (map[int]db.LighthouseSelectionBand, error)
 }
 
 // TxRunner runs the supplied function inside a Postgres transaction.
@@ -75,9 +75,13 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 		return nil
 	}
 
-	alreadySampled, err := s.db.GetLighthouseRunPageIDs(ctx, jobID)
+	existingBands, err := s.db.GetLighthouseRunPageBands(ctx, jobID)
 	if err != nil {
-		return fmt.Errorf("lighthouse: load already-sampled page IDs: %w", err)
+		return fmt.Errorf("lighthouse: load already-sampled page bands: %w", err)
+	}
+	alreadySampled := make(map[int]SelectionBand, len(existingBands))
+	for pageID, b := range existingBands {
+		alreadySampled[pageID] = SelectionBand(b)
 	}
 
 	// Map page_id -> meta so the band selection (which only carries

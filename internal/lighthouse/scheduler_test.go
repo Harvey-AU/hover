@@ -18,7 +18,7 @@ import (
 type fakeSchedulerDB struct {
 	completed    []db.CompletedTaskForSampling
 	completedErr error
-	sampled      map[int]struct{}
+	sampled      map[int]db.LighthouseSelectionBand
 	sampledErr   error
 }
 
@@ -29,12 +29,12 @@ func (f *fakeSchedulerDB) GetCompletedTasksForLighthouseSampling(_ context.Conte
 	return f.completed, nil
 }
 
-func (f *fakeSchedulerDB) GetLighthouseRunPageIDs(_ context.Context, _ string) (map[int]struct{}, error) {
+func (f *fakeSchedulerDB) GetLighthouseRunPageBands(_ context.Context, _ string) (map[int]db.LighthouseSelectionBand, error) {
 	if f.sampledErr != nil {
 		return nil, f.sampledErr
 	}
 	if f.sampled == nil {
-		return map[int]struct{}{}, nil
+		return map[int]db.LighthouseSelectionBand{}, nil
 	}
 	return f.sampled, nil
 }
@@ -164,7 +164,10 @@ func TestScheduler_OnMilestone_AllAlreadySampled(t *testing.T) {
 			{TaskID: "t1", PageID: 1, Host: "example.com", Path: "/", ResponseTime: 200},
 			{TaskID: "t2", PageID: 2, Host: "example.com", Path: "/about", ResponseTime: 1500},
 		},
-		sampled: map[int]struct{}{1: {}, 2: {}},
+		sampled: map[int]db.LighthouseSelectionBand{
+			1: db.LighthouseBandFastest,
+			2: db.LighthouseBandSlowest,
+		},
 	}
 	s := NewScheduler(fake, &txRunnerFromMock{db: mockDB})
 
