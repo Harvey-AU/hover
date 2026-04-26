@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-APP="hover,hover-worker"
+APP="hover,hover-worker,hover-analysis"
 INTERVAL=10
 SAMPLES=400
 ITERATIONS=1440  # 4 hours at 10s intervals
@@ -30,7 +30,7 @@ Automatic cleanup (enabled by default):
 
 Options:
   --app NAMES           Fly application name(s), comma-separated
-                        (default: hover,hover-worker)
+                        (default: hover,hover-worker,hover-analysis)
   --interval SECONDS    Seconds to wait between samples (default: 60)
   --samples N           Number of log lines to request each run (default: 400)
   --iterations N        Number of iterations to perform (0 = run forever)
