@@ -193,6 +193,7 @@ var (
 	lighthouseRunsScheduledCounter metric.Int64Counter
 	lighthouseRunsCounter          metric.Int64Counter
 	lighthouseRunDurationHistogram metric.Float64Histogram
+	lighthouseRunRetriesCounter    metric.Int64Counter
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -1459,7 +1460,7 @@ func initLighthouseInstruments(meterProvider *sdkmetric.MeterProvider) error {
 
 	lighthouseRunsCounter, err = meter.Int64Counter(
 		"bee.lighthouse.runs_total",
-		metric.WithDescription("Lighthouse run outcomes grouped by result (succeeded|failed|skipped_quota)"),
+		metric.WithDescription("Lighthouse run outcomes grouped by result (succeeded|failed|skipped_quota|shed)"),
 	)
 	if err != nil {
 		return err
@@ -1469,6 +1470,14 @@ func initLighthouseInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		"bee.lighthouse.run_duration_ms",
 		metric.WithUnit("ms"),
 		metric.WithDescription("Wall-clock duration of a single lighthouse audit, measured by the runner"),
+	)
+	if err != nil {
+		return err
+	}
+
+	lighthouseRunRetriesCounter, err = meter.Int64Counter(
+		"bee.lighthouse.run_retries_total",
+		metric.WithDescription("Transient Chromium failures that triggered the runner's one-shot retry, grouped by reason"),
 	)
 	return err
 }
@@ -1486,7 +1495,11 @@ func RecordLighthouseScheduled(ctx context.Context, jobID, band string, count in
 }
 
 // RecordLighthouseRun increments the consumer-side run outcome counter.
-// outcome values: "succeeded", "failed", "skipped_quota".
+// outcome values: "succeeded", "failed", "skipped_quota", "shed".
+// "shed" tracks audits the runner deferred via the soft memory-shed
+// circuit breaker (left in 'running', message redelivered later); a
+// rising shed rate is the signal that the analysis fleet is
+// memory-saturated and needs scaling up.
 func RecordLighthouseRun(ctx context.Context, jobID, outcome string) {
 	_ = jobID
 	if lighthouseRunsCounter == nil {
@@ -1506,4 +1519,18 @@ func RecordLighthouseRunDuration(ctx context.Context, jobID, outcome string, dur
 	}
 	lighthouseRunDurationHistogram.Record(ctx, durationMs,
 		metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// RecordLighthouseRunRetry increments the transient-retry counter.
+// reason is a short tag identifying the recognised stderr substring
+// that triggered the retry (e.g. "target_crashed", "protocol_error");
+// keep cardinality low — these are the named patterns from the
+// runner's transientStderrSubstrings list, not free-form error text.
+func RecordLighthouseRunRetry(ctx context.Context, jobID, reason string) {
+	_ = jobID
+	if lighthouseRunRetriesCounter == nil {
+		return
+	}
+	lighthouseRunRetriesCounter.Add(ctx, 1,
+		metric.WithAttributes(attribute.String("reason", reason)))
 }

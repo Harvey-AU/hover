@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/archive"
 	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/lighthouse"
@@ -142,9 +143,6 @@ func main() {
 	}
 	analysisLog.Info("connected to Redis")
 
-	// --- runner ---
-	runner := selectRunner()
-
 	// --- root context tied to OS signals ---
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -154,7 +152,18 @@ func main() {
 		"max_concurrency", cfg.maxConcurrency,
 		"audit_timeout_ms", cfg.auditTimeout.Milliseconds(),
 		"poll_interval_ms", cfg.pollInterval.Milliseconds(),
+		"runner", cfg.runner,
+		"memory_shed_mb", cfg.memoryShedMB,
 	)
+
+	// --- archive provider (only required by the local runner) ---
+	provider, bucket := loadArchiveProvider(rootCtx, cfg.runner)
+
+	// --- runner ---
+	runner, err := selectRunner(cfg, provider, bucket)
+	if err != nil {
+		analysisLog.Fatal("failed to construct lighthouse runner", "error", err)
+	}
 
 	consumer := newConsumer(pgDB, redisClient, runner, cfg)
 	consumer.run(rootCtx)
@@ -162,22 +171,72 @@ func main() {
 	analysisLog.Info("analysis service stopped")
 }
 
+// loadArchiveProvider builds a ColdStorageProvider from ARCHIVE_*
+// env vars. The stub runner doesn't need it, so a missing config is
+// only fatal when LIGHTHOUSE_RUNNER=local. For "stub" we log and
+// continue with a nil provider so review apps without R2 credentials
+// still boot.
+func loadArchiveProvider(ctx context.Context, runner string) (archive.ColdStorageProvider, string) {
+	cfg := archive.ConfigFromEnv()
+	if cfg == nil {
+		if runner == "local" {
+			analysisLog.Fatal("LIGHTHOUSE_RUNNER=local requires ARCHIVE_PROVIDER + ARCHIVE_BUCKET")
+		}
+		analysisLog.Info("archive provider unconfigured; stub runner doesn't need it")
+		return nil, ""
+	}
+	provider, err := archive.ProviderFromEnv()
+	if err != nil {
+		if runner == "local" {
+			analysisLog.Fatal("failed to construct archive provider", "error", err)
+		}
+		analysisLog.Warn("failed to construct archive provider; stub runner unaffected", "error", err)
+		return nil, ""
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := provider.Ping(pingCtx, cfg.Bucket); err != nil {
+		if runner == "local" {
+			analysisLog.Fatal("archive provider ping failed", "error", err, "bucket", cfg.Bucket)
+		}
+		analysisLog.Warn("archive provider ping failed; stub runner unaffected", "error", err)
+		return nil, ""
+	}
+	analysisLog.Info("archive provider ready", "provider", provider.Provider(), "bucket", cfg.Bucket)
+	return provider, cfg.Bucket
+}
+
 // runnerEnvKey selects the runner implementation. v1 only has the stub
 // runner; Phase 3 introduces 'local' which shells out to Chromium.
 const runnerEnvKey = "LIGHTHOUSE_RUNNER"
 
-func selectRunner() lighthouse.Runner {
-	choice := strings.ToLower(strings.TrimSpace(os.Getenv(runnerEnvKey)))
-	if choice == "" {
-		choice = "stub"
-	}
-	switch choice {
+// selectRunner builds the configured Runner. Returns an error rather
+// than falling back silently so a Dockerfile/toml drift (missing
+// LIGHTHOUSE_BIN, missing R2 credentials when local is requested) is a
+// loud boot failure rather than a degraded service that quietly stubs
+// every audit. Unknown choices stay loud-but-not-fatal: log and stub
+// so an inadvertent typo in env doesn't take the service down.
+func selectRunner(cfg consumerConfig, provider archive.ColdStorageProvider, bucket string) (lighthouse.Runner, error) {
+	switch cfg.runner {
 	case "stub":
 		analysisLog.Info("using stub lighthouse runner")
-		return lighthouse.NewStubRunner()
+		return lighthouse.NewStubRunner(), nil
+	case "local":
+		analysisLog.Info("using local lighthouse runner",
+			"lighthouse_bin", cfg.lighthouseBin,
+			"chromium_bin", cfg.chromiumBin,
+		)
+		return lighthouse.NewLocalRunner(lighthouse.LocalRunnerConfig{
+			LighthouseBin: cfg.lighthouseBin,
+			ChromiumBin:   cfg.chromiumBin,
+			Provider:      provider,
+			Bucket:        bucket,
+			MemoryShedMB:  cfg.memoryShedMB,
+			ProfilePreset: lighthouse.ProfileMobile,
+		})
 	default:
-		analysisLog.Warn("unknown LIGHTHOUSE_RUNNER value; falling back to stub", "requested", choice)
-		return lighthouse.NewStubRunner()
+		analysisLog.Warn("unknown LIGHTHOUSE_RUNNER value; falling back to stub", "requested", cfg.runner)
+		return lighthouse.NewStubRunner(), nil
 	}
 }
 
@@ -189,9 +248,19 @@ type consumerConfig struct {
 	reclaimInterval time.Duration
 	reclaimMinIdle  time.Duration
 	consumerName    string
+
+	// Phase 3 additions. Only consulted when runner == "local".
+	runner        string // "stub" | "local"
+	lighthouseBin string // path to bundled lighthouse CLI
+	chromiumBin   string // path to bundled Chromium binary
+	memoryShedMB  int    // free-memory floor before deferring an audit
 }
 
 func loadConsumerConfig() consumerConfig {
+	runner := strings.ToLower(strings.TrimSpace(os.Getenv(runnerEnvKey)))
+	if runner == "" {
+		runner = "stub"
+	}
 	cfg := consumerConfig{
 		maxConcurrency:  envIntDefault("LIGHTHOUSE_MAX_CONCURRENCY", 1),
 		auditTimeout:    time.Duration(envIntDefault("LIGHTHOUSE_AUDIT_TIMEOUT_MS", 90_000)) * time.Millisecond,
@@ -202,6 +271,10 @@ func loadConsumerConfig() consumerConfig {
 		// stream's REDIS_AUTOCLAIM_MIN_IDLE_S default and is safely
 		// longer than the per-audit timeout (default 90s) plus DB write.
 		reclaimMinIdle: time.Duration(envIntDefault("LIGHTHOUSE_RECLAIM_MIN_IDLE_S", 180)) * time.Second,
+		runner:         runner,
+		lighthouseBin:  strings.TrimSpace(os.Getenv("LIGHTHOUSE_BIN")),
+		chromiumBin:    strings.TrimSpace(os.Getenv("CHROMIUM_BIN")),
+		memoryShedMB:   envIntDefault("LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB", 600),
 	}
 	if cfg.maxConcurrency < 1 {
 		cfg.maxConcurrency = 1
@@ -483,7 +556,7 @@ func (c *consumer) dispatchMessages(
 func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, msgID, streamKey, groupName string) {
 	startedAt := time.Now()
 
-	moved, err := c.db.MarkLighthouseRunRunning(ctx, req.RunID)
+	moved, sourceTaskID, err := c.db.MarkLighthouseRunRunning(ctx, req.RunID)
 	if err != nil {
 		analysisLog.Warn("MarkLighthouseRunRunning failed", "error", err,
 			"run_id", req.RunID, "job_id", req.JobID)
@@ -500,6 +573,7 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 		_ = c.rdb.RDB().XAck(ctx, streamKey, groupName, msgID).Err()
 		return
 	}
+	req.SourceTaskID = sourceTaskID
 
 	analysisLog.Info("lighthouse audit started",
 		"run_id", req.RunID, "job_id", req.JobID,
@@ -515,6 +589,22 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 
 	if runErr != nil {
 		duration := time.Since(startedAt)
+		// Memory-shed defers the audit just like a shutdown: leave the
+		// row in 'running' and skip the ACK so XAUTOCLAIM redelivers
+		// once memory recovers. Treating it as a permanent failure
+		// would burn the audit slot and we'd never re-attempt.
+		if errors.Is(runErr, lighthouse.ErrMemoryShed) {
+			analysisLog.Info("lighthouse audit shed (low memory); leaving for redelivery",
+				"run_id", req.RunID, "job_id", req.JobID,
+				"duration_ms", duration.Milliseconds(),
+			)
+			// Tick the shed outcome so a rising shed rate on Grafana
+			// is the unambiguous signal that the analysis fleet is
+			// memory-saturated. No duration histogram bucket — these
+			// audits never actually ran.
+			observability.RecordLighthouseRun(ctx, req.JobID, "shed")
+			return
+		}
 		// Shutdown cancellation must not be turned into a permanent
 		// 'failed' row. SIGTERM cancels the root context, which would
 		// otherwise mark the in-flight audit failed AND ACK the stream

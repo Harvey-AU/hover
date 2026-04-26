@@ -19,13 +19,20 @@ const (
 // AuditRequest is the input handed to a Runner. The scheduler builds
 // these from a lighthouse_runs row plus the matching tasks/pages
 // metadata. Timeout is the per-run budget; runners must respect it.
+//
+// SourceTaskID is the lighthouse_runs.source_task_id (empty when the
+// FK was NULLed via ON DELETE SET NULL). The local runner uses it to
+// co-locate the report with the matching crawl artefact under
+// jobs/{JobID}/tasks/{SourceTaskID}/. Empty falls back to a
+// run-id-keyed path so a deleted parent task doesn't lose the report.
 type AuditRequest struct {
-	RunID   int64
-	JobID   string
-	PageID  int
-	URL     string
-	Profile Profile
-	Timeout time.Duration
+	RunID        int64
+	JobID        string
+	PageID       int
+	SourceTaskID string
+	URL          string
+	Profile      Profile
+	Timeout      time.Duration
 }
 
 // AuditResult is the output of a successful audit. ReportKey is the

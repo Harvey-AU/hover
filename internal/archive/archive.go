@@ -64,3 +64,29 @@ func TaskHTMLObjectPath(jobID, taskID string) string {
 func ColdKey(jobID, taskID string) string {
 	return TaskHTMLObjectPath(jobID, taskID)
 }
+
+// LighthouseObjectPath returns the canonical object path for a
+// lighthouse audit's gzipped JSON report. When taskID is non-empty the
+// report is co-located with the matching crawl artefact under
+// "jobs/{jobID}/tasks/{taskID}/lighthouse-{profile}.json.gz" so the
+// two blobs can be discovered together. When taskID is empty (the
+// parent task was deleted via ON DELETE SET NULL on
+// lighthouse_runs.source_task_id) the path falls back to
+// "jobs/{jobID}/runs/{runID}/lighthouse-{profile}.json.gz" so the
+// audit is still archived.
+//
+// ARCHIVE_PATH_PREFIX prepends in the same way as TaskHTMLObjectPath so
+// review-app deployments stay siloed from production.
+func LighthouseObjectPath(jobID, taskID, profile string, runID int64) string {
+	var base string
+	if taskID == "" {
+		base = fmt.Sprintf("jobs/%s/runs/%d/lighthouse-%s.json.gz", jobID, runID, profile)
+	} else {
+		base = fmt.Sprintf("jobs/%s/tasks/%s/lighthouse-%s.json.gz", jobID, taskID, profile)
+	}
+	prefix := strings.Trim(strings.TrimSpace(os.Getenv("ARCHIVE_PATH_PREFIX")), "/")
+	if prefix == "" {
+		return base
+	}
+	return prefix + "/" + base
+}
