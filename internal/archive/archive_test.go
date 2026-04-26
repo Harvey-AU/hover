@@ -1,6 +1,73 @@
 package archive
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- ConfigFromEnv ---
+
+func TestConfigFromEnv_BothUnset(t *testing.T) {
+	t.Setenv("ARCHIVE_PROVIDER", "")
+	t.Setenv("ARCHIVE_BUCKET", "")
+	got := ConfigFromEnv()
+	assert.Nil(t, got, "nil expected when both vars are unset")
+}
+
+func TestConfigFromEnv_ProviderUnset(t *testing.T) {
+	t.Setenv("ARCHIVE_PROVIDER", "")
+	t.Setenv("ARCHIVE_BUCKET", "my-bucket")
+	got := ConfigFromEnv()
+	assert.Nil(t, got, "nil expected when ARCHIVE_PROVIDER is unset")
+}
+
+func TestConfigFromEnv_BucketUnset(t *testing.T) {
+	t.Setenv("ARCHIVE_PROVIDER", "r2")
+	t.Setenv("ARCHIVE_BUCKET", "")
+	got := ConfigFromEnv()
+	assert.Nil(t, got, "nil expected when ARCHIVE_BUCKET is unset")
+}
+
+func TestConfigFromEnv_BothSet(t *testing.T) {
+	t.Setenv("ARCHIVE_PROVIDER", "r2")
+	t.Setenv("ARCHIVE_BUCKET", "my-archive")
+	got := ConfigFromEnv()
+	require.NotNil(t, got)
+	assert.Equal(t, "r2", got.Provider)
+	assert.Equal(t, "my-archive", got.Bucket)
+}
+
+func TestConfigFromEnv_CustomProvider(t *testing.T) {
+	t.Setenv("ARCHIVE_PROVIDER", "s3")
+	t.Setenv("ARCHIVE_BUCKET", "s3-bucket")
+	got := ConfigFromEnv()
+	require.NotNil(t, got)
+	assert.Equal(t, "s3", got.Provider)
+	assert.Equal(t, "s3-bucket", got.Bucket)
+}
+
+// --- DefaultConfig ---
+
+func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	assert.Equal(t, "r2", cfg.Provider)
+	assert.Equal(t, "native-hover-archive", cfg.Bucket)
+}
+
+// --- ColdKey ---
+
+func TestColdKey_DelegatesToTaskHTMLObjectPath(t *testing.T) {
+	t.Setenv("ARCHIVE_PATH_PREFIX", "")
+	assert.Equal(t, TaskHTMLObjectPath("j", "t"), ColdKey("j", "t"))
+}
+
+func TestColdKey_WithPrefix(t *testing.T) {
+	t.Setenv("ARCHIVE_PATH_PREFIX", "42")
+	assert.Equal(t, "42/jobs/j/tasks/t/page-content.html.gz", ColdKey("j", "t"))
+}
 
 func TestTaskHTMLObjectPath(t *testing.T) {
 	cases := []struct {
