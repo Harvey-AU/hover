@@ -16,7 +16,6 @@ on:
       - ".prettierrc"
       - ".prettierignore"
       - ".golangci.yml"
-      - ".github/**"
 
 jobs:
   check-changelog:
@@ -54,15 +53,44 @@ jobs:
             exit 1
           fi
 
+          # PR-level enforcement: every PR must add new content under
+          # [Unreleased]. We compare the unreleased section between
+          # origin/main and HEAD; if they're identical, the PR didn't
+          # add anything and is rejected. This catches the failure mode
+          # where [Unreleased] is non-empty (because previous PRs
+          # accumulated entries) but the current PR forgot to add one.
+          extract_unreleased() {
+            awk '
+              /^## \[Unreleased/ {f=1; next}
+              /^## Full changelog history$/ {f=0}
+              /^## \[[0-9]/ {f=0}
+              f
+            ' "$1" | sed '/^_Add unreleased changes here\._$/d' | sed '/^[[:space:]]*$/d'
+          }
+
+          MAIN_UNRELEASED=$(git show "$COMPARE_REF":CHANGELOG.md 2>/dev/null | extract_unreleased /dev/stdin || true)
+          HEAD_UNRELEASED=$(extract_unreleased CHANGELOG.md)
+
+          if [ "$MAIN_UNRELEASED" = "$HEAD_UNRELEASED" ]; then
+            echo "❌ ERROR: This PR did not add any new entry under ## [Unreleased]."
+            echo ""
+            echo "Every PR to main must add at least one line under ## [Unreleased]"
+            echo "in CHANGELOG.md describing the change. For example:"
+            echo ""
+            echo "  ## [Unreleased]"
+            echo ""
+            echo "  ### Changed"
+            echo "  - Brief description of the change."
+            echo ""
+            echo "If your change really does not warrant a changelog entry, justify"
+            echo "it explicitly in the PR description and request the gate be waived."
+            exit 1
+          fi
+
           # Use shared script for changelog parsing and version calculation
           bash scripts/changelog-version.sh
 
-          # Report status
-          if grep -q 'should_release=true' "$GITHUB_OUTPUT"; then
-            echo "✅ Changelog has been updated with changes"
-          else
-            echo "⚠️  [Unreleased] section is empty — release will have blank changelog"
-          fi
+          echo "✅ Changelog has new content under [Unreleased]"
 
       - name: Comment on PR with version info
         uses: actions/github-script@v8

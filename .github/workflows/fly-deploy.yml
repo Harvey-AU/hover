@@ -1,5 +1,16 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
-# CI trigger after repository rename (no functional change)
+#
+# Pipeline shape: the deploy is split into a build phase that pushes
+# images to registry.fly.io in parallel, and a release phase that points
+# each Fly app at the pre-built image. The build phase is the slow part
+# (~3 min on Fly's remote builder); decoupling it from release lets us
+# build the shared hover/hover-worker image once instead of twice, and
+# build the analysis image concurrently rather than after.
+#
+# Ordering invariant (preserved from the original workflow): hover-analysis
+# (lighthouse consumer) must be live before hover-worker (lighthouse
+# producer) starts XADDing onto the per-job lighthouse stream. The
+# release-worker job declares needs: [release-analysis] to enforce this.
 
 name: Fly Deploy
 on:
@@ -17,69 +28,77 @@ on:
       - "SECURITY.md"
       - "Roadmap.md"
       - "QandA.md"
+
+# Workflow-level lock: only one full deploy run for this group is in
+# flight at a time. cancel-in-progress: false so a second push to main
+# queues behind the first rather than aborting it mid-release.
+concurrency:
+  group: deploy-group
+  cancel-in-progress: false
+
 jobs:
-  deploy:
-    name: Deploy app
+  # ───────── Build phase ───────────────────────────────────────────────
+  # Two image builds run in parallel. The shared image carries both the
+  # API binary (cmd/app) and the worker binary (cmd/worker) — see
+  # Dockerfile lines 19–20 — so it is reused by both release-api and
+  # release-worker. The analysis image has its own runtime (Debian +
+  # Chromium) and is built independently.
+  build-shared:
+    name: Build hover image (API + worker)
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    concurrency: deploy-group # optional: ensure only one action runs at a time
+    outputs:
+      image: ${{ steps.build.outputs.image }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: ./.github/actions/fly-setup
         with:
-          go-version: "1.26.2"
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
-      - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
-        with:
-          export-env: true
+      - name: Build and push hover image
+        id: build
         env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # CI-only
-          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
-          # Runtime secrets — hover-supabase
-          DATABASE_URL: op://Good Native/hover-supabase/DATABASE_URL
-          DATABASE_DIRECT_URL:
-            op://Good Native/hover-supabase/DATABASE_DIRECT_URL
-          SUPABASE_JWT_SECRET:
-            op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
-          SUPABASE_SERVICE_ROLE_KEY:
-            op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
-          # Runtime secrets — hover-runtime
-          SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
-          LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
-          SLACK_CLIENT_SECRET:
-            op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
-          WEBFLOW_CLIENT_SECRET:
-            op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
-          GOOGLE_CLIENT_SECRET:
-            op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
-          OTEL_EXPORTER_OTLP_HEADERS:
-            op://Good Native/hover-runtime/OTEL_EXPORTER_OTLP_HEADERS
-          GRAFANA_CLOUD_USER: op://Good Native/hover-runtime/GRAFANA_CLOUD_USER
-          GRAFANA_CLOUD_API_KEY:
-            op://Good Native/hover-runtime/GRAFANA_CLOUD_API_KEY
-          # Redis broker (shared by hover + hover-worker)
-          REDIS_URL: op://Good Native/hover-runtime/REDIS_URL
-          # Archive (R2 cold storage)
-          ARCHIVE_ACCESS_KEY_ID:
-            op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
-          ARCHIVE_SECRET_ACCESS_KEY:
-            op://Good Native/hover-archive/ARCHIVE_SECRET_ACCESS_KEY
-          ARCHIVE_ENDPOINT: op://Good Native/hover-archive/ARCHIVE_ENDPOINT
-
-      - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
-
-      - name: Validate runtime secrets
+          IMAGE_LABEL: deployment-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          # REDIS_URL is shared by the API (scheduler enqueue path) and the
-          # worker (consumer). Validate up front so an empty value doesn't
-          # produce a half-deployed API before the worker step fails.
-          if [ -z "$REDIS_URL" ]; then
-            echo "❌ REDIS_URL is required. Check 1Password: op://Good Native/hover-runtime/REDIS_URL" >&2
-            exit 1
-          fi
+          flyctl deploy --build-only --push \
+            --image-label "$IMAGE_LABEL" \
+            --app hover
+          echo "image=registry.fly.io/hover:${IMAGE_LABEL}" >> "$GITHUB_OUTPUT"
+
+  build-analysis:
+    name: Build hover-analysis image
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
+      - name: Build and push hover-analysis image
+        id: build
+        env:
+          IMAGE_LABEL: deployment-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          flyctl deploy --build-only --push \
+            --image-label "$IMAGE_LABEL" \
+            --config fly.analysis.toml \
+            --app hover-analysis
+          echo "image=registry.fly.io/hover-analysis:${IMAGE_LABEL}" >> "$GITHUB_OUTPUT"
+
+  # ───────── Release phase ─────────────────────────────────────────────
+  # release-api and release-analysis fan out in parallel as soon as their
+  # builds are ready. release-worker waits on release-analysis so the
+  # consumer is healthy before the producer starts publishing.
+  release-api:
+    name: Release hover (API)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [build-shared]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Sync secrets to Fly (API app)
         run: |
@@ -102,15 +121,28 @@ jobs:
             REDIS_URL="$REDIS_URL" \
             --stage
 
-      - name: Deploy API app
-        run: flyctl deploy --remote-only
+      - name: Release API app
+        env:
+          IMAGE: ${{ needs.build-shared.outputs.image }}
+        run: flyctl deploy --image "$IMAGE" --app hover
+
+  release-analysis:
+    name: Release hover-analysis
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [build-analysis]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Sync secrets to Fly (analysis app)
         run: |
-          # hover-analysis consumes the per-job lighthouse streams written by
-          # the dispatcher and writes audit metrics back to lighthouse_runs.
-          # Only secrets actually referenced by the analysis binary are
-          # synced; user-facing auth secrets are deliberately excluded.
+          # hover-analysis consumes the per-job lighthouse streams written
+          # by the dispatcher and writes audit metrics back to
+          # lighthouse_runs. Only secrets actually referenced by the
+          # analysis binary are synced; user-facing auth secrets are
+          # deliberately excluded.
           flyctl secrets set \
             --app hover-analysis \
             DATABASE_URL="$DATABASE_URL" \
@@ -125,22 +157,33 @@ jobs:
             ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
             --stage
 
-      - name: Deploy analysis app
-        # Analysis (lighthouse consumer) deploys BEFORE worker (lighthouse
-        # producer) so the per-job lighthouse stream has a reader before the
-        # worker starts XADDing audit jobs onto it. Mirrors the existing
-        # consumer-before-producer rule from the worker/API split.
-        run:
-          flyctl deploy --config fly.analysis.toml --app hover-analysis
-          --remote-only
+      - name: Release analysis app
+        env:
+          IMAGE: ${{ needs.build-analysis.outputs.image }}
+        run: |
+          flyctl deploy --image "$IMAGE" \
+            --config fly.analysis.toml \
+            --app hover-analysis
+
+  release-worker:
+    name: Release hover-worker
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Waits on build-shared for the image, and on release-analysis for
+    # the consumer-before-producer invariant.
+    needs: [build-shared, release-analysis]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - name: Sync secrets to Fly (worker app)
         run: |
-          # hover-worker consumes Redis streams, executes crawls, persists to
-          # Postgres + R2. Only secrets actually referenced by the worker
-          # binary are synced here; user-facing auth secrets (Supabase JWT,
-          # Slack/Webflow/Google OAuth client secrets) are deliberately
-          # excluded.
+          # hover-worker consumes Redis streams, executes crawls, persists
+          # to Postgres + R2. Only secrets actually referenced by the
+          # worker binary are synced here; user-facing auth secrets
+          # (Supabase JWT, Slack/Webflow/Google OAuth client secrets) are
+          # deliberately excluded.
           flyctl secrets set \
             --app hover-worker \
             DATABASE_URL="$DATABASE_URL" \
@@ -155,15 +198,27 @@ jobs:
             ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
             --stage
 
-      - name: Deploy worker app
-        run:
-          flyctl deploy --config fly.worker.toml --app hover-worker
-          --remote-only
+      - name: Release worker app
+        # Reuses the hover image from build-shared — Dockerfile compiles
+        # both binaries, fly.worker.toml selects the worker entrypoint.
+        env:
+          IMAGE: ${{ needs.build-shared.outputs.image }}
+        run: |
+          flyctl deploy --image "$IMAGE" \
+            --config fly.worker.toml \
+            --app hover-worker
 
+  # ───────── Annotation ────────────────────────────────────────────────
+  # if: always() so a partial deploy still produces an annotation for
+  # observability. Annotation is best-effort — failures here log a
+  # warning but do not fail the workflow.
+  annotate:
+    name: Post deploy annotation to Grafana
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [release-api, release-analysis, release-worker]
+    if: always()
+    steps:
       - name: Load Grafana annotation secrets
-        # Annotation is observability, not a release gate. If 1Password is
-        # unreachable or the items are missing, log a warning and move on —
-        # the deploy itself has already succeeded by this point.
         continue-on-error: true
         uses: 1password/load-secrets-action@v2
         with:
@@ -174,11 +229,11 @@ jobs:
           GRAFANA_SA_TOKEN: op://Good Native/hover-runtime/GRAFANA_SA_TOKEN
 
       - name: Post deploy annotation to Grafana
-        # Best-effort: a Grafana outage logs a warning but does not fail the
-        # deploy. The annotation is observability, not a release gate.
-        # Commit-message and ref are passed via env vars (not direct
-        # ${{ ... }} interpolation) to avoid shell-injection via crafted
-        # commit messages — see GitHub Actions injection guidance.
+        # Best-effort: a Grafana outage logs a warning but does not fail
+        # the workflow. Commit-message and ref are passed via env vars
+        # (not direct ${{ ... }} interpolation) to avoid shell-injection
+        # via crafted commit messages — see GitHub Actions injection
+        # guidance.
         continue-on-error: true
         env:
           COMMIT_SHA: ${{ github.sha }}
@@ -197,9 +252,10 @@ jobs:
           short_sha="${COMMIT_SHA:0:7}"
           commit_url="https://github.com/${REPO}/commit/${COMMIT_SHA}"
 
-          # PR detection — merge commits from GitHub include "(#NNN)" in the
-          # subject. Look up the PR via gh api so we get the canonical title
-          # rather than whatever shorthand appeared in the commit message.
+          # PR detection — merge commits from GitHub include "(#NNN)" in
+          # the subject. Look up the PR via gh api so we get the canonical
+          # title rather than whatever shorthand appeared in the commit
+          # message.
           pr_number="$(printf '%s' "$COMMIT_MESSAGE" | grep -oE '#[0-9]+' | head -n1 | tr -d '#' || true)"
           pr_section=""
           extra_tags_json='[]'
@@ -213,9 +269,9 @@ jobs:
             fi
           fi
 
-          # Commit range since previous successful deploy — walk workflow runs
-          # for this workflow file on main and pick the most recent success
-          # that isn't the current commit.
+          # Commit range since previous successful deploy — walk workflow
+          # runs for this workflow file on main and pick the most recent
+          # success that isn't the current commit.
           prev_sha="$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?branch=main&status=success&per_page=10" \
             --jq "[.workflow_runs[] | select(.head_sha != \"${COMMIT_SHA}\")][0].head_sha" 2>/dev/null || true)"
 
@@ -237,8 +293,9 @@ jobs:
             commit_tags_json="$(jq -cn --arg t "commit:${short_sha}" '[$t]')"
           fi
 
-          # Derive service tags from the files changed in this deploy range.
-          # Falls back to the single-commit API when no compare range is available.
+          # Derive service tags from the files changed in this deploy
+          # range. Falls back to the single-commit API when no compare
+          # range is available.
           changed_files=""
           if [ -n "$compare_json" ]; then
             changed_files="$(printf '%s' "$compare_json" | jq -r '.files[].filename' 2>/dev/null || true)"
@@ -256,8 +313,8 @@ jobs:
             service_tags_json="$(jq -cn --argjson t "$service_tags_json" '$t + ["service:hover-worker"]')"
           fi
           # hover-analysis surface: the analysis binary itself, its image
-          # config, fly app config, and the lighthouse package modules that
-          # only it consumes (runner). The shared lighthouse pieces
+          # config, fly app config, and the lighthouse package modules
+          # that only it consumes (runner). The shared lighthouse pieces
           # (sampler, scheduler) are picked up by the broader internal/...
           # clause below since the worker imports them too.
           if printf '%s\n' "$changed_files" | grep -qE '^(cmd/analysis/|Dockerfile\.analysis|fly\.analysis\.toml|\.fly/review_apps\.analysis\.toml|internal/lighthouse/runner\.go)'; then
