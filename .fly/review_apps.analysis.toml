@@ -14,7 +14,9 @@ primary_region = "syd"
   # Match production fly.analysis.toml — without this, flyctl deploy
   # --build-only falls back to the default Dockerfile (which builds the
   # API and worker binaries) and the analysis app boots the wrong binary.
-  dockerfile = "Dockerfile.analysis"
+  # Path is relative to this toml file's directory, so we need ../ to
+  # reach the repo root where Dockerfile.analysis lives.
+  dockerfile = "../Dockerfile.analysis"
 
 # Override the Dockerfile CMD to run start-analysis.sh, which boots the
 # Alloy metrics sidecar alongside the analysis binary so review apps emit
