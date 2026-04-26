@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/stretchr/testify/mock"
 )
@@ -708,4 +709,13 @@ type MockBrokerCleaner struct {
 func (m *MockBrokerCleaner) ClearAll(ctx context.Context) (int, error) {
 	args := m.Called(ctx)
 	return args.Int(0), args.Error(1)
+}
+
+// ReclaimTerminalJobKeys mocks the broker reclaim sweeper. Returns the
+// configured (report, error) pair so admin handler tests can assert on
+// the surfaced counts.
+func (m *MockBrokerCleaner) ReclaimTerminalJobKeys(ctx context.Context, filter broker.TerminalFilter) (broker.ReclaimReport, error) {
+	args := m.Called(ctx, filter)
+	report, _ := args.Get(0).(broker.ReclaimReport)
+	return report, args.Error(1)
 }
