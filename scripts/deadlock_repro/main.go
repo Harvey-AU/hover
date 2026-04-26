@@ -113,16 +113,22 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config) error {
-	pool, err := pgxpool.New(ctx, cfg.dsn)
+	poolCfg, err := pgxpool.ParseConfig(cfg.dsn)
+	if err != nil {
+		return fmt.Errorf("parse dsn: %w", err)
+	}
+	maxConns := cfg.workers + 2
+	if maxConns < 1 || maxConns > 1<<30 {
+		maxConns = 16
+	}
+	// pgxpool.MaxConns is set on the parsed config before pool creation;
+	// modifying pool.Config().MaxConns after pgxpool.New is a no-op.
+	poolCfg.MaxConns = int32(maxConns) // #nosec G115 -- bounds checked above
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer pool.Close()
-	maxConns := cfg.workers + 2
-	if maxConns < 0 || maxConns > 1<<30 {
-		maxConns = 16
-	}
-	pool.Config().MaxConns = int32(maxConns) // #nosec G115 -- maxConns clamped to [0, 1<<30] above
 
 	taskIDs, err := setup(ctx, pool, cfg)
 	if err != nil {
@@ -273,20 +279,21 @@ func setup(ctx context.Context, pool *pgxpool.Pool, cfg config) ([]string, error
 	var taskIDs []string
 	for j := 0; j < cfg.jobs; j++ {
 		jobID := fmt.Sprintf("repro-job-%d", j)
+		// Initialise jobs counters at zero. The statement-level INSERT trigger
+		// on tasks (trg_job_counters_insert, see migration 20260409025105)
+		// will then aggregate per-row deltas to total_tasks, pending_tasks,
+		// and sitemap_tasks as the seed inserts run, leaving the harness with
+		// counters that match the actual task population exactly.
 		_, err := pool.Exec(ctx, `
 			INSERT INTO jobs (id, domain_id, status, progress, total_tasks,
 			                  completed_tasks, failed_tasks, skipped_tasks,
 			                  pending_tasks, waiting_tasks, running_tasks,
 			                  created_at, concurrency, find_links, max_pages)
-			VALUES ($1, 999999, 'pending', 0, $2, 0, 0, 0, $2, 0, 0, NOW(), 20, false, 1000)`,
-			jobID, cfg.tasksPerJob)
+			VALUES ($1, 999999, 'pending', 0, 0, 0, 0, 0, 0, 0, 0, NOW(), 20, false, 1000)`,
+			jobID)
 		if err != nil {
 			return nil, err
 		}
-		// Seed tasks in pending status. Using INSERT ... we hit the
-		// statement-level INSERT trigger (existing) — fine; it just bumps
-		// total_tasks and pending_tasks. Reset counters explicitly afterwards
-		// so the harness starts from a known state.
 		batch := &pgx.Batch{}
 		for t := 0; t < cfg.tasksPerJob; t++ {
 			tid := fmt.Sprintf("repro-task-%s-%s", jobID, uuid.NewString())
@@ -303,8 +310,6 @@ func setup(ctx context.Context, pool *pgxpool.Pool, cfg config) ([]string, error
 		if err := br.Close(); err != nil {
 			return nil, err
 		}
-		// Reset counters to a clean baseline; the INSERT trigger has bumped
-		// pending_tasks, total_tasks, sitemap_tasks already.
 	}
 	return taskIDs, nil
 }
