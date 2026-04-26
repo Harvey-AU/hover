@@ -1,8 +1,9 @@
 # Lighthouse Performance Reports
 
-Status: Phase 1 (Foundations) implemented in PR #353 (branch
-`claude/lighthouse-performance-reports-gcL1S`); Phases 2–5 still to do. Last
-updated: 2026-04-26.
+Status: Phase 1 (Foundations) shipped in PR #353. Phase 2 (milestone
+scheduling + skeleton `hover-analysis` app) shipped in PR #356; producer →
+stream → consumer pipeline verified end-to-end on the review app via the
+StubRunner. Phases 3–5 still to do. Last updated: 2026-04-26.
 
 ## Goal
 
@@ -610,7 +611,71 @@ ALTER TABLE public.task_outbox
   Phase 2 split when the rationale was explained — there is now a recorded
   learning instructing CodeRabbit not to re-flag it.
 
-### Phase 2 — Milestone scheduling and skeleton analysis app
+### Phase 2 — Milestone scheduling and skeleton analysis app ✅ Complete (PR #356)
+
+End-to-end verified on the review app: a real crawl drives lighthouse audits
+through `stream:{jobID}:lh`, the analysis app processes them via the
+`StubRunner`, and `lighthouse_runs` rows reach `succeeded`. Phase 3 picks up
+from there — only the runner backing needs replacing.
+
+**Phase 2 implementation notes (deviations from this plan):**
+
+- **One combined PR**, not the optional 2a/2b split — the producer surface
+  turned out small enough to review in one pass.
+- **No tenant quota plumbing.** Audits are inherently capped by the sampler
+  (≤100/job) and by crawl page-completion rate; they don't consume the daily
+  page quota and the scheduler never calls `get_daily_quota_remaining`. The
+  `skipped_quota` enum value stays on `lighthouse_runs.status` from Phase 1 but
+  no Phase 2 code sets it. Revisit only if v1 telemetry shows abuse (Phase 5).
+- **Outbox routing uses synthetic UUIDs**, not nullable `task_id`. Each
+  lighthouse outbox row carries a freshly generated `uuid.NewString()` in
+  `task_id` (kept `NOT NULL UNIQUE`) plus the real link in a new
+  `lighthouse_run_id BIGINT NULL` column. Rationale: avoids rewriting the
+  existing `promote_waiting_with_outbox` plpgsql function's
+  `ON CONFLICT (task_id) DO NOTHING` to specify a partial-index predicate. A
+  CHECK on `task_outbox` enforces
+  `(crawl ⇔ lighthouse_run_id IS NULL) ∧ (lighthouse ⇔ lighthouse_run_id IS NOT NULL)`;
+  the mirror CHECK on `task_outbox_dead` is intentionally loosened to allow
+  `lighthouse_run_id IS NULL` for `task_type='lighthouse'` so
+  `ON DELETE SET NULL` preserves the forensic trail after a parent
+  `lighthouse_runs` row is cleaned up.
+- **Milestone hook is in-process, not event-bus.** `db.BatchManager` fires a
+  `BatchFlushCallback(ctx, jobIDs)` after each successful flush;
+  `JobManager.MaybeFireMilestones` reads job progress, gates against an
+  in-process per-job tracker (`lastMilestoneFired`), and forwards crossings to a
+  registered `OnProgressMilestone` callback. Multi-replica safety is bounded by
+  `lighthouse_runs UNIQUE(job_id, page_id)` — if two workers fire the same
+  milestone, the second insert is a no-op. The tracker is cleared on terminal
+  `UpdateJobStatus` transitions (and on `CancelJob` alongside `processedPages`)
+  so memory stays bounded.
+- **ZSET wire format extended backwards-compatibly.** ScheduleEntry's
+  pipe-delimited member grew from 9 to 11 fields (`taskType`,
+  `lighthouseRunID`); `ParseScheduleEntry` accepts both shapes so a rolling
+  deploy doesn't drop in-flight members. Legacy 9-field entries default to
+  `taskType='crawl'`.
+- **Dispatcher fails closed on routing.** Unknown `task_type` values and
+  `task_type='lighthouse'` rows missing `lighthouse_run_id` produce hard errors
+  instead of silently routing onto the crawl stream.
+- **Consumer correctness for redelivery + reclaim.** `MarkLighthouseRunRunning`
+  was relaxed from `status = 'pending'` to `status IN ('pending', 'running')` so
+  `XAUTOCLAIM` can hand a shutdown-interrupted row to a fresh consumer cleanly.
+  The `status='running'` guards on `CompleteLighthouseRun` / `FailLighthouseRun`
+  bound the resulting double-run race to "first to finish wins, the other gets
+  `ErrLighthouseRunNotFound` and ACKs". The consumer also distinguishes shutdown
+  cancellation (`context.Canceled` → leave row in `running`, skip ACK) from
+  genuine failure, and runs an `XAUTOCLAIM` recovery sweep on start + every 60s
+  so a fresh pod picks up its predecessor's PEL.
+- **Observability + slog covers Phase 1 too.** `internal/observability`
+  registers `bee.lighthouse.runs_scheduled_total{band}`,
+  `bee.lighthouse.runs_total{outcome}`, and
+  `bee.lighthouse.run_duration_ms{outcome}`. `internal/lighthouse/log.go`
+  introduces a package-scoped `lighthouse` logger via `logging.Component`;
+  runner, scheduler, and consumer log start/finish/failures through it.
+  `cmd/analysis` carries its own `analysis` component logger plus the standard
+  Alloy sidecar. Audit URLs are sanitised (query/fragment stripped) before any
+  log call via the exported `lighthouse.SanitiseAuditURL`.
+
+The original Phase 2 plan and starting-point notes follow for posterity.
 
 - `OnProgressMilestone` hook in `JobManager`, fired from the post-batch-flush
   path.
@@ -676,6 +741,42 @@ against an in-process consumer before the new app's CI surface lands.
 - Verify on the production-shaped review app: peak memory at the v1 default of
   `LIGHTHOUSE_MAX_CONCURRENCY=1`, average audit duration, failure rate. Document
   numbers; only then consider raising the default.
+
+**Phase 3 starting point (post-Phase-2):**
+
+- Branch off `main` after PR #356 is merged.
+- The shapes Phase 3 plugs into are already in the tree:
+  - `Dockerfile.analysis` builds the Go binary only — Phase 3 adds the
+    Chromium + `lighthouse@<pinned>` layers on top of it; no other image is
+    touched.
+  - `internal/lighthouse.Runner` interface + `StubRunner` are in place — drop a
+    `localRunner` next to `StubRunner` and register it via the existing
+    `selectRunner` switch in `cmd/analysis/main.go`.
+  - `LIGHTHOUSE_RUNNER` env (`stub`|`local`) is the dispatch knob already
+    consulted at boot; flip the production default to `local` once Chromium
+    proves out, but leave `.fly/review_apps.analysis.toml` on `stub` until then.
+  - `LIGHTHOUSE_AUDIT_TIMEOUT_MS` (default 90s), `LIGHTHOUSE_MAX_CONCURRENCY`
+    (default 1) and `LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB` (default 600) are
+    plumbed through; the local runner just needs to consult them.
+  - `internal/archive.ColdStorageProvider` is the existing R2 path — the
+    `report_key` column on `lighthouse_runs` is already populated by
+    `CompleteLighthouseRun` from the runner's `AuditResult.ReportKey`, so the
+    local runner only needs to upload + return the key.
+  - Observability surface (`bee.lighthouse.runs_total{outcome}`,
+    `bee.lighthouse.run_duration_ms`, `bee.lighthouse.runs_scheduled_total`) is
+    wired and emits through the Alloy sidecar; the local runner uses the same
+    helpers, no new metric registrations needed.
+  - `lighthouse.SanitiseAuditURL` is exported — keep using it for any log lines
+    that include the audit URL.
+
+**Open before coding:**
+
+1. Pin the Alpine `chromium` package and `lighthouse` npm versions (open
+   question still listed in § Open questions below).
+2. `fly.analysis.toml` VM size: stays at smoke-test `performance-cpu-1x` / 8 GB
+   / `LIGHTHOUSE_MAX_CONCURRENCY=1` until measurements land, or bump
+   pre-emptively?
+3. Keep the 90 s per-run hard timeout, or tune from stub-side telemetry?
 
 ### Phase 4 — Surfacing
 
