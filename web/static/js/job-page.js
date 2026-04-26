@@ -1037,11 +1037,21 @@ function setupInteractions(state) {
       cancelBtn.style.display = "none";
     } else {
       cancelBtn.addEventListener("click", async () => {
+        if (cancelBtn.disabled) {
+          return;
+        }
+        const originalLabel = cancelBtn.textContent;
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "Cancelling…";
         try {
           await cancelJobFromPage(state);
+          // Leave the button disabled on success — the next refresh hides
+          // it because can_cancel flips to false.
         } catch (error) {
           console.error("Failed to cancel job:", error);
           showToast("Failed to cancel job.", true);
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = originalLabel;
         }
       });
     }
