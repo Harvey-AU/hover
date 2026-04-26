@@ -30,6 +30,18 @@ const (
 	TaskStatusSkipped   TaskStatus = "skipped"
 )
 
+// TaskType identifies which worker class should process a task.
+// 'crawl' is the default and covers existing HTTP fetch tasks;
+// 'lighthouse' routes to the hover-analysis app for performance audits.
+// Mirrors the tasks.task_type / task_outbox.task_type column added in
+// migration 20260427000001_add_task_type.sql.
+type TaskType string
+
+const (
+	TaskTypeCrawl      TaskType = "crawl"
+	TaskTypeLighthouse TaskType = "lighthouse"
+)
+
 // Maximum time a task can be "in progress" before being considered stale
 const (
 	TaskStaleTimeout = 3 * time.Minute
@@ -81,6 +93,7 @@ type Task struct {
 	DomainID    int        `json:"domain_id"`
 	DomainName  string     `json:"domain_name"`
 	Status      TaskStatus `json:"status"`
+	TaskType    TaskType   `json:"task_type,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt time.Time  `json:"completed_at"`
