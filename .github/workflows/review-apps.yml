@@ -214,16 +214,30 @@ jobs:
             # attempt an interactive prompt (which errors in CI with
             # "Error: prompt: non interactive"). Piping stdin is not enough;
             # recent flyctl versions abort rather than read from stdin.
-            # Do not pass --plan: flyctl rejects the documented default
-            # value ("pay-as-you-go") with "plan not found", and the default
-            # is applied automatically when the flag is omitted.
-            if ! flyctl redis create \
-              --name "$REDIS_NAME" \
-              --region syd \
-              --no-replicas \
-              --disable-eviction \
-              --enable-prodpack=false \
-              --org personal; then
+            #
+            # Plan handling: REVIEW_REDIS_PLAN (a repo variable) selects a
+            # Fixed-tier subscription to cap spend (PR-330 accrued $150 of
+            # PAYG charges before cleanup ran). Leave it empty to keep the
+            # historical PAYG default. The documented default value
+            # ("pay-as-you-go") is rejected by flyctl, so the exact slug is
+            # environment-specific and must be confirmed locally with
+            # `flyctl redis create --help` before turning this on in CI.
+            CREATE_ARGS=(
+              redis create
+              --name "$REDIS_NAME"
+              --region syd
+              --no-replicas
+              --disable-eviction
+              --enable-prodpack=false
+              --org personal
+            )
+            if [ -n "$REVIEW_REDIS_PLAN" ]; then
+              echo "Using Fixed plan: $REVIEW_REDIS_PLAN"
+              CREATE_ARGS+=(--plan "$REVIEW_REDIS_PLAN")
+            else
+              echo "REVIEW_REDIS_PLAN not set — defaulting to pay-as-you-go"
+            fi
+            if ! flyctl "${CREATE_ARGS[@]}"; then
               echo "❌ flyctl redis create failed for $REDIS_NAME"
               exit 1
             fi
@@ -258,6 +272,7 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
+          REVIEW_REDIS_PLAN: ${{ vars.REVIEW_REDIS_PLAN }}
 
       - name: Build Docker image locally
         run: |
