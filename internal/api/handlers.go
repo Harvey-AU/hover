@@ -212,21 +212,33 @@ type DBClient interface {
 	DeleteSiteSettingsByConnection(ctx context.Context, connectionID string) error
 }
 
+// BrokerCleaner is the subset of the broker client the API needs for
+// admin reset endpoints. Defining it here keeps the api package free of
+// a hard import on internal/broker and makes the Handler trivially
+// mockable in tests.
+type BrokerCleaner interface {
+	ClearAll(ctx context.Context) (int, error)
+}
+
 // Handler holds dependencies for API handlers
 type Handler struct {
 	DB                 DBClient
 	JobsManager        jobs.JobManagerInterface
 	Loops              *loops.Client
+	Broker             BrokerCleaner
 	GoogleClientID     string
 	GoogleClientSecret string
 }
 
-// NewHandler creates a new API handler with dependencies
-func NewHandler(pgDB DBClient, jobsManager jobs.JobManagerInterface, loopsClient *loops.Client, googleClientID, googleClientSecret string) *Handler {
+// NewHandler creates a new API handler with dependencies. broker may be
+// nil when Redis is not configured — admin reset endpoints will skip
+// the Redis clear in that case.
+func NewHandler(pgDB DBClient, jobsManager jobs.JobManagerInterface, loopsClient *loops.Client, broker BrokerCleaner, googleClientID, googleClientSecret string) *Handler {
 	return &Handler{
 		DB:                 pgDB,
 		JobsManager:        jobsManager,
 		Loops:              loopsClient,
+		Broker:             broker,
 		GoogleClientID:     googleClientID,
 		GoogleClientSecret: googleClientSecret,
 	}

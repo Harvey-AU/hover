@@ -573,11 +573,17 @@ func main() {
 	// Create job manager (no local worker pool — tasks are consumed by the worker service)
 	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 
+	// redisClient is declared at the outer scope so the API handler can
+	// reach it for admin reset endpoints; it stays nil when REDIS_URL is
+	// unset and handlers tolerate that.
+	var redisClient *broker.Client
+
 	if redisCfg.URL != "" {
-		redisClient, err := broker.NewClient(redisCfg)
+		client, err := broker.NewClient(redisCfg)
 		if err != nil {
 			startupLog.Fatal("failed to create Redis client", "error", err)
 		}
+		redisClient = client
 		defer redisClient.Close()
 
 		if err := redisClient.Ping(context.Background()); err != nil {
@@ -662,11 +668,17 @@ func main() {
 		startupLog.Info("Loops email client unavailable: LOOPS_API_KEY not configured")
 	}
 
-	// Create API handler with dependencies
+	// Create API handler with dependencies. redisClient may be nil when
+	// REDIS_URL is unset; admin reset endpoints handle that gracefully.
+	var brokerCleaner api.BrokerCleaner
+	if redisClient != nil {
+		brokerCleaner = redisClient
+	}
 	apiHandler := api.NewHandler(
 		pgDB,
 		jobsManager,
 		loopsClient,
+		brokerCleaner,
 		googleClientID,
 		googleClientSecret,
 	)

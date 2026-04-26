@@ -96,6 +96,88 @@ func (c *Client) Close() error {
 // access (e.g. Lua scripts, pipelines).
 func (c *Client) RDB() *redis.Client { return c.rdb }
 
+// ClearAll deletes every Redis key the broker writes to. Used by admin
+// reset endpoints. Does not call FLUSHDB — only touches hover:* prefixes
+// owned by this package, so it stays safe on a shared Redis. Returns the
+// number of keys deleted.
+func (c *Client) ClearAll(ctx context.Context) (int, error) {
+	// Patterns covering every prefix defined in keys.go. Deleting the
+	// per-job stream keys also removes their attached consumer groups,
+	// so there is no separate hover:cg:* key to scan.
+	patterns := []string{
+		keyPrefix + "sched:*",
+		keyPrefix + "stream:*",
+		keyPrefix + "dom:gate:*",
+		keyPrefix + "dom:cfg:*",
+		keyPrefix + "dom:flight:*",
+	}
+
+	total := 0
+	for _, pattern := range patterns {
+		n, err := c.scanAndDelete(ctx, pattern)
+		if err != nil {
+			return total, fmt.Errorf("broker: clear %s: %w", pattern, err)
+		}
+		total += n
+	}
+
+	// RunningCountersKey is a single fixed key — no scan needed.
+	deleted, err := c.rdb.Del(ctx, RunningCountersKey).Result()
+	if err != nil {
+		return total, fmt.Errorf("broker: clear %s: %w", RunningCountersKey, err)
+	}
+	total += int(deleted)
+
+	return total, nil
+}
+
+// scanAndDelete walks every key matching pattern with SCAN and deletes
+// them in batches of up to 500 per DEL call.
+func (c *Client) scanAndDelete(ctx context.Context, pattern string) (int, error) {
+	const batch = 500
+	var (
+		cursor  uint64
+		keys    []string
+		deleted int
+	)
+
+	for {
+		var (
+			page []string
+			err  error
+		)
+		page, cursor, err = c.rdb.Scan(ctx, cursor, pattern, batch).Result()
+		if err != nil {
+			return deleted, err
+		}
+		keys = append(keys, page...)
+
+		// Flush whenever we have enough to make a worthwhile DEL call.
+		for len(keys) >= batch {
+			n, err := c.rdb.Del(ctx, keys[:batch]...).Result()
+			if err != nil {
+				return deleted, err
+			}
+			deleted += int(n)
+			keys = keys[batch:]
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(keys) > 0 {
+		n, err := c.rdb.Del(ctx, keys...).Result()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += int(n)
+	}
+
+	return deleted, nil
+}
+
 // --- env helpers ---
 
 func envInt(key string, def int) int {

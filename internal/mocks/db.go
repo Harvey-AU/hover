@@ -697,3 +697,15 @@ func (m *MockDB) GetGoogleToken(ctx context.Context, connectionID string) (strin
 	args := m.Called(ctx, connectionID)
 	return args.String(0), args.Error(1)
 }
+
+// MockBrokerCleaner is a mock implementation of api.BrokerCleaner for
+// admin handler tests. Returns the configured (count, error) pair.
+type MockBrokerCleaner struct {
+	mock.Mock
+}
+
+// ClearAll mocks the broker ClearAll method.
+func (m *MockBrokerCleaner) ClearAll(ctx context.Context) (int, error) {
+	args := m.Called(ctx)
+	return args.Int(0), args.Error(1)
+}

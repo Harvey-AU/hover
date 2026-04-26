@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/auth"
+	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/getsentry/sentry-go"
 )
 
@@ -109,6 +111,11 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	resetDuration := time.Since(resetStart)
 	logger.Warn("Database schema reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
+	// Clear Redis broker state so the reset is genuinely a fresh slate.
+	// Order matters: Postgres has been truncated above, so no new tasks
+	// can repopulate Redis during the SCAN+DEL pass.
+	redisCleared, redisKeysDeleted, redisErr := clearBrokerState(r.Context(), h.Broker, logger, user.ID)
+
 	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelInfo)
@@ -119,13 +126,24 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 			Email: user.Email,
 		})
 		scope.SetContext("success_details", map[string]any{
-			"duration_ms": resetDuration.Milliseconds(),
-			"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			"duration_ms":        resetDuration.Milliseconds(),
+			"timestamp":          time.Now().UTC().Format(time.RFC3339),
+			"redis_cleared":      redisCleared,
+			"redis_keys_deleted": redisKeysDeleted,
 		})
 		sentry.CaptureMessage("Database reset completed successfully")
 	})
 
-	WriteSuccess(w, r, nil, "Database schema reset successfully - Supabase will rebuild from migrations")
+	payload := map[string]any{
+		"redis_cleared":      redisCleared,
+		"redis_keys_deleted": redisKeysDeleted,
+	}
+	msg := "Database schema reset successfully - Supabase will rebuild from migrations"
+	if redisErr != nil {
+		payload["redis_error"] = redisErr.Error()
+		msg = "Database schema reset; Redis clear failed - flush manually"
+	}
+	WriteSuccess(w, r, payload, msg)
 }
 
 // AdminResetData handles the admin data-only reset endpoint
@@ -219,6 +237,10 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	resetDuration := time.Since(resetStart)
 	logger.Warn("Data reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
+	// Clear Redis broker state. Postgres is already empty at this point,
+	// so the SCAN+DEL pass cannot race with new task dispatch.
+	redisCleared, redisKeysDeleted, redisErr := clearBrokerState(r.Context(), h.Broker, logger, user.ID)
+
 	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelInfo)
@@ -229,13 +251,48 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 			Email: user.Email,
 		})
 		scope.SetContext("success_details", map[string]any{
-			"duration_ms": resetDuration.Milliseconds(),
-			"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			"duration_ms":        resetDuration.Milliseconds(),
+			"timestamp":          time.Now().UTC().Format(time.RFC3339),
+			"redis_cleared":      redisCleared,
+			"redis_keys_deleted": redisKeysDeleted,
 		})
 		sentry.CaptureMessage("Data reset completed successfully")
 	})
 
-	WriteSuccess(w, r, nil, "Data cleared successfully - schema preserved")
+	payload := map[string]any{
+		"redis_cleared":      redisCleared,
+		"redis_keys_deleted": redisKeysDeleted,
+	}
+	msg := "Data cleared successfully - schema preserved"
+	if redisErr != nil {
+		payload["redis_error"] = redisErr.Error()
+		msg = "Data cleared; Redis clear failed - flush manually"
+	}
+	WriteSuccess(w, r, payload, msg)
+}
+
+// clearBrokerState invokes broker.ClearAll when the broker is wired and
+// reports the outcome. Errors are logged and forwarded to Sentry but do
+// not abort the response — Postgres has already been reset by the time
+// this runs, so the operator needs a successful HTTP reply with enough
+// detail to flush Redis manually if needed.
+func clearBrokerState(ctx context.Context, broker BrokerCleaner, logger *logging.Logger, userID string) (bool, int, error) {
+	if broker == nil {
+		logger.Debug("Reset: broker not configured, skipping Redis clear")
+		return false, 0, nil
+	}
+
+	n, err := broker.ClearAll(ctx)
+	if err != nil {
+		logger.Error("Reset: cleared Postgres but Redis clear failed",
+			"error", err, "user_id", userID)
+		sentry.CaptureException(err)
+		return false, n, err
+	}
+
+	logger.Info("Reset: cleared Redis broker state",
+		"user_id", userID, "redis_keys_deleted", n)
+	return true, n, nil
 }
 
 // hasSystemAdminRole checks if the user has system administrator privileges via app_metadata
