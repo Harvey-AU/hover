@@ -1,7 +1,8 @@
 # Lighthouse Performance Reports
 
-Status: Proposal — decisions confirmed 2026-04-26, ready for implementation.
-Last updated: 2026-04-26.
+Status: Phase 1 (Foundations) implemented in PR #353 (branch
+`claude/lighthouse-performance-reports-gcL1S`); Phases 2–5 still to do. Last
+updated: 2026-04-26.
 
 ## Goal
 
@@ -568,7 +569,7 @@ ALTER TABLE public.task_outbox
 
 ## Rollout phases
 
-### Phase 1 — Foundations
+### Phase 1 — Foundations ✅ Complete (PR #353, commit 9b4f45f)
 
 - Migrations: `lighthouse_runs` (with `report_key TEXT`, no JSONB blob),
   `task_type` on `tasks`/`task_outbox`.
@@ -580,6 +581,34 @@ ALTER TABLE public.task_outbox
   - Dedupe across milestones.
 - Stub runner returning canned data so the pipeline can be exercised end-to-end
   before Chromium lands.
+
+**Phase 1 implementation notes (deviations from this plan):**
+
+- `lighthouse_runs.job_id` is `TEXT` (not `UUID`) to match the actual `jobs.id`
+  and `tasks.id` types in the existing schema. The `UUID` example earlier in
+  this doc was inaccurate; the migration and the doc now agree on `TEXT`.
+- The sampler's selection function is `SelectSamples(...)`, not `Sample(...)` —
+  `Sample` is the struct (one tagged task), so the function needed a different
+  name. The `Sample` struct itself is unchanged.
+- During CodeRabbit review three small but real issues were fixed in commit
+  9b4f45f:
+  - `CompleteLighthouseRun` and `FailLighthouseRun` UPDATEs are gated on
+    `status = 'running'` so a duplicate-delivered worker can't clobber a row
+    that has already reached a terminal state. Redis stream redelivery is
+    at-least-once.
+  - `StubRunner.Run` derives a child context from `AuditRequest.Timeout` so the
+    per-run budget is enforced even pre-Chromium. Real `localRunner` (Phase 3)
+    must do the same.
+  - The `task_type` migration adds
+    `CHECK (task_type IN ('crawl', 'lighthouse'))` on both `tasks` and
+    `task_outbox` so a typo can't silently route through to the dispatcher. New
+    task types are a one-line drop+re-add.
+- `task_type` is **schema-only** at end of Phase 1: the column exists with
+  default `'crawl'`, but no producer enqueues `'lighthouse'` and the dispatcher
+  does not route on it. Phase 2 lands the producer + dispatcher routing
+  atomically. CodeRabbit flagged this as missing and accepted the Phase 1 /
+  Phase 2 split when the rationale was explained — there is now a recorded
+  learning instructing CodeRabbit not to re-flag it.
 
 ### Phase 2 — Milestone scheduling and skeleton analysis app
 
@@ -607,6 +636,29 @@ ALTER TABLE public.task_outbox
   the analysis app picks up + persists results end-to-end.
 - Land a no-op review app on a real PR to validate the pipeline end-to-end
   before Phase 3.
+
+**Phase 2 starting point (post-Phase-1):**
+
+- Branch off `main` after PR #353 is merged.
+- The shapes Phase 2 plugs into are already in the tree:
+  - `internal/db.InsertLighthouseRun` is `tx`-scoped — the scheduler can insert
+    the `lighthouse_runs` row in the same transaction as the `task_outbox`
+    entry, mirroring the existing crawl-side CTE pattern.
+  - `internal/db.GetLighthouseRunPageIDs(ctx, jobID)` returns the dedupe set the
+    sampler needs across milestones.
+  - `internal/lighthouse.SelectSamples(completed, milestone, alreadySampled)` is
+    pure and ready to call.
+  - `internal/lighthouse.StubRunner` is the consumer-side stub for the skeleton
+    `cmd/analysis/main.go` until Phase 3 swaps in `localRunner`.
+  - `internal/jobs.TaskType` + `TaskTypeCrawl` / `TaskTypeLighthouse` constants
+    are defined; the column on `tasks` and `task_outbox` is `CHECK`-constrained
+    to those two values.
+
+**Optional split**: Phase 2 is large enough that splitting it into 2a
+(scheduler + dispatcher routing in the existing apps, still consumed by a test)
+and 2b (skeleton `hover-analysis` app + CI wiring) keeps each PR reviewable.
+Either ordering works; 2a-then-2b lets us prove the producer side end-to-end
+against an in-process consumer before the new app's CI surface lands.
 
 ### Phase 3 — Real Lighthouse audits
 
