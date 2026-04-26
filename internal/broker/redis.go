@@ -96,6 +96,56 @@ func (c *Client) Close() error {
 // access (e.g. Lua scripts, pipelines).
 func (c *Client) RDB() *redis.Client { return c.rdb }
 
+// RemoveJobKeys deletes every Redis key owned by the broker for a single
+// terminal (completed/cancelled/failed) job. Called from the completion
+// tick and CancelJob to stop the per-job key set leaking into resident
+// data — without it the schedule ZSET, both streams, both consumer
+// groups, and the running-counter HASH field persist forever once the
+// dispatcher stops scanning the job.
+//
+// The two XGroupDestroy calls are best-effort: NOGROUP/no-such-stream
+// errors are tolerated so a partially-cleaned job (or a job that never
+// produced lighthouse work) doesn't abort the rest of the cleanup.
+func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("broker: RemoveJobKeys requires a jobID")
+	}
+
+	streamKey := StreamKey(jobID)
+	lhStreamKey := LighthouseStreamKey(jobID)
+
+	// Destroy consumer groups before deleting the streams. Failures here
+	// are non-fatal — the group may already be gone, or the stream may
+	// never have been created (e.g. a job cancelled before any task ran).
+	if err := c.rdb.XGroupDestroy(ctx, streamKey, ConsumerGroup(jobID)).Err(); err != nil && !isMissingGroup(err) {
+		brokerLog.Warn("XGroupDestroy crawl group failed", "error", err, "job_id", jobID)
+	}
+	if err := c.rdb.XGroupDestroy(ctx, lhStreamKey, LighthouseConsumerGroup(jobID)).Err(); err != nil && !isMissingGroup(err) {
+		brokerLog.Warn("XGroupDestroy lighthouse group failed", "error", err, "job_id", jobID)
+	}
+
+	pipe := c.rdb.Pipeline()
+	pipe.Del(ctx, ScheduleKey(jobID), streamKey, lhStreamKey)
+	pipe.HDel(ctx, RunningCountersKey, jobID)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("broker: remove job keys for %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// isMissingGroup reports whether err is the Redis NOGROUP / no-such-key
+// response from XGroupDestroy on a stream or group that does not exist.
+// Tolerated by RemoveJobKeys so cleanup is idempotent.
+func isMissingGroup(err error) bool {
+	if err == nil || err == redis.Nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "NOGROUP") ||
+		strings.Contains(msg, "no such key") ||
+		strings.Contains(msg, "requires the key to exist")
+}
+
 // ClearAll deletes every Redis key the broker writes to. Used by admin
 // reset endpoints. Does not call FLUSHDB — only touches hover:* prefixes
 // owned by this package, so it stays safe on a shared Redis. Returns the

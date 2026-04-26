@@ -156,7 +156,11 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 // startHealthMonitoring starts background monitoring for job completion and system health
 // It respects context cancellation for graceful shutdown
 // The WaitGroup must be marked Done when this function exits
-func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB) {
+//
+// redisClient may be nil when REDIS_URL is unset; in that case the
+// per-job Redis cleanup on completion is skipped (there is nothing to
+// clean up).
+func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB, redisClient *broker.Client) {
 	defer wg.Done() // Signal completion when exiting
 
 	completionTicker := time.NewTicker(completionCheckInterval)
@@ -178,12 +182,32 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB)
 			startupLog.Error("Failed to update completed jobs", "error", err)
 			return
 		}
-		defer rows.Close()
 
+		// Capture the IDs so we can release the rows before issuing
+		// per-job Redis cleanup — Postgres connection holds a row lock
+		// for the duration of an open Rows iterator.
+		var completed []string
 		for rows.Next() {
 			var jobID string
 			if err := rows.Scan(&jobID); err == nil {
 				startupLog.Info("Job marked as completed", "job_id", jobID)
+				completed = append(completed, jobID)
+			}
+		}
+		_ = rows.Close()
+
+		// Drop per-job Redis keys (schedule ZSET, both streams + their
+		// consumer groups, running-counter HASH field). Without this the
+		// active-jobs query filters completed jobs out and their keys
+		// leak into resident data forever. Errors here do not roll the
+		// Postgres status change back — partial cleanup is acceptable
+		// and the one-off reclaim sweeper can reattempt.
+		if redisClient != nil {
+			for _, jobID := range completed {
+				if err := redisClient.RemoveJobKeys(ctx, jobID); err != nil {
+					startupLog.Warn("failed to clean up Redis keys for completed job",
+						"error", err, "job_id", jobID)
+				}
 			}
 		}
 	}
@@ -628,6 +652,17 @@ func main() {
 				}
 			}
 		}
+
+		// Wire the terminal-state cleanup callback so CancelJob releases
+		// the per-job Redis keys. The completion-tick path in
+		// startHealthMonitoring takes the redisClient directly and does
+		// the same cleanup for auto-completed jobs.
+		jobsManager.OnJobTerminated = func(ctx context.Context, jobID string) {
+			if err := redisClient.RemoveJobKeys(ctx, jobID); err != nil {
+				startupLog.Warn("failed to clean up Redis keys for terminated job",
+					"error", err, "job_id", jobID)
+			}
+		}
 	} else {
 		startupLog.Warn("REDIS_URL not set — task dispatch to Redis is disabled; API will still create tasks in Postgres")
 	}
@@ -784,7 +819,7 @@ func main() {
 
 	// Start background health monitoring with cancellable context
 	backgroundWG.Add(1)
-	go startHealthMonitoring(appCtx, &backgroundWG, pgDB)
+	go startHealthMonitoring(appCtx, &backgroundWG, pgDB, redisClient)
 
 	// Start scheduler service
 	backgroundWG.Add(1)

@@ -2,13 +2,16 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/auth"
+	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/getsentry/sentry-go"
+	"github.com/lib/pq"
 )
 
 // organisationIDOrNone returns the organisation ID as a string, or "none"
@@ -269,6 +272,178 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 		msg = "Data cleared; Redis clear failed - flush manually"
 	}
 	WriteSuccess(w, r, payload, msg)
+}
+
+// AdminReclaimRedis runs the one-off backfill sweeper that drops Redis
+// keys for jobs that have already reached a terminal state (completed,
+// cancelled, failed, archived) but never had their per-job keys cleaned
+// up. Targets the historical leak introduced by RemoveJobSchedule and
+// RemoveJob being defined-but-unused; phase 1 fixes the forward path,
+// this endpoint reclaims data already resident.
+//
+// Idempotent and intentionally simple: no batching, no progress
+// streaming. The expected use is a single curl after deploy. Gated on
+// ALLOW_DB_RESET (already used by the other admin reset endpoints) so
+// the endpoint cannot be hit without explicit operator opt-in.
+func (h *Handler) AdminReclaimRedis(w http.ResponseWriter, r *http.Request) {
+	logger := loggerWithRequest(r)
+
+	if r.Method != http.MethodPost {
+		MethodNotAllowed(w, r)
+		return
+	}
+
+	if os.Getenv("ALLOW_DB_RESET") != "true" {
+		Forbidden(w, r, "Reclaim not enabled. Set ALLOW_DB_RESET=true to enable")
+		return
+	}
+
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		Unauthorised(w, r, "Authentication required for admin endpoint")
+		return
+	}
+	if !hasSystemAdminRole(claims) {
+		logger.Warn("Non-system-admin user attempted to access reclaim endpoint", "user_id", claims.UserID)
+		Forbidden(w, r, "System administrator privileges required")
+		return
+	}
+
+	if h.Broker == nil {
+		BadRequest(w, r, "Redis broker not configured; nothing to reclaim")
+		return
+	}
+
+	user, err := h.DB.GetUser(claims.UserID)
+	if err != nil {
+		logger.Error("Failed to verify admin user", "error", err, "user_id", claims.UserID)
+		Unauthorised(w, r, "User verification failed")
+		return
+	}
+
+	logger.Warn("Admin Redis reclaim requested",
+		"user_id", user.ID,
+		"organisation_id", organisationIDOrNone(user.OrganisationID),
+		"remote_addr", r.RemoteAddr,
+	)
+
+	sqlDB := h.DB.GetDB()
+	filter := terminalJobFilter(sqlDB)
+
+	report, err := h.Broker.ReclaimTerminalJobKeys(r.Context(), filter)
+	if err != nil {
+		logger.Error("Reclaim sweep failed", "error", err, "user_id", user.ID)
+		sentry.CaptureException(err)
+		InternalError(w, r, err)
+		return
+	}
+
+	logger.Warn("Redis reclaim completed",
+		"user_id", user.ID,
+		"candidates", report.CandidatesScanned,
+		"terminal", report.TerminalJobs,
+		"cleaned", report.Cleaned,
+		"failed", report.Failed,
+	)
+
+	payload := map[string]any{
+		"candidates_scanned": report.CandidatesScanned,
+		"terminal_jobs":      report.TerminalJobs,
+		"cleaned":            report.Cleaned,
+		"failed":             report.Failed,
+	}
+	if report.FirstError != nil {
+		payload["first_error"] = report.FirstError.Error()
+	}
+	WriteSuccess(w, r, payload, "Redis reclaim sweep completed")
+}
+
+// terminalJobFilter returns a broker.TerminalFilter that selects job
+// IDs whose Postgres status is in the terminal set (completed, failed,
+// cancelled, archived). Jobs missing from the jobs table are also
+// treated as terminal — their Redis state is orphaned by definition.
+func terminalJobFilter(sqlDB interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}) broker.TerminalFilter {
+	return func(ctx context.Context, jobIDs []string) ([]string, error) {
+		if len(jobIDs) == 0 {
+			return nil, nil
+		}
+
+		rows, err := sqlDB.QueryContext(ctx,
+			`SELECT id FROM jobs
+			   WHERE id = ANY($1)
+			     AND status IN ('completed', 'failed', 'cancelled', 'archived')`,
+			pq.Array(jobIDs))
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		alive := make(map[string]struct{}, len(jobIDs))
+		known := make(map[string]struct{})
+		var terminal []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			terminal = append(terminal, id)
+			known[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+
+		// Find any candidates that did not appear in the result — those
+		// are either still active or no longer in the jobs table at
+		// all. A second query bounds 'still active' so deletion-by-
+		// missing-row only fires for genuine orphans.
+		stillActive, err := lookupActiveJobs(ctx, sqlDB, jobIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range stillActive {
+			alive[id] = struct{}{}
+		}
+		for _, id := range jobIDs {
+			if _, t := known[id]; t {
+				continue
+			}
+			if _, a := alive[id]; a {
+				continue
+			}
+			terminal = append(terminal, id)
+		}
+		return terminal, nil
+	}
+}
+
+// lookupActiveJobs returns the subset of jobIDs whose row in the jobs
+// table is still in a non-terminal state. Used by terminalJobFilter to
+// distinguish "row missing — orphan" from "row present and running".
+func lookupActiveJobs(ctx context.Context, sqlDB interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, jobIDs []string) ([]string, error) {
+	rows, err := sqlDB.QueryContext(ctx,
+		`SELECT id FROM jobs
+		   WHERE id = ANY($1)
+		     AND status NOT IN ('completed', 'failed', 'cancelled', 'archived')`,
+		pq.Array(jobIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var active []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		active = append(active, id)
+	}
+	return active, rows.Err()
 }
 
 // clearBrokerState invokes broker.ClearAll when the broker is wired and
