@@ -159,19 +159,26 @@ func (l *LocalRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, e
 // exit it returns an error wrapping the stderr tail so callers can
 // surface it into lighthouse_runs.error_message.
 func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, error) {
-	preset := string(req.Profile)
-	if preset == "" {
-		preset = string(l.cfg.ProfilePreset)
+	profile := req.Profile
+	if profile == "" {
+		profile = l.cfg.ProfilePreset
 	}
 
+	// Lighthouse 12.x's --preset flag only accepts 'desktop',
+	// 'experimental', or 'perf'. Mobile is the implicit default and
+	// passing --preset=mobile fails the CLI's argument validation
+	// before Chromium even launches. So: pass --preset=desktop only
+	// for the desktop profile; otherwise omit the flag entirely.
 	args := []string{
 		"--output=json",
 		"--quiet",
-		"--preset=" + preset,
 		"--max-wait-for-load=45000",
 		"--chrome-flags=--headless=new --no-sandbox --disable-gpu",
-		req.URL,
 	}
+	if profile == ProfileDesktop {
+		args = append(args, "--preset=desktop")
+	}
+	args = append(args, req.URL)
 
 	// #nosec G204 -- LighthouseBin is sourced from trusted env config
 	// baked into the analysis image at build time, not user input. The

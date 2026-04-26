@@ -318,9 +318,13 @@ Self-hosted, packaged into the `hover-analysis` image only. The `hover` and
       --output=json \
       --quiet \
       --chrome-flags="--headless=new --no-sandbox --disable-gpu" \
-      --preset=desktop|mobile \
+      [--preset=desktop] \
       --max-wait-for-load=45000
   ```
+
+  Lighthouse 12.x's `--preset` flag only accepts `desktop`, `experimental`, or
+  `perf`. Mobile is the implicit default and the flag is omitted entirely; pass
+  `--preset=desktop` only for the desktop profile.
 
 - Captures stdout into a `LighthouseReport` struct, parses headline metrics,
   persists. Errors capture stderr in `lighthouse_runs.error_message`.

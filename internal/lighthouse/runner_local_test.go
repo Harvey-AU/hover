@@ -183,6 +183,79 @@ func TestLocalRunner_HappyPathUploadsAndReturnsKey(t *testing.T) {
 	assert.Equal(t, "7", up.opts.Metadata["run_id"])
 }
 
+// TestLocalRunner_DoesNotPassPresetFlagForMobile pins the contract
+// against Lighthouse 12.x's CLI: --preset only accepts 'desktop',
+// 'experimental', or 'perf'. Mobile is the implicit default and
+// passing --preset=mobile fails argument validation before Chromium
+// launches. The fix omits the flag entirely for mobile audits;
+// regressing that would silently break every audit in production.
+func TestLocalRunner_DoesNotPassPresetFlagForMobile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake unsupported on windows")
+	}
+	dir := t.TempDir()
+	argsLog := filepath.Join(dir, "args.txt")
+	script := filepath.Join(dir, "fake-lighthouse.sh")
+	body := `#!/bin/sh
+echo "$@" > "` + argsLog + `"
+cat <<'JSON'
+` + sampleLighthouseJSON + `
+JSON
+exit 0
+`
+	// #nosec G306 -- test fixture: the fake binary must be executable.
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+
+	r, _ := newTestRunner(t, script, 0, 0)
+	_, err := r.Run(context.Background(), AuditRequest{
+		RunID: 1, JobID: "j", SourceTaskID: "t", URL: "https://example.com",
+		Profile: ProfileMobile, Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	// #nosec G304 -- argsLog is t.TempDir-rooted, written above.
+	logged, err := os.ReadFile(argsLog)
+	require.NoError(t, err)
+	assert.NotContains(t, string(logged), "--preset=mobile",
+		"mobile is Lighthouse's implicit default; passing --preset=mobile is rejected")
+	assert.NotContains(t, string(logged), "--preset=desktop",
+		"desktop preset must not leak into a mobile audit")
+}
+
+// TestLocalRunner_PassesPresetForDesktop confirms desktop audits do
+// flip --preset=desktop on. Currently dead-code-pathed since v1 only
+// schedules mobile, but the runner-level code path exists and we want
+// to catch a regression early when desktop ships in Phase 5.
+func TestLocalRunner_PassesPresetForDesktop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake unsupported on windows")
+	}
+	dir := t.TempDir()
+	argsLog := filepath.Join(dir, "args.txt")
+	script := filepath.Join(dir, "fake-lighthouse.sh")
+	body := `#!/bin/sh
+echo "$@" > "` + argsLog + `"
+cat <<'JSON'
+` + sampleLighthouseJSON + `
+JSON
+exit 0
+`
+	// #nosec G306 -- test fixture: the fake binary must be executable.
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+
+	r, _ := newTestRunner(t, script, 0, 0)
+	_, err := r.Run(context.Background(), AuditRequest{
+		RunID: 1, JobID: "j", SourceTaskID: "t", URL: "https://example.com",
+		Profile: ProfileDesktop, Timeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	// #nosec G304 -- argsLog is t.TempDir-rooted, written above.
+	logged, err := os.ReadFile(argsLog)
+	require.NoError(t, err)
+	assert.Contains(t, string(logged), "--preset=desktop")
+}
+
 func TestLocalRunner_FallsBackToRunIDPathWhenNoTaskID(t *testing.T) {
 	script := writeFakeLighthouseScript(t, false, "")
 	r, provider := newTestRunner(t, script, 0, 0)
