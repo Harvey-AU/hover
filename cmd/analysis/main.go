@@ -183,19 +183,25 @@ func selectRunner() lighthouse.Runner {
 
 // consumerConfig holds the tunables the analysis service exposes via env.
 type consumerConfig struct {
-	maxConcurrency int
-	auditTimeout   time.Duration
-	pollInterval   time.Duration
-	blockTimeout   time.Duration
-	consumerName   string
+	maxConcurrency  int
+	auditTimeout    time.Duration
+	pollInterval    time.Duration
+	reclaimInterval time.Duration
+	reclaimMinIdle  time.Duration
+	consumerName    string
 }
 
 func loadConsumerConfig() consumerConfig {
 	cfg := consumerConfig{
-		maxConcurrency: envIntDefault("LIGHTHOUSE_MAX_CONCURRENCY", 1),
-		auditTimeout:   time.Duration(envIntDefault("LIGHTHOUSE_AUDIT_TIMEOUT_MS", 90_000)) * time.Millisecond,
-		pollInterval:   time.Duration(envIntDefault("LIGHTHOUSE_POLL_INTERVAL_MS", 1_000)) * time.Millisecond,
-		blockTimeout:   time.Duration(envIntDefault("LIGHTHOUSE_BLOCK_TIMEOUT_MS", 2_000)) * time.Millisecond,
+		maxConcurrency:  envIntDefault("LIGHTHOUSE_MAX_CONCURRENCY", 1),
+		auditTimeout:    time.Duration(envIntDefault("LIGHTHOUSE_AUDIT_TIMEOUT_MS", 90_000)) * time.Millisecond,
+		pollInterval:    time.Duration(envIntDefault("LIGHTHOUSE_POLL_INTERVAL_MS", 1_000)) * time.Millisecond,
+		reclaimInterval: time.Duration(envIntDefault("LIGHTHOUSE_RECLAIM_INTERVAL_S", 60)) * time.Second,
+		// MinIdle is the floor the message must have been pending before
+		// XAUTOCLAIM will reassign it. Three minutes mirrors the crawl
+		// stream's REDIS_AUTOCLAIM_MIN_IDLE_S default and is safely
+		// longer than the per-audit timeout (default 90s) plus DB write.
+		reclaimMinIdle: time.Duration(envIntDefault("LIGHTHOUSE_RECLAIM_MIN_IDLE_S", 180)) * time.Second,
 	}
 	if cfg.maxConcurrency < 1 {
 		cfg.maxConcurrency = 1
@@ -248,7 +254,15 @@ func (c *consumer) run(ctx context.Context) {
 	ticker := time.NewTicker(c.cfg.pollInterval)
 	defer ticker.Stop()
 
+	reclaimTicker := time.NewTicker(c.cfg.reclaimInterval)
+	defer reclaimTicker.Stop()
+
 	var wg sync.WaitGroup
+
+	// Run an immediate reclaim sweep on start so a fresh pod replacing
+	// a crashed one picks up its abandoned PEL entries before any new
+	// XReadGroup ">" deliveries land.
+	c.reclaimAllJobs(ctx, &wg)
 
 	for {
 		select {
@@ -268,7 +282,26 @@ func (c *consumer) run(ctx context.Context) {
 				}
 				c.consumeOne(ctx, &wg, jobID)
 			}
+		case <-reclaimTicker.C:
+			c.reclaimAllJobs(ctx, &wg)
 		}
+	}
+}
+
+// reclaimAllJobs runs an XAUTOCLAIM sweep across every active job.
+// Cheap when nothing is stuck: each empty stream returns an empty
+// page in one round-trip.
+func (c *consumer) reclaimAllJobs(ctx context.Context, wg *sync.WaitGroup) {
+	jobs, err := c.activeJobIDs(ctx)
+	if err != nil {
+		analysisLog.Warn("reclaim sweep: failed to list jobs", "error", err)
+		return
+	}
+	for _, jobID := range jobs {
+		if ctx.Err() != nil {
+			return
+		}
+		c.reclaimStale(ctx, wg, jobID)
 	}
 }
 
@@ -277,12 +310,17 @@ func (c *consumer) run(ctx context.Context) {
 // jobs" query keeps the consumer focused on jobs that actually have
 // lighthouse work waiting, which matters more than crawl status when
 // reconciliation passes outlive the crawl.
+//
+// No LIMIT is applied: the active-job count is bounded in practice by
+// the per-job 100-audit cap and the analysis app's own throughput, and
+// per-tick polling is non-blocking (Block: -1) so a wide active set
+// simply round-robins through more streams per tick rather than
+// starving anything.
 func (c *consumer) activeJobIDs(ctx context.Context) ([]string, error) {
 	rows, err := c.db.GetDB().QueryContext(ctx, `
 		SELECT DISTINCT job_id
 		  FROM lighthouse_runs
 		 WHERE status IN ('pending', 'running')
-		 LIMIT 200
 	`)
 	if err != nil {
 		return nil, err
@@ -300,9 +338,61 @@ func (c *consumer) activeJobIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// reclaimStale runs an XAUTOCLAIM sweep so a fresh consumer (e.g. a
+// freshly-deployed analysis pod) picks up messages stuck in another
+// consumer's PEL after a crash. Without this, a process that died
+// between MarkLighthouseRunRunning and XAck would leave the stream
+// message orphaned forever — XReadGroup ">" only delivers
+// never-delivered entries, so a new consumer never sees the abandoned
+// IDs.
+//
+// Reclaimed messages are dispatched through the same processOne path
+// as new deliveries.
+func (c *consumer) reclaimStale(ctx context.Context, wg *sync.WaitGroup, jobID string) {
+	streamKey := broker.LighthouseStreamKey(jobID)
+	groupName := broker.LighthouseConsumerGroup(jobID)
+
+	if err := c.ensureGroup(ctx, streamKey, groupName); err != nil {
+		analysisLog.Warn("reclaim ensure consumer group failed",
+			"error", err, "job_id", jobID)
+		return
+	}
+
+	cursor := "0-0"
+	for ctx.Err() == nil {
+		msgs, next, err := c.rdb.RDB().XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream:   streamKey,
+			Group:    groupName,
+			Consumer: c.cfg.consumerName,
+			MinIdle:  c.cfg.reclaimMinIdle,
+			Start:    cursor,
+			Count:    int64(c.cfg.maxConcurrency),
+		}).Result()
+		if err != nil {
+			if isNoGroupErr(err) {
+				return
+			}
+			analysisLog.Warn("XAutoClaim failed", "error", err, "job_id", jobID)
+			return
+		}
+		if len(msgs) == 0 && (next == "0-0" || next == "") {
+			return
+		}
+		c.dispatchMessages(ctx, wg, jobID, streamKey, groupName, msgs)
+		if next == "0-0" || next == "" {
+			return
+		}
+		cursor = next
+	}
+}
+
 // consumeOne does one XReadGroup tick for a single job. Messages are
 // dispatched into the bounded worker pool and processed concurrently up
 // to LIGHTHOUSE_MAX_CONCURRENCY.
+//
+// Block: -1 makes XReadGroup return immediately when the stream is
+// empty, so a tick over many active jobs does not stall on any one of
+// them. The outer ticker (LIGHTHOUSE_POLL_INTERVAL_MS) sets the cadence.
 func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID string) {
 	streamKey := broker.LighthouseStreamKey(jobID)
 	groupName := broker.LighthouseConsumerGroup(jobID)
@@ -317,7 +407,7 @@ func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID str
 		Consumer: c.cfg.consumerName,
 		Streams:  []string{streamKey, ">"},
 		Count:    int64(c.cfg.maxConcurrency),
-		Block:    c.cfg.blockTimeout,
+		Block:    -1,
 	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return
@@ -332,37 +422,55 @@ func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID str
 	}
 
 	for _, stream := range streams {
-		for _, msg := range stream.Messages {
-			runID, ok := parseRunID(msg.Values)
-			if !ok {
-				analysisLog.Warn("malformed lighthouse stream message; ACKing to drop",
-					"job_id", jobID, "message_id", msg.ID)
-				_ = c.rdb.RDB().XAck(ctx, streamKey, groupName, msg.ID).Err()
-				continue
-			}
-			url := stringFromMap(msg.Values, streamFieldURL)
-			if url == "" {
-				url = composeURLFromMap(msg.Values)
-			}
-			pageID, _ := strconv.Atoi(stringFromMap(msg.Values, "page_id"))
+		c.dispatchMessages(ctx, wg, jobID, streamKey, groupName, stream.Messages)
+	}
+}
 
-			req := lighthouse.AuditRequest{
-				RunID:   runID,
-				JobID:   jobID,
-				PageID:  pageID,
-				URL:     url,
-				Profile: lighthouse.ProfileMobile,
-				Timeout: c.cfg.auditTimeout,
-			}
-
-			c.sem <- struct{}{}
-			wg.Add(1)
-			go func(req lighthouse.AuditRequest, msgID string) {
-				defer wg.Done()
-				defer func() { <-c.sem }()
-				c.processOne(ctx, req, msgID, streamKey, groupName)
-			}(req, msg.ID)
+// dispatchMessages turns a batch of stream entries (from either
+// XReadGroup or XAutoClaim) into runner work, sharing the bounded
+// worker pool. Malformed messages are ACKed to drop them.
+func (c *consumer) dispatchMessages(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	jobID, streamKey, groupName string,
+	msgs []redis.XMessage,
+) {
+	for _, msg := range msgs {
+		runID, ok := parseRunID(msg.Values)
+		if !ok {
+			analysisLog.Warn("malformed lighthouse stream message; ACKing to drop",
+				"job_id", jobID, "message_id", msg.ID)
+			_ = c.rdb.RDB().XAck(ctx, streamKey, groupName, msg.ID).Err()
+			continue
 		}
+		url := stringFromMap(msg.Values, streamFieldURL)
+		if url == "" {
+			url = composeURLFromMap(msg.Values)
+		}
+		pageID, _ := strconv.Atoi(stringFromMap(msg.Values, "page_id"))
+
+		req := lighthouse.AuditRequest{
+			RunID:   runID,
+			JobID:   jobID,
+			PageID:  pageID,
+			URL:     url,
+			Profile: lighthouse.ProfileMobile,
+			Timeout: c.cfg.auditTimeout,
+		}
+
+		// Acquire the semaphore before spawning so a backpressured
+		// consumer doesn't pile up goroutines waiting on the channel.
+		select {
+		case c.sem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		wg.Add(1)
+		go func(req lighthouse.AuditRequest, msgID string) {
+			defer wg.Done()
+			defer func() { <-c.sem }()
+			c.processOne(ctx, req, msgID, streamKey, groupName)
+		}(req, msg.ID)
 	}
 }
 
@@ -400,6 +508,22 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 
 	if runErr != nil {
 		duration := time.Since(startedAt)
+		// Shutdown cancellation must not be turned into a permanent
+		// 'failed' row. SIGTERM cancels the root context, which would
+		// otherwise mark the in-flight audit failed AND ACK the stream
+		// entry — a deploy would burn whatever was mid-flight. Leave
+		// the row in 'running' and skip the ACK so XAUTOCLAIM (or the
+		// next XReadGroup ">" delivery to a fresh consumer) redelivers
+		// the message; the status='running' guard on
+		// MarkLighthouseRunRunning makes the redelivery a no-op for
+		// already-handled rows.
+		if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			analysisLog.Info("lighthouse audit interrupted by shutdown; leaving for redelivery",
+				"run_id", req.RunID, "job_id", req.JobID,
+				"duration_ms", duration.Milliseconds(),
+			)
+			return
+		}
 		analysisLog.Warn("lighthouse audit failed",
 			"error", runErr, "run_id", req.RunID,
 			"job_id", req.JobID, "duration_ms", duration.Milliseconds(),

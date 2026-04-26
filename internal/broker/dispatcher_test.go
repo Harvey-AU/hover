@@ -12,6 +12,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// --- publishAndRemove validation -------------------------------------------
+
+// TestPublishAndRemove_RejectsLighthouseWithoutRunID exercises the
+// poison-message guard added with task_type routing: a lighthouse
+// outbox row that somehow reaches the dispatcher without a populated
+// LighthouseRunID must be rejected before the XADD lands, otherwise
+// the analysis consumer would receive a message it cannot tie back to
+// any lighthouse_runs row.
+func TestPublishAndRemove_RejectsLighthouseWithoutRunID(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-bad"}}
+	conc := &staticConcurrency{can: true}
+	d, _, _, _, _, _ := newDispatcherRig(t, lister, conc)
+
+	entry := ScheduleEntry{
+		TaskID:          "task-bad",
+		JobID:           "job-bad",
+		PageID:          1,
+		Host:            "example.com",
+		Path:            "/",
+		Priority:        0.5,
+		SourceType:      "lighthouse",
+		SourceURL:       "https://example.com/",
+		RunAt:           time.Now(),
+		TaskType:        "lighthouse",
+		LighthouseRunID: 0, // intentionally missing
+	}
+
+	err := d.publishAndRemove(context.Background(), &entry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing lighthouse_run_id")
+}
+
+// TestPublishAndRemove_RejectsUnknownTaskType ensures a producer that
+// drifts ahead of the dispatcher (e.g. a new task type added to the
+// schema before this code knows how to route it) fails fast rather
+// than silently dumping work onto the crawl stream.
+func TestPublishAndRemove_RejectsUnknownTaskType(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-unknown"}}
+	conc := &staticConcurrency{can: true}
+	d, _, _, _, _, _ := newDispatcherRig(t, lister, conc)
+
+	entry := ScheduleEntry{
+		TaskID:     "task-x",
+		JobID:      "job-unknown",
+		PageID:     1,
+		Host:       "example.com",
+		Path:       "/",
+		Priority:   0.5,
+		SourceType: "future",
+		RunAt:      time.Now(),
+		TaskType:   "future-thing",
+	}
+
+	err := d.publishAndRemove(context.Background(), &entry)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown task_type")
+}
+
 // --- Test doubles for dispatcher collaborators ---------------------------
 
 type staticJobLister struct {

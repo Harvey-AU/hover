@@ -58,11 +58,19 @@ ALTER TABLE public.task_outbox_dead
   ADD COLUMN IF NOT EXISTS lighthouse_run_id BIGINT
     REFERENCES public.lighthouse_runs(id) ON DELETE SET NULL;
 
+-- Note the asymmetry with task_outbox: live outbox rows must always
+-- carry lighthouse_run_id when task_type='lighthouse' (the dispatcher
+-- rejects the row otherwise), but the dead-letter table preserves the
+-- forensic trail even after the lighthouse_runs parent is cleaned up.
+-- The FK above uses ON DELETE SET NULL so the dead row survives parent
+-- removal; the CHECK below intentionally allows lighthouse_run_id to
+-- become NULL for task_type='lighthouse' once the parent is gone.
+-- The crawl branch keeps the strict invariant.
 ALTER TABLE public.task_outbox_dead
   DROP CONSTRAINT IF EXISTS task_outbox_dead_routing_check;
 ALTER TABLE public.task_outbox_dead
   ADD CONSTRAINT task_outbox_dead_routing_check
   CHECK (
     (task_type = 'crawl'      AND lighthouse_run_id IS NULL)
-    OR (task_type = 'lighthouse' AND lighthouse_run_id IS NOT NULL)
+    OR task_type = 'lighthouse'
   );

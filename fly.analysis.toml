@@ -27,10 +27,15 @@ primary_region = 'syd'
   LIGHTHOUSE_AUDIT_TIMEOUT_MS = "90000"
   # How aggressively the consumer re-polls active jobs. 1s is plenty —
   # the producer side enqueues in waves at 10% milestones, not bursts.
+  # XReadGroup itself runs non-blocking (Block: -1) so a wide active
+  # job set never starves any individual stream.
   LIGHTHOUSE_POLL_INTERVAL_MS = "1000"
-  # XReadGroup BLOCK; complements POLL_INTERVAL with a longer wait when
-  # nothing is queued.
-  LIGHTHOUSE_BLOCK_TIMEOUT_MS = "2000"
+  # XAUTOCLAIM sweep cadence. Picks up messages stuck in a crashed
+  # consumer's PEL so a fresh pod recovers in-flight work.
+  LIGHTHOUSE_RECLAIM_INTERVAL_S = "60"
+  # Min-idle for XAUTOCLAIM. Comfortably longer than the per-audit
+  # timeout so an in-flight audit cannot be reclaimed mid-run.
+  LIGHTHOUSE_RECLAIM_MIN_IDLE_S = "180"
   # Soft memory floor before the runner defers a new audit. Phase 3
   # consults this; Phase 2 stub runner ignores it.
   LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB = "600"

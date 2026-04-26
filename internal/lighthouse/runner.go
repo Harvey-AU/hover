@@ -3,6 +3,7 @@ package lighthouse
 import (
 	"context"
 	"errors"
+	"net/url"
 	"time"
 )
 
@@ -95,7 +96,7 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 		"job_id", req.JobID,
 		"page_id", req.PageID,
 		"profile", string(req.Profile),
-		"url", req.URL,
+		"url", sanitiseAuditURL(req.URL),
 	)
 
 	select {
@@ -140,4 +141,23 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	)
 
 	return result, nil
+}
+
+// sanitiseAuditURL strips query strings and fragments before logging.
+// Lighthouse audit URLs come from customer crawls and can carry session
+// tokens, signed-link tokens, or other low-entropy PII in the query
+// string; the runner does not need them in central logs.
+func sanitiseAuditURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Don't risk leaking the unparsed string — fall back to host
+		// only if we can extract one heuristically; otherwise drop.
+		return ""
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }

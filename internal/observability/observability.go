@@ -183,10 +183,13 @@ var (
 
 	// --- Lighthouse audit instruments. ---
 	// Surface the producer-side scheduler activity (how many runs were
-	// enqueued, in which band, at which milestone) and the consumer-side
-	// runner outcomes (succeeded/failed/skipped_quota plus duration). The
-	// band/milestone labels are bounded — band has three values, milestone
-	// is 0–100 in tens — so cardinality stays predictable.
+	// enqueued, in which band) and the consumer-side runner outcomes
+	// (succeeded/failed/skipped_quota plus duration). band has three
+	// values (fastest|slowest|reconcile) so cardinality stays bounded.
+	// Milestone is intentionally not a label — the metric records the
+	// flow rate of scheduling decisions, and per-milestone breakdowns
+	// belong on logs/traces (which already carry job_id + milestone)
+	// rather than time-series cardinality.
 	lighthouseRunsScheduledCounter metric.Int64Counter
 	lighthouseRunsCounter          metric.Int64Counter
 	lighthouseRunDurationHistogram metric.Float64Histogram

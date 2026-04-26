@@ -627,7 +627,22 @@ func (bm *BatchManager) flushTaskUpdates(ctx context.Context, updates []*TaskUpd
 	if bm.onBatchFlushed != nil {
 		jobIDs := uniqueJobIDsForMilestone(completedTasks, failedTasks, skippedTasks)
 		if len(jobIDs) > 0 {
-			bm.onBatchFlushed(ctx, jobIDs)
+			// Wrap the external callback in a panic guard. A panic
+			// inside onBatchFlushed (e.g. a milestone scheduler bug)
+			// would otherwise unwind the batch loop goroutine and
+			// silently halt every subsequent flush, since the outer
+			// processUpdateBatches loop has no recover() above it.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						batchLog.Error("onBatchFlushed callback panicked",
+							"panic", r,
+							"job_count", len(jobIDs),
+						)
+					}
+				}()
+				bm.onBatchFlushed(ctx, jobIDs)
+			}()
 		}
 	}
 

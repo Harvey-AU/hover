@@ -108,10 +108,16 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 		return b
 	}
 
-	scheduledByBand := make(map[SelectionBand]int, 3)
+	// scheduledByBand is populated per-attempt and only published to
+	// the outer scope after the tx commits, so retries inside
+	// ExecuteWithContext cannot inflate the metrics counts. The closure
+	// owns the per-attempt map; the outer scope reads only after a
+	// successful return.
+	var scheduledByBand map[SelectionBand]int
 	now := time.Now().UTC()
 
 	err = s.queue.ExecuteWithContext(ctx, func(txCtx context.Context, tx *sql.Tx) error {
+		attemptByBand := make(map[SelectionBand]int, 3)
 		var (
 			outboxTaskIDs    []string
 			outboxJobIDs     []string
@@ -159,10 +165,11 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 			outboxSourceURL = append(outboxSourceURL, lighthouseAuditURL(m.Host, m.Path))
 			outboxRunIDs = append(outboxRunIDs, runID)
 			outboxRunAt = append(outboxRunAt, now)
-			scheduledByBand[band]++
+			attemptByBand[band]++
 		}
 
 		if len(outboxTaskIDs) == 0 {
+			scheduledByBand = attemptByBand
 			return nil
 		}
 
@@ -214,6 +221,7 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 		); err != nil {
 			return fmt.Errorf("insert lighthouse outbox rows: %w", err)
 		}
+		scheduledByBand = attemptByBand
 		return nil
 	})
 

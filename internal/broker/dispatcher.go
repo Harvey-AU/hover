@@ -278,12 +278,27 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 		groupName string
 	)
 	switch taskType {
+	case "crawl":
+		streamKey = StreamKey(entry.JobID)
+		groupName = ConsumerGroup(entry.JobID)
 	case "lighthouse":
+		// A lighthouse outbox row without lighthouse_run_id is a
+		// poison message — the analysis consumer reads run_id straight
+		// off the stream payload and has no way to fall back to the
+		// DB. Reject early so the bad row stays in the outbox and gets
+		// surfaced via the existing dead-letter path rather than
+		// silently churning through the stream.
+		if entry.LighthouseRunID <= 0 {
+			return fmt.Errorf("broker: lighthouse task %s missing lighthouse_run_id", entry.TaskID)
+		}
 		streamKey = LighthouseStreamKey(entry.JobID)
 		groupName = LighthouseConsumerGroup(entry.JobID)
 	default:
-		streamKey = StreamKey(entry.JobID)
-		groupName = ConsumerGroup(entry.JobID)
+		// Unknown task_type means a producer drift the dispatcher
+		// can't safely route. Don't silently fall through to the crawl
+		// stream — that would put lighthouse-shaped work in front of
+		// crawl workers and produce hard-to-debug runtime parse errors.
+		return fmt.Errorf("broker: unknown task_type %q for task %s", taskType, entry.TaskID)
 	}
 
 	// Ensure consumer group exists (idempotent).
@@ -303,7 +318,9 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 		"source_url":  entry.SourceURL,
 		"task_type":   taskType,
 	}
-	if taskType == "lighthouse" && entry.LighthouseRunID > 0 {
+	if taskType == "lighthouse" {
+		// Already validated non-zero above; emit unconditionally so the
+		// consumer never sees a lighthouse message without it.
 		values["lighthouse_run_id"] = strconv.FormatInt(entry.LighthouseRunID, 10)
 	}
 

@@ -201,6 +201,17 @@ func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) 
 			jm.milestoneMu.Unlock()
 			continue
 		}
+		// 0% is not a milestone — every fresh job sits at 0% before
+		// any tasks complete, and the first batch flush would otherwise
+		// emit a spurious (0, 0) callback on the very first observation
+		// (where ok is false). The lighthouse scheduler handles 0%
+		// fine via the no-completed-tasks branch, but the noise drowns
+		// the milestone signal in logs and metrics.
+		if newMilestone == 0 {
+			jm.lastMilestoneFired[jobID] = 0
+			jm.milestoneMu.Unlock()
+			continue
+		}
 		jm.lastMilestoneFired[jobID] = newMilestone
 		jm.milestoneMu.Unlock()
 
