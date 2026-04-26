@@ -74,8 +74,14 @@ func NewLocalRunner(cfg LocalRunnerConfig) (*LocalRunner, error) {
 	if strings.TrimSpace(cfg.LighthouseBin) == "" {
 		return nil, errors.New("local runner: LighthouseBin is required")
 	}
+	if err := validateExecutable(cfg.LighthouseBin); err != nil {
+		return nil, fmt.Errorf("local runner: invalid LighthouseBin: %w", err)
+	}
 	if strings.TrimSpace(cfg.ChromiumBin) == "" {
 		return nil, errors.New("local runner: ChromiumBin is required")
+	}
+	if err := validateExecutable(cfg.ChromiumBin); err != nil {
+		return nil, fmt.Errorf("local runner: invalid ChromiumBin: %w", err)
 	}
 	if cfg.Provider == nil {
 		return nil, errors.New("local runner: archive provider is required")
@@ -91,6 +97,26 @@ func NewLocalRunner(cfg LocalRunnerConfig) (*LocalRunner, error) {
 		readMemAvailableMB: defaultReadMemAvailableMB,
 		now:                time.Now,
 	}, nil
+}
+
+// validateExecutable confirms a binary path resolves to an existing,
+// executable, non-directory file. Catching this at boot turns a
+// Dockerfile/toml drift (binary moved, wrong path, accidentally a
+// directory) into a loud fatal during analysis-app startup rather than
+// an ENOENT on the first audit — by which point the lighthouse_runs row
+// already moved to 'running' and a redelivery storm is in motion.
+func validateExecutable(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", path)
+	}
+	if info.Mode()&0o111 == 0 {
+		return fmt.Errorf("%s is not executable", path)
+	}
+	return nil
 }
 
 // Run executes a single Lighthouse audit, parses the JSON result,
@@ -222,7 +248,7 @@ func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, er
 		if waitErr != nil {
 			tail := stderr.tail()
 			return nil, fmt.Errorf("lighthouse exit: %w (stderr: %s)",
-				waitErr, truncateForLog(tail))
+				waitErr, sanitiseRunnerStderr(req.URL, tail))
 		}
 	}
 
@@ -352,6 +378,22 @@ func truncateForLog(b []byte) string {
 		return string(b)
 	}
 	return "..." + string(b[len(b)-max:])
+}
+
+// sanitiseRunnerStderr strips the audited URL's query/fragment from a
+// stderr tail before it lands in lighthouse_runs.error_message. The
+// startup log already calls SanitiseAuditURL on req.URL, but Lighthouse
+// (and Chromium error paths) routinely echo the raw URL into stderr,
+// which would otherwise leak session tokens or signed-link tokens
+// through the failure path. Strips only the exact request URL so the
+// rest of the stderr context (stack frames, protocol-error details)
+// stays usable for diagnostics.
+func sanitiseRunnerStderr(rawURL string, tail []byte) string {
+	msg := truncateForLog(tail)
+	if rawURL == "" {
+		return msg
+	}
+	return strings.ReplaceAll(msg, rawURL, SanitiseAuditURL(rawURL))
 }
 
 // defaultReadMemAvailableMB reads /proc/meminfo's MemAvailable line and

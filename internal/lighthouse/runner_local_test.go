@@ -107,13 +107,20 @@ exit 0
 
 // newTestRunner builds a LocalRunner with a fake provider and an
 // optional memory-shed shim. memMB < 0 disables the check by setting
-// cfg.MemoryShedMB=0.
+// cfg.MemoryShedMB=0. ChromiumBin is a stand-in executable in the
+// caller's t.TempDir so NewLocalRunner's validateExecutable check
+// passes — the local runner never invokes it directly (lighthouse
+// drives Chromium itself), it just plumbs the path into CHROME_PATH.
 func newTestRunner(t *testing.T, lhBin string, memMB int, available int) (*LocalRunner, *fakeProvider) {
 	t.Helper()
+	chromiumStub := filepath.Join(t.TempDir(), "chromium-stub")
+	// #nosec G306 -- test fixture: stand-in chromium must be executable.
+	require.NoError(t, os.WriteFile(chromiumStub, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
 	provider := &fakeProvider{}
 	r, err := NewLocalRunner(LocalRunnerConfig{
 		LighthouseBin: lhBin,
-		ChromiumBin:   "/usr/bin/chromium-fake",
+		ChromiumBin:   chromiumStub,
 		Provider:      provider,
 		Bucket:        "test-bucket",
 		MemoryShedMB:  memMB,
@@ -126,25 +133,79 @@ func newTestRunner(t *testing.T, lhBin string, memMB int, available int) (*Local
 }
 
 func TestNewLocalRunner_ValidatesConfig(t *testing.T) {
+	dir := t.TempDir()
+	goodLH := filepath.Join(dir, "lighthouse")
+	goodCH := filepath.Join(dir, "chromium")
+	nonExec := filepath.Join(dir, "non-exec")
+	subdir := filepath.Join(dir, "subdir")
+	// #nosec G306 -- test fixtures: stand-in binaries must be executable.
+	require.NoError(t, os.WriteFile(goodLH, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	// #nosec G306 -- test fixtures: stand-in binaries must be executable.
+	require.NoError(t, os.WriteFile(goodCH, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(nonExec, []byte("not executable"), 0o600))
+	require.NoError(t, os.Mkdir(subdir, 0o750))
+
 	cases := []struct {
-		name string
-		cfg  LocalRunnerConfig
+		name        string
+		cfg         LocalRunnerConfig
+		errContains string
 	}{
-		{"missing lighthouse bin", LocalRunnerConfig{ChromiumBin: "/c", Provider: &fakeProvider{}, Bucket: "b"}},
-		{"missing chromium bin", LocalRunnerConfig{LighthouseBin: "/l", Provider: &fakeProvider{}, Bucket: "b"}},
-		{"missing provider", LocalRunnerConfig{LighthouseBin: "/l", ChromiumBin: "/c", Bucket: "b"}},
-		{"missing bucket", LocalRunnerConfig{LighthouseBin: "/l", ChromiumBin: "/c", Provider: &fakeProvider{}}},
+		{
+			name:        "missing lighthouse bin",
+			cfg:         LocalRunnerConfig{ChromiumBin: goodCH, Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "LighthouseBin is required",
+		},
+		{
+			name:        "missing chromium bin",
+			cfg:         LocalRunnerConfig{LighthouseBin: goodLH, Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "ChromiumBin is required",
+		},
+		{
+			name:        "missing provider",
+			cfg:         LocalRunnerConfig{LighthouseBin: goodLH, ChromiumBin: goodCH, Bucket: "b"},
+			errContains: "archive provider is required",
+		},
+		{
+			name:        "missing bucket",
+			cfg:         LocalRunnerConfig{LighthouseBin: goodLH, ChromiumBin: goodCH, Provider: &fakeProvider{}},
+			errContains: "bucket is required",
+		},
+		{
+			name:        "lighthouse bin does not exist",
+			cfg:         LocalRunnerConfig{LighthouseBin: "/nope/lighthouse", ChromiumBin: goodCH, Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "invalid LighthouseBin",
+		},
+		{
+			name:        "chromium bin does not exist",
+			cfg:         LocalRunnerConfig{LighthouseBin: goodLH, ChromiumBin: "/nope/chromium", Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "invalid ChromiumBin",
+		},
+		{
+			name:        "lighthouse bin is a directory",
+			cfg:         LocalRunnerConfig{LighthouseBin: subdir, ChromiumBin: goodCH, Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "is a directory",
+		},
+		{
+			name:        "lighthouse bin is not executable",
+			cfg:         LocalRunnerConfig{LighthouseBin: nonExec, ChromiumBin: goodCH, Provider: &fakeProvider{}, Bucket: "b"},
+			errContains: "is not executable",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := NewLocalRunner(tc.cfg)
-			assert.Error(t, err)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errContains)
 		})
 	}
 }
 
 func TestLocalRunner_MemoryShedReturnsSentinel(t *testing.T) {
-	r, provider := newTestRunner(t, "/does-not-matter", 600, 200)
+	// Use a stub binary so NewLocalRunner's executable validation
+	// passes; the memory-shed check trips before the binary is ever
+	// invoked, so a no-op script suffices.
+	stub := writeFakeLighthouseScript(t, false, "")
+	r, provider := newTestRunner(t, stub, 600, 200)
 	_, err := r.Run(context.Background(), AuditRequest{
 		RunID: 1, JobID: "j", URL: "https://example.com",
 		Profile: ProfileMobile, Timeout: time.Second,
@@ -295,6 +356,48 @@ func TestLocalRunner_NonTransientFailsImmediately(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ENOENT", "stderr tail should be in the error")
 	assert.Empty(t, provider.uploads, "no upload on hard failure")
+}
+
+// TestLocalRunner_StderrRedactsAuditURL pins the privacy contract on
+// the failure path. Lighthouse and Chromium routinely echo the audited
+// URL into stderr; without redaction those query strings (which can
+// carry session tokens or signed-link tokens) end up in
+// lighthouse_runs.error_message and in centralised logs. Mirrors the
+// SanitiseAuditURL rule already applied to start/finish log lines.
+func TestLocalRunner_StderrRedactsAuditURL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake unsupported on windows")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake.sh")
+	// Echo every arg so the URL (always the last positional in our
+	// runner) is guaranteed to land in stderr regardless of flag
+	// position. Mirrors how real Chromium error paths echo "navigation
+	// to <url> failed".
+	body := `#!/bin/sh
+for a in "$@"; do
+  echo "lighthouse stderr ref: $a" 1>&2
+done
+echo "fatal: navigation failed: missing CDP target" 1>&2
+exit 1
+`
+	// #nosec G306 -- test fixture: the fake binary must be executable.
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+
+	r, _ := newTestRunner(t, script, 0, 0)
+	rawURL := "https://example.com/secret?token=leak-me-please&session=abc"
+	_, err := r.Run(context.Background(), AuditRequest{
+		RunID: 1, JobID: "j", URL: rawURL,
+		Profile: ProfileMobile, Timeout: 5 * time.Second,
+	})
+	require.Error(t, err)
+	msg := err.Error()
+	assert.NotContains(t, msg, "token=leak-me-please",
+		"query token must not survive into the returned error")
+	assert.NotContains(t, msg, "session=abc",
+		"query token must not survive into the returned error")
+	assert.Contains(t, msg, "https://example.com/secret",
+		"sanitised URL prefix should remain so diagnostics still locate the page")
 }
 
 func TestLocalRunner_TimeoutCancelsAndKillsProcess(t *testing.T) {
