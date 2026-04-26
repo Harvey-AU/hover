@@ -22,6 +22,14 @@ inputs:
   op-service-account-token:
     description: 1Password service-account token used to load secrets.
     required: true
+  validate-redis-url:
+    description: >-
+      When 'true' (default), fail the job if REDIS_URL is empty after the
+      1Password load. Production deploys depend on REDIS_URL coming from
+      1Password; review apps provision their own per-PR Redis later in the
+      workflow and pass 'false' to skip the check.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -39,6 +47,9 @@ runs:
         OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.op-service-account-token }}
         # CI-only
         FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+        # Supabase API (review apps look up preview-branch URLs)
+        SUPABASE_ACCESS_TOKEN:
+          op://Good Native/hover-supabase/SUPABASE_ACCESS_TOKEN
         # Runtime secrets — hover-supabase
         DATABASE_URL: op://Good Native/hover-supabase/DATABASE_URL
         DATABASE_DIRECT_URL: op://Good Native/hover-supabase/DATABASE_DIRECT_URL
@@ -70,6 +81,7 @@ runs:
     - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
     - name: Validate runtime secrets
+      if: inputs.validate-redis-url == 'true'
       shell: bash
       run: |
         if [ -z "$REDIS_URL" ]; then

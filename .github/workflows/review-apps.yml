@@ -1,3 +1,15 @@
+# Review-app deploys mirror the production fly-deploy.yml shape: provision
+# once, build the shared hover image and the analysis image in parallel,
+# then release each app from a pre-built image. Worker release waits on
+# analysis release for the same consumer-before-producer invariant the
+# prod workflow enforces.
+#
+# Per-PR isolation: each PR has its own Fly apps (hover-pr-N, hover-worker-pr-N,
+# hover-analysis-pr-N), its own Upstash Redis, and its own Supabase preview
+# branch. The provision job sets all of that up and stages secrets onto the
+# three Fly apps; release jobs only need to call `flyctl deploy --image …`,
+# which applies the staged secrets.
+
 name: Deploy Review App
 
 on:
@@ -17,9 +29,20 @@ on:
       - "Roadmap.md"
       - "QandA.md"
 
+# Workflow-level lock: per-PR group, newer pushes cancel any in-flight
+# build/release for the same PR.
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: true
+
 jobs:
-  deploy-review:
-    name: Deploy Review App
+  # ───────── Provision ─────────────────────────────────────────────────
+  # Looks up the per-PR Supabase preview branch, provisions Upstash Redis,
+  # creates the three Fly apps if missing, and stages all secrets onto
+  # them. After this job, each Fly app has its secrets staged and just
+  # needs a deploy to apply them.
+  provision:
+    name: Provision review-app dependencies
     runs-on: blacksmith-4vcpu-ubuntu-2404
     if: |
       github.event.pull_request.draft == false &&
@@ -28,63 +51,51 @@ jobs:
       !contains(github.event.pull_request.body || '', '[preview skip]')
     permissions:
       pull-requests: write
-
-    concurrency:
-      group: preview-${{ github.event.number }}
-      cancel-in-progress: true
-
+    outputs:
+      image_label: ${{ steps.tag.outputs.image_label }}
+      api_app: ${{ steps.naming.outputs.api_app }}
+      worker_app: ${{ steps.naming.outputs.worker_app }}
+      analysis_app: ${{ steps.naming.outputs.analysis_app }}
+      api_url: ${{ steps.naming.outputs.api_url }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
         with:
-          go-version: "1.26.2"
-
-      - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          # Per-PR Redis is provisioned below; the prod REDIS_URL loaded by
+          # the composite is irrelevant here and must not be validated.
+          validate-redis-url: "false"
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: "2.67.1"
 
-      - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
-        with:
-          export-env: true
+      - name: Compute app names and image label
+        id: naming
         env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
-          SUPABASE_ACCESS_TOKEN:
-            op://Good Native/hover-supabase/SUPABASE_ACCESS_TOKEN
-          SENTRY_DSN: op://Good Native/hover-runtime/SENTRY_DSN
-          LOOPS_API_KEY: op://Good Native/hover-runtime/LOOPS_API_KEY
-          SLACK_CLIENT_SECRET:
-            op://Good Native/hover-runtime/SLACK_CLIENT_SECRET
-          WEBFLOW_CLIENT_SECRET:
-            op://Good Native/hover-runtime/WEBFLOW_CLIENT_SECRET
-          GOOGLE_CLIENT_SECRET:
-            op://Good Native/hover-runtime/GOOGLE_CLIENT_SECRET
-          OTEL_EXPORTER_OTLP_HEADERS:
-            op://Good Native/hover-runtime/OTEL_EXPORTER_OTLP_HEADERS
-          SUPABASE_JWT_SECRET:
-            op://Good Native/hover-supabase/SUPABASE_JWT_SECRET
-          SUPABASE_SERVICE_ROLE_KEY:
-            op://Good Native/hover-supabase/SUPABASE_SERVICE_ROLE_KEY
-          # Archive (R2 cold storage)
-          ARCHIVE_ACCESS_KEY_ID:
-            op://Good Native/hover-archive/ARCHIVE_ACCESS_KEY_ID
-          ARCHIVE_SECRET_ACCESS_KEY:
-            op://Good Native/hover-archive/ARCHIVE_SECRET_ACCESS_KEY
-          ARCHIVE_ENDPOINT: op://Good Native/hover-archive/ARCHIVE_ENDPOINT
-          GRAFANA_CLOUD_USER: op://Good Native/hover-runtime/GRAFANA_CLOUD_USER
-          GRAFANA_CLOUD_API_KEY:
-            op://Good Native/hover-runtime/GRAFANA_CLOUD_API_KEY
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
+          {
+            echo "api_app=hover-pr-${PR_NUMBER}"
+            echo "worker_app=hover-worker-pr-${PR_NUMBER}"
+            echo "analysis_app=hover-analysis-pr-${PR_NUMBER}"
+            echo "api_url=https://hover-pr-${PR_NUMBER}.fly.dev"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Get Supabase Preview Branch URL
+      - name: Set image label
+        id: tag
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          echo "image_label=deployment-${RUN_ID}-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Get Supabase preview branch URL
         id: supabase
+        env:
+          SUPABASE_PROJECT_REF: gpzjtbgtdjxnacdfujvx
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           echo "🔍 Listing all Supabase branches..."
           supabase branches list --project-ref "$SUPABASE_PROJECT_REF" || echo "Failed to list branches"
@@ -102,13 +113,9 @@ jobs:
           BRANCH_JSON=""
 
           for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
-            # Get branch details as JSON for robust parsing.
             BRANCH_JSON=$(supabase branches get "$BRANCH_NAME" --project-ref "$SUPABASE_PROJECT_REF" --output json 2>/dev/null) || true
 
-            # Extract pooler URL (for general queries) - try multiple field names.
             PREVIEW_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL // .postgres_url // .db_url // empty' 2>/dev/null)
-
-            # Extract direct URL (for LISTEN/NOTIFY) - Supabase uses POSTGRES_URL_NON_POOLING.
             DIRECT_DB_URL=$(echo "$BRANCH_JSON" | jq -r '.POSTGRES_URL_NON_POOLING // empty' 2>/dev/null)
             BRANCH_SERVICE_ROLE_KEY=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_SERVICE_ROLE_KEY // empty' 2>/dev/null)
             BRANCH_JWT_SECRET=$(echo "$BRANCH_JSON" | jq -r '.SUPABASE_JWT_SECRET // empty' 2>/dev/null)
@@ -124,58 +131,46 @@ jobs:
             fi
           done
 
-          # Debug: show available fields (keys only, not values)
-          echo "🔑 Available JSON fields:"
-          echo "$BRANCH_JSON" | jq -r 'keys[]' 2>/dev/null || echo "  (none)"
-
-          echo "📊 URLs found:"
-          echo "  Pooler URL present: $([ -n "$PREVIEW_DB_URL" ] && echo 'yes' || echo 'no')"
-          echo "  Direct URL present: $([ -n "$DIRECT_DB_URL" ] && echo 'yes' || echo 'no')"
-          echo "  Branch service role key present: $([ -n "$BRANCH_SERVICE_ROLE_KEY" ] && echo 'yes' || echo 'no')"
-          echo "  Branch JWT secret present: $([ -n "$BRANCH_JWT_SECRET" ] && echo 'yes' || echo 'no')"
-          echo "  Branch Supabase URL present: $([ -n "$BRANCH_SUPABASE_URL" ] && echo 'yes' || echo 'no')"
-
-          if [ -n "$PREVIEW_DB_URL" ]; then
-            echo "✅ Found Supabase preview branch!"
-            echo "preview_db_url=$PREVIEW_DB_URL" >> $GITHUB_OUTPUT
-            echo "direct_db_url=$DIRECT_DB_URL" >> $GITHUB_OUTPUT
-            echo "branch_exists=true" >> $GITHUB_OUTPUT
-            # Mask and export branch-specific secrets
-            if [ -n "$BRANCH_SERVICE_ROLE_KEY" ]; then
-              echo "::add-mask::$BRANCH_SERVICE_ROLE_KEY"
-              echo "branch_service_role_key=$BRANCH_SERVICE_ROLE_KEY" >> $GITHUB_OUTPUT
-            fi
-            if [ -n "$BRANCH_JWT_SECRET" ]; then
-              echo "::add-mask::$BRANCH_JWT_SECRET"
-              echo "branch_jwt_secret=$BRANCH_JWT_SECRET" >> $GITHUB_OUTPUT
-            fi
-            if [ -n "$BRANCH_SUPABASE_URL" ]; then
-              echo "branch_supabase_url=$BRANCH_SUPABASE_URL" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "⚠️ No Supabase preview branch found"
-            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          if [ -z "$PREVIEW_DB_URL" ]; then
+            echo "❌ No Supabase preview branch found. Every PR should have one." >&2
+            exit 1
           fi
-        env:
-          SUPABASE_PROJECT_REF: gpzjtbgtdjxnacdfujvx
-          BRANCH_NAME: ${{ github.head_ref }}
 
-      - name: Log Supabase Branch Status
-        run: |
-          echo "========================================"
-          echo "SUPABASE PREVIEW BRANCH STATUS"
-          echo "========================================"
-          echo "Branch exists: ${{ steps.supabase.outputs.branch_exists }}"
-          echo "Preview DB available: ${{ steps.supabase.outputs.preview_db_url != '' }}"
-          echo "========================================"
+          # Branch-specific keys override the prod-loaded fallbacks.
+          if [ -z "$BRANCH_SERVICE_ROLE_KEY" ]; then
+            BRANCH_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
+            echo "🔑 Using main project service_role key (branch key not available)"
+          else
+            echo "🔑 Using preview branch service_role key"
+            echo "::add-mask::$BRANCH_SERVICE_ROLE_KEY"
+          fi
+          if [ -z "$BRANCH_JWT_SECRET" ]; then
+            BRANCH_JWT_SECRET="$SUPABASE_JWT_SECRET"
+            echo "🔑 Using main project JWT secret (branch secret not available)"
+          else
+            echo "🔑 Using preview branch JWT secret"
+            echo "::add-mask::$BRANCH_JWT_SECRET"
+          fi
+
+          {
+            echo "preview_db_url=$PREVIEW_DB_URL"
+            echo "direct_db_url=$DIRECT_DB_URL"
+            echo "service_role_key=$BRANCH_SERVICE_ROLE_KEY"
+            echo "jwt_secret=$BRANCH_JWT_SECRET"
+            echo "supabase_url=$BRANCH_SUPABASE_URL"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set preview branch pool size
-        if: steps.supabase.outputs.branch_exists == 'true'
+        env:
+          BRANCH_SUPABASE_URL: ${{ steps.supabase.outputs.supabase_url }}
         run: |
-          BRANCH_URL="$BRANCH_SUPABASE_URL"
-          BRANCH_REF=$(echo "$BRANCH_URL" | sed 's|https://||' | cut -d'.' -f1)
+          if [ -z "$BRANCH_SUPABASE_URL" ]; then
+            echo "ℹ️ Branch Supabase URL not available — skipping pool size update"
+            exit 0
+          fi
+          BRANCH_REF=$(echo "$BRANCH_SUPABASE_URL" | sed 's|https://||' | cut -d'.' -f1)
           if [ -z "$BRANCH_REF" ]; then
-            echo "⚠️ Could not extract branch ref from $BRANCH_URL — skipping pool size update"
+            echo "⚠️ Could not extract branch ref from $BRANCH_SUPABASE_URL — skipping pool size update"
             exit 0
           fi
           # 60 conns covers the API review app (DB_MAX_OPEN_CONNS=40) plus
@@ -196,27 +191,24 @@ jobs:
           else
             echo "⚠️ Pool size update returned HTTP $HTTP_STATUS — continuing"
           fi
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ env.SUPABASE_ACCESS_TOKEN }}
-          BRANCH_SUPABASE_URL: ${{ steps.supabase.outputs.branch_supabase_url }}
 
       - name: Provision Upstash Redis
         id: redis
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
 
-          # Check if Redis instance already exists (exact word match on name column).
           if flyctl redis list | grep -wq "$REDIS_NAME"; then
             echo "Upstash Redis already exists: $REDIS_NAME"
           else
             echo "Creating Upstash Redis: $REDIS_NAME"
             # Explicitly set --enable-prodpack=false so flyctl does not
             # attempt an interactive prompt (which errors in CI with
-            # "Error: prompt: non interactive"). Piping stdin is not enough;
-            # recent flyctl versions abort rather than read from stdin.
-            # Do not pass --plan: flyctl rejects the documented default
-            # value ("pay-as-you-go") with "plan not found", and the default
-            # is applied automatically when the flag is omitted.
+            # "Error: prompt: non interactive"). Do not pass --plan: flyctl
+            # rejects the documented default value with "plan not found",
+            # and the default is applied automatically when the flag is
+            # omitted.
             if ! flyctl redis create \
               --name "$REDIS_NAME" \
               --region syd \
@@ -229,11 +221,6 @@ jobs:
             fi
           fi
 
-          # Poll for private URL (may take a moment after creation).
-          # flyctl renders the status table with box-drawing characters and
-          # arbitrary whitespace, so extract only the redis://... substring
-          # and strip surrounding whitespace. The earlier sed 's/.*= *//'
-          # approach captured the full line because flyctl uses │, not =.
           REDIS_URL=""
           for i in 1 2 3 4 5 6; do
             REDIS_URL=$(flyctl redis status "$REDIS_NAME" 2>/dev/null \
@@ -255,141 +242,88 @@ jobs:
           echo "::add-mask::$REDIS_URL"
           echo "redis_url=$REDIS_URL" >> "$GITHUB_OUTPUT"
           echo "✅ Redis provisioned: $REDIS_NAME"
+
+      - name: Create Fly apps if missing
         env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          PR_NUMBER: ${{ github.event.number }}
-
-      - name: Build Docker image locally
+          API_APP: ${{ steps.naming.outputs.api_app }}
+          WORKER_APP: ${{ steps.naming.outputs.worker_app }}
+          ANALYSIS_APP: ${{ steps.naming.outputs.analysis_app }}
         run: |
-          # The Dockerfile builds both the API (./main) and the worker
-          # (./worker) binaries into a single image. We tag it twice so the
-          # worker review app can --local-only deploy the same bits without
-          # a second docker build.
-          docker build -t hover-pr-${{ github.event.number }} .
-          docker tag hover-pr-${{ github.event.number }} hover-worker-pr-${{ github.event.number }}
+          # Exact match on app name (column 1). grep -q does substring
+          # matching, so hover-pr-12 would falsely match PR 123.
+          for APP in "$API_APP" "$WORKER_APP" "$ANALYSIS_APP"; do
+            if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$APP"; then
+              echo "Creating: $APP"
+              flyctl apps create "$APP" --org personal
+            else
+              echo "Already exists: $APP"
+            fi
+          done
 
-      - name: Build Analysis image locally
+      - name: Stage secrets on API review app
+        env:
+          API_APP: ${{ steps.naming.outputs.api_app }}
+          API_URL: ${{ steps.naming.outputs.api_url }}
+          DB_URL: ${{ steps.supabase.outputs.preview_db_url }}
+          DIRECT_URL: ${{ steps.supabase.outputs.direct_db_url }}
+          BRANCH_JWT_SECRET: ${{ steps.supabase.outputs.jwt_secret }}
+          BRANCH_SERVICE_ROLE_KEY:
+            ${{ steps.supabase.outputs.service_role_key }}
+          BRANCH_SUPABASE_URL: ${{ steps.supabase.outputs.supabase_url }}
+          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
         run: |
-          # hover-analysis uses a different image (Dockerfile.analysis): the
-          # analysis binary lives in cmd/analysis and Phase 3 will add
-          # Chromium + lighthouse@<pinned> here, so it cannot share the
-          # main image's artefact. Tagged separately and consumed by the
-          # later "Deploy Analysis Review App" step.
-          docker build -f Dockerfile.analysis -t hover-analysis-pr-${{ github.event.number }} .
-
-      # Deploy the analysis review app *before* the worker review app. The
-      # worker is the lighthouse producer (its milestone hook enqueues
-      # outbox rows that the dispatcher routes onto stream:{jobID}:lh); the
-      # analysis app is the consumer of that stream. Bringing the consumer
-      # up first means the first XADD lands in a stream that already has a
-      # reader, mirroring the worker-before-API rule below.
-      - name: Deploy Analysis Review App
-        id: deploy_analysis
-        run: |
-          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
-            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
-            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
-          else
-            echo "❌ No Supabase preview branch found; cannot deploy analysis review app." >&2
-            exit 1
-          fi
-
-          ANALYSIS_APP_NAME="hover-analysis-pr-${{ github.event.number }}"
-
-          # Exact match on app name to avoid hover-analysis-pr-1 falsely
-          # matching PR 12. Mirrors the worker review-app guard.
-          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$ANALYSIS_APP_NAME"; then
-            echo "Creating new analysis review app: $ANALYSIS_APP_NAME"
-            flyctl apps create "$ANALYSIS_APP_NAME" --org personal
-          else
-            echo "Analysis review app already exists: $ANALYSIS_APP_NAME"
-          fi
-
-          if [ -z "$REVIEW_REDIS_URL" ]; then
-            echo "❌ REDIS_URL is required for analysis; provisioning earlier must have failed." >&2
-            exit 1
-          fi
-
+          # Optional flags only included when their source values are set.
           DIRECT_URL_FLAGS=()
           if [ -n "$DIRECT_URL" ]; then
             DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
           fi
+          SUPABASE_URL_FLAGS=()
+          if [ -n "$BRANCH_SUPABASE_URL" ]; then
+            SUPABASE_URL_FLAGS+=(SUPABASE_URL="$BRANCH_SUPABASE_URL")
+          fi
 
+          flyctl secrets set \
+            --app "$API_APP" \
+            DATABASE_URL="$DB_URL" \
+            "${DIRECT_URL_FLAGS[@]}" \
+            "${SUPABASE_URL_FLAGS[@]}" \
+            REDIS_URL="$REVIEW_REDIS_URL" \
+            SUPABASE_JWT_SECRET="$BRANCH_JWT_SECRET" \
+            SUPABASE_SERVICE_ROLE_KEY="$BRANCH_SERVICE_ROLE_KEY" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            LOOPS_API_KEY="$LOOPS_API_KEY" \
+            SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
+            WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
+            GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            WEBFLOW_REDIRECT_URI="${API_URL}/v1/integrations/webflow/callback" \
+            APP_URL="$API_URL" \
+            SETTINGS_URL="${API_URL}/settings" \
+            --stage
+
+      - name: Stage secrets on analysis review app
+        env:
+          ANALYSIS_APP: ${{ steps.naming.outputs.analysis_app }}
+          DB_URL: ${{ steps.supabase.outputs.preview_db_url }}
+          DIRECT_URL: ${{ steps.supabase.outputs.direct_db_url }}
+          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: |
           # Analysis-specific secret set. No OAuth client secrets, no
           # Loops, no auth — analysis only talks to Postgres + Redis + R2 +
           # observability backends.
-          echo "Setting secrets for analysis review app..."
-          flyctl secrets set \
-            DATABASE_URL="$DB_URL" \
-            "${DIRECT_URL_FLAGS[@]}" \
-            REDIS_URL="$REVIEW_REDIS_URL" \
-            SENTRY_DSN="$SENTRY_DSN" \
-            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
-            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
-            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
-            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
-            ARCHIVE_PATH_PREFIX="$PR_NUMBER" \
-            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
-            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
-            --app $ANALYSIS_APP_NAME --stage
-
-          flyctl deploy \
-            --app $ANALYSIS_APP_NAME \
-            --config .fly/review_apps.analysis.toml \
-            --local-only \
-            --image "hover-analysis-pr-$PR_NUMBER"
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
-          PR_NUMBER: ${{ github.event.number }}
-
-      # Deploy the worker review app *before* the API review app. The API
-      # enables Redis dispatch as soon as REDIS_URL is set on it, so we need
-      # a running consumer on the other end before we flip that switch.
-      # Without this ordering, a failure in the worker step would leave the
-      # API review app live, enqueueing tasks into Redis that no worker
-      # consumes.
-      - name: Deploy Worker Review App
-        id: deploy_worker
-        run: |
-          # Mirrors the API deploy step but uses fly.worker.toml-equivalent
-          # config. The same image is used (Dockerfile builds both binaries);
-          # review_apps.worker.toml overrides CMD to run ./worker directly.
-          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
-            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
-            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
-          else
-            echo "❌ No Supabase preview branch found; cannot deploy worker review app." >&2
-            exit 1
-          fi
-
-          WORKER_APP_NAME="hover-worker-pr-${{ github.event.number }}"
-
-          # Exact match on app name (column 1). grep -q does substring
-          # matching, so hover-worker-pr-12 would falsely match PR 123 and
-          # cause secrets to be set on the wrong app.
-          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$WORKER_APP_NAME"; then
-            echo "Creating new worker review app: $WORKER_APP_NAME"
-            flyctl apps create "$WORKER_APP_NAME" --org personal
-          else
-            echo "Worker review app already exists: $WORKER_APP_NAME"
-          fi
-
-          if [ -z "$REVIEW_REDIS_URL" ]; then
-            echo "❌ REDIS_URL is required for the worker; provisioning earlier must have failed." >&2
-            exit 1
-          fi
-
-          # Worker-specific secret set. Worker does not serve HTTP so OAuth
-          # client secrets (Slack/Webflow/Google), Loops API key, and the
-          # WEBFLOW_REDIRECT_URI/APP_URL/SETTINGS_URL triplet are omitted.
           DIRECT_URL_FLAGS=()
           if [ -n "$DIRECT_URL" ]; then
             DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
           fi
 
-          echo "Setting secrets for worker review app..."
           flyctl secrets set \
+            --app "$ANALYSIS_APP" \
             DATABASE_URL="$DB_URL" \
             "${DIRECT_URL_FLAGS[@]}" \
             REDIS_URL="$REVIEW_REDIS_URL" \
@@ -401,175 +335,207 @@ jobs:
             ARCHIVE_PATH_PREFIX="$PR_NUMBER" \
             GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
             GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
-            --app $WORKER_APP_NAME --stage
+            --stage
 
-          flyctl deploy \
-            --app $WORKER_APP_NAME \
-            --config .fly/review_apps.worker.toml \
-            --local-only \
-            --image "hover-worker-pr-$PR_NUMBER"
+      - name: Stage secrets on worker review app
         env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          WORKER_APP: ${{ steps.naming.outputs.worker_app }}
+          DB_URL: ${{ steps.supabase.outputs.preview_db_url }}
+          DIRECT_URL: ${{ steps.supabase.outputs.direct_db_url }}
           REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
           PR_NUMBER: ${{ github.event.number }}
-
-      - name: Deploy Review App
-        id: deploy
         run: |
-          # Use Supabase preview branch if available
-          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
-            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
-            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
-            # Use the branch's own keys if available, fall back to main project
-            BRANCH_SRK="${{ steps.supabase.outputs.branch_service_role_key }}"
-            BRANCH_JWT="${{ steps.supabase.outputs.branch_jwt_secret }}"
-            if [ -n "$BRANCH_SRK" ]; then
-              SERVICE_ROLE_KEY="$BRANCH_SRK"
-              echo "🔑 Using preview branch service_role key"
-            else
-              SERVICE_ROLE_KEY="$SUPABASE_SERVICE_ROLE_KEY"
-              echo "🔑 Using main project service_role key (branch key not available)"
-            fi
-            if [ -n "$BRANCH_JWT" ]; then
-              JWT_SECRET="$BRANCH_JWT"
-              echo "🔑 Using preview branch JWT secret"
-            else
-              JWT_SECRET="$SUPABASE_JWT_SECRET"
-              echo "🔑 Using main project JWT secret (branch secret not available)"
-            fi
-            BRANCH_URL="${{ steps.supabase.outputs.branch_supabase_url }}"
-            if [ -n "$BRANCH_URL" ]; then
-              SUPABASE_URL="$BRANCH_URL"
-              echo "🔑 Using preview branch Supabase URL"
-            else
-              SUPABASE_URL=""
-              echo "🔑 Using default Supabase URL from review_apps.toml"
-            fi
-            echo "🔀 Using Supabase PREVIEW database"
-            echo "db_type=preview" >> $GITHUB_OUTPUT
-          else
-            echo "❌ No Supabase preview branch found. Every PR should have one." >&2
-            exit 1
-          fi
-
-          # Create review app name
-          # Auth URLs (SUPABASE_FALLBACK_AUTH_URL, SUPABASE_LEGACY_AUTH_URL) are
-          # now in review_apps.toml [env] — no need to set as secrets.
-          APP_NAME="hover-pr-${{ github.event.number }}"
-
-          # Check if app exists, create if not.
-          # Exact match on app name (column 1). grep -q does substring
-          # matching, so hover-pr-12 would falsely match PR 123 and cause
-          # secrets to be set on the wrong app.
-          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$APP_NAME"; then
-            echo "Creating new review app: $APP_NAME"
-            flyctl apps create "$APP_NAME" --org personal
-          else
-            echo "Review app already exists: $APP_NAME"
-          fi
-
-          # Override SUPABASE_URL if branch provides one
-          SUPABASE_URL_FLAGS=()
-          if [ -n "$SUPABASE_URL" ]; then
-            SUPABASE_URL_FLAGS+=(SUPABASE_URL="$SUPABASE_URL")
-          fi
-
-          # Set secrets for Review App WITHOUT triggering deployment
-          echo "Setting test database connection and auth secrets for review app..."
-          # Non-secret config (OAuth client IDs, auth URLs) is in review_apps.toml [env].
-          # Only set actual secrets and per-PR dynamic values here.
-          # Build optional Redis secret flag
-          REDIS_FLAGS=()
-          if [ -n "$REVIEW_REDIS_URL" ]; then
-            REDIS_FLAGS+=(REDIS_URL="$REVIEW_REDIS_URL")
-            echo "🔴 Setting REDIS_URL for review app worker"
-          fi
-
+          # Worker does not serve HTTP, so OAuth client secrets, Loops, and
+          # the WEBFLOW_REDIRECT_URI/APP_URL/SETTINGS_URL triplet are
+          # omitted.
+          DIRECT_URL_FLAGS=()
           if [ -n "$DIRECT_URL" ]; then
-            echo "📡 Setting DATABASE_DIRECT_URL for real-time notifications"
-            flyctl secrets set \
-              DATABASE_URL="$DB_URL" \
-              DATABASE_DIRECT_URL="$DIRECT_URL" \
-              "${SUPABASE_URL_FLAGS[@]}" \
-              "${REDIS_FLAGS[@]}" \
-              SUPABASE_JWT_SECRET="$JWT_SECRET" \
-              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
-              SENTRY_DSN="$SENTRY_DSN" \
-              LOOPS_API_KEY="$LOOPS_API_KEY" \
-              SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
-              WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
-              GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-              OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
-              ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
-              ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
-              ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
-              GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
-              GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
-              WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
-              APP_URL="https://$APP_NAME.fly.dev" \
-              SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
-              --app $APP_NAME --stage
-          else
-            flyctl secrets set \
-              DATABASE_URL="$DB_URL" \
-              "${SUPABASE_URL_FLAGS[@]}" \
-              "${REDIS_FLAGS[@]}" \
-              SUPABASE_JWT_SECRET="$JWT_SECRET" \
-              SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
-              SENTRY_DSN="$SENTRY_DSN" \
-              LOOPS_API_KEY="$LOOPS_API_KEY" \
-              SLACK_CLIENT_SECRET="$SLACK_CLIENT_SECRET" \
-              WEBFLOW_CLIENT_SECRET="$WEBFLOW_CLIENT_SECRET" \
-              GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-              OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
-              ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
-              ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
-              ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
-              GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
-              GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
-              WEBFLOW_REDIRECT_URI="https://$APP_NAME.fly.dev/v1/integrations/webflow/callback" \
-              APP_URL="https://$APP_NAME.fly.dev" \
-              SETTINGS_URL="https://$APP_NAME.fly.dev/settings" \
-              --app $APP_NAME --stage
+            DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
           fi
 
-          # Deploy to review app with local image (this will apply staged secrets)
-          # Region is set via primary_region in .fly/review_apps.toml (syd)
-          flyctl deploy \
-            --app $APP_NAME \
-            --config .fly/review_apps.toml \
-            --local-only \
-            --image hover-pr-${{ github.event.number }}
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
+          flyctl secrets set \
+            --app "$WORKER_APP" \
+            DATABASE_URL="$DB_URL" \
+            "${DIRECT_URL_FLAGS[@]}" \
+            REDIS_URL="$REVIEW_REDIS_URL" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            ARCHIVE_PATH_PREFIX="$PR_NUMBER" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            --stage
 
+  # ───────── Build phase ───────────────────────────────────────────────
+  # Two image builds run in parallel, mirroring fly-deploy.yml. The shared
+  # image carries both API and worker binaries (Dockerfile lines 19–20),
+  # so it is reused by both release-api and release-worker.
+  build-shared:
+    name: Build shared review image (API + worker)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [provision]
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          validate-redis-url: "false"
+
+      - name: Build and push shared image
+        id: build
+        env:
+          IMAGE_LABEL: ${{ needs.provision.outputs.image_label }}
+          API_APP: ${{ needs.provision.outputs.api_app }}
+        run: |
+          # --local-only builds on this runner; --push uploads to
+          # registry.fly.io/$API_APP:<tag>. Worker release pulls the same
+          # image cross-app via FLY_API_TOKEN (org-scoped).
+          flyctl deploy --build-only --push --local-only \
+            --image-label "$IMAGE_LABEL" \
+            --config .fly/review_apps.toml \
+            --app "$API_APP"
+          echo "image=registry.fly.io/${API_APP}:${IMAGE_LABEL}" >> "$GITHUB_OUTPUT"
+
+  build-analysis:
+    name: Build analysis review image
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [provision]
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          validate-redis-url: "false"
+
+      - name: Build and push analysis image
+        id: build
+        env:
+          IMAGE_LABEL: ${{ needs.provision.outputs.image_label }}
+          ANALYSIS_APP: ${{ needs.provision.outputs.analysis_app }}
+        run: |
+          flyctl deploy --build-only --push --local-only \
+            --image-label "$IMAGE_LABEL" \
+            --config .fly/review_apps.analysis.toml \
+            --app "$ANALYSIS_APP"
+          echo "image=registry.fly.io/${ANALYSIS_APP}:${IMAGE_LABEL}" >> "$GITHUB_OUTPUT"
+
+  # ───────── Release phase ─────────────────────────────────────────────
+  # release-api and release-analysis fan out as soon as their builds are
+  # ready. release-worker waits on release-analysis so the consumer is
+  # healthy before the producer starts XADDing onto the lighthouse stream.
+  release-api:
+    name: Release API review app
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [provision, build-shared]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          validate-redis-url: "false"
+
+      - name: Release API review app
+        env:
+          IMAGE: ${{ needs.build-shared.outputs.image }}
+          API_APP: ${{ needs.provision.outputs.api_app }}
+        run: |
+          flyctl deploy \
+            --image "$IMAGE" \
+            --config .fly/review_apps.toml \
+            --app "$API_APP"
+
+  release-analysis:
+    name: Release analysis review app
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [provision, build-analysis]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          validate-redis-url: "false"
+
+      - name: Release analysis review app
+        env:
+          IMAGE: ${{ needs.build-analysis.outputs.image }}
+          ANALYSIS_APP: ${{ needs.provision.outputs.analysis_app }}
+        run: |
+          flyctl deploy \
+            --image "$IMAGE" \
+            --config .fly/review_apps.analysis.toml \
+            --app "$ANALYSIS_APP"
+
+  release-worker:
+    name: Release worker review app
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # build-shared for the image, release-analysis for the
+    # consumer-before-producer invariant.
+    needs: [provision, build-shared, release-analysis]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/fly-setup
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          validate-redis-url: "false"
+
+      - name: Release worker review app
+        # Reuses the shared image from build-shared — Dockerfile compiles
+        # both binaries, review_apps.worker.toml selects the worker
+        # entrypoint.
+        env:
+          IMAGE: ${{ needs.build-shared.outputs.image }}
+          WORKER_APP: ${{ needs.provision.outputs.worker_app }}
+        run: |
+          flyctl deploy \
+            --image "$IMAGE" \
+            --config .fly/review_apps.worker.toml \
+            --app "$WORKER_APP"
+
+  # ───────── Comment on PR ─────────────────────────────────────────────
+  # Single comment with the API URL — posted only after the API release
+  # succeeds (worker/analysis are not user-facing).
+  comment-pr:
+    name: Comment review-app URL on PR
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    needs: [provision, release-api]
+    permissions:
+      pull-requests: write
+    steps:
       - name: Comment PR with app URL
         uses: actions/github-script@v8
+        env:
+          API_URL: ${{ needs.provision.outputs.api_url }}
         with:
           script: |
-            const prNumber = ${{ github.event.number }};
-            const appName = `hover-pr-${prNumber}`;
-            const appUrl = `https://${appName}.fly.dev`;
-
+            const apiUrl = process.env.API_URL;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `🐝 **Review App Deployed**
 
-              Homepage: <a href="${appUrl}">${appUrl}</a>
-              Dashboard: <a href="${appUrl}/dashboard">${appUrl}/dashboard</a>`
+              Homepage: <a href="${apiUrl}">${apiUrl}</a>
+              Dashboard: <a href="${apiUrl}/dashboard">${apiUrl}/dashboard</a>`
             });
 
+  # ───────── Cleanup ───────────────────────────────────────────────────
+  # Runs only on PR close. Tears down the three Fly apps and the
+  # per-PR Redis instance, in the reverse order of creation
+  # (consumer-before-producer applies to teardown too: stop the worker
+  # first so it doesn't log Redis errors as the broker disappears, and
+  # stop the analysis consumer before the API stops enqueueing).
   cleanup-review:
     name: Cleanup Review App
     runs-on: blacksmith-4vcpu-ubuntu-2404
     if: github.event.action == 'closed'
-
     steps:
-      - name: Setup Fly.io CLI
-        uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
+      - uses: superfly/flyctl-actions/setup-flyctl@63da3ecc5e2793b98a3f2519b3d75d4f4c11cec2 # pinned
 
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
@@ -580,12 +546,10 @@ jobs:
           FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
 
       - name: Destroy Analysis Review App
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           ANALYSIS_APP_NAME="hover-analysis-pr-${PR_NUMBER}"
-          # Destroy the analysis app first so the lighthouse stream
-          # consumer detaches before the worker stops producing. Mirrors
-          # the consumer-before-producer rule that already applies to the
-          # worker → API ordering below.
           if ! APP_LIST=$(flyctl apps list); then
             echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
             exit 1
@@ -599,18 +563,12 @@ jobs:
           else
             echo "ℹ️ Analysis review app does not exist, nothing to clean up: $ANALYSIS_APP_NAME"
           fi
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          PR_NUMBER: ${{ github.event.number }}
 
       - name: Destroy Worker Review App
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           WORKER_APP_NAME="hover-worker-pr-${PR_NUMBER}"
-          # Destroy the worker first so the consumer detaches before Redis
-          # is torn down; otherwise the worker logs a flurry of Redis
-          # connection errors on its way out.
-          # Capture list output separately so API/auth failures surface
-          # instead of being silently treated as "app does not exist".
           if ! APP_LIST=$(flyctl apps list); then
             echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
             exit 1
@@ -624,14 +582,12 @@ jobs:
           else
             echo "ℹ️ Worker review app does not exist, nothing to clean up: $WORKER_APP_NAME"
           fi
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          PR_NUMBER: ${{ github.event.number }}
 
       - name: Destroy Upstash Redis
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           REDIS_NAME="hover-redis-pr-${PR_NUMBER}"
-          # Distinguish "doesn't exist" (OK) from other failures (surface them).
           if ! REDIS_LIST=$(flyctl redis list); then
             echo "❌ flyctl redis list failed — cannot determine cleanup state" >&2
             exit 1
@@ -645,14 +601,12 @@ jobs:
           else
             echo "ℹ️ Redis instance does not exist, nothing to clean up: $REDIS_NAME"
           fi
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          PR_NUMBER: ${{ github.event.number }}
 
       - name: Destroy Review App
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
           APP_NAME="hover-pr-${PR_NUMBER}"
-          # Distinguish "doesn't exist" (OK) from other failures (surface them).
           if ! APP_LIST=$(flyctl apps list); then
             echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
             exit 1
@@ -666,6 +620,3 @@ jobs:
           else
             echo "ℹ️ Review app does not exist, nothing to clean up: $APP_NAME"
           fi
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          PR_NUMBER: ${{ github.event.number }}
