@@ -649,8 +649,32 @@ func (db *DB) ResetDataOnly() error {
 	dbLog.Warn("Clearing all data from database tables (schema preserved)")
 
 	// Use TRUNCATE instead of DELETE - it's atomic, faster, and handles concurrent access better
-	// TRUNCATE automatically handles foreign key constraints with CASCADE
-	tables := []string{"tasks", "jobs", "job_share_links", "schedulers", "pages", "domains", "page_analytics", "domain_hosts", "notifications"}
+	// TRUNCATE automatically handles foreign key constraints with CASCADE.
+	//
+	// Anything that holds operational state (jobs, tasks, usage counters,
+	// integration connections) is cleared. users, organisations,
+	// organisation_members and plans are deliberately preserved so the
+	// admin operator stays signed in and reference data survives.
+	tables := []string{
+		"tasks",
+		"jobs",
+		"job_share_links",
+		"schedulers",
+		"pages",
+		"domains",
+		"page_analytics",
+		"domain_hosts",
+		"notifications",
+		"daily_usage",
+		"organisation_domains",
+		"platform_org_mappings",
+		"google_analytics_accounts",
+		"google_analytics_connections",
+		"slack_connections",
+		"slack_user_links",
+		"webflow_connections",
+		"webflow_site_settings",
+	}
 	totalRowsDeleted := int64(0)
 
 	dbLog.Info("Step 1/2: Truncating all data from tables")
