@@ -99,6 +99,14 @@ type JobManager struct {
 	// without the analysis app, tests).
 	OnProgressMilestone ProgressMilestoneCallback
 
+	// OnJobTerminated is called after a job's Postgres status has been
+	// flipped to a terminal state (cancelled, completed, failed). Set by
+	// the API server to drop the per-job Redis keys (schedule ZSET,
+	// streams, consumer groups, running-counter HASH field). Fire-and-
+	// forget: errors are logged inside the callback. Nil is allowed for
+	// tests and for deploys without REDIS_URL.
+	OnJobTerminated JobTerminatedCallback
+
 	// lastMilestoneFired is the in-process record of the last 10%
 	// boundary that has been signalled per job, gating MaybeFireMilestones
 	// against duplicate fires within this replica. Multiple replicas may
@@ -122,6 +130,12 @@ type JobManager struct {
 // implementations must return promptly — long-running work belongs in a
 // goroutine inside the callback.
 type ProgressMilestoneCallback func(ctx context.Context, jobID string, oldPct, newPct int)
+
+// JobTerminatedCallback is invoked after a job has been moved to a
+// terminal state (cancelled, completed, failed). Implementations are
+// expected to release per-job Redis state. The callback is fire-and-
+// forget; errors must be handled inside the callback.
+type JobTerminatedCallback func(ctx context.Context, jobID string)
 
 // NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
@@ -852,6 +866,13 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
 	jm.clearMilestoneState(job.ID)
+
+	// Drop per-job Redis keys. Without this the schedule ZSET, both
+	// streams + their consumer groups, and the running-counter HASH
+	// field linger forever — the dispatcher only scans active jobs.
+	if jm.OnJobTerminated != nil {
+		jm.OnJobTerminated(ctx, job.ID)
+	}
 
 	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 

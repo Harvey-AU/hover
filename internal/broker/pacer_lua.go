@@ -22,16 +22,25 @@ local threshold = tonumber(ARGV[1])
 local step = tonumber(ARGV[2])
 
 redis.call('HINCRBY', key, 'success_streak', 1)
-redis.call('HSET', key, 'error_streak', '0')
 
-local streak = tonumber(redis.call('HGET', key, 'success_streak') or '0')
-local delay = tonumber(redis.call('HGET', key, 'adaptive_delay_ms') or '0')
-local floor = tonumber(redis.call('HGET', key, 'floor_ms') or '0')
+-- One HMGET replaces three HGETs against the same hash; the post-
+-- HINCRBY read is intentional so the streak value reflects this call.
+local fields = redis.call('HMGET', key, 'success_streak', 'adaptive_delay_ms', 'floor_ms')
+local streak = tonumber(fields[1] or '0') or 0
+local delay = tonumber(fields[2] or '0') or 0
+local floor = tonumber(fields[3] or '0') or 0
 
 if streak >= threshold and delay > floor then
     delay = math.max(floor, delay - step)
-    redis.call('HSET', key, 'adaptive_delay_ms', tostring(delay))
-    redis.call('HSET', key, 'success_streak', '0')
+    -- Single HMSET batches the three writes (error_streak reset, new
+    -- adaptive delay, success_streak reset) that previously ran as
+    -- separate HSETs.
+    redis.call('HMSET', key,
+        'error_streak', '0',
+        'adaptive_delay_ms', tostring(delay),
+        'success_streak', '0')
+else
+    redis.call('HSET', key, 'error_streak', '0')
 end
 
 redis.call('EXPIRE', key, 86400)
@@ -55,8 +64,12 @@ var tryAcquireScript = redis.NewScript(`
 local cfgKey = KEYS[1]
 local gateKey = KEYS[2]
 
-local base = tonumber(redis.call('HGET', cfgKey, 'base_delay_ms') or '0') or 0
-local adaptive = tonumber(redis.call('HGET', cfgKey, 'adaptive_delay_ms') or '0') or 0
+-- One HMGET replaces two HGETs against cfgKey. tryAcquire is on the
+-- dispatch hot path; halving the per-call command count meaningfully
+-- shrinks the Upstash command bill.
+local cfg = redis.call('HMGET', cfgKey, 'base_delay_ms', 'adaptive_delay_ms')
+local base = tonumber(cfg[1] or '0') or 0
+local adaptive = tonumber(cfg[2] or '0') or 0
 local delay = base
 if adaptive > delay then
     delay = adaptive
@@ -94,11 +107,14 @@ local step = tonumber(ARGV[1])
 local maxDelay = tonumber(ARGV[2])
 
 redis.call('HINCRBY', key, 'error_streak', 1)
-redis.call('HSET', key, 'success_streak', '0')
 
 local delay = tonumber(redis.call('HGET', key, 'adaptive_delay_ms') or '0')
 delay = math.min(maxDelay, delay + step)
-redis.call('HSET', key, 'adaptive_delay_ms', tostring(delay))
+-- HMSET coalesces the success_streak reset and the new adaptive delay
+-- into a single write; the previous code issued these as two HSETs.
+redis.call('HMSET', key,
+    'success_streak', '0',
+    'adaptive_delay_ms', tostring(delay))
 
 redis.call('EXPIRE', key, 86400)
 return delay
