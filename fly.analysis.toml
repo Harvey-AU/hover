@@ -1,0 +1,65 @@
+# fly.analysis.toml — Fly.io configuration for the hover-analysis service.
+# The analysis app consumes per-job lighthouse streams (stream:{jobID}:lh)
+# populated by the crawl-side dispatcher and writes audit results back
+# to lighthouse_runs.
+#
+# Phase 2 ships a stub-runner default. Phase 3 layers Chromium and the
+# lighthouse npm package into Dockerfile.analysis and flips
+# LIGHTHOUSE_RUNNER to "local".
+
+app = 'hover-analysis'
+primary_region = 'syd'
+
+[build]
+  dockerfile = "Dockerfile.analysis"
+
+[env]
+  APP_ENV = "production"
+  # Phase 2 default: in-process stub runner. Phase 3 will switch to
+  # "local" once Chromium + lighthouse@<pinned> are baked into the image.
+  LIGHTHOUSE_RUNNER = "stub"
+  # Concurrency cap on simultaneous audits. v1 starts conservative
+  # (1 per machine) and tunes up after observing real Chromium memory
+  # pressure during Phase 3.
+  LIGHTHOUSE_MAX_CONCURRENCY = "1"
+  # Per-audit hard budget. Wraps the runner's context with this timeout
+  # so a wedged Chromium can't hold a worker forever.
+  LIGHTHOUSE_AUDIT_TIMEOUT_MS = "90000"
+  # How aggressively the consumer re-polls active jobs. 1s is plenty —
+  # the producer side enqueues in waves at 10% milestones, not bursts.
+  LIGHTHOUSE_POLL_INTERVAL_MS = "1000"
+  # XReadGroup BLOCK; complements POLL_INTERVAL with a longer wait when
+  # nothing is queued.
+  LIGHTHOUSE_BLOCK_TIMEOUT_MS = "2000"
+  # Soft memory floor before the runner defers a new audit. Phase 3
+  # consults this; Phase 2 stub runner ignores it.
+  LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB = "600"
+  LOG_LEVEL = "info"
+  OBSERVABILITY_ENABLED = "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
+
+[deploy]
+  strategy = "immediate"
+
+[processes]
+  # Launch via start-analysis.sh so the Alloy metrics sidecar runs
+  # alongside the analysis binary. Running ./analysis directly skips
+  # Alloy and silently drops every bee.lighthouse.* metric.
+  analysis = "./start.sh"
+
+# Always restart on exit. The analysis app has no [http_service] block
+# (the metrics endpoint is on Fly's internal network only), so Fly has no
+# health-check hook to wake it up. Default on-failure gives up after 10
+# retries — a bad hour could otherwise leave the analysis app stopped
+# and lighthouse_runs piling up in pending.
+[[restart]]
+  policy = "always"
+
+# v1 sizing: smoke test on a small performance VM. Lighthouse audits
+# average 20–30s wall-time at concurrency 1, so a single performance-cpu-1x
+# is enough to validate the producer/consumer pipeline. Phase 3 retunes
+# this once we have real RSS data from production traffic.
+[[vm]]
+  memory = '8gb'
+  cpu_kind = 'performance'
+  cpus = 1

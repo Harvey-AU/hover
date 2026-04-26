@@ -259,29 +259,58 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 // publishAndRemove atomically XADDs the task to the job's stream
 // and ZREMs it from the schedule ZSET in a single Redis pipeline,
 // preventing double-dispatch if either operation were to fail alone.
+//
+// Stream selection is driven by entry.TaskType:
+//   - "crawl" (default) → StreamKey(jobID): the legacy crawl stream
+//     consumed by hover-worker.
+//   - "lighthouse"      → LighthouseStreamKey(jobID): consumed by the
+//     hover-analysis service. The payload carries lighthouse_run_id so
+//     the consumer can update the matching lighthouse_runs row without
+//     a Postgres lookup.
 func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry) error {
-	streamKey := StreamKey(entry.JobID)
-	groupName := ConsumerGroup(entry.JobID)
+	taskType := entry.TaskType
+	if taskType == "" {
+		taskType = "crawl"
+	}
+
+	var (
+		streamKey string
+		groupName string
+	)
+	switch taskType {
+	case "lighthouse":
+		streamKey = LighthouseStreamKey(entry.JobID)
+		groupName = LighthouseConsumerGroup(entry.JobID)
+	default:
+		streamKey = StreamKey(entry.JobID)
+		groupName = ConsumerGroup(entry.JobID)
+	}
 
 	// Ensure consumer group exists (idempotent).
 	if err := d.ensureConsumerGroup(ctx, streamKey, groupName); err != nil {
 		return fmt.Errorf("broker: ensure consumer group %s: %w", groupName, err)
 	}
 
+	values := map[string]interface{}{
+		"task_id":     entry.TaskID,
+		"job_id":      entry.JobID,
+		"page_id":     strconv.Itoa(entry.PageID),
+		"host":        entry.Host,
+		"path":        entry.Path,
+		"priority":    fmt.Sprintf("%.4f", entry.Priority),
+		"retry_count": strconv.Itoa(entry.RetryCount),
+		"source_type": entry.SourceType,
+		"source_url":  entry.SourceURL,
+		"task_type":   taskType,
+	}
+	if taskType == "lighthouse" && entry.LighthouseRunID > 0 {
+		values["lighthouse_run_id"] = strconv.FormatInt(entry.LighthouseRunID, 10)
+	}
+
 	pipe := d.client.rdb.TxPipeline()
 	pipe.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamKey,
-		Values: map[string]interface{}{
-			"task_id":     entry.TaskID,
-			"job_id":      entry.JobID,
-			"page_id":     strconv.Itoa(entry.PageID),
-			"host":        entry.Host,
-			"path":        entry.Path,
-			"priority":    fmt.Sprintf("%.4f", entry.Priority),
-			"retry_count": strconv.Itoa(entry.RetryCount),
-			"source_type": entry.SourceType,
-			"source_url":  entry.SourceURL,
-		},
+		Values: values,
 	})
 	pipe.ZRem(ctx, ScheduleKey(entry.JobID), entry.Member())
 

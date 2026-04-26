@@ -180,6 +180,16 @@ var (
 	htmlPersistUploadHistogram metric.Float64Histogram
 	htmlPersistQueueDepthGauge metric.Int64Gauge
 	htmlPersistBodyHistogram   metric.Int64Histogram
+
+	// --- Lighthouse audit instruments. ---
+	// Surface the producer-side scheduler activity (how many runs were
+	// enqueued, in which band, at which milestone) and the consumer-side
+	// runner outcomes (succeeded/failed/skipped_quota plus duration). The
+	// band/milestone labels are bounded — band has three values, milestone
+	// is 0–100 in tens — so cardinality stays predictable.
+	lighthouseRunsScheduledCounter metric.Int64Counter
+	lighthouseRunsCounter          metric.Int64Counter
+	lighthouseRunDurationHistogram metric.Float64Histogram
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -306,6 +316,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		warnInit("db pool", initDBPoolInstruments(meterProvider))
 		warnInit("broker", initBrokerInstruments(meterProvider))
 		warnInit("html persister", initHTMLPersistInstruments(meterProvider))
+		warnInit("lighthouse", initLighthouseInstruments(meterProvider))
 	})
 
 	shutdown := func(ctx context.Context) error {
@@ -1419,4 +1430,77 @@ func RecordHTMLPersistBodyBytes(ctx context.Context, bytes int64) {
 		return
 	}
 	htmlPersistBodyHistogram.Record(ctx, bytes)
+}
+
+// initLighthouseInstruments registers the lighthouse audit pipeline
+// metrics. Called once from Init(). Producer-side counters live here
+// (scheduler enqueues) along with consumer-side outcome + duration so
+// dashboards covering both halves of the pipeline can pivot on a single
+// meter scope.
+func initLighthouseInstruments(meterProvider *sdkmetric.MeterProvider) error {
+	if meterProvider == nil {
+		return nil
+	}
+
+	meter := meterProvider.Meter("hover/lighthouse")
+
+	var err error
+
+	lighthouseRunsScheduledCounter, err = meter.Int64Counter(
+		"bee.lighthouse.runs_scheduled_total",
+		metric.WithDescription("Lighthouse runs enqueued by the scheduler grouped by band (fastest|slowest|reconcile)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	lighthouseRunsCounter, err = meter.Int64Counter(
+		"bee.lighthouse.runs_total",
+		metric.WithDescription("Lighthouse run outcomes grouped by result (succeeded|failed|skipped_quota)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	lighthouseRunDurationHistogram, err = meter.Float64Histogram(
+		"bee.lighthouse.run_duration_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Wall-clock duration of a single lighthouse audit, measured by the runner"),
+	)
+	return err
+}
+
+// RecordLighthouseScheduled increments the scheduler enqueue counter.
+// band values: "fastest", "slowest", "reconcile". jobID is retained for
+// call-site stability but not emitted as a label (per-job cardinality).
+func RecordLighthouseScheduled(ctx context.Context, jobID, band string, count int) {
+	_ = jobID
+	if lighthouseRunsScheduledCounter == nil || count <= 0 {
+		return
+	}
+	lighthouseRunsScheduledCounter.Add(ctx, int64(count),
+		metric.WithAttributes(attribute.String("band", band)))
+}
+
+// RecordLighthouseRun increments the consumer-side run outcome counter.
+// outcome values: "succeeded", "failed", "skipped_quota".
+func RecordLighthouseRun(ctx context.Context, jobID, outcome string) {
+	_ = jobID
+	if lighthouseRunsCounter == nil {
+		return
+	}
+	lighthouseRunsCounter.Add(ctx, 1,
+		metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// RecordLighthouseRunDuration records the wall-clock time of one audit.
+// outcome is included so the histogram separates the cost of successful
+// runs from the cost of failures (failures often cluster at timeout).
+func RecordLighthouseRunDuration(ctx context.Context, jobID, outcome string, durationMs float64) {
+	_ = jobID
+	if lighthouseRunDurationHistogram == nil || durationMs <= 0 {
+		return
+	}
+	lighthouseRunDurationHistogram.Record(ctx, durationMs,
+		metric.WithAttributes(attribute.String("outcome", outcome)))
 }

@@ -1,0 +1,50 @@
+# Dockerfile.analysis — image for hover-analysis (lighthouse audit service).
+#
+# Phase 2 ships the Go binary only — no Chromium, no lighthouse npm.
+# The analysis service runs the StubRunner in this state, exercising
+# the producer → stream → consumer pipeline end-to-end with canned data.
+# Phase 3 adds:
+#   - Chromium (system package)
+#   - `npm install -g lighthouse@<pinned>`
+#   - LIGHTHOUSE_RUNNER=local default
+#
+# Kept separate from the main Dockerfile so the heavyweight Chromium
+# layers do not bloat hover and hover-worker images.
+
+FROM grafana/alloy:v1.15.1@sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d AS alloy
+
+FROM golang:1.26.2-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o analysis ./cmd/analysis/main.go
+
+FROM alpine:3.19
+
+RUN adduser -D -g '' appuser
+
+WORKDIR /app
+
+# ca-certificates for HTTPS to Grafana / OTLP / Supabase; gcompat for the
+# Alloy sidecar's glibc dependency.
+RUN apk --no-cache add \
+  ca-certificates=20250911-r0 \
+  gcompat=1.1.0-r4
+
+COPY --from=builder /app/analysis .
+
+# Alloy sidecar so the analysis service emits app/environment-tagged
+# metrics without each pod needing its own Prometheus push secret.
+COPY --from=alloy /bin/alloy /usr/local/bin/alloy
+COPY alloy.river .
+COPY scripts/start-analysis.sh ./start.sh
+RUN chmod +x start.sh /usr/local/bin/alloy
+
+USER appuser
+
+CMD ["./start.sh"]

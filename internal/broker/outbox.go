@@ -119,18 +119,20 @@ func (s *Sweeper) Run(ctx context.Context) {
 
 // outboxRow mirrors the columns read from task_outbox.
 type outboxRow struct {
-	id         int64
-	taskID     string
-	jobID      string
-	pageID     int
-	host       string
-	path       string
-	priority   float64
-	retryCount int
-	sourceType string
-	sourceURL  string
-	runAt      time.Time
-	attempts   int
+	id              int64
+	taskID          string
+	jobID           string
+	pageID          int
+	host            string
+	path            string
+	priority        float64
+	retryCount      int
+	sourceType      string
+	sourceURL       string
+	runAt           time.Time
+	attempts        int
+	taskType        string
+	lighthouseRunID sql.NullInt64
 }
 
 // Tick runs a single sweep iteration. Exported for tests so they
@@ -171,7 +173,7 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	rows, err := tx.QueryContext(tickCtx, `
 		SELECT id, task_id, job_id, page_id, host, path,
 		       priority, retry_count, source_type, source_url,
-		       run_at, attempts
+		       run_at, attempts, task_type, lighthouse_run_id
 		FROM task_outbox
 		WHERE run_at <= NOW()
 		ORDER BY run_at
@@ -188,7 +190,7 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		if err := rows.Scan(
 			&r.id, &r.taskID, &r.jobID, &r.pageID, &r.host, &r.path,
 			&r.priority, &r.retryCount, &r.sourceType, &r.sourceURL,
-			&r.runAt, &r.attempts,
+			&r.runAt, &r.attempts, &r.taskType, &r.lighthouseRunID,
 		); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("outbox: scan row: %w", err)
@@ -207,17 +209,30 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 
 	entries := make([]ScheduleEntry, 0, len(claimed))
 	for _, r := range claimed {
+		taskType := r.taskType
+		if taskType == "" {
+			// Defensive default — column has NOT NULL DEFAULT 'crawl' so
+			// this branch should never fire, but the dispatcher routes on
+			// taskType and an empty string would silently misroute.
+			taskType = "crawl"
+		}
+		var lhRunID int64
+		if r.lighthouseRunID.Valid {
+			lhRunID = r.lighthouseRunID.Int64
+		}
 		entries = append(entries, ScheduleEntry{
-			TaskID:     r.taskID,
-			JobID:      r.jobID,
-			PageID:     r.pageID,
-			Host:       r.host,
-			Path:       r.path,
-			Priority:   r.priority,
-			RetryCount: r.retryCount,
-			SourceType: r.sourceType,
-			SourceURL:  r.sourceURL,
-			RunAt:      r.runAt,
+			TaskID:          r.taskID,
+			JobID:           r.jobID,
+			PageID:          r.pageID,
+			Host:            r.host,
+			Path:            r.path,
+			Priority:        r.priority,
+			RetryCount:      r.retryCount,
+			SourceType:      r.sourceType,
+			SourceURL:       r.sourceURL,
+			RunAt:           r.runAt,
+			TaskType:        taskType,
+			LighthouseRunID: lhRunID,
 		})
 	}
 
@@ -342,16 +357,19 @@ func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outbo
 	}
 	// Copy first, delete second. The SELECT filters by id rather than
 	// re-scanning so rows we never claimed (locked by another replica)
-	// are not touched.
+	// are not touched. task_type and lighthouse_run_id are propagated so
+	// the dead-letter forensic trail keeps the routing context intact.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO task_outbox_dead (
 			original_id, task_id, job_id, page_id, host, path,
 			priority, retry_count, source_type, source_url,
-			run_at, attempts, created_at, last_error
+			run_at, attempts, created_at, last_error,
+			task_type, lighthouse_run_id
 		)
 		SELECT id, task_id, job_id, page_id, host, path,
 		       priority, retry_count, source_type, source_url,
-		       run_at, attempts + 1, created_at, $2
+		       run_at, attempts + 1, created_at, $2,
+		       task_type, lighthouse_run_id
 		FROM task_outbox
 		WHERE id = ANY($1)
 	`, pq.Array(ids), lastErr); err != nil {

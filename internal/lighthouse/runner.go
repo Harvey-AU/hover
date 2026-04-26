@@ -90,9 +90,21 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	const simulated = 50 * time.Millisecond
 	start := time.Now()
 
+	lighthouseLog.Debug("stub runner audit started",
+		"run_id", req.RunID,
+		"job_id", req.JobID,
+		"page_id", req.PageID,
+		"profile", string(req.Profile),
+		"url", req.URL,
+	)
+
 	select {
 	case <-time.After(simulated):
 	case <-ctx.Done():
+		lighthouseLog.Debug("stub runner audit cancelled",
+			"run_id", req.RunID, "job_id", req.JobID,
+			"reason", ctx.Err(),
+		)
 		return AuditResult{}, ctx.Err()
 	}
 
@@ -106,7 +118,7 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	cls := 0.080
 	bytes := int64(1_500_000)
 
-	return AuditResult{
+	result := AuditResult{
 		PerformanceScore: &score,
 		LCPMs:            &lcp,
 		CLS:              &cls,
@@ -118,5 +130,14 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 		TotalByteWeight:  &bytes,
 		ReportKey:        "",
 		Duration:         time.Since(start),
-	}, nil
+	}
+
+	lighthouseLog.Debug("stub runner audit completed",
+		"run_id", req.RunID,
+		"job_id", req.JobID,
+		"page_id", req.PageID,
+		"duration_ms", result.Duration.Milliseconds(),
+	)
+
+	return result, nil
 }

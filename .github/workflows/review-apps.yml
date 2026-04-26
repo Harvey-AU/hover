@@ -268,6 +268,81 @@ jobs:
           docker build -t hover-pr-${{ github.event.number }} .
           docker tag hover-pr-${{ github.event.number }} hover-worker-pr-${{ github.event.number }}
 
+      - name: Build Analysis image locally
+        run: |
+          # hover-analysis uses a different image (Dockerfile.analysis): the
+          # analysis binary lives in cmd/analysis and Phase 3 will add
+          # Chromium + lighthouse@<pinned> here, so it cannot share the
+          # main image's artefact. Tagged separately and consumed by the
+          # later "Deploy Analysis Review App" step.
+          docker build -f Dockerfile.analysis -t hover-analysis-pr-${{ github.event.number }} .
+
+      # Deploy the analysis review app *before* the worker review app. The
+      # worker is the lighthouse producer (its milestone hook enqueues
+      # outbox rows that the dispatcher routes onto stream:{jobID}:lh); the
+      # analysis app is the consumer of that stream. Bringing the consumer
+      # up first means the first XADD lands in a stream that already has a
+      # reader, mirroring the worker-before-API rule below.
+      - name: Deploy Analysis Review App
+        id: deploy_analysis
+        run: |
+          if [ "${{ steps.supabase.outputs.branch_exists }}" == "true" ]; then
+            DB_URL="${{ steps.supabase.outputs.preview_db_url }}"
+            DIRECT_URL="${{ steps.supabase.outputs.direct_db_url }}"
+          else
+            echo "❌ No Supabase preview branch found; cannot deploy analysis review app." >&2
+            exit 1
+          fi
+
+          ANALYSIS_APP_NAME="hover-analysis-pr-${{ github.event.number }}"
+
+          # Exact match on app name to avoid hover-analysis-pr-1 falsely
+          # matching PR 12. Mirrors the worker review-app guard.
+          if ! flyctl apps list | awk 'NR>1 {print $1}' | grep -Fxq "$ANALYSIS_APP_NAME"; then
+            echo "Creating new analysis review app: $ANALYSIS_APP_NAME"
+            flyctl apps create "$ANALYSIS_APP_NAME" --org personal
+          else
+            echo "Analysis review app already exists: $ANALYSIS_APP_NAME"
+          fi
+
+          if [ -z "$REVIEW_REDIS_URL" ]; then
+            echo "❌ REDIS_URL is required for analysis; provisioning earlier must have failed." >&2
+            exit 1
+          fi
+
+          DIRECT_URL_FLAGS=()
+          if [ -n "$DIRECT_URL" ]; then
+            DIRECT_URL_FLAGS+=(DATABASE_DIRECT_URL="$DIRECT_URL")
+          fi
+
+          # Analysis-specific secret set. No OAuth client secrets, no
+          # Loops, no auth — analysis only talks to Postgres + Redis + R2 +
+          # observability backends.
+          echo "Setting secrets for analysis review app..."
+          flyctl secrets set \
+            DATABASE_URL="$DB_URL" \
+            "${DIRECT_URL_FLAGS[@]}" \
+            REDIS_URL="$REVIEW_REDIS_URL" \
+            SENTRY_DSN="$SENTRY_DSN" \
+            OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+            ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+            ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+            ARCHIVE_PATH_PREFIX="$PR_NUMBER" \
+            GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+            GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY" \
+            --app $ANALYSIS_APP_NAME --stage
+
+          flyctl deploy \
+            --app $ANALYSIS_APP_NAME \
+            --config .fly/review_apps.analysis.toml \
+            --local-only \
+            --image "hover-analysis-pr-$PR_NUMBER"
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          REVIEW_REDIS_URL: ${{ steps.redis.outputs.redis_url }}
+          PR_NUMBER: ${{ github.event.number }}
+
       # Deploy the worker review app *before* the API review app. The API
       # enables Redis dispatch as soon as REDIS_URL is set on it, so we need
       # a running consumer on the other end before we flip that switch.
@@ -503,6 +578,30 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           FLY_API_TOKEN: op://Good Native/hover-fly/FLY_API_TOKEN
+
+      - name: Destroy Analysis Review App
+        run: |
+          ANALYSIS_APP_NAME="hover-analysis-pr-${PR_NUMBER}"
+          # Destroy the analysis app first so the lighthouse stream
+          # consumer detaches before the worker stops producing. Mirrors
+          # the consumer-before-producer rule that already applies to the
+          # worker → API ordering below.
+          if ! APP_LIST=$(flyctl apps list); then
+            echo "❌ flyctl apps list failed — cannot determine cleanup state" >&2
+            exit 1
+          fi
+          if echo "$APP_LIST" | awk 'NR>1 {print $1}' | grep -Fxq "$ANALYSIS_APP_NAME"; then
+            if ! flyctl apps destroy "$ANALYSIS_APP_NAME" --yes; then
+              echo "❌ Failed to destroy analysis review app: $ANALYSIS_APP_NAME"
+              exit 1
+            fi
+            echo "✅ Destroyed analysis review app: $ANALYSIS_APP_NAME"
+          else
+            echo "ℹ️ Analysis review app does not exist, nothing to clean up: $ANALYSIS_APP_NAME"
+          fi
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
 
       - name: Destroy Worker Review App
         run: |

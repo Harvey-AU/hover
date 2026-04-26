@@ -193,6 +193,50 @@ func TestParseScheduleEntry_RoundTrip(t *testing.T) {
 	assert.Equal(t, expectedRunAt, parsed.RunAt)
 }
 
+// TestParseScheduleEntry_LegacyNineFields exercises backwards
+// compatibility with the pre-Phase-2 ZSET member format. A rolling
+// deploy can leave 9-field members in the schedule ZSET; the parser
+// must accept them and default TaskType to "crawl" with no
+// LighthouseRunID rather than dropping work on the floor.
+func TestParseScheduleEntry_LegacyNineFields(t *testing.T) {
+	legacy := "abc-123|def-456|99|example.com|/path|0.7500|2|link|https://example.com/source"
+
+	parsed, err := ParseScheduleEntry(legacy, 1234567890.0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "abc-123", parsed.TaskID)
+	assert.Equal(t, "crawl", parsed.TaskType, "legacy entries must default to crawl")
+	assert.Equal(t, int64(0), parsed.LighthouseRunID, "legacy entries have no run id")
+}
+
+// TestParseScheduleEntry_LighthouseRoundTrip covers the 11-field path:
+// a lighthouse-tagged ScheduleEntry must round-trip through Member and
+// ParseScheduleEntry without losing TaskType or LighthouseRunID, since
+// the dispatcher routes on TaskType and the consumer reads the run id
+// straight from the stream payload.
+func TestParseScheduleEntry_LighthouseRoundTrip(t *testing.T) {
+	entry := ScheduleEntry{
+		TaskID:          "abc-123",
+		JobID:           "def-456",
+		PageID:          99,
+		Host:            "example.com",
+		Path:            "/path",
+		Priority:        0.5,
+		RetryCount:      0,
+		SourceType:      "lighthouse",
+		SourceURL:       "https://example.com/path",
+		TaskType:        "lighthouse",
+		LighthouseRunID: 4242,
+	}
+
+	parsed, err := ParseScheduleEntry(entry.Member(), 1234567890.0)
+	require.NoError(t, err)
+
+	assert.Equal(t, "lighthouse", parsed.TaskType)
+	assert.Equal(t, int64(4242), parsed.LighthouseRunID)
+	assert.Equal(t, entry.SourceURL, parsed.SourceURL)
+}
+
 // TestReschedule_DualWritesPostgresAndRedis verifies that Reschedule,
 // when constructed with a DB, issues the UPDATE to tasks.run_at *and*
 // moves the ZSET score.

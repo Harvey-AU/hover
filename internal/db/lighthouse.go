@@ -317,6 +317,62 @@ func (db *DB) GetLighthouseRunPageIDs(ctx context.Context, jobID string) (map[in
 	return seen, nil
 }
 
+// CompletedTaskForSampling carries the per-task metadata the lighthouse
+// scheduler needs to both feed the sampler (PageID, TaskID, ResponseTime)
+// and write outbox rows (Host, Path, Priority). Source URL is computed
+// later by the scheduler from Host+Path so the structure stays in sync
+// with what the sampler exposes.
+type CompletedTaskForSampling struct {
+	TaskID       string
+	PageID       int
+	Host         string
+	Path         string
+	Priority     float64
+	ResponseTime int64
+}
+
+// GetCompletedTasksForLighthouseSampling returns the metadata needed to
+// feed the lighthouse sampler and produce outbox rows. Restricted to
+// task_type='crawl' so an early lighthouse audit cannot become a sample
+// candidate for a later one. Excludes tasks without a response_time
+// (sampling is band-by-response-time; rows without it can't be ranked).
+//
+// jobID is the textual job identifier used elsewhere; the join into
+// tasks happens via tasks.job_id without coercion since the schema has
+// already aligned both columns to TEXT.
+func (db *DB) GetCompletedTasksForLighthouseSampling(ctx context.Context, jobID string) ([]CompletedTaskForSampling, error) {
+	const q = `
+		SELECT id, page_id, host, path,
+		       COALESCE(priority_score, 0)::double precision AS priority,
+		       COALESCE(response_time, 0)::bigint AS response_time
+		  FROM tasks
+		 WHERE job_id = $1
+		   AND status = 'completed'
+		   AND task_type = 'crawl'
+		   AND response_time IS NOT NULL
+		   AND response_time > 0
+	`
+
+	rows, err := db.client.QueryContext(ctx, q, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("list completed tasks for lighthouse sampling: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CompletedTaskForSampling
+	for rows.Next() {
+		var t CompletedTaskForSampling
+		if err := rows.Scan(&t.TaskID, &t.PageID, &t.Host, &t.Path, &t.Priority, &t.ResponseTime); err != nil {
+			return nil, fmt.Errorf("scan completed task for sampling: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate completed tasks for sampling: %w", err)
+	}
+	return out, nil
+}
+
 func scanLighthouseRun(rows *sql.Rows) (LighthouseRun, error) {
 	var (
 		run                                               LighthouseRun
