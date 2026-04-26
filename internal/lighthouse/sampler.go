@@ -9,15 +9,27 @@ import (
 	"sort"
 )
 
-// Per-band sampling parameters. The formula picks 2.5% of completed
-// pages per extreme band (fastest + slowest), floored at 1 and capped
-// at 50, so a typical crawl is audited at roughly 5% of pages with a
-// hard ceiling of 100 audits per job. Tunable here so we can adjust
-// the mix without touching the rest of the codebase.
+// Per-band sampling parameters. The formula picks
+// floor(sqrt(completed_pages) * 0.15) audits per extreme band
+// (fastest + slowest), floored at 1 and capped at 15. A square-root
+// curve keeps small sites well-covered (every site gets at least
+// 1 fastest + 1 slowest) while sub-linearly tapering on large sites
+// so the lighthouse fleet doesn't scale linearly with crawl size.
+//
+// Anchor points the curve lands on:
+//
+//	    40 pages →  1 per band (floor) →  2 audits
+//	   200 pages →  2 per band         →  4 audits
+//	 1,000 pages →  4 per band         →  8 audits
+//	10,000 pages → 15 per band (cap)   → 30 audits
+//
+// Tunable here so we can adjust the mix without touching the rest of
+// the codebase. The previous shape (2.5%/band, cap 50) is preserved
+// in git history; switching back is a single-commit change.
 const (
-	bandFraction = 0.025
-	bandFloor    = 1
-	bandCap      = 50
+	bandSqrtFactor = 0.15
+	bandFloor      = 1
+	bandCap        = 15
 )
 
 // CompletedTask is the input shape the sampler needs from a completed
@@ -50,15 +62,19 @@ type Sample struct {
 }
 
 // PerBand returns the number of audits to schedule per extreme band
-// for a job with completedPages successful tasks so far. Floored at
-// 1 (so even a 1-page site gets one audit per band) and capped at 50
-// (so a 10,000-page crawl never queues more than 100 audits per job).
+// for a job with completedPages successful tasks so far. Floored at 1
+// (so even a 1-page site gets one audit per band) and capped at 15
+// (so a 10,000-page crawl never queues more than 30 audits per job).
+//
+// math.Floor (rather than Round) keeps the curve from over-shooting
+// the cap at exactly 10,000 pages and matches the published anchor
+// points exactly.
 func PerBand(completedPages int) int {
 	if completedPages <= 0 {
 		return 0
 	}
 
-	n := int(math.Round(float64(completedPages) * bandFraction))
+	n := int(math.Floor(math.Sqrt(float64(completedPages)) * bandSqrtFactor))
 	if n < bandFloor {
 		n = bandFloor
 	}

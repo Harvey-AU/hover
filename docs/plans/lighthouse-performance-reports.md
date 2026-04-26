@@ -24,10 +24,10 @@ Core Web Vitals without auditing the full site.
 - Mobile profile.
 - **Self-hosted Lighthouse** — Chromium plus the `lighthouse` npm package run
   in-process via a Go sidecar; no external API dependency.
-- Sample size: 2.5% of completed pages per extreme band (fastest + slowest) by
-  `tasks.response_time`. Single formula floored at 1, capped at 50 per band —
-  roughly 5% of pages on small/medium sites, capped at 100 audits per job on
-  large sites.
+- Sample size: `floor(sqrt(completed_pages) × 0.15)` per extreme band (fastest +
+  slowest) by `tasks.response_time`. Floored at 1, capped at 15 per band — every
+  site gets at least 1 fastest + 1 slowest, the cap binds at ~10,000 pages where
+  30 audits/job is still the budget ceiling.
 - Scheduling waves at every 10% milestone of crawl progress; sampler dedupes so
   the same page is not audited twice within one job.
 - Persistent storage of headline metrics plus the full Lighthouse JSON.
@@ -45,11 +45,11 @@ Core Web Vitals without auditing the full site.
 
 1. **Chromium delivery** — self-host. Bundle Chromium plus `lighthouse` into the
    analysis-app image; no PageSpeed Insights API.
-2. **Sampling** — 2.5% of completed pages per extreme band (fastest + slowest),
-   floored at 1, capped at 50 per band. Total audits ≈ 5% of pages, capped at
-   100 per job.
-3. **Per-job run cap** — 100 audits/job (50 fastest + 50 slowest), enforced by
-   the per-band cap of 50.
+2. **Sampling** — `floor(sqrt(completed_pages) × 0.15)` per extreme band
+   (fastest + slowest), floored at 1, capped at 15 per band. Sub-linear curve so
+   audit count tapers on large sites rather than scaling 1:1 with crawl size.
+3. **Per-job run cap** — 30 audits/job (15 fastest + 15 slowest), enforced by
+   the per-band cap of 15.
 4. **Profile** — mobile only for v1; desktop deferred.
 5. **Tenant budget** — handled by plan-tier max-audits-per-day, not a separate
    knob in this feature. The scheduler honours whatever the billing/plan layer
@@ -73,12 +73,12 @@ no timing data, so sampling has to join through `tasks`.
 successful tasks for the job:**
 
 ```go
-perBand := int(math.Round(float64(completedPages) * 0.025))
+perBand := int(math.Floor(math.Sqrt(float64(completedPages)) * 0.15))
 if perBand < 1 {
     perBand = 1
 }
-if perBand > 50 {
-    perBand = 50
+if perBand > 15 {
+    perBand = 15
 }
 ```
 
@@ -86,21 +86,24 @@ That's it — no piecewise tiers, no skip threshold. Take the top `perBand`
 fastest pages by `response_time` and the top `perBand` slowest. Enqueue
 Lighthouse runs for both bands.
 
-| Pages  | per_band | Total audits | % audited |
-| ------ | -------- | ------------ | --------- |
-| 10     | 1        | 2            | 20%       |
-| 50     | 1        | 2            | 4%        |
-| 100    | 3        | 6            | 6%        |
-| 200    | 5        | 10           | 5%        |
-| 500    | 13       | 26           | 5.2%      |
-| 1,000  | 25       | 50           | 5%        |
-| 2,000  | 50 (cap) | 100          | 5%        |
-| 5,000+ | 50 (cap) | 100          | ≤2%       |
+| Pages   | per_band  | Total audits | % audited |
+| ------- | --------- | ------------ | --------- |
+| 10      | 1 (floor) | 2            | 20%       |
+| 40      | 1 (floor) | 2            | 5%        |
+| 100     | 1         | 2            | 2%        |
+| 200     | 2         | 4            | 2%        |
+| 500     | 3         | 6            | 1.2%      |
+| 1,000   | 4         | 8            | 0.8%      |
+| 2,000   | 6         | 12           | 0.6%      |
+| 5,000   | 10        | 20           | 0.4%      |
+| 10,000  | 15 (cap)  | 30           | 0.3%      |
+| 20,000+ | 15 (cap)  | 30           | ≤0.15%    |
 
 Properties: floor of 1 per band means even a 5-page site gets 1 fastest + 1
-slowest. Cap of 50 binds at ~2,000 pages, where 100 audits is still 5%. Beyond
-that, audit count plateaus while the percentage tapers — the cost ceiling we
-want.
+slowest. The square-root curve gives small/medium sites generous coverage while
+keeping the audit fleet sub-linear. Cap of 15 binds at exactly 10,000 pages,
+where 30 audits is the per-job budget ceiling. Beyond that, audit count plateaus
+while %-audited tapers — the cost ceiling we want.
 
 **Dedupe and reconciliation:**
 
@@ -386,17 +389,33 @@ toml.
 
 **Sample wall-time (v1 defaults: 1 concurrent, 25 s avg per audit):**
 
-| Crawl size | Audits    | Wall time at concurrency 1 | At concurrency 5 |
-| ---------- | --------- | -------------------------- | ---------------- |
-| 100 pages  | 6         | ~2.5 min                   | ~30 s            |
-| 200        | 10        | ~4 min                     | ~50 s            |
-| 1,000      | 50        | ~21 min                    | ~4 min           |
-| 5,000      | 100 (cap) | ~42 min                    | ~8 min           |
-| 10,000+    | 100 (cap) | ~42 min                    | ~8 min           |
+| Crawl size | Audits   | Wall time at concurrency 1 | At concurrency 5 |
+| ---------- | -------- | -------------------------- | ---------------- |
+| 100 pages  | 2        | ~50 s                      | ~10 s            |
+| 200        | 4        | ~100 s                     | ~20 s            |
+| 1,000      | 8        | ~3.3 min                   | ~40 s            |
+| 5,000      | 20       | ~8 min                     | ~100 s           |
+| 10,000     | 30 (cap) | ~12.5 min                  | ~2.5 min         |
+| 50,000+    | 30 (cap) | ~12.5 min                  | ~2.5 min         |
 
-At v1 defaults a 1,000-page crawl's audits run for ~21 minutes — fine because
-crawl wall time at that size is typically longer. If audits ever drag past crawl
-completion, that's the signal to bump concurrency or add machines.
+At v1 defaults even a 10,000-page crawl's audits drain in ~12 minutes — well
+within typical crawl wall time. If audits ever drag past crawl completion,
+that's the signal to bump concurrency or add machines.
+
+**Throughput planning (steady-state crawler at 4,500 pages/min):**
+
+| Job-size mix           | Audits/min generated   | Drain rate @ v1 (1× perf-1x, ~2.4/min) |
+| ---------------------- | ---------------------- | -------------------------------------- |
+| Tiny sites (~10 pages) | ~900/min (floor binds) | overflowing — needs ~6× perf-4x        |
+| Typical (~200 pages)   | ~90/min                | overflowing — needs ~3× perf-4x        |
+| Large (~1,000 pages)   | ~36/min                | overflowing — needs ~1× perf-4x        |
+| Huge (5,000+ pages)    | ~27/min                | overflowing — needs ~1× perf-4x        |
+
+v1 (single perf-1x at concurrency 1) is sized for low-volume / single-tenant
+testing. Once ingestion sustains beyond a couple of jobs/min, scale via the
+sizing ladder above. The ZSET → stream → reclaim machinery is already
+multi-machine safe; scaling is `fly scale count` plus matching
+`min_machines_running` in the toml.
 
 **Failure handling:**
 
@@ -519,7 +538,8 @@ ALTER TABLE public.task_outbox
   stream. Reuse the existing `DomainPacer` so concurrent audits don't hammer one
   customer domain.
 - `internal/lighthouse/sampler.go` (new, shared package) — fastest/slowest band
-  selection via the single 2.5%-per-band formula, capped at 50.
+  selection via the `floor(sqrt(completed_pages) × 0.15)` per-band formula,
+  capped at 15.
 - `internal/lighthouse/scheduler.go` (new, shared package) — milestone-driven
   enqueue with quota enforcement and dedupe.
 - `internal/db/lighthouse.go` (new, shared) — insert/update/list helpers.
@@ -790,6 +810,26 @@ against an in-process consumer before the new app's CI surface lands.
   runner has no R2 upload). Phase 3 adds an `archive.ProviderFromEnv()` call
   gated on `LIGHTHOUSE_RUNNER=local` so review apps without R2 credentials still
   boot the stub runner.
+- **Two new observability surfaces** for the runner-specific failure modes Phase
+  2 couldn't see. Both are emitted by the same `hover/lighthouse` meter scope as
+  the existing counters so a single Grafana dashboard pivots across the
+  producer + consumer + runner halves of the pipeline.
+  - `bee.lighthouse.runs_total{outcome="shed"}` — ticks every time the soft
+    memory-shed circuit-breaker defers an audit. A rising shed rate is the
+    unambiguous "scale up the analysis fleet" signal; without this metric the
+    only evidence of saturation was the audit-duration histogram drifting up.
+  - `bee.lighthouse.run_retries_total{reason}` — increments when the runner's
+    one-shot retry fires on a recognised transient stderr (`target_crashed`,
+    `protocol_error`, `page_crashed`, `target_closed`, `websocket_closed`).
+    Catches Chromium flakes that recover on a second attempt, so a
+    silently-rising retry rate flags Chromium-level instability before it starts
+    showing up as `outcome="failed"`.
+- **Sampler curve switched from linear to square-root.** Original formula was
+  `2.5%/band` capped at 50 (so 100 audits/job at 2,000+ pages); new formula is
+  `floor(sqrt(pages) × 0.15)` capped at 15 (so 30 audits/job at 10,000+ pages).
+  Sub-linear curve keeps small-site coverage generous while putting a much
+  harder ceiling on the lighthouse fleet's required size. See the sample-size
+  table above for anchor points.
 
 **Phase 3 starting point (post-Phase-2):**
 

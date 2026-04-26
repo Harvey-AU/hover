@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/archive"
+	"github.com/Harvey-AU/hover/internal/observability"
 )
 
 // ErrMemoryShed is returned by LocalRunner.Run when free memory is
@@ -30,16 +31,24 @@ var ErrMemoryShed = errors.New("lighthouse runner shed audit due to low memory")
 const stderrTailBytes = 16 * 1024
 
 // transientStderrSubstrings flag a Chromium failure as worth one retry
-// rather than a permanent fail. These match the patterns Lighthouse
-// emits when its CDP attach to Chromium drops or the renderer crashes
-// — both well-known transient failure modes that recover on a fresh
-// browser. Anything outside this list is a hard failure.
-var transientStderrSubstrings = []string{
-	"Inspector.targetCrashed",
-	"Protocol error",
-	"Page crashed",
-	"WebSocket is not open",
-	"Target closed",
+// rather than a permanent fail. Each entry pairs a stderr substring
+// with a short low-cardinality reason tag emitted on the
+// bee.lighthouse.run_retries_total metric so a rising retry rate can
+// be split by failure mode in Grafana.
+//
+// These match the patterns Lighthouse emits when its CDP attach to
+// Chromium drops or the renderer crashes — both well-known transient
+// failure modes that recover on a fresh browser. Anything outside this
+// list is a hard failure.
+var transientStderrSubstrings = []struct {
+	pattern string
+	reason  string
+}{
+	{"Inspector.targetCrashed", "target_crashed"},
+	{"Protocol error", "protocol_error"},
+	{"Page crashed", "page_crashed"},
+	{"WebSocket is not open", "websocket_closed"},
+	{"Target closed", "target_closed"},
 }
 
 // LocalRunnerConfig captures the bits the local runner needs from
@@ -155,10 +164,12 @@ func (l *LocalRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, e
 	start := l.now()
 
 	stdout, runErr := l.runOnce(ctx, req)
-	if runErr != nil && isTransientErr(runErr) && ctx.Err() == nil {
+	if reason := transientRetryReason(runErr); reason != "" && ctx.Err() == nil {
 		lighthouseLog.Warn("lighthouse transient failure; retrying once",
-			"run_id", req.RunID, "job_id", req.JobID, "error", runErr,
+			"run_id", req.RunID, "job_id", req.JobID,
+			"reason", reason, "error", runErr,
 		)
+		observability.RecordLighthouseRunRetry(ctx, req.JobID, reason)
 		stdout, runErr = l.runOnce(ctx, req)
 	}
 	if runErr != nil {
@@ -290,25 +301,28 @@ func (l *LocalRunner) uploadReport(ctx context.Context, req AuditRequest, raw []
 	return key, nil
 }
 
-// isTransientErr decides whether a runOnce failure is worth one retry.
+// transientRetryReason decides whether a runOnce failure is worth one
+// retry and, if so, returns the short reason tag attached to the
+// retries metric. Empty return means "not transient — fail fast".
+//
 // Context cancellation/deadline are never retried — those are caller
 // signals. Everything else is checked against the stderr substring
 // allowlist so Chromium's well-known transient crashes get a second
-// shot but a missing-binary or argument error fails fast.
-func isTransientErr(err error) bool {
+// shot but a missing-binary or argument error fails immediately.
+func transientRetryReason(err error) string {
 	if err == nil {
-		return false
+		return ""
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
+		return ""
 	}
 	msg := err.Error()
-	for _, s := range transientStderrSubstrings {
-		if strings.Contains(msg, s) {
-			return true
+	for _, e := range transientStderrSubstrings {
+		if strings.Contains(msg, e.pattern) {
+			return e.reason
 		}
 	}
-	return false
+	return ""
 }
 
 // tailBuffer keeps only the last `cap` bytes written to it. Streaming

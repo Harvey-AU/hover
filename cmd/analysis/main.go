@@ -598,6 +598,11 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 				"run_id", req.RunID, "job_id", req.JobID,
 				"duration_ms", duration.Milliseconds(),
 			)
+			// Tick the shed outcome so a rising shed rate on Grafana
+			// is the unambiguous signal that the analysis fleet is
+			// memory-saturated. No duration histogram bucket — these
+			// audits never actually ran.
+			observability.RecordLighthouseRun(ctx, req.JobID, "shed")
 			return
 		}
 		// Shutdown cancellation must not be turned into a permanent

@@ -455,24 +455,24 @@ func TestSanitiseRunnerStderr_NoURLPassthrough(t *testing.T) {
 	assert.Equal(t, "plain stderr without url", out)
 }
 
-func TestIsTransientErr(t *testing.T) {
+func TestTransientRetryReason(t *testing.T) {
 	cases := []struct {
 		err  error
-		want bool
+		want string
 	}{
-		{nil, false},
-		{context.Canceled, false},
-		{context.DeadlineExceeded, false},
-		{fmt.Errorf("Inspector.targetCrashed: renderer died"), true},
-		{fmt.Errorf("Protocol error: connection lost"), true},
-		{fmt.Errorf("Page crashed during eval"), true},
-		{fmt.Errorf("Target closed"), true},
-		{fmt.Errorf("WebSocket is not open"), true},
-		{fmt.Errorf("ENOENT no such file"), false},
-		{fmt.Errorf("invalid URL"), false},
+		{nil, ""},
+		{context.Canceled, ""},
+		{context.DeadlineExceeded, ""},
+		{fmt.Errorf("Inspector.targetCrashed: renderer died"), "target_crashed"},
+		{fmt.Errorf("Protocol error: connection lost"), "protocol_error"},
+		{fmt.Errorf("Page crashed during eval"), "page_crashed"},
+		{fmt.Errorf("Target closed"), "target_closed"},
+		{fmt.Errorf("WebSocket is not open"), "websocket_closed"},
+		{fmt.Errorf("ENOENT no such file"), ""},
+		{fmt.Errorf("invalid URL"), ""},
 	}
 	for _, tc := range cases {
-		assert.Equal(t, tc.want, isTransientErr(tc.err), tc.err)
+		assert.Equal(t, tc.want, transientRetryReason(tc.err), tc.err)
 	}
 }
 

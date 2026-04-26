@@ -6,16 +6,19 @@ import (
 )
 
 func TestPerBandFloor(t *testing.T) {
-	// 2.5% of these would all round below 1, so the floor binds.
+	// floor(sqrt(pages) * 0.15) = 0 for everything below ~50, so the
+	// floor binds and even a 1-page site gets 1 fastest + 1 slowest.
 	cases := []struct {
 		pages int
 		want  int
 	}{
-		{1, 1},
-		{5, 1},
-		{10, 1},
-		{20, 1},
-		{39, 1}, // round(39 * 0.025) = round(0.975) = 1
+		{1, 1},  // sqrt(1)*0.15 = 0.15  → floor 0 → floor binds
+		{5, 1},  // sqrt(5)*0.15 = 0.34
+		{10, 1}, // sqrt(10)*0.15 = 0.47
+		{20, 1}, // sqrt(20)*0.15 = 0.67
+		{39, 1}, // sqrt(39)*0.15 = 0.94
+		{40, 1}, // anchor: 40 → 1 (floor)
+		{44, 1}, // sqrt(44)*0.15 = 0.99
 	}
 	for _, tc := range cases {
 		if got := PerBand(tc.pages); got != tc.want {
@@ -24,20 +27,25 @@ func TestPerBandFloor(t *testing.T) {
 	}
 }
 
-func TestPerBandLinearScaling(t *testing.T) {
-	// Mid range: 2.5% rounds to a meaningful integer.
+func TestPerBandSquareRootScaling(t *testing.T) {
+	// Mid range: floor(sqrt(pages) * 0.15) yields the documented
+	// anchor points exactly. Values in between fall on the curve
+	// without surprise rounding.
 	cases := []struct {
 		pages int
 		want  int
 	}{
-		{40, 1},   // round(40 * 0.025) = 1
-		{50, 1},   // round(50 * 0.025) = round(1.25) = 1
-		{100, 3},  // round(100 * 0.025) = round(2.5) = 3 (banker's rounding caveat: math.Round rounds half away from zero)
-		{200, 5},  // round(5)
-		{500, 13}, // round(12.5) = 13
-		{1000, 25},
-		{1500, 38}, // round(37.5) = 38
-		{1900, 48}, // round(47.5) = 48
+		{45, 1},     // sqrt(45)*0.15 = 1.005 → 1 (just hits floor 1 organically)
+		{100, 1},    // sqrt(100)*0.15 = 1.5 → floor 1
+		{178, 2},    // sqrt(178)*0.15 = 2.0 → floor 2
+		{200, 2},    // ANCHOR: 200 → 2
+		{500, 3},    // sqrt(500)*0.15 = 3.35 → floor 3
+		{1000, 4},   // ANCHOR: 1,000 → 4
+		{2000, 6},   // sqrt(2000)*0.15 = 6.7 → floor 6
+		{5000, 10},  // sqrt(5000)*0.15 = 10.6 → floor 10
+		{8000, 13},  // sqrt(8000)*0.15 = 13.4 → floor 13
+		{9999, 14},  // sqrt(9999)*0.15 ≈ 14.99 → floor 14
+		{10000, 15}, // ANCHOR: 10,000 → 15 (exact)
 	}
 	for _, tc := range cases {
 		if got := PerBand(tc.pages); got != tc.want {
@@ -47,15 +55,17 @@ func TestPerBandLinearScaling(t *testing.T) {
 }
 
 func TestPerBandCap(t *testing.T) {
-	// Cap binds at ~2,000 pages and never exceeds 50.
+	// Cap binds at exactly 10,000 pages and never exceeds 15. The
+	// sub-linear curve means audit count plateaus while %-audited
+	// keeps tapering, which is the intended cost ceiling shape.
 	cases := []struct {
 		pages int
 		want  int
 	}{
-		{2000, 50},
-		{5000, 50},
-		{10000, 50},
-		{100000, 50},
+		{10000, 15},
+		{12000, 15},
+		{50000, 15},
+		{1_000_000, 15},
 	}
 	for _, tc := range cases {
 		if got := PerBand(tc.pages); got != tc.want {
@@ -127,11 +137,12 @@ func TestSampleSmallSetSplitsBands(t *testing.T) {
 }
 
 func TestSampleMidSizedDistribution(t *testing.T) {
-	// 200 tasks, perBand = 5: expect 5 fastest + 5 slowest, disjoint.
+	// 200 tasks, perBand = 2 (sqrt(200)*0.15 = 2.12 → floor 2): expect
+	// 2 fastest + 2 slowest, disjoint.
 	tasks := makeTasks(200)
 	got := SelectSamples(tasks, 10, nil)
-	if len(got) != 10 {
-		t.Fatalf("expected 10 samples, got %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("expected 4 samples, got %d", len(got))
 	}
 
 	seen := make(map[int]bool)
@@ -148,12 +159,12 @@ func TestSampleMidSizedDistribution(t *testing.T) {
 			slowestCount++
 		}
 	}
-	if fastestCount != 5 || slowestCount != 5 {
-		t.Errorf("expected 5 fastest + 5 slowest, got %d + %d", fastestCount, slowestCount)
+	if fastestCount != 2 || slowestCount != 2 {
+		t.Errorf("expected 2 fastest + 2 slowest, got %d + %d", fastestCount, slowestCount)
 	}
 
-	// Fastest band should hold pages 1..5 (lowest response_time).
-	for i := 0; i < 5; i++ {
+	// Fastest band should hold pages 1..2 (lowest response_time).
+	for i := 0; i < 2; i++ {
 		if got[i].Band != BandFastest {
 			t.Errorf("expected fastest at index %d, got %s", i, got[i].Band)
 		}
@@ -161,24 +172,24 @@ func TestSampleMidSizedDistribution(t *testing.T) {
 			t.Errorf("fastest order wrong at %d: got page %d", i, got[i].Task.PageID)
 		}
 	}
-	// Slowest band should hold pages 200..196 (highest response_time first).
-	for i := 0; i < 5; i++ {
+	// Slowest band should hold pages 200..199 (highest response_time first).
+	for i := 0; i < 2; i++ {
 		want := 200 - i
-		if got[5+i].Band != BandSlowest {
-			t.Errorf("expected slowest at index %d, got %s", 5+i, got[5+i].Band)
+		if got[2+i].Band != BandSlowest {
+			t.Errorf("expected slowest at index %d, got %s", 2+i, got[2+i].Band)
 		}
-		if got[5+i].Task.PageID != want {
-			t.Errorf("slowest order wrong at %d: got page %d, want %d", 5+i, got[5+i].Task.PageID, want)
+		if got[2+i].Task.PageID != want {
+			t.Errorf("slowest order wrong at %d: got page %d, want %d", 2+i, got[2+i].Task.PageID, want)
 		}
 	}
 }
 
 func TestSampleAtCap(t *testing.T) {
-	// 10,000 tasks, perBand = 50 (cap): expect exactly 50 + 50 = 100.
+	// 10,000 tasks, perBand = 15 (cap): expect exactly 15 + 15 = 30.
 	tasks := makeTasks(10000)
 	got := SelectSamples(tasks, 100, nil)
-	if len(got) != 100 {
-		t.Fatalf("expected 100 samples at cap, got %d", len(got))
+	if len(got) != 30 {
+		t.Fatalf("expected 30 samples at cap, got %d", len(got))
 	}
 	var fastest, slowest int
 	for _, s := range got {
@@ -189,19 +200,19 @@ func TestSampleAtCap(t *testing.T) {
 			slowest++
 		}
 	}
-	if fastest != 50 || slowest != 50 {
-		t.Errorf("expected 50/50 split at cap, got %d/%d", fastest, slowest)
+	if fastest != 15 || slowest != 15 {
+		t.Errorf("expected 15/15 split at cap, got %d/%d", fastest, slowest)
 	}
 }
 
 func TestSampleDedupeAcrossMilestones(t *testing.T) {
-	// First milestone over 200 tasks samples 5 fastest + 5 slowest.
+	// First milestone over 200 tasks samples 2 fastest + 2 slowest.
 	// Second milestone over the same 200 tasks should skip the
 	// pre-sampled IDs and select different ones from the remaining.
 	tasks := makeTasks(200)
 	first := SelectSamples(tasks, 10, nil)
-	if len(first) != 10 {
-		t.Fatalf("first pass expected 10 samples, got %d", len(first))
+	if len(first) != 4 {
+		t.Fatalf("first pass expected 4 samples, got %d", len(first))
 	}
 
 	already := make(map[int]struct{})
@@ -210,8 +221,8 @@ func TestSampleDedupeAcrossMilestones(t *testing.T) {
 	}
 
 	second := SelectSamples(tasks, 20, already)
-	if len(second) != 10 {
-		t.Fatalf("second pass expected 10 samples, got %d", len(second))
+	if len(second) != 4 {
+		t.Fatalf("second pass expected 4 samples, got %d", len(second))
 	}
 
 	for _, s := range second {
@@ -220,7 +231,7 @@ func TestSampleDedupeAcrossMilestones(t *testing.T) {
 		}
 	}
 
-	// Combined coverage: first 10 + next 10 = 20 distinct pages.
+	// Combined coverage: first 4 + next 4 = 8 distinct pages.
 	all := make(map[int]struct{})
 	for _, s := range first {
 		all[s.Task.PageID] = struct{}{}
@@ -228,8 +239,8 @@ func TestSampleDedupeAcrossMilestones(t *testing.T) {
 	for _, s := range second {
 		all[s.Task.PageID] = struct{}{}
 	}
-	if len(all) != 20 {
-		t.Errorf("expected 20 distinct pages across two milestones, got %d", len(all))
+	if len(all) != 8 {
+		t.Errorf("expected 8 distinct pages across two milestones, got %d", len(all))
 	}
 }
 
