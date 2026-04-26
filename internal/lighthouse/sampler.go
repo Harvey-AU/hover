@@ -84,10 +84,24 @@ func PerBand(completedPages int) int {
 	return n
 }
 
-// SelectSamples picks up to PerBand(len(tasks)) fastest and slowest
-// tasks from completed, after excluding any whose PageID appears in
-// alreadySampled. The fastest and slowest sets are guaranteed
-// disjoint: when fewer than 2*perBand candidates remain, fastest
+// SelectSamples picks fastest and slowest tasks from completed,
+// enforcing a global per-band cap of PerBand(len(completed)) across
+// the lifetime of a job. alreadySampled maps every page_id already
+// queued for the job (any band) to the band it was scheduled under;
+// the function uses it both to dedupe (a page never appears twice)
+// and to count existing fastest/slowest rows so each milestone only
+// tops up the band quotas — it never re-spends them.
+//
+// BandReconcile rows in alreadySampled count toward dedupe but not
+// toward fastest/slowest quotas: at milestone 100 the scheduler
+// retags whatever the sampler picks as reconcile, so by construction
+// reconcile rows shouldn't exist before this call. If they do (e.g.
+// a duplicate milestone-100 fire) the dedupe still keeps page IDs
+// disjoint while the quota math correctly treats the existing rows
+// as already-spent budget.
+//
+// The fastest and slowest output sets are guaranteed disjoint: when
+// fewer than fastestNeeded+slowestNeeded candidates remain, fastest
 // takes priority and slowest fills from what's left.
 //
 // Order in the returned slice is fastest band first (ascending
@@ -96,13 +110,41 @@ func PerBand(completedPages int) int {
 //
 // The function is pure — it does not touch the database or the
 // network — so it is straightforward to unit test.
-func SelectSamples(completed []CompletedTask, milestone int, alreadySampled map[int]struct{}) []Sample {
+func SelectSamples(completed []CompletedTask, milestone int, alreadySampled map[int]SelectionBand) []Sample {
 	if len(completed) == 0 {
 		return nil
 	}
 
-	// Filter out previously-sampled pages. Defensive copy so the
-	// caller's slice ordering is preserved.
+	target := PerBand(len(completed))
+	if target == 0 {
+		return nil
+	}
+
+	var fastestExisting, slowestExisting int
+	for _, b := range alreadySampled {
+		switch b {
+		case BandFastest:
+			fastestExisting++
+		case BandSlowest:
+			slowestExisting++
+		}
+	}
+
+	fastestNeeded := target - fastestExisting
+	if fastestNeeded < 0 {
+		fastestNeeded = 0
+	}
+	slowestNeeded := target - slowestExisting
+	if slowestNeeded < 0 {
+		slowestNeeded = 0
+	}
+	if fastestNeeded == 0 && slowestNeeded == 0 {
+		return nil
+	}
+
+	// Filter out previously-sampled pages (any band) so the same page
+	// can never be queued twice. Defensive copy preserves the caller's
+	// slice ordering.
 	candidates := make([]CompletedTask, 0, len(completed))
 	for _, t := range completed {
 		if _, seen := alreadySampled[t.PageID]; seen {
@@ -111,11 +153,6 @@ func SelectSamples(completed []CompletedTask, milestone int, alreadySampled map[
 		candidates = append(candidates, t)
 	}
 	if len(candidates) == 0 {
-		return nil
-	}
-
-	perBand := PerBand(len(completed))
-	if perBand == 0 {
 		return nil
 	}
 
@@ -128,14 +165,14 @@ func SelectSamples(completed []CompletedTask, milestone int, alreadySampled map[
 		return candidates[i].PageID < candidates[j].PageID
 	})
 
-	fastestN := perBand
+	fastestN := fastestNeeded
 	if fastestN > len(candidates) {
 		fastestN = len(candidates)
 	}
 
 	// Slowest pulls from the tail, but never overlaps with fastest.
 	remaining := len(candidates) - fastestN
-	slowestN := perBand
+	slowestN := slowestNeeded
 	if slowestN > remaining {
 		slowestN = remaining
 	}

@@ -206,32 +206,30 @@ func TestSampleAtCap(t *testing.T) {
 }
 
 func TestSampleDedupeAcrossMilestones(t *testing.T) {
-	// First milestone over 200 tasks samples 2 fastest + 2 slowest.
-	// Second milestone over the same 200 tasks should skip the
-	// pre-sampled IDs and select different ones from the remaining.
+	// Once the per-band quota for a 200-page job (perBand = 2) is
+	// satisfied, subsequent milestone calls must not top up further —
+	// the cap is global per-job, not per-call. PR #357 violated this:
+	// each milestone happily picked another perBand fastest + slowest
+	// from the not-yet-sampled pool, so a 200-page crawl could
+	// accumulate ≈30 rows across 10 milestones instead of 4.
 	tasks := makeTasks(200)
 	first := SelectSamples(tasks, 10, nil)
 	if len(first) != 4 {
 		t.Fatalf("first pass expected 4 samples, got %d", len(first))
 	}
 
-	already := make(map[int]struct{})
+	already := make(map[int]SelectionBand)
 	for _, s := range first {
-		already[s.Task.PageID] = struct{}{}
+		already[s.Task.PageID] = s.Band
 	}
 
 	second := SelectSamples(tasks, 20, already)
-	if len(second) != 4 {
-		t.Fatalf("second pass expected 4 samples, got %d", len(second))
+	if len(second) != 0 {
+		t.Fatalf("second pass expected 0 samples (quota already met), got %d (%+v)",
+			len(second), second)
 	}
 
-	for _, s := range second {
-		if _, dup := already[s.Task.PageID]; dup {
-			t.Errorf("second pass returned already-sampled page %d", s.Task.PageID)
-		}
-	}
-
-	// Combined coverage: first 4 + next 4 = 8 distinct pages.
+	// Combined coverage: still 4 distinct pages, not 8.
 	all := make(map[int]struct{})
 	for _, s := range first {
 		all[s.Task.PageID] = struct{}{}
@@ -239,20 +237,121 @@ func TestSampleDedupeAcrossMilestones(t *testing.T) {
 	for _, s := range second {
 		all[s.Task.PageID] = struct{}{}
 	}
-	if len(all) != 8 {
-		t.Errorf("expected 8 distinct pages across two milestones, got %d", len(all))
+	if len(all) != 4 {
+		t.Errorf("expected 4 distinct pages across two milestones, got %d", len(all))
 	}
 }
 
 func TestSampleAllAlreadyConsumed(t *testing.T) {
 	// All candidates already sampled — nothing left to schedule.
 	tasks := makeTasks(20)
-	already := make(map[int]struct{})
+	already := make(map[int]SelectionBand)
 	for _, t := range tasks {
-		already[t.PageID] = struct{}{}
+		// Half tagged fastest, half tagged slowest; doesn't matter for
+		// this test — quota and dedupe both filter the pool to empty.
+		if t.PageID%2 == 0 {
+			already[t.PageID] = BandFastest
+		} else {
+			already[t.PageID] = BandSlowest
+		}
 	}
 	if got := SelectSamples(tasks, 50, already); got != nil {
 		t.Errorf("expected nil when nothing left, got %+v", got)
+	}
+}
+
+// simulateMilestoneRun walks a job through the 10%, 20%, …, 100%
+// milestones the JobManager fires, threading the prior calls' picks
+// (with their bands) back in as alreadySampled each iteration. It
+// returns the merged result so tests can assert the global cap.
+func simulateMilestoneRun(t *testing.T, totalPages int) []Sample {
+	t.Helper()
+
+	tasks := makeTasks(totalPages)
+	already := make(map[int]SelectionBand)
+	var combined []Sample
+
+	for milestone := 10; milestone <= 100; milestone += 10 {
+		completedSoFar := totalPages * milestone / 100
+		if completedSoFar > totalPages {
+			completedSoFar = totalPages
+		}
+		picks := SelectSamples(tasks[:completedSoFar], milestone, already)
+		for _, s := range picks {
+			if _, dup := already[s.Task.PageID]; dup {
+				t.Errorf("milestone %d returned already-sampled page %d",
+					milestone, s.Task.PageID)
+			}
+			already[s.Task.PageID] = s.Band
+			combined = append(combined, s)
+		}
+	}
+	return combined
+}
+
+func TestSampleGlobalCap_337Pages(t *testing.T) {
+	// 337 pages → perBand = 2 → global cap = 4 audits total.
+	// Pre-fix (PR #357) this scenario produced ≈30 rows because each
+	// milestone re-spent the per-band quota. With the global cap the
+	// total is exactly 4 (2 fastest + 2 slowest).
+	picks := simulateMilestoneRun(t, 337)
+	if len(picks) != 4 {
+		t.Fatalf("expected exactly 4 samples for 337-page job, got %d", len(picks))
+	}
+
+	var fastest, slowest int
+	seen := make(map[int]bool)
+	for _, s := range picks {
+		if seen[s.Task.PageID] {
+			t.Errorf("page %d picked twice across milestones", s.Task.PageID)
+		}
+		seen[s.Task.PageID] = true
+		switch s.Band {
+		case BandFastest:
+			fastest++
+		case BandSlowest:
+			slowest++
+		}
+	}
+	if fastest != 2 || slowest != 2 {
+		t.Errorf("expected 2 fastest + 2 slowest, got %d + %d", fastest, slowest)
+	}
+}
+
+func TestSampleGlobalCap_200Pages(t *testing.T) {
+	// 200 pages → perBand = 2 → cap = 4 audits total.
+	picks := simulateMilestoneRun(t, 200)
+	if len(picks) != 4 {
+		t.Fatalf("expected exactly 4 samples for 200-page job, got %d", len(picks))
+	}
+}
+
+func TestSampleGlobalCap_1000Pages(t *testing.T) {
+	// 1,000 pages → perBand = 4 → cap = 8 audits total.
+	picks := simulateMilestoneRun(t, 1000)
+	if len(picks) != 8 {
+		t.Fatalf("expected exactly 8 samples for 1,000-page job, got %d", len(picks))
+	}
+}
+
+func TestSampleGlobalCap_10000Pages(t *testing.T) {
+	// 10,000 pages → perBand = 15 (cap) → cap = 30 audits total.
+	picks := simulateMilestoneRun(t, 10000)
+	if len(picks) != 30 {
+		t.Fatalf("expected exactly 30 samples for 10,000-page job, got %d", len(picks))
+	}
+
+	var fastest, slowest int
+	for _, s := range picks {
+		switch s.Band {
+		case BandFastest:
+			fastest++
+		case BandSlowest:
+			slowest++
+		}
+	}
+	if fastest != 15 || slowest != 15 {
+		t.Errorf("expected 15 fastest + 15 slowest at cap, got %d + %d", fastest, slowest)
 	}
 }
 

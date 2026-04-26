@@ -32,6 +32,64 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.10] – 2026-04-26
+
+### Added
+
+- Lighthouse Performance reports — Phase 1 foundations (PR #353). New
+  `lighthouse_runs` table storing headline metrics plus an R2 report key (no
+  JSONB blob); `task_type` column added to `tasks` and `task_outbox` so the
+  dispatcher can route Lighthouse work onto `stream:{jobID}:lh`. DB helpers for
+  insert / mark-running / complete / fail / skip-quota are gated on
+  `status='running'` so a duplicate-delivered worker can't clobber a row that
+  already reached a terminal state. A stub Runner behind a `Runner` interface
+  lets the rest of the pipeline be exercised before Chromium lands. Sampler is a
+  pure function with deterministic tie-break by PageID; its initial shape was
+  2.5%-per-band / floor 1 / cap 50.
+- Lighthouse Phase 2 producer + analysis app (PR #356). New `hover-analysis` Fly
+  service (`cmd/analysis/main.go`, `Dockerfile.analysis`, `fly.analysis.toml`)
+  consuming a dedicated `stream:{jobID}:lh` Redis stream. JobManager now fires
+  `OnProgressMilestone` at every 10% boundary;
+  `lighthouse.Scheduler.OnMilestone` loads completed tasks, runs the sampler,
+  inserts `pending` `lighthouse_runs` rows, and bulk-enqueues `task_outbox`
+  entries in a single transaction. Review-app and CI deploy workflows extended
+  to build and deploy the analysis service alongside web + worker.
+- Lighthouse Phase 3 real audits (PR #357).
+  `internal/lighthouse/runner_local.go` runs Chromium plus the `lighthouse` npm
+  CLI in-process; the JSON report is gzipped and uploaded to R2 under
+  `jobs/{job_id}/tasks/{task_id}/lighthouse-mobile.json.gz`.
+  `internal/lighthouse/report.go` extracts headline metrics (performance score,
+  LCP, CLS, INP, TBT, FCP, Speed Index, TTFB, total byte weight) onto the
+  `lighthouse_runs` row. Includes a memory-shed pre-check that defers an audit
+  when the host is under pressure and a one-shot retry on transient Chromium
+  failures. Production analysis app flipped from StubRunner to the local runner;
+  `ARCHIVE_PROVIDER` / `ARCHIVE_BUCKET` set on the analysis service so reports
+  land in R2 alongside crawl HTML.
+
+### Changed
+
+- Lighthouse sampler retuned from 2.5%-per-band / floor 1 / cap 50 to
+  `floor(sqrt(completed) × 0.15)` per band, floored at 1, capped at 15. A
+  10,000-page crawl now tops out at 30 audits/job (15 fastest + 15 slowest)
+  instead of the previous 1,000-cap arithmetic. Added shed and retry metrics
+  around the local runner so an operator can correlate skips with host memory
+  pressure.
+- `lighthouse 12` ships the mobile profile by default, so the explicit
+  `--preset=mobile` flag was dropped from the local runner invocation.
+
+### Fixed
+
+- Lighthouse sampler now enforces the per-band cap **globally per job** instead
+  of re-spending the quota at every 10% milestone. The Phase 1 sampler deduped
+  by `page_id` only, so each milestone happily picked another `perBand` fastest
+  - slowest from the not-yet-sampled pool — production observed 4 jobs producing
+    110 `lighthouse_runs` rows when the cap should have held them to ~14.
+    `SelectSamples` now takes `map[int]SelectionBand`, counts existing fastest /
+    slowest rows, and only requests `max(0, target − existing)` per band per
+    call. The 100% reconcile pass shares the same global budget rather than
+    spending a separate one. New `db.GetLighthouseRunPageBands` replaces the
+    page-id-only `GetLighthouseRunPageIDs`.
+
 ## [0.33.9] – 2026-04-26
 
 ### Added

@@ -99,6 +99,14 @@ type JobManager struct {
 	// without the analysis app, tests).
 	OnProgressMilestone ProgressMilestoneCallback
 
+	// OnJobTerminated is called after a job's Postgres status has been
+	// flipped to a terminal state (cancelled, completed, failed). Set by
+	// the API server to drop the per-job Redis keys (schedule ZSET,
+	// streams, consumer groups, running-counter HASH field). Fire-and-
+	// forget: errors are logged inside the callback. Nil is allowed for
+	// tests and for deploys without REDIS_URL.
+	OnJobTerminated JobTerminatedCallback
+
 	// lastMilestoneFired is the in-process record of the last 10%
 	// boundary that has been signalled per job, gating MaybeFireMilestones
 	// against duplicate fires within this replica. Multiple replicas may
@@ -122,6 +130,12 @@ type JobManager struct {
 // implementations must return promptly — long-running work belongs in a
 // goroutine inside the callback.
 type ProgressMilestoneCallback func(ctx context.Context, jobID string, oldPct, newPct int)
+
+// JobTerminatedCallback is invoked after a job has been moved to a
+// terminal state (cancelled, completed, failed). Implementations are
+// expected to release per-job Redis state. The callback is fire-and-
+// forget; errors must be handled inside the callback.
+type JobTerminatedCallback func(ctx context.Context, jobID string)
 
 // NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
@@ -798,6 +812,13 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 		return fmt.Errorf("failed to get job: %w", err)
 	}
 
+	// Already-cancelled is a no-op success so duplicate clicks from a flaky
+	// network or an impatient user do not surface as red toasts.
+	if job.Status == JobStatusCancelled {
+		jobsLog.Debug("Cancel requested on already-cancelled job", "job_id", job.ID)
+		return nil
+	}
+
 	// Check if job can be canceled
 	if job.Status != JobStatusRunning && job.Status != JobStatusPending && job.Status != JobStatusPaused && job.Status != JobStatusInitialising {
 		return fmt.Errorf("job cannot be canceled: %s", job.Status)
@@ -807,34 +828,53 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	job.Status = JobStatusCancelled
 	job.CompletedAt = time.Now().UTC()
 
-	// Use dbQueue for transaction safety
+	// Use dbQueue for transaction safety. Lock order matters here: workers
+	// update task rows first and the AFTER STATEMENT counter trigger then
+	// acquires jobs row locks in id order (see migrations 20260425000001
+	// and 20260426013451). The cancel transaction must follow the same
+	// tasks-before-jobs order or it deadlocks against any in-flight worker
+	// batch on the same job (HOVER: 40P01 on 30k-page cancels).
 	err = jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// Update job status
+		// 1. Skip pending/waiting tasks first. ORDER BY id keeps the
+		//    row-lock graph acyclic across concurrent transactions, mirroring
+		//    promote_waiting_with_outbox (20260425000001).
 		_, err := tx.ExecContext(ctx, `
+			WITH picked AS (
+				SELECT id FROM tasks
+				 WHERE job_id = $1
+				   AND status IN ($3, $4)
+				 ORDER BY id
+				 FOR UPDATE
+			)
+			UPDATE tasks t
+			   SET status = $2
+			  FROM picked
+			 WHERE t.id = picked.id
+		`, job.ID, TaskStatusSkipped, TaskStatusPending, TaskStatusWaiting)
+		if err != nil {
+			return err
+		}
+
+		// 2. Flip the job status. The AFTER STATEMENT trigger on the
+		//    previous UPDATE has already taken the jobs row lock for us in
+		//    id order; this just writes the cancelled status under that
+		//    same lock. The trigger preserves jobs.status when it is
+		//    already 'cancelled' or 'failed', so no race with a late
+		//    completion fire.
+		_, err = tx.ExecContext(ctx, `
 			UPDATE jobs
 			SET status = $1, completed_at = $2
 			WHERE id = $3
 		`, job.Status, job.CompletedAt, job.ID)
-
 		if err != nil {
 			return err
 		}
 
-		// Cancel pending and waiting tasks
-		_, err = tx.ExecContext(ctx, `
-			UPDATE tasks
-			SET status = $1
-			WHERE job_id = $2 AND status IN ($3, $4)
-		`, TaskStatusSkipped, job.ID, TaskStatusPending, TaskStatusWaiting)
-		if err != nil {
-			return err
-		}
-
-		// Drop any task_outbox rows for this job so the sweeper does
-		// not waste work ZADDing tasks whose status has just flipped
-		// to skipped. Without this, outbox rows for cancelled jobs
-		// linger until their next sweep and inflate the outbox backlog
-		// and oldest-age gauges.
+		// 3. Drop any task_outbox rows for this job so the sweeper does
+		//    not waste work ZADDing tasks whose status has just flipped
+		//    to skipped. Without this, outbox rows for cancelled jobs
+		//    linger until their next sweep and inflate the outbox backlog
+		//    and oldest-age gauges.
 		_, err = tx.ExecContext(ctx, `
 			DELETE FROM task_outbox WHERE job_id = $1
 		`, job.ID)
@@ -852,6 +892,13 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
 	jm.clearMilestoneState(job.ID)
+
+	// Drop per-job Redis keys. Without this the schedule ZSET, both
+	// streams + their consumer groups, and the running-counter HASH
+	// field linger forever — the dispatcher only scans active jobs.
+	if jm.OnJobTerminated != nil {
+		jm.OnJobTerminated(ctx, job.ID)
+	}
 
 	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 

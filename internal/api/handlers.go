@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Harvey-AU/hover/internal/auth"
+	"github.com/Harvey-AU/hover/internal/broker"
 	"github.com/Harvey-AU/hover/internal/db"
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/logging"
@@ -213,11 +214,11 @@ type DBClient interface {
 }
 
 // BrokerCleaner is the subset of the broker client the API needs for
-// admin reset endpoints. Defining it here keeps the api package free of
-// a hard import on internal/broker and makes the Handler trivially
-// mockable in tests.
+// admin reset endpoints. The interface keeps the Handler trivially
+// mockable; production wiring uses *broker.Client.
 type BrokerCleaner interface {
 	ClearAll(ctx context.Context) (int, error)
+	ReclaimTerminalJobKeys(ctx context.Context, filter broker.TerminalFilter) (broker.ReclaimReport, error)
 }
 
 // Handler holds dependencies for API handlers
@@ -374,6 +375,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	// Admin endpoints (require authentication and admin role)
 	mux.Handle("/v1/admin/reset-db", auth.AuthMiddleware(http.HandlerFunc(h.AdminResetDatabase)))
 	mux.Handle("/v1/admin/reset-data", auth.AuthMiddleware(http.HandlerFunc(h.AdminResetData)))
+	mux.Handle("/v1/admin/reclaim-redis", auth.AuthMiddleware(http.HandlerFunc(h.AdminReclaimRedis)))
 
 	// Protected pprof endpoints (system admin + auth required)
 	pprofProtected := func(handler http.Handler) http.Handler {

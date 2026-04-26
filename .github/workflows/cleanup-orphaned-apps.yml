@@ -73,4 +73,35 @@ jobs:
             echo ""
           done
 
+          # The PR-close workflow also destroys the per-PR Upstash Redis
+          # instance, but only if the workflow runs to completion. If a
+          # PR was force-closed during a deploy, or the close-event
+          # workflow failed, the Redis instance survives and continues
+          # accruing PAYG charges. Sweep the orphaned ones here using
+          # the same PR-state check.
+          echo "Listing orphaned Upstash Redis instances..."
+          REDIS_NAMES=$(flyctl redis list --json 2>/dev/null \
+            | jq -r '.[] | select(.Name | startswith("hover-redis-pr-")) | .Name' \
+            || echo "")
+
+          if [ -z "$REDIS_NAMES" ]; then
+            echo "No hover-redis-pr-* instances found"
+          else
+            for REDIS_NAME in $REDIS_NAMES; do
+              PR_NUMBER=$(echo "$REDIS_NAME" | sed -e 's/^hover-redis-pr-//')
+              echo "Checking PR #$PR_NUMBER for Redis $REDIS_NAME..."
+
+              PR_STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo "NOT_FOUND")
+              echo "  PR state: $PR_STATE"
+
+              if [ "$PR_STATE" = "OPEN" ]; then
+                echo "  PR is open, keeping Redis"
+              else
+                echo "  PR is closed/merged/missing, destroying Redis..."
+                flyctl redis destroy "$REDIS_NAME" --yes || echo "  Failed to destroy $REDIS_NAME"
+              fi
+              echo ""
+            done
+          fi
+
           echo "Cleanup complete"
