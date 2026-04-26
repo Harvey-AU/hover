@@ -111,7 +111,7 @@ while %-audited tapers — the cost ceiling we want.
   is excluded from later milestones, even if its band membership shifts.
 - Final reconciliation at 100%: rerun the sampler against the complete dataset
   to cover any late-arriving extremes that weren't visible during earlier
-  milestones. Bounded by the same 50+50 cap.
+  milestones. Bounded by the same 15+15 cap.
 
 ### When to schedule
 
