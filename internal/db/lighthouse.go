@@ -129,30 +129,36 @@ func InsertLighthouseRun(ctx context.Context, tx *sql.Tx, insert LighthouseRunIn
 // 'running' (reclaim of a row left in flight by a crashed or
 // shutting-down consumer) so XAUTOCLAIM can hand work off cleanly.
 //
-// Returns false only when the row has reached a terminal state
+// Returns moved=false only when the row has reached a terminal state
 // ('succeeded', 'failed', 'skipped_quota'); the caller treats that as
 // "safe to ACK and drop the redelivered stream message". Double-running
 // races (two consumers reclaim the same idle row) are bounded by the
 // status='running' guard on CompleteLighthouseRun / FailLighthouseRun:
 // whichever finishes first writes the terminal row, the other gets
 // ErrLighthouseRunNotFound and ACKs.
-func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (bool, error) {
+//
+// sourceTaskID is the row's source_task_id (empty string when NULL,
+// which can happen after the parent task is deleted via
+// ON DELETE SET NULL); the analysis-side runner uses it to build the
+// R2 report key without an extra SELECT.
+func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (moved bool, sourceTaskID string, err error) {
 	const q = `
 		UPDATE lighthouse_runs
 		   SET status = 'running',
 		       started_at = NOW()
 		 WHERE id = $1 AND status IN ('pending', 'running')
+		 RETURNING COALESCE(source_task_id, '')
 	`
 
-	result, err := db.client.ExecContext(ctx, q, runID)
-	if err != nil {
-		return false, fmt.Errorf("mark lighthouse run running: %w", err)
+	var taskID string
+	scanErr := db.client.QueryRowContext(ctx, q, runID).Scan(&taskID)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		return false, "", nil
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("rows affected: %w", err)
+	if scanErr != nil {
+		return false, "", fmt.Errorf("mark lighthouse run running: %w", scanErr)
 	}
-	return rows > 0, nil
+	return true, taskID, nil
 }
 
 // CompleteLighthouseRun records a successful audit's metrics on a row

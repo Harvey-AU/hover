@@ -3,7 +3,9 @@
 Status: Phase 1 (Foundations) shipped in PR #353. Phase 2 (milestone
 scheduling + skeleton `hover-analysis` app) shipped in PR #356; producer →
 stream → consumer pipeline verified end-to-end on the review app via the
-StubRunner. Phases 3–5 still to do. Last updated: 2026-04-26.
+StubRunner. Phase 3 (real Lighthouse audits) implemented on
+`work/confident-banzai-4b367c`, awaiting review. Phases 4–5 still to do. Last
+updated: 2026-04-26.
 
 ## Goal
 
@@ -741,6 +743,46 @@ against an in-process consumer before the new app's CI surface lands.
 - Verify on the production-shaped review app: peak memory at the v1 default of
   `LIGHTHOUSE_MAX_CONCURRENCY=1`, average audit duration, failure rate. Document
   numbers; only then consider raising the default.
+
+**Phase 3 implementation notes (deviations from this plan):**
+
+- **Image base switched to Debian (`node:20-slim`)**, not Alpine. Alpine's
+  `chromium` package consistently lags upstream; Debian bookworm tracks Chromium
+  stable within days, so the security/stability call goes to Debian. Pinned:
+  `chromium 147.0.7727.116` (whatever bookworm currently ships) and
+  `lighthouse@12.2.1`. Image size lands at ~2 GB — within Fly's pull window but
+  worth a future trim pass.
+- **`source_task_id` plumbed via DB rather than the wire format.**
+  `MarkLighthouseRunRunning` was changed to `RETURNING source_task_id` so the
+  consumer learns the parent task at audit start time. The Phase 2 ZSET wire
+  format (now 11 fields) was left untouched — bumping it again on the back of
+  Phase 2's bump would have been churn. The runner falls back to
+  `jobs/{job_id}/runs/{run_id}/lighthouse-mobile.json.gz` when `source_task_id`
+  is NULL (parent task deleted via `ON DELETE SET NULL`).
+- **`ErrMemoryShed` is a sentinel, not a permanent failure.** The consumer
+  treats it like shutdown cancellation: leave the row in `running`, skip `XAck`,
+  let `XAUTOCLAIM` redeliver once memory recovers. Treating it as `failed` would
+  burn the audit slot unrecoverably.
+- **Process-tree kill via `Setpgid` + `Kill(-pgid, SIGKILL)`.** Without this a
+  context-cancelled audit orphans Chromium renderers that keep eating memory.
+  Covered by a unit test that asserts a 30s `sleep` fake binary dies within the
+  200ms timeout.
+- **Stderr capped via a ring buffer** (16 KiB tail) before being embedded in the
+  returned error and ultimately `lighthouse_runs.error_message`. A wedged
+  Chromium can emit megabytes of debug output; the column is plain TEXT and
+  would otherwise grow unbounded.
+- **`LIGHTHOUSE_RUNNER` stays `stub` on review apps and on the merge commit.**
+  The Chromium layers ship in the image regardless, but flipping the runner
+  default waits until the first production smoke test confirms the binary boots
+  cleanly. A follow-up commit on the same PR flips production once the
+  review-app numbers look healthy.
+- **`dumb-init` reaps Chromium zombies.** Renderer crashes leave defunct
+  processes; without dumb-init the analysis container eventually exhausts its
+  PID table.
+- **Archive provider boots in `cmd/analysis`.** Phase 2 didn't need it (stub
+  runner has no R2 upload). Phase 3 adds an `archive.ProviderFromEnv()` call
+  gated on `LIGHTHOUSE_RUNNER=local` so review apps without R2 credentials still
+  boot the stub runner.
 
 **Phase 3 starting point (post-Phase-2):**
 

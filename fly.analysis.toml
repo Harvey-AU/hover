@@ -39,6 +39,13 @@ primary_region = 'syd'
   # Soft memory floor before the runner defers a new audit. Phase 3
   # consults this; Phase 2 stub runner ignores it.
   LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB = "600"
+  # Bundled binary paths. Dockerfile.analysis bakes the same defaults
+  # via ENV so a misconfigured toml still resolves the binaries, but
+  # we set them here too so a base-image rebuild that moves them
+  # surfaces as a loud boot error rather than a runtime exec ENOENT
+  # on the first audit.
+  LIGHTHOUSE_BIN = "/usr/local/bin/lighthouse"
+  CHROMIUM_BIN = "/usr/bin/chromium"
   LOG_LEVEL = "info"
   OBSERVABILITY_ENABLED = "true"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"

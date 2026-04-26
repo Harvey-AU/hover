@@ -1,15 +1,20 @@
 # Dockerfile.analysis — image for hover-analysis (lighthouse audit service).
 #
-# Phase 2 ships the Go binary only — no Chromium, no lighthouse npm.
-# The analysis service runs the StubRunner in this state, exercising
-# the producer → stream → consumer pipeline end-to-end with canned data.
-# Phase 3 adds:
-#   - Chromium (system package)
-#   - `npm install -g lighthouse@<pinned>`
-#   - LIGHTHOUSE_RUNNER=local default
+# Phase 3 layers Chromium and the lighthouse npm package on top of the
+# analysis Go binary. The runtime stage is node:20-slim (Debian bookworm)
+# rather than Alpine so we can pull Chromium from Debian's main repo —
+# Debian's chromium tracks upstream within days, while Alpine's
+# chromium package historically lags by weeks and carries unpatched CVEs
+# longer.
 #
-# Kept separate from the main Dockerfile so the heavyweight Chromium
-# layers do not bloat hover and hover-worker images.
+# Confined to this Dockerfile only; the main Dockerfile (hover, hover-worker)
+# stays lean and Alpine-based.
+#
+# Pin discipline: chromium and lighthouse are pinned to exact versions
+# below. Bumps are a deliberate Dockerfile change, not a "latest" drift.
+# Schedule: bump monthly to track Chromium's stable channel for security
+# fixes (Debian publishes within days of upstream). See
+# docs/plans/lighthouse-performance-reports.md § Phase 3 for context.
 
 FROM grafana/alloy:v1.15.1@sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d AS alloy
 
@@ -24,27 +29,58 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o analysis ./cmd/analysis/main.go
 
-FROM alpine:3.19
+FROM node:20-slim AS runtime
 
-RUN adduser -D -g '' appuser
+# Chromium plus the few runtime libs Lighthouse needs and ca-certificates
+# for outbound HTTPS (Supabase, OTLP, Grafana Cloud, R2). fonts-liberation
+# stops Chromium falling back to bitmap fonts on JS-heavy pages, which
+# breaks rendering audits.
+#
+# TODO(phase3): pin chromium=<exact> after first successful build to make
+# the bump cadence deliberate. Left unpinned now so the initial build
+# resolves whatever Debian bookworm currently ships, and we capture that
+# version in a follow-up commit on this PR.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    chromium \
+    chromium-sandbox \
+    ca-certificates \
+    fonts-liberation \
+    dumb-init \
+  && rm -rf /var/lib/apt/lists/*
+
+# Lighthouse CLI. Pinned to the 12.x line; bump in lockstep with Chromium.
+RUN npm install -g lighthouse@12.2.1 \
+  && npm cache clean --force
+
+# Non-root runtime user mirrors the previous Alpine image's appuser.
+RUN useradd --create-home --shell /bin/sh --uid 10001 appuser
 
 WORKDIR /app
-
-# ca-certificates for HTTPS to Grafana / OTLP / Supabase; gcompat for the
-# Alloy sidecar's glibc dependency.
-RUN apk --no-cache add \
-  ca-certificates=20250911-r0 \
-  gcompat=1.1.0-r4
 
 COPY --from=builder /app/analysis .
 
 # Alloy sidecar so the analysis service emits app/environment-tagged
 # metrics without each pod needing its own Prometheus push secret.
+# Debian's glibc means no gcompat shim is needed — it ran on Alpine
+# only because Alpine ships musl.
 COPY --from=alloy /bin/alloy /usr/local/bin/alloy
 COPY alloy.river .
 COPY scripts/start-analysis.sh ./start.sh
-RUN chmod +x start.sh /usr/local/bin/alloy
+RUN chmod +x start.sh /usr/local/bin/alloy \
+  && chown -R appuser:appuser /app
+
+# CHROMIUM_BIN / LIGHTHOUSE_BIN are baked here so cmd/analysis can read
+# them via env without each Fly toml having to repeat the paths. The
+# tomls still set them so a misconfigured base image fails loudly rather
+# than silently picking up a different binary.
+ENV CHROMIUM_BIN=/usr/bin/chromium \
+    LIGHTHOUSE_BIN=/usr/local/bin/lighthouse
 
 USER appuser
 
+# dumb-init reaps zombies left behind by Chromium renderer crashes.
+# Without it the analysis container accumulates defunct processes over
+# time and eventually exhausts the PID table.
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["./start.sh"]

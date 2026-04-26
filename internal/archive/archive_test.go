@@ -69,6 +69,65 @@ func TestColdKey_WithPrefix(t *testing.T) {
 	assert.Equal(t, "42/jobs/j/tasks/t/page-content.html.gz", ColdKey("j", "t"))
 }
 
+func TestLighthouseObjectPath(t *testing.T) {
+	cases := []struct {
+		name    string
+		prefix  string
+		jobID   string
+		taskID  string
+		profile string
+		runID   int64
+		want    string
+	}{
+		{
+			name:    "task id co-locates with crawl artefact",
+			prefix:  "",
+			jobID:   "job-1",
+			taskID:  "task-1",
+			profile: "mobile",
+			runID:   42,
+			want:    "jobs/job-1/tasks/task-1/lighthouse-mobile.json.gz",
+		},
+		{
+			name:    "empty task id falls back to run id",
+			prefix:  "",
+			jobID:   "job-1",
+			taskID:  "",
+			profile: "mobile",
+			runID:   42,
+			want:    "jobs/job-1/runs/42/lighthouse-mobile.json.gz",
+		},
+		{
+			name:    "review-app prefix prepends",
+			prefix:  "347",
+			jobID:   "job-1",
+			taskID:  "task-1",
+			profile: "mobile",
+			runID:   42,
+			want:    "347/jobs/job-1/tasks/task-1/lighthouse-mobile.json.gz",
+		},
+		{
+			name:    "desktop profile slot",
+			prefix:  "",
+			jobID:   "job-1",
+			taskID:  "task-1",
+			profile: "desktop",
+			runID:   42,
+			want:    "jobs/job-1/tasks/task-1/lighthouse-desktop.json.gz",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ARCHIVE_PATH_PREFIX", tc.prefix)
+			got := LighthouseObjectPath(tc.jobID, tc.taskID, tc.profile, tc.runID)
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTaskHTMLObjectPath(t *testing.T) {
 	cases := []struct {
 		name   string
