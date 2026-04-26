@@ -20,9 +20,10 @@ and worst case Core Web Vitals without auditing the full site.
 - Mobile profile.
 - **Self-hosted Lighthouse** — Chromium plus the `lighthouse` npm package run
   in-process via a Go sidecar; no external API dependency.
-- Sample size: 10% of the fastest 5% and 10% of the slowest 5% by
-  `tasks.response_time` — i.e. roughly 1% of total pages, drawn from the
-  extremes.
+- Sample size: 2.5% of completed pages per extreme band (fastest +
+  slowest) by `tasks.response_time`. Single formula floored at 1, capped
+  at 50 per band — roughly 5% of pages on small/medium sites, capped at
+  100 audits per job on large sites.
 - Scheduling waves at every 10% milestone of crawl progress; sampler dedupes so
   the same page is not audited twice within one job.
 - Persistent storage of headline metrics plus the full Lighthouse JSON.
@@ -39,45 +40,70 @@ and worst case Core Web Vitals without auditing the full site.
 ## Confirmed decisions
 
 1. **Chromium delivery** — self-host. Bundle Chromium plus `lighthouse` into
-   the Fly image; no PageSpeed Insights API.
-2. **Sampling** — 10% of the top 5% and 10% of the bottom 5% by HTTP response
-   time. Roughly 1% of pages total.
-3. **Per-job run cap** — default 100 audits/job (50 fastest band + 50 slowest
-   band). With the new sampling math the cap is rarely binding (10k+ pages
-   to hit it), but it's a hard ceiling against runaway tenants.
+   the analysis-app image; no PageSpeed Insights API.
+2. **Sampling** — 2.5% of completed pages per extreme band (fastest +
+   slowest), floored at 1, capped at 50 per band. Total audits ≈ 5% of pages,
+   capped at 100 per job.
+3. **Per-job run cap** — 100 audits/job (50 fastest + 50 slowest), enforced
+   by the per-band cap of 50.
 4. **Profile** — mobile only for v1; desktop deferred.
 5. **Tenant budget** — handled by plan-tier max-audits-per-day, not a separate
    knob in this feature. The scheduler honours whatever the billing/plan
    layer reports as remaining quota.
+6. **Storage** — full Lighthouse JSON in R2, co-located with `page-content.html.gz`
+   under `jobs/{job_id}/tasks/{task_id}/lighthouse-mobile.json.gz`.
+   `lighthouse_runs` row stores headline metrics + R2 key.
+7. **Concurrency model** — fixed `LIGHTHOUSE_MAX_CONCURRENCY` per machine
+   (start at 1, smoke test on `performance-cpu-1x` / 8 GB). No autoscaling
+   in v1; revisit after observing real load.
 
 ## Architecture
 
 ### Sampling
 
-- Source signal: `tasks.response_time` (BIGINT, milliseconds). The pages table
-  has no timing data, so sampling has to join through `tasks`.
-- Two-step selection per milestone, applied to the set of completed,
-  successful tasks for the job:
-  1. **Identify the extreme bands.** Take the fastest 5% by ascending
-     `response_time` (fastest band) and the slowest 5% by descending
-     `response_time` (slowest band).
-  2. **Audit 10% of each band.** Within each band, sample 10% of the pages
-     and enqueue Lighthouse runs for those.
-- Per-band sample size: `M = clamp(round(band_size * 0.10), 1, 50)`. The
-  floor of 1 means tiny sites still get one fastest and one slowest audit;
-  the ceiling of 50 enforces the per-job cap (50 + 50 = 100).
-- Skip threshold: if `completed_pages < 20`, the bands are too narrow to be
-  meaningful — skip until the next milestone, and at the final 100%
-  reconciliation pass force at least 1 + 1 if any results exist at all.
+Source signal: `tasks.response_time` (BIGINT, milliseconds). The pages table
+has no timing data, so sampling has to join through `tasks`.
+
+**Single formula, applied at every milestone over the set of completed,
+successful tasks for the job:**
+
+```go
+perBand := int(math.Round(float64(completedPages) * 0.025))
+if perBand < 1 {
+    perBand = 1
+}
+if perBand > 50 {
+    perBand = 50
+}
+```
+
+That's it — no piecewise tiers, no skip threshold. Take the top `perBand`
+fastest pages by `response_time` and the top `perBand` slowest. Enqueue
+Lighthouse runs for both bands.
+
+| Pages | per_band | Total audits | % audited |
+| --- | --- | --- | --- |
+| 10 | 1 | 2 | 20% |
+| 50 | 1 | 2 | 4% |
+| 100 | 3 | 6 | 6% |
+| 200 | 5 | 10 | 5% |
+| 500 | 13 | 26 | 5.2% |
+| 1,000 | 25 | 50 | 5% |
+| 2,000 | 50 (cap) | 100 | 5% |
+| 5,000+ | 50 (cap) | 100 | ≤2% |
+
+Properties: floor of 1 per band means even a 5-page site gets 1 fastest + 1
+slowest. Cap of 50 binds at ~2,000 pages, where 100 audits is still 5%.
+Beyond that, audit count plateaus while the percentage tapers — the cost
+ceiling we want.
+
+**Dedupe and reconciliation:**
+
 - Page-level dedupe: a page already scheduled in `lighthouse_runs` for this
   job is excluded from later milestones, even if its band membership shifts.
 - Final reconciliation at 100%: rerun the sampler against the complete
   dataset to cover any late-arriving extremes that weren't visible during
-  earlier milestones. Reconciliation is bounded by the same 50+50 cap.
-
-Worked example for a 1,000-page crawl at 100%: fastest band = 50 pages, audit
-5; slowest band = 50 pages, audit 5; total 10 Lighthouse runs. For 100 pages:
-fastest band = 5, audit 1; slowest band = 5, audit 1; total 2 runs.
+  earlier milestones. Bounded by the same 50+50 cap.
 
 ### When to schedule
 
@@ -173,6 +199,85 @@ Inter-service contract (over the existing Redis):
 - Backpressure: bounded consumer concurrency in hover-analysis;
   Redis stream depth absorbs the queue.
 
+### Deployment, CI/CD, and review apps
+
+`hover-analysis` mirrors the existing `hover-worker` deployment surface
+exactly. New files:
+
+| File | Purpose |
+| --- | --- |
+| `fly.analysis.toml` | Production app config; `app = 'hover-analysis'`, `primary_region = 'syd'`, `[build] dockerfile = "Dockerfile.analysis"`, smoke-test `[[vm]]` defaults |
+| `.fly/review_apps.analysis.toml` | Review-app overrides — smaller machine, lower concurrency, points at the PR's Supabase preview branch |
+| `Dockerfile.analysis` | Multi-stage build with Chromium + `lighthouse` npm, runs the `cmd/analysis` binary |
+| `cmd/analysis/main.go` | Service entrypoint |
+
+**Production deploy (`.github/workflows/fly-deploy.yml`):**
+
+A new step pair, parallel to the existing worker steps:
+
+```yaml
+- name: Sync secrets to Fly (analysis app)
+  run: |
+    flyctl secrets set --app hover-analysis \
+      DATABASE_URL="$DATABASE_URL" \
+      REDIS_URL="$REDIS_URL" \
+      ARCHIVE_ACCESS_KEY_ID="$ARCHIVE_ACCESS_KEY_ID" \
+      ARCHIVE_SECRET_ACCESS_KEY="$ARCHIVE_SECRET_ACCESS_KEY" \
+      ARCHIVE_ENDPOINT="$ARCHIVE_ENDPOINT" \
+      SENTRY_DSN="$SENTRY_DSN" \
+      OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+      GRAFANA_CLOUD_USER="$GRAFANA_CLOUD_USER" \
+      GRAFANA_CLOUD_API_KEY="$GRAFANA_CLOUD_API_KEY"
+
+- name: Deploy analysis app
+  run: |
+    flyctl deploy --config fly.analysis.toml --app hover-analysis
+```
+
+All secrets reuse existing 1Password entries (`hover-supabase`,
+`hover-runtime`, `hover-archive`) — no new vault items. The new
+`LIGHTHOUSE_*` env vars (`LIGHTHOUSE_BIN`, `CHROMIUM_BIN`,
+`LIGHTHOUSE_MAX_CONCURRENCY`, `LIGHTHOUSE_AUDIT_TIMEOUT_MS`) are baked into
+`fly.analysis.toml` `[env]` with sensible defaults; not secrets.
+
+**Deploy ordering:** analysis → worker → API. Consumer up before producer
+starts enqueueing for it. Mirrors the existing "worker before API" rule.
+
+**Path-based service tagging** (Grafana annotation step, end of
+`fly-deploy.yml`): touching `cmd/analysis/`, `Dockerfile.analysis`,
+`fly.analysis.toml`, or `internal/lighthouse/runner.go` adds
+`service:hover-analysis`. Touching shared `internal/` packages already
+triggers all three services; the existing `if printf ... grep` block needs
+one extra `cmd/analysis/` clause.
+
+**Review apps (`.github/workflows/review-apps.yml`):**
+
+Mirror the existing worker review-app block:
+
+1. Build the analysis image: `docker build -f Dockerfile.analysis -t hover-analysis-pr-${{ github.event.number }} .`. (Separate from the main image because the Dockerfile is different — can't be tagged twice from one build.)
+2. Provision Fly app `hover-analysis-pr-${PR}` with strict-prefix get-or-create (avoid `hover-analysis-pr-1` falsely matching PR 12).
+3. Set secrets pointing at the PR's Supabase preview branch + the same shared Redis and R2 used by the API/worker review apps.
+4. Deploy: `flyctl deploy --config .fly/review_apps.analysis.toml --app hover-analysis-pr-${PR} --image hover-analysis-pr-${PR} --local-only`.
+5. Order: analysis review app → worker review app → API review app.
+
+**Cleanup (`.github/workflows/cleanup-orphaned-apps.yml` and the
+on-PR-close branch of `review-apps.yml`):**
+
+Add `hover-analysis-pr-*` to the destroy sweep. Destroy order on PR close:
+analysis first (consumer detaches before producer keeps queueing), then
+worker, then API. Mirrors the existing rule that destroys the worker
+before the API + Redis.
+
+**Local dev:**
+
+- Add an `air` target for `cmd/analysis/main.go` in `.air.toml`, or document
+  running it via a separate `air` invocation.
+- `.env.example` gains `LIGHTHOUSE_BIN`, `CHROMIUM_BIN`,
+  `LIGHTHOUSE_MAX_CONCURRENCY`, `LIGHTHOUSE_AUDIT_TIMEOUT_MS`. Devs without
+  Chromium installed locally can run the analysis service against a stub
+  runner (`LIGHTHOUSE_RUNNER=stub`) for end-to-end testing without real
+  audits.
+
 ### Chromium delivery
 
 Self-hosted, packaged into the `hover-analysis` image only. The `hover` and
@@ -227,32 +332,59 @@ CPU throttling.
 
 **Resource shape and concurrency sizing:**
 
-Default `LIGHTHOUSE_MAX_CONCURRENCY=5` on a 32 GB / 16 vCPU analysis
-machine. Sizing guidance:
+Default `LIGHTHOUSE_MAX_CONCURRENCY=1` on `performance-cpu-1x` / 8 GB. We
+start small, observe real resource usage on production traffic, then dial
+up. All knobs live in `fly.analysis.toml` (production) and
+`.fly/review_apps.analysis.toml` (review apps), not in code, so tuning is a
+deploy not a code change.
 
-| Machine class | Safe concurrency | Notes |
-| --- | --- | --- |
-| 8 GB / 4 core | 1–2 | OOM risk above; metric quality degrades fast |
-| 16 GB / 8 core | 3–4 | Tight; ~7 GB Chromium + headroom for Go server |
-| 32 GB / 16 core | **5** (default) | Sweet spot; comfortable headroom |
-| 64 GB / 32 core | 8 | Returns diminish past this |
+Sizing ladder for when we want to scale up:
 
-Running more than ~8 concurrent on one host degrades Lighthouse score
-validity because the host CPU contention breaks the simulated-throttling
-model. Scale horizontally instead — multiple analysis machines, each with a
-modest cap.
+| Stage | Machine | Mem | `LIGHTHOUSE_MAX_CONCURRENCY` | Throughput |
+| --- | --- | --- | --- | --- |
+| **v1 default** | `performance-cpu-1x` | 8 GB | **1** | ~2–3/min |
+| Light prod | `performance-cpu-2x` | 8 GB | 2 | ~4–6/min |
+| Default prod | `performance-cpu-4x` | 8 GB | 4 | ~8–12/min |
+| Heavy prod | `performance-cpu-8x` | 16 GB | 8 | ~16–25/min |
 
-**Sample wall-time at 5 concurrent, 25 s avg per audit:**
+Rules of thumb:
 
-| Crawl size | Audits (1% sample) | Wall time |
-| --- | --- | --- |
-| 100 pages | 2 | ~25 s |
-| 1,000 | 10 | ~50 s |
-| 10,000 | 100 | ~8 min |
-| 100,000 | 1,000 | ~83 min |
+- Never set concurrency higher than vCPU count — each Lighthouse run pegs
+  ~1 core, and Lighthouse's CPU-throttling model produces unreliable scores
+  once the host is contended.
+- Above ~8 concurrent on one host, score validity collapses regardless of
+  CPU count. Past that, scale horizontally (more machines), not vertically.
 
-In every realistic case, audits finish *inside* the crawl wall time rather
-than gating job completion.
+**Soft memory shedding (in-process safety, v1):**
+
+Before starting a Lighthouse run, the runner reads `/proc/meminfo` (or
+cgroup memory limits where available). If free memory is below
+`2 × <expected RSS per audit>` (configurable, default 600 MB), the run is
+deferred — re-queued with a small delay rather than risking OOM. This is
+local safety, not autoscaling.
+
+**Horizontal autoscaling: deferred.**
+
+v1 runs on a single machine with `min_machines_running = 1`. Multi-machine
+autoscaling (queue-depth driven, Fly machine count) is a follow-up once we
+have real production resource data. Until then, scale-up is a manual
+`fly scale count` with a corresponding bump in `min_machines_running` in
+the toml.
+
+**Sample wall-time (v1 defaults: 1 concurrent, 25 s avg per audit):**
+
+| Crawl size | Audits | Wall time at concurrency 1 | At concurrency 5 |
+| --- | --- | --- | --- |
+| 100 pages | 6 | ~2.5 min | ~30 s |
+| 200 | 10 | ~4 min | ~50 s |
+| 1,000 | 50 | ~21 min | ~4 min |
+| 5,000 | 100 (cap) | ~42 min | ~8 min |
+| 10,000+ | 100 (cap) | ~42 min | ~8 min |
+
+At v1 defaults a 1,000-page crawl's audits run for ~21 minutes — fine
+because crawl wall time at that size is typically longer. If audits ever
+drag past crawl completion, that's the signal to bump concurrency or add
+machines.
 
 **Failure handling:**
 
@@ -274,15 +406,42 @@ default and only Phase 1 implementation is local.
 
 ### Storage
 
-Use a dedicated `lighthouse_runs` table rather than columns on `tasks`. Phase 5
-wants trend lines across crawls, which a separate table supports cleanly. The
-table is foreign-keyed to `pages` (logical page) and `tasks` (the specific
-crawl run that justified the sample).
+Two tiers, mirroring the existing `page-content.html.gz` pattern:
 
-Full Lighthouse JSON lives in `report_json JSONB` initially. Typical payload is
-50–100 KB; if the table grows past, say, 5 GB we move `report_json` to cold
-storage (S3/R2 via the existing `ColdStorageProvider` interface in
-`internal/archive/`) and replace the column with a pointer.
+**1. R2 — full Lighthouse JSON (gzipped).**
+
+Co-located with the existing crawl artefact in the `tasks/{task_id}/` folder:
+
+```
+native-hover-archive/jobs/{job_id}/tasks/{task_id}/
+├── page-content.html.gz        ← existing
+└── lighthouse-mobile.json.gz   ← new (this plan)
+```
+
+Profile-suffixed naming so future artefacts slot in cleanly without
+restructuring the path:
+
+```
+├── lighthouse-desktop.json.gz  ← future (Phase 5, deferred)
+├── screenshot-mobile.png       ← future (separate plan)
+└── axe-mobile.json.gz          ← future (separate plan)
+```
+
+Reuses the existing `ColdStorageProvider` interface in `internal/archive/`,
+the existing R2 credentials (`ARCHIVE_*` env vars), and the existing bucket
+(`native-hover-archive`). Lighthouse JSON compresses ~5–10× — a 1–3 MB raw
+report becomes ~150–400 KB gzipped.
+
+**2. Postgres — `lighthouse_runs` table.**
+
+Headline metrics (everything you'd ever sort/aggregate by) plus the R2 key
+to fetch the full report. No JSONB blob — keeps the table small enough to
+index and query cheaply, and avoids paying the 1–3 MB Postgres cost for
+every audit.
+
+Foreign keys to `pages` (logical page) and `tasks` (the specific crawl run
+that justified the sample). Phase 5 trend lines across crawls fall out of
+this naturally.
 
 ## Data model
 
@@ -307,7 +466,7 @@ CREATE TABLE IF NOT EXISTS public.lighthouse_runs (
   speed_index_ms      INT,
   ttfb_ms             INT,
   total_byte_weight   BIGINT,
-  report_json         JSONB,
+  report_key          TEXT,    -- R2 object key, e.g. jobs/{id}/tasks/{id}/lighthouse-mobile.json.gz
   error_message       TEXT,
   scheduled_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   started_at          TIMESTAMPTZ,
@@ -349,7 +508,7 @@ ALTER TABLE public.task_outbox
   crawl stream. Reuse the existing `DomainPacer` so concurrent audits don't
   hammer one customer domain.
 - `internal/lighthouse/sampler.go` (new, shared package) — fastest/slowest
-  band identification plus 10%-of-band sampling.
+  band selection via the single 2.5%-per-band formula, capped at 50.
 - `internal/lighthouse/scheduler.go` (new, shared package) — milestone-driven
   enqueue with quota enforcement and dedupe.
 - `internal/db/lighthouse.go` (new, shared) — insert/update/list helpers.
@@ -373,15 +532,26 @@ ALTER TABLE public.task_outbox
   metric extraction.
 - `Dockerfile.analysis` (new) — multi-stage build that layers Chromium and
   `lighthouse@<pinned>` on top of the analysis Go binary.
-- `fly.analysis.toml` (new) — Fly app config for `hover-analysis`,
-  `[build] dockerfile = "Dockerfile.analysis"`, primary region `syd`,
-  memory-tier machine class.
-- `scripts/start.sh` — extend to handle the analysis binary if/when the
-  start script becomes role-aware (or use a separate entrypoint in
-  `Dockerfile.analysis`).
+- `fly.analysis.toml` (new) — production app config; smoke-test sized
+  (`performance-cpu-1x` / 8 GB / `LIGHTHOUSE_MAX_CONCURRENCY=1`).
+- `.fly/review_apps.analysis.toml` (new) — review-app overrides.
+- `.github/workflows/fly-deploy.yml` — new "Sync secrets to Fly (analysis
+  app)" + "Deploy analysis app" steps; new `service:hover-analysis` clause
+  in the path-based service tagging block.
+- `.github/workflows/review-apps.yml` — new build/provision/deploy block
+  for `hover-analysis-pr-${PR}` review apps; deploy ordering analysis →
+  worker → API; destroy ordering reversed on PR close.
+- `.github/workflows/cleanup-orphaned-apps.yml` — add `hover-analysis-pr-*`
+  to the destroy sweep with strict-prefix matching.
+- Entrypoint: `Dockerfile.analysis` ships a minimal entrypoint that runs
+  `./analysis` directly, since the analysis app doesn't need the alloy
+  sidecar or the static HTML/migration files that the existing `start.sh`
+  sets up. (Alternative: extend `start.sh` to be role-aware via env.
+  Preferred to keep the analysis image minimal.)
 - Config: `LIGHTHOUSE_BIN`, `CHROMIUM_BIN`, `LIGHTHOUSE_MAX_CONCURRENCY`
-  (default 5), `LIGHTHOUSE_AUDIT_TIMEOUT_MS` (default 90000) — set as Fly
-  secrets on `hover-analysis`.
+  (default 1), `LIGHTHOUSE_AUDIT_TIMEOUT_MS` (default 90000),
+  `LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB` (default 600) — set in the toml
+  `[env]` block, not as Fly secrets.
 
 **Local dev:**
 
@@ -397,15 +567,16 @@ ALTER TABLE public.task_outbox
 
 ### Phase 1 — Foundations
 
-- Migrations: `lighthouse_runs`, `task_type` on `tasks`/`task_outbox`.
+- Migrations: `lighthouse_runs` (with `report_key TEXT`, no JSONB blob),
+  `task_type` on `tasks`/`task_outbox`.
 - DB layer in `internal/db/lighthouse.go`.
 - Sampler in `internal/lighthouse/sampler.go` with unit tests covering:
-  - Small-site floor (1+1 minimum from the 100% reconciliation pass).
-  - Skip threshold below 20 completed pages.
-  - Per-band 10% sampling with rounding behaviour.
+  - Floor of 1 per band at low N (1, 5, 10, 50 completed pages).
+  - Linear scaling at medium N (200, 500, 1,000).
+  - Cap of 50 per band at high N (2,000, 10,000).
   - Dedupe across milestones.
-- `LighthouseExecutor` stub returning canned data so the full pipeline can be
-  exercised end-to-end before Chromium lands.
+- Stub runner returning canned data so the pipeline can be exercised
+  end-to-end before Chromium lands.
 
 ### Phase 2 — Milestone scheduling and skeleton analysis app
 
@@ -414,13 +585,26 @@ ALTER TABLE public.task_outbox
 - `lighthouse.Scheduler` enqueues sampled rows and writes outbox entries with
   `task_type='lighthouse'`; honours plan-tier remaining quota.
 - Dispatcher routes `lighthouse` outbox rows onto `stream:{jobID}:lh`.
-- **New `cmd/analysis/main.go` skeleton** with stream consumer, stub runner
-  that writes canned data back to `lighthouse_runs`. New `Dockerfile.analysis`
-  (no Chromium yet — just the Go binary), new `fly.analysis.toml`. Deploy
-  `hover-analysis` to staging.
+- **New `cmd/analysis/main.go` skeleton** with stream consumer and stub
+  runner that writes canned data back to `lighthouse_runs`. New
+  `Dockerfile.analysis` (no Chromium yet — just the Go binary). New
+  `fly.analysis.toml` and `.fly/review_apps.analysis.toml`.
+- **CI/CD wiring** so `hover-analysis` ships through the same pipeline as
+  `hover-worker`:
+  - `.github/workflows/fly-deploy.yml` — new secrets-sync + deploy steps;
+    deploy ordering analysis → worker → API; `service:hover-analysis`
+    added to the path-based service tagging block.
+  - `.github/workflows/review-apps.yml` — build with `Dockerfile.analysis`,
+    tag `hover-analysis-pr-${PR}`, provision Fly app with strict-prefix
+    matching, set secrets pointing at the PR's Supabase preview branch,
+    deploy review app. Destroy ordering reversed on PR close.
+  - `.github/workflows/cleanup-orphaned-apps.yml` — sweep
+    `hover-analysis-pr-*`.
 - Integration test: drive a synthetic job from 0% to 100%, assert correct
   band sizes per milestone, no duplicates, reconciliation behaviour at 100%,
   and that the analysis app picks up + persists results end-to-end.
+- Land a no-op review app on a real PR to validate the pipeline end-to-end
+  before Phase 3.
 
 ### Phase 3 — Real Lighthouse audits
 
@@ -428,11 +612,16 @@ ALTER TABLE public.task_outbox
   No change to `Dockerfile` — `hover` and `hover-worker` images stay lean.
 - `localRunner` in `internal/lighthouse/runner.go` shells out to the binary
   with mobile preset and the documented Chrome flags.
+- Soft memory-shed circuit breaker: skip new runs when free memory is below
+  `LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB` (default 600).
+- R2 upload: gzip the Lighthouse JSON, upload to
+  `jobs/{job_id}/tasks/{task_id}/lighthouse-mobile.json.gz` via the existing
+  `ColdStorageProvider`, store key in `lighthouse_runs.report_key`.
 - 90-second per-run hard timeout; one retry on transient failures; stderr
   captured to `error_message` on permanent failure.
-- Verify on a Fly staging machine: peak memory at `LIGHTHOUSE_MAX_CONCURRENCY=5`,
-  average audit duration, failure rate. Adjust the default if RSS or P95
-  duration is out of bounds.
+- Verify on the production-shaped review app: peak memory at the v1 default
+  of `LIGHTHOUSE_MAX_CONCURRENCY=1`, average audit duration, failure rate.
+  Document numbers; only then consider raising the default.
 
 ### Phase 4 — Surfacing
 
@@ -442,12 +631,13 @@ ALTER TABLE public.task_outbox
 
 ### Phase 5 — Hardening (post-MVP)
 
-- Cold-storage `report_json` to S3/R2 above a size threshold (reuse the
-  `ColdStorageProvider` interface in `internal/archive/`).
-- Configurable sample percentage and per-band cap per plan tier.
+- Horizontal autoscaling: queue-depth-driven `fly scale count` for
+  `hover-analysis`, with `min_machines_running` and a hard ceiling to
+  prevent runaway scale-out.
+- Per-tenant configurable sample percentage and per-band cap.
 - Trend view across multiple crawls per domain (chart of perf score over
   time, regressions highlighted).
-- Optional desktop profile.
+- Optional desktop profile (adds `lighthouse-desktop.json.gz` artefact).
 - Optional remote runner implementation (PSI or WebPageTest) if peak load
   ever outstrips local capacity.
 
