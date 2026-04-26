@@ -14,3 +14,18 @@ ALTER TABLE public.tasks
 
 ALTER TABLE public.task_outbox
   ADD COLUMN IF NOT EXISTS task_type TEXT NOT NULL DEFAULT 'crawl';
+
+-- Constrain the routing values so a typo can't silently flow through to
+-- the dispatcher. Adding a new task type is a one-line migration: drop
+-- the constraint, re-add with the new value included.
+ALTER TABLE public.tasks
+  DROP CONSTRAINT IF EXISTS tasks_task_type_check;
+ALTER TABLE public.tasks
+  ADD CONSTRAINT tasks_task_type_check
+  CHECK (task_type IN ('crawl', 'lighthouse'));
+
+ALTER TABLE public.task_outbox
+  DROP CONSTRAINT IF EXISTS task_outbox_task_type_check;
+ALTER TABLE public.task_outbox
+  ADD CONSTRAINT task_outbox_task_type_check
+  CHECK (task_type IN ('crawl', 'lighthouse'));

@@ -77,10 +77,18 @@ func NewStubRunner() *StubRunner {
 	return &StubRunner{}
 }
 
-// Run honours ctx cancellation but otherwise sleeps briefly to
-// approximate the cost of an audit, then returns a canned result.
+// Run honours ctx cancellation and req.Timeout but otherwise sleeps
+// briefly to approximate the cost of an audit, then returns a canned
+// result.
 func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, error) {
+	if req.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+
 	const simulated = 50 * time.Millisecond
+	start := time.Now()
 
 	select {
 	case <-time.After(simulated):
@@ -109,6 +117,6 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 		TTFBMs:           &ttfb,
 		TotalByteWeight:  &bytes,
 		ReportKey:        "",
-		Duration:         simulated,
+		Duration:         time.Since(start),
 	}, nil
 }

@@ -148,6 +148,11 @@ func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (bool, 
 
 // CompleteLighthouseRun records a successful audit's metrics on a row
 // and stamps completed_at + duration_ms. Status moves to 'succeeded'.
+//
+// The status='running' guard prevents a stale or duplicate-delivered
+// runner from clobbering a row that has already reached a terminal
+// state (succeeded, failed, or skipped_quota) — Redis stream redelivery
+// is at-least-once.
 func (db *DB) CompleteLighthouseRun(ctx context.Context, runID int64, metrics LighthouseRunMetrics) error {
 	const q = `
 		UPDATE lighthouse_runs
@@ -164,7 +169,7 @@ func (db *DB) CompleteLighthouseRun(ctx context.Context, runID int64, metrics Li
 		       report_key        = NULLIF($11, ''),
 		       duration_ms       = $12,
 		       completed_at      = NOW()
-		 WHERE id = $1
+		 WHERE id = $1 AND status = 'running'
 	`
 
 	result, err := db.client.ExecContext(ctx, q,
@@ -195,7 +200,10 @@ func (db *DB) CompleteLighthouseRun(ctx context.Context, runID int64, metrics Li
 }
 
 // FailLighthouseRun records a permanent failure's stderr/error message.
-// Used after the runner exhausts its retry budget.
+// Used after the runner exhausts its retry budget. Like
+// CompleteLighthouseRun, gated on status='running' to avoid a
+// duplicate-delivered worker overwriting a row that already reached a
+// terminal state.
 func (db *DB) FailLighthouseRun(ctx context.Context, runID int64, errorMessage string, durationMs int) error {
 	const q = `
 		UPDATE lighthouse_runs
@@ -203,7 +211,7 @@ func (db *DB) FailLighthouseRun(ctx context.Context, runID int64, errorMessage s
 		       error_message = NULLIF($2, ''),
 		       duration_ms   = $3,
 		       completed_at  = NOW()
-		 WHERE id = $1
+		 WHERE id = $1 AND status = 'running'
 	`
 
 	result, err := db.client.ExecContext(ctx, q, runID, errorMessage, durationMs)

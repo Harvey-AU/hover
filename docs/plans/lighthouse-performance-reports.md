@@ -151,7 +151,7 @@ queue.
 Lighthouse runs in a third Fly app deployed from this same repo, mirroring the
 existing `hover` / `hover-worker` split:
 
-```
+```text
 hover repo
 ├── cmd/
 │   ├── app/main.go           → image used by `hover`           (fly.toml)
@@ -416,7 +416,7 @@ Two tiers, mirroring the existing `page-content.html.gz` pattern:
 
 Co-located with the existing crawl artefact in the `tasks/{task_id}/` folder:
 
-```
+```text
 native-hover-archive/jobs/{job_id}/tasks/{task_id}/
 ├── page-content.html.gz        ← existing
 └── lighthouse-mobile.json.gz   ← new (this plan)
@@ -425,7 +425,7 @@ native-hover-archive/jobs/{job_id}/tasks/{task_id}/
 Profile-suffixed naming so future artefacts slot in cleanly without
 restructuring the path:
 
-```
+```text
 ├── lighthouse-desktop.json.gz  ← future (Phase 5, deferred)
 ├── screenshot-mobile.png       ← future (separate plan)
 └── axe-mobile.json.gz          ← future (separate plan)
@@ -453,7 +453,7 @@ naturally.
 
 CREATE TABLE IF NOT EXISTS public.lighthouse_runs (
   id                  BIGSERIAL PRIMARY KEY,
-  job_id              UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  job_id              TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
   page_id             INT  NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   source_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
   selection_band      TEXT NOT NULL CHECK (selection_band IN ('fastest','slowest','reconcile')),

@@ -46,3 +46,19 @@ func TestStubRunnerHonoursContextCancel(t *testing.T) {
 		t.Fatal("expected context error from cancelled ctx, got nil")
 	}
 }
+
+func TestStubRunnerHonoursAuditRequestTimeout(t *testing.T) {
+	// Timeout shorter than the simulated 50ms audit must trip the
+	// per-run budget rather than waiting for the parent ctx.
+	runner := NewStubRunner()
+	_, err := runner.Run(context.Background(), AuditRequest{
+		URL:     "https://example.com/",
+		Timeout: 1 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected timeout error from short req.Timeout, got nil")
+	}
+	if err != context.DeadlineExceeded {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
