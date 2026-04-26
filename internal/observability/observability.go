@@ -170,6 +170,16 @@ var (
 	// Redis counter.
 	brokerCounterPELSkewHistogram metric.Float64Histogram
 	brokerPELWithoutConsumerGauge metric.Int64Gauge
+
+	// --- HTML persister instruments. ---
+	// Each completed task with HTML payload streams through the persister
+	// pool — direct R2 upload then a metadata-only UPDATE. These metrics
+	// surface upload throughput, latency, queue backpressure, and payload
+	// size so we can tune pool dimensions without rebuilding.
+	htmlPersistUploadCounter   metric.Int64Counter
+	htmlPersistUploadHistogram metric.Float64Histogram
+	htmlPersistQueueDepthGauge metric.Int64Gauge
+	htmlPersistBodyHistogram   metric.Int64Histogram
 )
 
 // Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
@@ -280,11 +290,22 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 
 	initOnce.Do(func() {
 		workerTracer = tracerProvider.Tracer("hover/worker")
-		_ = initWorkerInstruments(meterProvider)
-		_ = initCrawlerInstruments(meterProvider)
-		_ = initJobInstruments(meterProvider)
-		_ = initDBPoolInstruments(meterProvider)
-		_ = initBrokerInstruments(meterProvider)
+		// Surface instrument-registration failures to stderr so a missing
+		// metric group doesn't disappear silently — without this, an
+		// upstream change that breaks one of these registrations would
+		// only show up as "the dashboard panel went flat", much harder
+		// to diagnose than a one-line boot warning.
+		warnInit := func(name string, err error) {
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: failed to initialise %s instruments: %v\n", name, err)
+			}
+		}
+		warnInit("worker", initWorkerInstruments(meterProvider))
+		warnInit("crawler", initCrawlerInstruments(meterProvider))
+		warnInit("jobs", initJobInstruments(meterProvider))
+		warnInit("db pool", initDBPoolInstruments(meterProvider))
+		warnInit("broker", initBrokerInstruments(meterProvider))
+		warnInit("html persister", initHTMLPersistInstruments(meterProvider))
 	})
 
 	shutdown := func(ctx context.Context) error {
@@ -1315,4 +1336,87 @@ func RecordBrokerRedisPool(ctx context.Context, snap RedisPoolSnapshot) {
 	if brokerRedisPoolWait != nil {
 		brokerRedisPoolWait.Record(ctx, snap.Waits)
 	}
+}
+
+// initHTMLPersistInstruments registers the HTML persister metrics.
+// Called once from Init().
+func initHTMLPersistInstruments(meterProvider *sdkmetric.MeterProvider) error {
+	if meterProvider == nil {
+		return nil
+	}
+
+	meter := meterProvider.Meter("hover/html_persist")
+
+	var err error
+
+	htmlPersistUploadCounter, err = meter.Int64Counter(
+		"bee.html_persist.upload_total",
+		metric.WithDescription("HTML persister upload outcomes grouped by result (ok|err|skipped)"),
+	)
+	if err != nil {
+		return err
+	}
+
+	htmlPersistUploadHistogram, err = meter.Float64Histogram(
+		"bee.html_persist.upload_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription("Time taken to PUT a single task HTML payload to R2"),
+	)
+	if err != nil {
+		return err
+	}
+
+	htmlPersistQueueDepthGauge, err = meter.Int64Gauge(
+		"bee.html_persist.queue_depth",
+		metric.WithDescription("Number of pending HTML payloads waiting in the persister channel"),
+	)
+	if err != nil {
+		return err
+	}
+
+	htmlPersistBodyHistogram, err = meter.Int64Histogram(
+		"bee.html_persist.body_bytes",
+		metric.WithUnit("By"),
+		metric.WithDescription("Compressed payload size of HTML uploads streamed to R2"),
+	)
+	return err
+}
+
+// RecordHTMLPersistUpload increments the persister outcome counter.
+// outcome values: "ok", "err", "skipped".
+func RecordHTMLPersistUpload(ctx context.Context, outcome string) {
+	if htmlPersistUploadCounter == nil {
+		return
+	}
+	htmlPersistUploadCounter.Add(ctx, 1,
+		metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// RecordHTMLPersistUploadDuration records how long a single PUT to R2
+// took. Caller passes the wall-clock duration for one object.
+func RecordHTMLPersistUploadDuration(ctx context.Context, duration time.Duration) {
+	if htmlPersistUploadHistogram == nil {
+		return
+	}
+	htmlPersistUploadHistogram.Record(ctx, float64(duration.Milliseconds()))
+}
+
+// RecordHTMLPersistQueueDepth emits the current persister channel depth.
+// Called periodically by the persister itself; useful for tuning the
+// HTML_PERSIST_QUEUE / HTML_PERSIST_WORKERS ratio.
+func RecordHTMLPersistQueueDepth(ctx context.Context, depth int) {
+	if htmlPersistQueueDepthGauge == nil {
+		return
+	}
+	htmlPersistQueueDepthGauge.Record(ctx, int64(depth))
+}
+
+// RecordHTMLPersistBodyBytes records the compressed payload size of a
+// single upload. Catches large-page surprises and helps right-size the
+// in-flight memory budget.
+func RecordHTMLPersistBodyBytes(ctx context.Context, bytes int64) {
+	if htmlPersistBodyHistogram == nil || bytes <= 0 {
+		return
+	}
+	htmlPersistBodyHistogram.Record(ctx, bytes)
 }

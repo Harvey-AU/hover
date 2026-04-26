@@ -32,6 +32,71 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.9] – 2026-04-26
+
+### Added
+
+- `ARCHIVE_PATH_PREFIX` env var on the worker. When set, `TaskHTMLObjectPath`
+  prepends the prefix to every persisted HTML key — so review-app deployments
+  can land in their own R2 sub-tree and be cleaned out as a single sweep. Empty
+  prefix preserves the production path layout exactly.
+
+### Changed
+
+- Review-app workers now write HTML to a dedicated bucket
+  `native-hover-archive-review` with an `<pr-number>/` prefix
+  (`native-hover-archive-review/<pr>/jobs/<job>/tasks/<task>/...`). Cleanup
+  becomes a single bucket purge (or R2 lifecycle rule) instead of per-PR prefix
+  surgery on the production bucket. The bucket itself must be pre-created in R2
+  — credentials in 1Password already carry write access.
+
+### Removed
+
+- Legacy hot-to-cold archive sweep (`internal/archive/scheduler.go`,
+  `internal/archive/task_html.go`, `archive.Archiver`, `archive.ArchiveSource`,
+  `archive.ArchiveCandidate`) and the corresponding DB methods
+  `FindArchiveCandidates` / `MarkTaskArchived` / `MarkArchiveSkipped` /
+  `MarkFullyArchivedJobs`. The sweep moved data Supabase Storage → R2; with R2
+  now serving as the hot store, nothing was wired to call any of it. Nothing in
+  the runtime referenced these symbols. `ARCHIVE_RETENTION_JOBS`,
+  `ARCHIVE_INTERVAL`, `ARCHIVE_BATCH_SIZE`, `ARCHIVE_CONCURRENCY` env vars
+  removed from `fly.toml`, `fly.worker.toml`, `.fly/review_apps.toml`,
+  `.fly/review_apps.worker.toml` for the same reason. DB schema is unchanged —
+  `tasks.html_archive_*` columns stay reserved for a future deep-cold tier.
+
+### Fixed
+
+- HTML persister now drains accepted uploads on graceful shutdown instead of
+  abandoning queued payloads when `Stop()` is called. Stop rejects further
+  Enqueue calls, closes the queue, lets workers drain (uploads keep their
+  per-call timeout), then signals the probe loop and cancels the shared context.
+  Previously a `Stop()` race could silently drop up to `QueueSize` task bodies
+  on every restart.
+- `cmd/worker` now starts the persister under a context decoupled from the main
+  shutdown `cancel()`. The persister and its upload workers stay live while
+  `swp.Stop()` drains the stream worker, so final HTML payloads enqueued during
+  drain reach an active reader. Previously the shared context meant SIGTERM
+  cancelled the persister's workers immediately, leaving any payload enqueued
+  during drain stuck in a queue with no readers.
+- HTML metadata flush failures no longer discard the in-memory batch. Transient
+  DB errors retain the batch for retry on the next tick/size flush so
+  just-uploaded R2 objects keep their metadata pointer; sustained failure caps
+  the retained batch at 8× `BatchSize` and drops oldest, with a `flush_err`
+  outcome on the existing persister upload counter.
+- `cmd/worker` now fails loudly when only one of `ARCHIVE_PROVIDER` /
+  `ARCHIVE_BUCKET` is set. A deploy typo previously fell through to the "feature
+  disabled" branch and silently recreated the missing-capture failure mode this
+  stage is meant to fix.
+- Stream worker now logs a warning when an HTML payload is dropped because the
+  persister queue is saturated, in addition to the persister's `skipped` outcome
+  metric — so an operator can correlate a drop with the specific task without
+  combing persister logs.
+- Observability instrument-registration failures now write a `WARN:` line to
+  stderr instead of being silently swallowed by `_ =`. Surfaces a missing metric
+  group at boot rather than as a flat dashboard panel later. Applied to all six
+  init calls (worker, crawler, jobs, db pool, broker, html persister) for
+  consistency.
+
 ## [0.33.8] – 2026-04-25
 
 ### Added
@@ -217,6 +282,13 @@ _Add unreleased changes here._
 
 - Grafana deploy annotations posted on every main merge; dashboards synced from
   repo; panels and traces scoped by app
+- HTML persister pool (`internal/jobs/html_persister.go`) streaming completed
+  task HTML directly to Cloudflare R2 with a metadata-only batch UPDATE; tunable
+  via `HTML_PERSIST_WORKERS`, `HTML_PERSIST_QUEUE`, `HTML_PERSIST_BATCH_SIZE`,
+  `HTML_PERSIST_FLUSH_INTERVAL`, and `HTML_PERSIST_UPLOAD_TIMEOUT`.
+- New `bee.html_persist.*` metrics: `upload_total{outcome}`, `upload_ms`,
+  `queue_depth`, and `body_bytes`, so persister throughput, latency,
+  backpressure, and payload size are dashboarded.
 
 ### Fixed
 
@@ -227,10 +299,22 @@ _Add unreleased changes here._
 - Worker metrics now scraped by Alloy sidecar (added to Docker build); four
   broken Grafana panels restored after metrics rename; semaphore wait corrected
   to µs
+- Restored task HTML capture, which had silently dropped on the post-Redis
+  worker rewrite (no rows persisted since 2026-04-14). New writes go straight to
+  R2 with `html_archived_at` stamped at write time, so the archive sweep no
+  longer surfaces them as no-op candidates.
 
 ### Changed
 
 - Go bumped to 1.26.2 for security fixes
+- Task HTML now persists direct-to-R2 from the worker (issue #332), skipping the
+  Supabase Storage hop entirely. The R2 paths land in `html_storage_*`; the
+  `html_archive_*` columns are reserved for a future deep-cold-storage tier.
+
+### Removed
+
+- `internal/storage` package (Supabase Storage client) and its tests — the
+  direct-to-R2 persister supersedes it and there were no remaining callers.
 
 ## [0.33.1] – 2026-04-24
 

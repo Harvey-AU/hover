@@ -1,8 +1,14 @@
 # Page Content Storage Plan
 
-This document outlines how to store per-task HTML page content in Supabase
-Storage rather than Postgres, so each crawl run can retain the fetched page body
-for later inspection.
+> **Update — 2026-04-25:** the canonical write path is now **direct to
+> Cloudflare R2** (issue #332). Supabase Storage is no longer involved. The
+> sections below preserve the original design rationale;
+> `## 3. Recommended Approach` and `## 6. Task Metadata` reflect the current
+> implementation.
+
+This document outlines how to store per-task HTML page content in object storage
+rather than Postgres, so each crawl run can retain the fetched page body for
+later inspection.
 
 ## 1. Goal
 
@@ -29,15 +35,22 @@ Out of scope:
 
 ## 3. Recommended Approach
 
-Store page bodies in a private Supabase Storage bucket and keep only metadata on
-`tasks`.
+Store page bodies in a private Cloudflare R2 bucket (S3-compatible) and keep
+only metadata on `tasks`. R2 was previously the cold-storage tier behind a sweep
+job; with the direct-to-R2 path it is now the hot store too. A future
+deep-cold-storage tier (provider TBD) will eventually replace the
+`html_archive_*` columns the archive scheduler still references.
 
-Recommended default:
+Current default:
 
-- bucket: `task-html`
-- object path: `jobs/{job_id}/tasks/page-path/{task_id}.html.gz`
+- bucket: configured via `ARCHIVE_BUCKET` (production: `native-hover-archive`)
+- provider: `ARCHIVE_PROVIDER=r2`
+- object path: `jobs/{job_id}/tasks/{task_id}/page-content.html.gz`
 - always upload gzip-compressed HTML
-- keep a few scalar metadata columns on `tasks`
+- one PUT per task; no Supabase Storage hop
+- metadata columns on `tasks` populated in a single batched UPDATE per persister
+  flush, with `html_archived_at` stamped at write time so the archive sweep
+  skips the row
 
 ## 4. Why Storage Instead Of Postgres
 
@@ -66,19 +79,22 @@ real storage scale efficiently.
 
 ## 6. Task Metadata To Store
 
-Add task-level columns such as:
+Task-level columns populated by `BatchUpsertTaskHTMLMetadata`:
 
+- `html_storage_bucket TEXT` — the R2 bucket name (matches `ARCHIVE_BUCKET`)
 - `html_storage_path TEXT`
 - `html_content_type TEXT`
 - `html_size_bytes BIGINT`
 - `html_compressed_size_bytes BIGINT`
 - `html_content_encoding TEXT`
 - `html_captured_at TIMESTAMPTZ`
-
-Optional:
-
-- `html_storage_bucket TEXT`
 - `html_sha256 TEXT`
+- `html_archived_at TIMESTAMPTZ` — stamped equal to `html_captured_at` so the
+  archive sweep candidate query (`html_archived_at IS NULL`) treats the row as
+  already cold-stored
+
+The `html_archive_*` columns remain on the schema but are unused by the
+direct-to-R2 path. They are reserved for the future deep-cold-storage tier.
 
 These columns allow later retrieval, rough size analysis, and content change
 tracking without querying Storage directly.

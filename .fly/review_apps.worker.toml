@@ -77,12 +77,13 @@ primary_region = "syd"
   OTEL_EXPORTER_OTLP_ENDPOINT = "https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp/v1/traces"
 
   # Cold-storage archival (R2) — credentials via flyctl secrets.
+  # Review apps land in a dedicated bucket so cleanup is a single bucket
+  # purge (or R2 lifecycle rule) instead of per-PR prefix surgery on the
+  # production bucket. ARCHIVE_PATH_PREFIX is injected per-PR by the
+  # review-apps workflow with the PR number, giving paths like
+  # native-hover-archive-review/<pr>/jobs/<job>/tasks/<task>/...
   ARCHIVE_PROVIDER = "r2"
-  ARCHIVE_BUCKET = "native-hover-archive"
-  ARCHIVE_RETENTION_JOBS = "3"
-  ARCHIVE_INTERVAL = "1m"
-  ARCHIVE_BATCH_SIZE = "100"
-  ARCHIVE_CONCURRENCY = "5"
+  ARCHIVE_BUCKET = "native-hover-archive-review"
 
   # Outbox sweeper — mirror prod defaults.
   OUTBOX_SWEEP_INTERVAL_MS = "200"
