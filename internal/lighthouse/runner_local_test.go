@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -424,6 +425,34 @@ func TestLocalRunner_TimeoutCancelsAndKillsProcess(t *testing.T) {
 	assert.True(t, errors.Is(err, context.DeadlineExceeded),
 		"expected deadline exceeded, got %v", err)
 	assert.Less(t, elapsed, 5*time.Second, "process tree must die promptly on timeout")
+}
+
+// TestSanitiseRunnerStderr_RedactsBeforeTruncating pins the order of
+// operations: the full URL must be replaced *before* truncation, not
+// after. If truncation happened first, a URL straddling the 2 KiB
+// cut-off would no longer match `rawURL` and the trailing query token
+// would survive into lighthouse_runs.error_message.
+func TestSanitiseRunnerStderr_RedactsBeforeTruncating(t *testing.T) {
+	rawURL := "https://example.com/path?token=leak-me-please&session=abc"
+	// Build a stderr tail where the URL appears just before the
+	// truncateForLog 2 KiB cut-off, so half the URL would be lost
+	// if truncation ran first.
+	prefix := strings.Repeat("noise ", 400) // ~2400 bytes
+	tail := []byte(prefix + "fatal: navigation to " + rawURL + " failed")
+
+	out := sanitiseRunnerStderr(rawURL, tail)
+
+	assert.NotContains(t, out, "token=leak-me-please",
+		"query token must not survive truncation regardless of where the URL falls")
+	assert.NotContains(t, out, "session=abc",
+		"query token must not survive truncation regardless of where the URL falls")
+	assert.LessOrEqual(t, len(out), 2048+3,
+		"truncation must still bound the output (2048 + leading '...' marker)")
+}
+
+func TestSanitiseRunnerStderr_NoURLPassthrough(t *testing.T) {
+	out := sanitiseRunnerStderr("", []byte("plain stderr without url"))
+	assert.Equal(t, "plain stderr without url", out)
 }
 
 func TestIsTransientErr(t *testing.T) {

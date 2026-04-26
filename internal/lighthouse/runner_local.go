@@ -388,12 +388,17 @@ func truncateForLog(b []byte) string {
 // through the failure path. Strips only the exact request URL so the
 // rest of the stderr context (stack frames, protocol-error details)
 // stays usable for diagnostics.
+//
+// Order matters: redact the full tail first, then truncate. If we
+// truncated first, a URL that straddled the 2 KiB cut-off would no
+// longer match the rawURL string and the partial query/fragment would
+// leak through.
 func sanitiseRunnerStderr(rawURL string, tail []byte) string {
-	msg := truncateForLog(tail)
-	if rawURL == "" {
-		return msg
+	msg := string(tail)
+	if rawURL != "" {
+		msg = strings.ReplaceAll(msg, rawURL, SanitiseAuditURL(rawURL))
 	}
-	return strings.ReplaceAll(msg, rawURL, SanitiseAuditURL(rawURL))
+	return truncateForLog([]byte(msg))
 }
 
 // defaultReadMemAvailableMB reads /proc/meminfo's MemAvailable line and
