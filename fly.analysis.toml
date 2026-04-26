@@ -15,6 +15,15 @@ primary_region = 'syd'
 
 [env]
   APP_ENV = "production"
+  # R2 archive target. Mirrors fly.toml and fly.worker.toml exactly so
+  # the analysis app uploads its lighthouse JSON reports into the same
+  # bucket as the worker's page-content.html.gz artefacts. Provider
+  # name and bucket are not secrets — credentials come in via Fly
+  # secrets (ARCHIVE_ACCESS_KEY_ID/SECRET/ENDPOINT). Without these two,
+  # archive.ConfigFromEnv returns nil and the local runner refuses to
+  # boot; that's the boot guard that flagged this gap on first deploy.
+  ARCHIVE_PROVIDER = "r2"
+  ARCHIVE_BUCKET = "native-hover-archive"
   # Phase 3: real Chromium + lighthouse@12.2.1 baked into the image
   # via Dockerfile.analysis. Boot fails loud if ARCHIVE_* secrets are
   # missing, so a misconfiguration surfaces before any audit is queued
