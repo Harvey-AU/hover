@@ -96,7 +96,7 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 		"job_id", req.JobID,
 		"page_id", req.PageID,
 		"profile", string(req.Profile),
-		"url", sanitiseAuditURL(req.URL),
+		"url", SanitiseAuditURL(req.URL),
 	)
 
 	select {
@@ -143,11 +143,13 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	return result, nil
 }
 
-// sanitiseAuditURL strips query strings and fragments before logging.
+// SanitiseAuditURL strips query strings and fragments before logging.
 // Lighthouse audit URLs come from customer crawls and can carry session
 // tokens, signed-link tokens, or other low-entropy PII in the query
-// string; the runner does not need them in central logs.
-func sanitiseAuditURL(raw string) string {
+// string; the runner does not need them in central logs. Exported so
+// the analysis service (cmd/analysis) can apply the same rule to its
+// own info-level logs without redefining the helper.
+func SanitiseAuditURL(raw string) string {
 	if raw == "" {
 		return ""
 	}

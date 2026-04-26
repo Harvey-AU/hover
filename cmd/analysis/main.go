@@ -490,9 +490,12 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 		return
 	}
 	if !moved {
-		// Already past pending — likely a redelivery of a completed run.
-		// ACK and move on.
-		analysisLog.Debug("lighthouse run not in pending state; acking redelivery",
+		// MarkLighthouseRunRunning accepts both pending and running, so
+		// the only way to land here is a terminal status — the row is
+		// already succeeded, failed, or skipped_quota. The stream entry
+		// is stale; ACK so the dispatcher's at-least-once redelivery
+		// stops re-driving completed work.
+		analysisLog.Debug("lighthouse run already terminal; acking stale redelivery",
 			"run_id", req.RunID, "job_id", req.JobID, "message_id", msgID)
 		_ = c.rdb.RDB().XAck(ctx, streamKey, groupName, msgID).Err()
 		return
@@ -500,7 +503,11 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 
 	analysisLog.Info("lighthouse audit started",
 		"run_id", req.RunID, "job_id", req.JobID,
-		"page_id", req.PageID, "url", req.URL,
+		"page_id", req.PageID,
+		// Strip query/fragment so customer session tokens or signed-link
+		// tokens aren't written to centralised logs. Mirrors the same
+		// rule applied inside StubRunner.Run.
+		"url", lighthouse.SanitiseAuditURL(req.URL),
 		"profile", string(req.Profile),
 	)
 

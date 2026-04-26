@@ -124,15 +124,24 @@ func InsertLighthouseRun(ctx context.Context, tx *sql.Tx, insert LighthouseRunIn
 	return id, nil
 }
 
-// MarkLighthouseRunRunning transitions a pending row to running and
-// stamps started_at. Returns false if the row is already past pending,
-// so the caller can avoid double-dispatch.
+// MarkLighthouseRunRunning transitions a row into the running state and
+// stamps started_at. Accepts both 'pending' (first delivery) and
+// 'running' (reclaim of a row left in flight by a crashed or
+// shutting-down consumer) so XAUTOCLAIM can hand work off cleanly.
+//
+// Returns false only when the row has reached a terminal state
+// ('succeeded', 'failed', 'skipped_quota'); the caller treats that as
+// "safe to ACK and drop the redelivered stream message". Double-running
+// races (two consumers reclaim the same idle row) are bounded by the
+// status='running' guard on CompleteLighthouseRun / FailLighthouseRun:
+// whichever finishes first writes the terminal row, the other gets
+// ErrLighthouseRunNotFound and ACKs.
 func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (bool, error) {
 	const q = `
 		UPDATE lighthouse_runs
 		   SET status = 'running',
 		       started_at = NOW()
-		 WHERE id = $1 AND status = 'pending'
+		 WHERE id = $1 AND status IN ('pending', 'running')
 	`
 
 	result, err := db.client.ExecContext(ctx, q, runID)
