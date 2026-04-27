@@ -29,10 +29,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// ParseOTLPHeaders converts a comma-separated `key=value` list (matching the
-// OTEL_EXPORTER_OTLP_HEADERS env var format) into a map. Whitespace around
-// pairs and tokens is trimmed; empty pairs, pairs without `=`, and entries
-// with an empty key are skipped.
+// ParseOTLPHeaders parses the OTEL_EXPORTER_OTLP_HEADERS env var format.
 func ParseOTLPHeaders(raw string) map[string]string {
 	headers := make(map[string]string)
 	raw = strings.TrimSpace(raw)
@@ -63,7 +60,6 @@ func ParseOTLPHeaders(raw string) map[string]string {
 	return headers
 }
 
-// Config controls observability initialisation.
 type Config struct {
 	Enabled        bool
 	ServiceName    string
@@ -74,7 +70,6 @@ type Config struct {
 	MetricsAddress string
 }
 
-// Providers exposes configured telemetry providers.
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *sdkmetric.MeterProvider
@@ -133,8 +128,6 @@ var (
 	fdLimitGauge    metric.Int64Gauge
 	fdPressureGauge metric.Float64Gauge
 
-	// --- Redis broker instruments (Tier 1 + Tier 2). ---
-	// Tier 1: gauges scraped by the broker probe goroutine.
 	brokerStreamLengthGauge    metric.Int64Gauge
 	brokerScheduledDepthGauge  metric.Int64Gauge
 	brokerConsumerPendingGauge metric.Int64Gauge
@@ -142,61 +135,40 @@ var (
 	brokerOutboxAgeGauge       metric.Float64Gauge
 	brokerRedisPingHistogram   metric.Float64Histogram
 
-	// Tier 1: dispatch outcomes counter.
-	brokerDispatchCounter metric.Int64Counter
-
-	// Tier 1: outbox sweep outcomes. Labelled by outcome so the shape of
-	// sweeper failures (partial vs total vs dead-letter) is visible without
-	// an ad-hoc DB session.
+	brokerDispatchCounter    metric.Int64Counter
 	brokerOutboxSweepCounter metric.Int64Counter
 
-	// Tier 2: autoclaim + message age.
 	brokerAutoclaimCounter    metric.Int64Counter
 	brokerMessageAgeHistogram metric.Float64Histogram
 
-	// Tier 2: pacer signals.
 	brokerPacerPushbackCounter metric.Int64Counter
 	brokerPacerDelayHistogram  metric.Float64Histogram
 
-	// Tier 2: counter sync skew and Redis pool stats.
 	brokerCounterSyncSkew metric.Float64Histogram
 	brokerRedisPoolInUse  metric.Int64Gauge
 	brokerRedisPoolIdle   metric.Int64Gauge
 	brokerRedisPoolWait   metric.Int64Gauge
 
-	// Tier 2: counter-vs-PEL drift and orphan PEL detection. These catch
-	// the "job frozen with in-flight work" failure mode — historically
-	// invisible because the Postgres mirror happily reflected the stuck
-	// Redis counter.
+	// Catches the "job frozen with in-flight work" failure mode — the
+	// Postgres mirror reflects the stuck Redis counter, so PEL-vs-counter
+	// drift is the only signal.
 	brokerCounterPELSkewHistogram metric.Float64Histogram
 	brokerPELWithoutConsumerGauge metric.Int64Gauge
 
-	// --- HTML persister instruments. ---
-	// Each completed task with HTML payload streams through the persister
-	// pool — direct R2 upload then a metadata-only UPDATE. These metrics
-	// surface upload throughput, latency, queue backpressure, and payload
-	// size so we can tune pool dimensions without rebuilding.
 	htmlPersistUploadCounter   metric.Int64Counter
 	htmlPersistUploadHistogram metric.Float64Histogram
 	htmlPersistQueueDepthGauge metric.Int64Gauge
 	htmlPersistBodyHistogram   metric.Int64Histogram
 
-	// --- Lighthouse audit instruments. ---
-	// Surface the producer-side scheduler activity (how many runs were
-	// enqueued, in which band) and the consumer-side runner outcomes
-	// (succeeded/failed/skipped_quota plus duration). band has three
-	// values (fastest|slowest|reconcile) so cardinality stays bounded.
-	// Milestone is intentionally not a label — the metric records the
-	// flow rate of scheduling decisions, and per-milestone breakdowns
-	// belong on logs/traces (which already carry job_id + milestone)
-	// rather than time-series cardinality.
+	// Milestone is intentionally not a label on lighthouse metrics —
+	// per-milestone breakdowns live on logs/traces; band is bounded
+	// (fastest|slowest|reconcile) so it stays as a label.
 	lighthouseRunsScheduledCounter metric.Int64Counter
 	lighthouseRunsCounter          metric.Int64Counter
 	lighthouseRunDurationHistogram metric.Float64Histogram
 	lighthouseRunRetriesCounter    metric.Int64Counter
 )
 
-// Init configures tracing and metrics exporters. When cfg.Enabled is false the function is a no-op.
 func Init(ctx context.Context, cfg Config) (*Providers, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -233,10 +205,9 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 
 		exp, err := otlptracehttp.New(ctx, clientOpts...)
 		if err != nil {
-			// Log error but don't fail app startup - observability is optional
+			// Observability is optional; do not fail app startup.
 			fmt.Printf("WARN: Failed to create OTLP trace exporter (traces disabled): %v\n", err)
 			fmt.Printf("WARN: Endpoint: %s\n", cfg.OTLPEndpoint)
-			// Continue without tracing - app should still function
 		} else {
 			spanExporter = exp
 			fmt.Printf("INFO: OTLP trace exporter initialised successfully for endpoint: %s\n", cfg.OTLPEndpoint)
@@ -268,7 +239,7 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		otelprom.WithRegisterer(registry),
 	)
 	if err != nil {
-		_ = tracerProvider.Shutdown(ctx) // best-effort cleanup
+		_ = tracerProvider.Shutdown(ctx)
 		return nil, fmt.Errorf("create Prometheus exporter: %w", err)
 	}
 
@@ -304,11 +275,8 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 
 	initOnce.Do(func() {
 		workerTracer = tracerProvider.Tracer("hover/worker")
-		// Surface instrument-registration failures to stderr so a missing
-		// metric group doesn't disappear silently — without this, an
-		// upstream change that breaks one of these registrations would
-		// only show up as "the dashboard panel went flat", much harder
-		// to diagnose than a one-line boot warning.
+		// Surface registration failures: a silent miss shows up only as
+		// a flat dashboard panel, which is much harder to diagnose.
 		warnInit := func(name string, err error) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: failed to initialise %s instruments: %v\n", name, err)
@@ -347,11 +315,8 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 	}, nil
 }
 
-// otelExportInterval returns the OTEL metric export interval from
-// GNH_OTEL_EXPORT_INTERVAL_SECONDS (default 60s). A longer interval reduces
-// export frequency but increases the aggregated payload size per export; 60s
-// was chosen to keep per-export bursts within Grafana Mimir's ingestion rate
-// limits under expected load.
+// 60s default keeps per-export bursts within Grafana Mimir's ingestion
+// rate limits under expected load.
 func otelExportInterval() time.Duration {
 	if s := os.Getenv("GNH_OTEL_EXPORT_INTERVAL_SECONDS"); s != "" {
 		n, err := strconv.Atoi(s)
@@ -375,8 +340,7 @@ func getOTLPEndpointOption(endpoint string) otlptracehttp.Option {
 	return otlptracehttp.WithEndpoint(endpoint)
 }
 
-// deriveMetricsEndpoint converts a traces OTLP endpoint URL to the metrics equivalent.
-// e.g. ".../otlp/v1/traces" → ".../otlp/v1/metrics"
+// deriveMetricsEndpoint rewrites ".../v1/traces" to ".../v1/metrics".
 func deriveMetricsEndpoint(tracesEndpoint string) string {
 	if strings.HasSuffix(tracesEndpoint, "/v1/traces") {
 		return strings.TrimSuffix(tracesEndpoint, "/v1/traces") + "/v1/metrics"
@@ -384,7 +348,6 @@ func deriveMetricsEndpoint(tracesEndpoint string) string {
 	return tracesEndpoint
 }
 
-// WrapHandler applies OpenTelemetry instrumentation to an http.Handler when the providers are active.
 func WrapHandler(handler http.Handler, prov *Providers) http.Handler {
 	if prov == nil || prov.TracerProvider == nil {
 		return handler
@@ -397,7 +360,6 @@ func WrapHandler(handler http.Handler, prov *Providers) http.Handler {
 		otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
 			return fmt.Sprintf("%s %s", r.Method, r.URL.Path)
 		}),
-		// Skip tracing for health checks to reduce noise
 		otelhttp.WithFilter(func(r *http.Request) bool {
 			return r.URL.Path != "/health"
 		}),
@@ -723,7 +685,6 @@ func initDBPoolInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	return err
 }
 
-// WorkerTaskSpanInfo describes the attributes used when starting a worker task span.
 type WorkerTaskSpanInfo struct {
 	JobID     string
 	TaskID    string
@@ -732,7 +693,6 @@ type WorkerTaskSpanInfo struct {
 	FindLinks bool
 }
 
-// WorkerTaskMetrics describes a processed task for metric recording.
 type WorkerTaskMetrics struct {
 	JobID         string
 	Status        string
@@ -754,7 +714,6 @@ type CrawlerPhaseMetrics struct {
 	Duration time.Duration
 }
 
-// StartWorkerTaskSpan starts a span for an individual worker task.
 func StartWorkerTaskSpan(ctx context.Context, info WorkerTaskSpanInfo) (context.Context, trace.Span) {
 	t := workerTracer
 	if t == nil {
@@ -772,11 +731,8 @@ func StartWorkerTaskSpan(ctx context.Context, info WorkerTaskSpanInfo) (context.
 	return t.Start(ctx, "worker.process_task", trace.WithAttributes(attrs...))
 }
 
-// RecordWorkerTask emits worker task metrics when instrumentation is initialised.
-//
-// Note: job.id is intentionally dropped from metric labels to keep Prometheus
-// active-series cardinality bounded. Use spans (which still carry job.id on
-// the worker.process_task span attributes) to pivot per-job when needed.
+// job.id must NOT be a metric label — Prometheus active-series cardinality.
+// Per-job pivot lives on the worker.process_task span attributes.
 func RecordWorkerTask(ctx context.Context, metrics WorkerTaskMetrics) {
 	attrs := metric.WithAttributes(attribute.String("task.status", metrics.Status))
 
@@ -797,7 +753,6 @@ func RecordWorkerTask(ctx context.Context, metrics WorkerTaskMetrics) {
 	}
 }
 
-// RecordWorkerTaskOutcome emits task processing duration grouped by outcome.
 func RecordWorkerTaskOutcome(ctx context.Context, metrics WorkerTaskOutcomeMetrics) {
 	attrs := []attribute.KeyValue{
 		attribute.String("task.outcome", metrics.Outcome),
@@ -814,7 +769,6 @@ func RecordWorkerTaskOutcome(ctx context.Context, metrics WorkerTaskOutcomeMetri
 	}
 }
 
-// RecordCrawlerPhase emits duration and count metrics for a crawler phase.
 func RecordCrawlerPhase(ctx context.Context, metrics CrawlerPhaseMetrics) {
 	attrs := []attribute.KeyValue{
 		attribute.String("crawler.phase", metrics.Phase),
@@ -831,9 +785,7 @@ func RecordCrawlerPhase(ctx context.Context, metrics CrawlerPhaseMetrics) {
 	}
 }
 
-// RecordWorkerConcurrency records the change in concurrent tasks for a worker.
-// delta: +1 when starting a task, -1 when completing
-// capacity: the worker's concurrency limit (only recorded once per worker on startup)
+// delta: +1 starting, -1 completing. capacity: pass >0 only on startup.
 func RecordWorkerConcurrency(ctx context.Context, workerID int, delta int64, capacity int64) {
 	if workerConcurrentTasks != nil {
 		workerConcurrentTasks.Add(ctx, delta,
@@ -846,10 +798,7 @@ func RecordWorkerConcurrency(ctx context.Context, workerID int, delta int64, cap
 	}
 }
 
-// RecordJobConcurrencySnapshot captures the running task count and concurrency
-// limit for a job. jobID is retained in the signature for call-site stability
-// but omitted from metric labels — per-job cardinality is unbounded at launch
-// scale and these gauges are intended for worker-wide snapshots.
+// jobID kept for call-site stability; omitted from labels (cardinality).
 func RecordJobConcurrencySnapshot(ctx context.Context, jobID string, runningTasks int64, concurrencyLimit int64, unlimited bool) {
 	_ = jobID
 	if jobRunningTasksGauge != nil {
@@ -862,8 +811,7 @@ func RecordJobConcurrencySnapshot(ctx context.Context, jobID string, runningTask
 	}
 }
 
-// Note: jobID argument is retained for API stability and future span/trace
-// correlation, but is no longer attached as a metric label. See RecordWorkerTask.
+// jobID kept for call-site stability; omitted from labels (cardinality).
 func RecordJobInfoCacheHit(ctx context.Context, jobID string) {
 	_ = jobID
 	if jobInfoCacheHitsCounter == nil {
@@ -896,7 +844,6 @@ func RecordJobInfoCacheSize(ctx context.Context, size int) {
 	jobInfoCacheSizeGauge.Record(ctx, int64(size))
 }
 
-// DBPoolSnapshot describes a database connection pool state.
 type DBPoolSnapshot struct {
 	InUse        int
 	Idle         int
@@ -907,7 +854,6 @@ type DBPoolSnapshot struct {
 	Usage        float64
 }
 
-// RecordDBPoolStats records database pool utilisation metrics.
 func RecordDBPoolStats(ctx context.Context, snapshot DBPoolSnapshot) {
 	if dbPoolInUseGauge != nil {
 		dbPoolInUseGauge.Record(ctx, int64(snapshot.InUse), metric.WithAttributes())
@@ -932,8 +878,7 @@ func RecordDBPoolStats(ctx context.Context, snapshot DBPoolSnapshot) {
 	}
 }
 
-// RecordTaskClaimAttempt records the latency of claiming a task from the queue.
-// jobID is retained for signature stability but not emitted as a label.
+// jobID kept for call-site stability; omitted from labels (cardinality).
 func RecordTaskClaimAttempt(ctx context.Context, jobID string, latency time.Duration, status string) {
 	_ = jobID
 	if workerTaskClaimLatency != nil {
@@ -942,7 +887,6 @@ func RecordTaskClaimAttempt(ctx context.Context, jobID string, latency time.Dura
 	}
 }
 
-// RecordWorkerTaskRetry records a retry attempt for a task.
 func RecordWorkerTaskRetry(ctx context.Context, jobID string, reason string) {
 	_ = jobID
 	if workerTaskRetryCounter != nil {
@@ -951,7 +895,6 @@ func RecordWorkerTaskRetry(ctx context.Context, jobID string, reason string) {
 	}
 }
 
-// RecordWorkerTaskFailure records a permanently failed task.
 func RecordWorkerTaskFailure(ctx context.Context, jobID string, reason string) {
 	_ = jobID
 	if workerTaskFailureCounter != nil {
@@ -960,7 +903,6 @@ func RecordWorkerTaskFailure(ctx context.Context, jobID string, reason string) {
 	}
 }
 
-// RecordTaskWaiting records when tasks move into the waiting queue along with the reason.
 func RecordTaskWaiting(ctx context.Context, jobID string, reason string, count int) {
 	_ = jobID
 	if workerTaskWaitingCounter == nil || count <= 0 {
@@ -971,15 +913,13 @@ func RecordTaskWaiting(ctx context.Context, jobID string, reason string, count i
 		metric.WithAttributes(attribute.String("task.waiting_reason", reason)))
 }
 
-// RecordDBPoolRejection increments the pool rejection counter when requests are rejected before acquiring a connection.
 func RecordDBPoolRejection(ctx context.Context) {
 	if dbPoolRejectCounter != nil {
 		dbPoolRejectCounter.Add(ctx, 1, metric.WithAttributes())
 	}
 }
 
-// RecordDBPressureStats records the pressure controller's current EMA and concurrency limit.
-// Call this alongside RecordDBPoolStats for a complete pool+pressure snapshot in Grafana.
+// Call alongside RecordDBPoolStats for a complete pool+pressure snapshot.
 func RecordDBPressureStats(ctx context.Context, emaMs float64, limit int32) {
 	if dbPressureEMAGauge != nil {
 		dbPressureEMAGauge.Record(ctx, emaMs)
@@ -989,7 +929,6 @@ func RecordDBPressureStats(ctx context.Context, emaMs float64, limit int32) {
 	}
 }
 
-// RecordDBPressureAdjustment increments the adjustment counter.
 // direction must be "up" or "down".
 func RecordDBPressureAdjustment(ctx context.Context, direction string) {
 	if dbPressureAdjustCounter != nil {
@@ -998,14 +937,12 @@ func RecordDBPressureAdjustment(ctx context.Context, direction string) {
 	}
 }
 
-// RecordSemaphoreWait records the time spent waiting to acquire a DB queue semaphore slot.
 func RecordSemaphoreWait(ctx context.Context, waitMs float64) {
 	if dbSemaphoreWaitHistogram != nil {
 		dbSemaphoreWaitHistogram.Record(ctx, waitMs)
 	}
 }
 
-// RecordFDStats records file descriptor usage metrics.
 func RecordFDStats(ctx context.Context, current, limit int, pressure float64) {
 	if fdCurrentGauge != nil {
 		fdCurrentGauge.Record(ctx, int64(current), metric.WithAttributes())
@@ -1018,8 +955,6 @@ func RecordFDStats(ctx context.Context, current, limit int, pressure float64) {
 	}
 }
 
-// initBrokerInstruments registers the Tier 1 and Tier 2 Redis broker
-// metrics. Called once from Init().
 func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	if meterProvider == nil {
 		return nil
@@ -1029,7 +964,6 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 
 	var err error
 
-	// --- Tier 1 ---
 	brokerStreamLengthGauge, err = meter.Int64Gauge(
 		"bee.broker.stream_length",
 		metric.WithDescription("Current XLEN for a job's Redis stream"),
@@ -1096,7 +1030,6 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 		return err
 	}
 
-	// --- Tier 2 ---
 	brokerAutoclaimCounter, err = meter.Int64Counter(
 		"bee.broker.autoclaim_total",
 		metric.WithDescription("XAUTOCLAIM outcomes grouped by result (reclaimed|dead_letter)"),
@@ -1178,20 +1111,15 @@ func initBrokerInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	return err
 }
 
-// BrokerStreamStats captures worker-wide broker depth, aggregated across all
-// active jobs. Previously emitted per-job with a job.id label; the label was
-// removed to keep Mimir series cardinality bounded as job counts grow. The
-// original dashboard queries used sum(...) across the per-job series, so
-// emitting the pre-aggregated total preserves the dashboard semantics.
+// Pre-aggregated across active jobs; the per-job job.id label was dropped
+// for Mimir cardinality and dashboards already used sum(...).
 type BrokerStreamStats struct {
 	StreamLength   int64
 	ScheduledDepth int64
 	Pending        int64
 }
 
-// RecordBrokerStreamStats emits Tier 1 broker depth gauges aggregated across
-// all active jobs in the probe tick. Per-job drill-down is intentionally
-// unavailable — use traces or logs (which carry job_id) for that.
+// Per-job drill-down lives on traces/logs (which carry job_id), not metrics.
 func RecordBrokerStreamStats(ctx context.Context, s BrokerStreamStats) {
 	if brokerStreamLengthGauge != nil {
 		brokerStreamLengthGauge.Record(ctx, s.StreamLength)
@@ -1204,7 +1132,6 @@ func RecordBrokerStreamStats(ctx context.Context, s BrokerStreamStats) {
 	}
 }
 
-// RecordBrokerOutbox emits the outbox backlog + age gauges.
 func RecordBrokerOutbox(ctx context.Context, backlog int64, oldestAgeSeconds float64) {
 	if brokerOutboxBacklogGauge != nil {
 		brokerOutboxBacklogGauge.Record(ctx, backlog)
@@ -1214,14 +1141,7 @@ func RecordBrokerOutbox(ctx context.Context, backlog int64, oldestAgeSeconds flo
 	}
 }
 
-// RecordBrokerOutboxSweep increments the outbox sweep outcomes counter.
-//
-// outcome values (mutually exclusive, per-row):
-//   - "dispatched": row was ZADDed to Redis and DELETEd from task_outbox
-//   - "retried": ScheduleBatch failed for this entry (or at pipeline level)
-//     and attempts/run_at were bumped
-//   - "dead_lettered": attempts exceeded the cap and the row was moved to
-//     task_outbox_dead
+// outcome must be "dispatched" | "retried" | "dead_lettered" (mutually exclusive per row).
 func RecordBrokerOutboxSweep(ctx context.Context, outcome string, count int) {
 	if brokerOutboxSweepCounter == nil || count <= 0 {
 		return
@@ -1230,7 +1150,6 @@ func RecordBrokerOutboxSweep(ctx context.Context, outcome string, count int) {
 		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
-// RecordBrokerRedisPing emits the periodic Redis PING RTT.
 func RecordBrokerRedisPing(ctx context.Context, duration time.Duration, ok bool) {
 	if brokerRedisPingHistogram != nil {
 		brokerRedisPingHistogram.Record(ctx, float64(duration.Milliseconds()),
@@ -1238,9 +1157,7 @@ func RecordBrokerRedisPing(ctx context.Context, duration time.Duration, ok bool)
 	}
 }
 
-// RecordBrokerDispatch increments the dispatch outcomes counter.
-// outcome values: "ok", "err", "capacity", "paced".
-// jobID is retained for call-site stability but not emitted as a label.
+// outcome: "ok" | "err" | "capacity" | "paced". jobID kept for call-site stability.
 func RecordBrokerDispatch(ctx context.Context, jobID, outcome string) {
 	_ = jobID
 	if brokerDispatchCounter == nil {
@@ -1250,8 +1167,7 @@ func RecordBrokerDispatch(ctx context.Context, jobID, outcome string) {
 		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
-// RecordBrokerAutoclaim increments the autoclaim outcomes counter.
-// result values: "reclaimed", "dead_letter".
+// result: "reclaimed" | "dead_letter".
 func RecordBrokerAutoclaim(ctx context.Context, jobID, result string, count int) {
 	_ = jobID
 	if brokerAutoclaimCounter == nil || count <= 0 {
@@ -1261,8 +1177,7 @@ func RecordBrokerAutoclaim(ctx context.Context, jobID, result string, count int)
 		metric.WithAttributes(attribute.String("result", result)))
 }
 
-// RecordBrokerMessageAge records how long a stream message sat pending
-// before a consumer received it. Call once per parsed XREADGROUP message.
+// Call once per parsed XREADGROUP message.
 func RecordBrokerMessageAge(ctx context.Context, jobID string, ageMs float64) {
 	_ = jobID
 	if brokerMessageAgeHistogram == nil {
@@ -1271,10 +1186,8 @@ func RecordBrokerMessageAge(ctx context.Context, jobID string, ageMs float64) {
 	brokerMessageAgeHistogram.Record(ctx, ageMs)
 }
 
-// RecordBrokerPacerPushback increments the pushback counter.
-// reason values: "gate" (domain-gate NX hold), "rate_limited" (release feedback).
-// domain is retained for call-site stability but not emitted as a label
-// (per-domain cardinality is unbounded at launch scale).
+// reason: "gate" (domain-gate NX hold) | "rate_limited" (release feedback).
+// domain must NOT be a label — unbounded cardinality.
 func RecordBrokerPacerPushback(ctx context.Context, domain, reason string) {
 	_ = domain
 	if brokerPacerPushbackCounter == nil {
@@ -1284,9 +1197,7 @@ func RecordBrokerPacerPushback(ctx context.Context, domain, reason string) {
 		metric.WithAttributes(attribute.String("reason", reason)))
 }
 
-// RecordBrokerPacerDelay records the effective per-domain pacing delay
-// observed at TryAcquire time. domain is retained for API stability but not
-// emitted as a label.
+// domain must NOT be a label — unbounded cardinality.
 func RecordBrokerPacerDelay(ctx context.Context, domain string, delayMs float64) {
 	_ = domain
 	if brokerPacerDelayHistogram == nil {
@@ -1295,11 +1206,7 @@ func RecordBrokerPacerDelay(ctx context.Context, domain string, delayMs float64)
 	brokerPacerDelayHistogram.Record(ctx, delayMs)
 }
 
-// RecordBrokerCounterSyncSkew records the absolute difference between
-// the Redis running counter and Postgres running_tasks at sync time.
-// jobID retained for call-site stability; omitted from labels to keep
-// cardinality bounded — the histogram captures the distribution across
-// all jobs, which is the signal dashboards care about.
+// jobID kept for call-site stability; omitted from labels (cardinality).
 func RecordBrokerCounterSyncSkew(ctx context.Context, jobID string, skew float64) {
 	_ = jobID
 	if brokerCounterSyncSkew == nil {
@@ -1308,12 +1215,8 @@ func RecordBrokerCounterSyncSkew(ctx context.Context, jobID string, skew float64
 	brokerCounterSyncSkew.Record(ctx, skew)
 }
 
-// RecordBrokerCounterPELSkew records the absolute difference between the
-// Redis HASH counter for a job and the authoritative XPENDING count
-// observed during reconciliation. A persistent non-zero skew indicates
-// the counter leaked (drift fix shipped in fix-broker-counter-drift).
-// jobID retained for call-site stability; omitted from labels to keep
-// cardinality bounded.
+// Persistent non-zero skew = counter leaked (fix-broker-counter-drift).
+// jobID kept for call-site stability; omitted from labels (cardinality).
 func RecordBrokerCounterPELSkew(ctx context.Context, jobID string, skew float64) {
 	_ = jobID
 	if brokerCounterPELSkewHistogram == nil {
@@ -1322,10 +1225,8 @@ func RecordBrokerCounterPELSkew(ctx context.Context, jobID string, skew float64)
 	brokerCounterPELSkewHistogram.Record(ctx, skew)
 }
 
-// RecordBrokerPELWithoutConsumer emits the number of jobs with a non-zero
-// stream PEL that are NOT in the worker's active-job set. In a healthy
-// system this is always zero — a non-zero reading means dispatch/consume
-// have diverged and those jobs' tasks are stalled.
+// Healthy reading is always zero; non-zero = dispatch/consume diverged
+// and those jobs' tasks are stalled.
 func RecordBrokerPELWithoutConsumer(ctx context.Context, count int64) {
 	if brokerPELWithoutConsumerGauge == nil {
 		return
@@ -1333,14 +1234,12 @@ func RecordBrokerPELWithoutConsumer(ctx context.Context, count int64) {
 	brokerPELWithoutConsumerGauge.Record(ctx, count)
 }
 
-// RedisPoolSnapshot mirrors the subset of *redis.PoolStats we care about.
 type RedisPoolSnapshot struct {
 	InUse int64
 	Idle  int64
 	Waits int64
 }
 
-// RecordBrokerRedisPool emits the Redis client pool gauges.
 func RecordBrokerRedisPool(ctx context.Context, snap RedisPoolSnapshot) {
 	if brokerRedisPoolInUse != nil {
 		brokerRedisPoolInUse.Record(ctx, snap.InUse)
@@ -1353,8 +1252,6 @@ func RecordBrokerRedisPool(ctx context.Context, snap RedisPoolSnapshot) {
 	}
 }
 
-// initHTMLPersistInstruments registers the HTML persister metrics.
-// Called once from Init().
 func initHTMLPersistInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	if meterProvider == nil {
 		return nil
@@ -1397,8 +1294,7 @@ func initHTMLPersistInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	return err
 }
 
-// RecordHTMLPersistUpload increments the persister outcome counter.
-// outcome values: "ok", "err", "skipped".
+// outcome: "ok" | "err" | "skipped".
 func RecordHTMLPersistUpload(ctx context.Context, outcome string) {
 	if htmlPersistUploadCounter == nil {
 		return
@@ -1407,8 +1303,6 @@ func RecordHTMLPersistUpload(ctx context.Context, outcome string) {
 		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
-// RecordHTMLPersistUploadDuration records how long a single PUT to R2
-// took. Caller passes the wall-clock duration for one object.
 func RecordHTMLPersistUploadDuration(ctx context.Context, duration time.Duration) {
 	if htmlPersistUploadHistogram == nil {
 		return
@@ -1416,9 +1310,7 @@ func RecordHTMLPersistUploadDuration(ctx context.Context, duration time.Duration
 	htmlPersistUploadHistogram.Record(ctx, float64(duration.Milliseconds()))
 }
 
-// RecordHTMLPersistQueueDepth emits the current persister channel depth.
-// Called periodically by the persister itself; useful for tuning the
-// HTML_PERSIST_QUEUE / HTML_PERSIST_WORKERS ratio.
+// Used to tune the HTML_PERSIST_QUEUE / HTML_PERSIST_WORKERS ratio.
 func RecordHTMLPersistQueueDepth(ctx context.Context, depth int) {
 	if htmlPersistQueueDepthGauge == nil {
 		return
@@ -1426,9 +1318,6 @@ func RecordHTMLPersistQueueDepth(ctx context.Context, depth int) {
 	htmlPersistQueueDepthGauge.Record(ctx, int64(depth))
 }
 
-// RecordHTMLPersistBodyBytes records the compressed payload size of a
-// single upload. Catches large-page surprises and helps right-size the
-// in-flight memory budget.
 func RecordHTMLPersistBodyBytes(ctx context.Context, bytes int64) {
 	if htmlPersistBodyHistogram == nil || bytes <= 0 {
 		return
@@ -1436,11 +1325,6 @@ func RecordHTMLPersistBodyBytes(ctx context.Context, bytes int64) {
 	htmlPersistBodyHistogram.Record(ctx, bytes)
 }
 
-// initLighthouseInstruments registers the lighthouse audit pipeline
-// metrics. Called once from Init(). Producer-side counters live here
-// (scheduler enqueues) along with consumer-side outcome + duration so
-// dashboards covering both halves of the pipeline can pivot on a single
-// meter scope.
 func initLighthouseInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	if meterProvider == nil {
 		return nil
@@ -1482,9 +1366,7 @@ func initLighthouseInstruments(meterProvider *sdkmetric.MeterProvider) error {
 	return err
 }
 
-// RecordLighthouseScheduled increments the scheduler enqueue counter.
-// band values: "fastest", "slowest", "reconcile". jobID is retained for
-// call-site stability but not emitted as a label (per-job cardinality).
+// band: "fastest" | "slowest" | "reconcile". jobID kept for call-site stability.
 func RecordLighthouseScheduled(ctx context.Context, jobID, band string, count int) {
 	_ = jobID
 	if lighthouseRunsScheduledCounter == nil || count <= 0 {
@@ -1494,12 +1376,9 @@ func RecordLighthouseScheduled(ctx context.Context, jobID, band string, count in
 		metric.WithAttributes(attribute.String("band", band)))
 }
 
-// RecordLighthouseRun increments the consumer-side run outcome counter.
-// outcome values: "succeeded", "failed", "skipped_quota", "shed".
-// "shed" tracks audits the runner deferred via the soft memory-shed
-// circuit breaker (left in 'running', message redelivered later); a
-// rising shed rate is the signal that the analysis fleet is
-// memory-saturated and needs scaling up.
+// outcome: "succeeded" | "failed" | "skipped_quota" | "shed".
+// "shed" = soft memory-shed circuit breaker deferred the audit; a rising
+// shed rate means the analysis fleet is memory-saturated.
 func RecordLighthouseRun(ctx context.Context, jobID, outcome string) {
 	_ = jobID
 	if lighthouseRunsCounter == nil {
@@ -1509,9 +1388,8 @@ func RecordLighthouseRun(ctx context.Context, jobID, outcome string) {
 		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
-// RecordLighthouseRunDuration records the wall-clock time of one audit.
-// outcome is included so the histogram separates the cost of successful
-// runs from the cost of failures (failures often cluster at timeout).
+// outcome label is load-bearing — failures cluster at timeout and would
+// otherwise distort the success-path latency distribution.
 func RecordLighthouseRunDuration(ctx context.Context, jobID, outcome string, durationMs float64) {
 	_ = jobID
 	if lighthouseRunDurationHistogram == nil || durationMs <= 0 {
@@ -1521,11 +1399,8 @@ func RecordLighthouseRunDuration(ctx context.Context, jobID, outcome string, dur
 		metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
-// RecordLighthouseRunRetry increments the transient-retry counter.
-// reason is a short tag identifying the recognised stderr substring
-// that triggered the retry (e.g. "target_crashed", "protocol_error");
-// keep cardinality low — these are the named patterns from the
-// runner's transientStderrSubstrings list, not free-form error text.
+// reason MUST come from the runner's transientStderrSubstrings list
+// (e.g. "target_crashed"); never pass free-form error text — cardinality.
 func RecordLighthouseRunRetry(ctx context.Context, jobID, reason string) {
 	_ = jobID
 	if lighthouseRunRetriesCounter == nil {

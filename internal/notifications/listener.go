@@ -13,14 +13,12 @@ import (
 
 var notifyLog = logging.Component("notify")
 
-// Listener listens for PostgreSQL notifications and triggers delivery
 type Listener struct {
 	connStr string
 	service *Service
 }
 
-// NewListener creates a new notification listener.
-// Returns nil if service is nil to prevent nil pointer dereferences.
+// Returns nil when service is nil; callers must check.
 func NewListener(connStr string, service *Service) *Listener {
 	if service == nil {
 		notifyLog.Error("Cannot create notification listener: service is nil")
@@ -32,9 +30,6 @@ func NewListener(connStr string, service *Service) *Listener {
 	}
 }
 
-// Start begins listening for notifications
-// It uses PostgreSQL LISTEN/NOTIFY for real-time delivery
-// Falls back to polling if the connection fails
 func (l *Listener) Start(ctx context.Context) {
 	for {
 		select {
@@ -56,7 +51,6 @@ func (l *Listener) Start(ctx context.Context) {
 }
 
 func (l *Listener) listen(ctx context.Context) error {
-	// Create a dedicated connection for LISTEN
 	listener := pq.NewListener(l.connStr, 10*time.Second, time.Minute, func(ev pq.ListenerEventType, err error) {
 		if err != nil {
 			notifyLog.Warn("Notification listener event error", "error", err)
@@ -70,7 +64,7 @@ func (l *Listener) listen(ctx context.Context) error {
 
 	notifyLog.Info("Notification listener started (real-time mode)")
 
-	// Process any pending notifications on startup
+	// Sweep on startup in case any arrived while we were down.
 	l.processPending(ctx)
 
 	for {
@@ -80,7 +74,6 @@ func (l *Listener) listen(ctx context.Context) error {
 
 		case notification := <-listener.Notify:
 			if notification == nil {
-				// Connection lost, reconnect
 				return nil
 			}
 
@@ -89,12 +82,10 @@ func (l *Listener) listen(ctx context.Context) error {
 				"payload", notification.Extra,
 			)
 
-			// Process pending notifications (the payload is the notification ID,
-			// but we process all pending to handle any that might have been missed)
+			// Process all pending — payload carries one ID but bursts can coalesce.
 			l.processPending(ctx)
 
 		case <-time.After(90 * time.Second):
-			// Ping to keep connection alive
 			if err := listener.Ping(); err != nil {
 				return err
 			}
@@ -110,15 +101,10 @@ func (l *Listener) processPending(ctx context.Context) {
 	}
 }
 
-// StartWithFallback starts the listener with polling fallback.
-// This is useful when the database doesn't support LISTEN (e.g., connection poolers).
-// If DATABASE_DIRECT_URL is set, tests the connection first and uses it for real-time LISTEN/NOTIFY.
-// Falls back to polling if the direct connection fails or is unavailable.
+// PgBouncer in transaction mode kills LISTEN — DATABASE_DIRECT_URL is the escape hatch.
 func StartWithFallback(ctx context.Context, connStr string, service *Service) {
-	// Check for direct connection URL (bypasses pooler for LISTEN/NOTIFY)
 	directURL := os.Getenv("DATABASE_DIRECT_URL")
 	if directURL != "" {
-		// Test the direct connection before committing to listener mode
 		if testConnection(directURL) {
 			listener := NewListener(directURL, service)
 			if listener != nil {
@@ -131,27 +117,22 @@ func StartWithFallback(ctx context.Context, connStr string, service *Service) {
 		}
 	}
 
-	// Try to use LISTEN/NOTIFY with main connection
 	listener := NewListener(connStr, service)
 	if listener == nil {
-		// NewListener only returns nil when service is nil; starting the
-		// polling loop against a nil service would panic on the first tick.
+		// nil service — starting polling would panic on the first tick.
 		notifyLog.Warn("Notification listener not created; notifications disabled")
 		return
 	}
 
-	// Check if we can use LISTEN (direct connection, not pooled)
 	if canUseListen(connStr) {
 		go listener.Start(ctx)
 		return
 	}
 
-	// Fall back to polling
 	notifyLog.Info("Using polling mode for notifications (connection pooler detected)")
 	go startPolling(ctx, service)
 }
 
-// testConnection tests if a database connection can be established.
 func testConnection(connStr string) bool {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -170,14 +151,11 @@ func testConnection(connStr string) bool {
 	return true
 }
 
-// canUseListen checks if the connection string supports LISTEN/NOTIFY.
-// Connection poolers like PgBouncer in transaction mode don't support LISTEN.
+// Heuristic: Supabase pooler hosts contain "pooler"; PgBouncer defaults to :6543.
 func canUseListen(connStr string) bool {
-	// Supabase's pooler URLs contain "pooler" in the host
 	if strings.Contains(connStr, "pooler") {
 		return false
 	}
-	// PgBouncer typically runs on port 6543
 	if strings.Contains(connStr, ":6543") {
 		return false
 	}

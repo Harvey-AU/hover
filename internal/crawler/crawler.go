@@ -24,26 +24,7 @@ import (
 
 var crawlerLog = logging.Component("crawler")
 
-// normaliseCacheStatus converts CDN-specific cache status strings to standard values.
-// Covers top 10 CDNs representing ~90% of web traffic (verified Dec 2025):
-//   - Cloudflare (64%): HIT, MISS, DYNAMIC, BYPASS, EXPIRED, STALE, REVALIDATED, UPDATING, NONE, UNKNOWN
-//   - Google Cloud CDN (13%): No explicit header (uses Age/Via)
-//   - Fastly (12%): HIT, MISS, PASS (can be comma-separated for shielding: "HIT, HIT")
-//   - CloudFront (3%): "Hit from cloudfront", "Miss from cloudfront", "RefreshHit from cloudfront"
-//   - Akamai (3%): TCP_HIT, TCP_MISS, TCP_MEM_HIT, TCP_REFRESH_HIT, TCP_DENIED, etc.
-//   - Azure CDN (~2%): TCP_HIT, TCP_MISS, TCP_REMOTE_HIT, UNCACHEABLE
-//   - Vercel (~1%): HIT, MISS, STALE, PRERENDER
-//   - Netlify (~1%): RFC 9211 format - "Netlify Edge"; hit
-//   - KeyCDN (<1%): HIT, MISS
-//   - Varnish: X-Varnish header (handled separately)
-//
-// Sources:
-//   - https://developers.cloudflare.com/cache/concepts/cache-responses/
-//   - https://repost.aws/knowledge-center/cloudfront-x-cachemiss-error
-//   - https://techdocs.akamai.com/property-mgr/docs/return-cache-status
-//   - https://vercel.com/docs/headers/response-headers
 func normaliseCacheStatus(status string) string {
-	// Trim whitespace from input
 	status = strings.TrimSpace(status)
 	if status == "" {
 		return ""
@@ -51,7 +32,7 @@ func normaliseCacheStatus(status string) string {
 
 	upper := strings.ToUpper(status)
 
-	// Fastly shielding: "HIT, MISS" or "MISS, HIT" - take the last value (edge POP result)
+	// Fastly shielding emits "HIT, MISS" — last value is the edge POP result.
 	if strings.Contains(upper, ", ") {
 		parts := strings.Split(upper, ", ")
 		if len(parts) > 0 {
@@ -59,7 +40,6 @@ func normaliseCacheStatus(status string) string {
 		}
 	}
 
-	// CloudFront style: "Hit from cloudfront", "Miss from cloudfront"
 	if strings.Contains(upper, "FROM CLOUDFRONT") {
 		if strings.HasPrefix(upper, "HIT") || strings.HasPrefix(upper, "REFRESHHIT") {
 			return "HIT"
@@ -67,20 +47,16 @@ func normaliseCacheStatus(status string) string {
 		if strings.HasPrefix(upper, "MISS") {
 			return "MISS"
 		}
-		// LambdaGeneratedResponse, Error, etc. - treat as BYPASS
 		return "BYPASS"
 	}
 
-	// Akamai style: "TCP_HIT from child" or "TCP_MISS from child, TCP_HIT from parent"
 	if strings.Contains(upper, " FROM ") && strings.HasPrefix(upper, "TCP_") {
-		// Extract just the status part before " from"
 		parts := strings.Split(upper, " FROM")
 		if len(parts) > 0 {
 			upper = strings.TrimSpace(parts[0])
 		}
 	}
 
-	// Akamai/Azure CDN style: TCP_HIT, TCP_MISS, TCP_MEM_HIT, TCP_REFRESH_HIT, etc.
 	if strings.HasPrefix(upper, "TCP_") {
 		if strings.Contains(upper, "HIT") {
 			return "HIT"
@@ -88,37 +64,30 @@ func normaliseCacheStatus(status string) string {
 		if strings.Contains(upper, "MISS") {
 			return "MISS"
 		}
-		// TCP_DENIED, TCP_COOKIE_DENY - treat as BYPASS
 		return "BYPASS"
 	}
 
-	// Azure CDN / Cloudflare uncacheable states
 	switch upper {
 	case "UNCACHEABLE", "NONE", "UNKNOWN":
 		return "BYPASS"
 	}
 
-	// RFC 9211 Cache-Status format (Netlify, future CDNs)
-	// Examples: "Netlify Edge"; hit, "CacheName"; fwd=miss
+	// RFC 9211 Cache-Status format (Netlify et al.).
 	if strings.Contains(status, ";") {
 		lower := strings.ToLower(status)
 		if strings.Contains(lower, "; hit") || strings.Contains(lower, ";hit") {
 			return "HIT"
 		}
 		if strings.Contains(lower, "fwd=") {
-			// fwd=uri-miss, fwd=vary-miss, fwd=stale, fwd=miss all indicate cache miss
 			return "MISS"
 		}
 	}
 
-	// Standard formats - normalise to uppercase for consistency
-	// Covers: HIT, MISS, DYNAMIC, BYPASS, EXPIRED, STALE, REVALIDATED, UPDATING, PRERENDER, PASS
 	switch upper {
 	case "HIT", "MISS", "DYNAMIC", "BYPASS", "EXPIRED", "STALE", "REVALIDATED", "UPDATING", "PRERENDER", "PASS":
 		return upper
 	}
 
-	// Unknown formats - preserve original (already trimmed)
 	return status
 }
 
@@ -251,33 +220,27 @@ func buildRequestAttemptDiagnostics(
 	}
 }
 
-// Crawler represents a URL crawler with configuration and metrics
 type Crawler struct {
 	config      *Config
 	colly       *colly.Collector
-	id          string    // Add an ID field to identify each crawler instance
-	metricsMap  *sync.Map // Shared metrics storage for the transport
+	id          string
+	metricsMap  *sync.Map
 	aia         *aiaTransport
-	probeClient *http.Client // Shared client for cache probe requests — avoids per-call transport leaks
+	probeClient *http.Client // Shared to avoid per-call transport leaks.
 }
 
-// GetUserAgent returns the user agent string for this crawler
 func (c *Crawler) GetUserAgent() string {
 	return c.config.UserAgent
 }
 
-// tracingRoundTripper captures HTTP trace metrics for each request
 type tracingRoundTripper struct {
 	transport  http.RoundTripper
-	metricsMap *sync.Map // Maps URL -> PerformanceMetrics
+	metricsMap *sync.Map
 }
 
-// RoundTrip implements the http.RoundTripper interface with httptrace instrumentation
 func (t *tracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Create performance metrics for this request
 	metrics := &PerformanceMetrics{}
 
-	// Create trace with callbacks that populate metrics
 	var dnsStartTime, connectStartTime, tlsStartTime, requestStartTime time.Time
 	requestStartTime = time.Now()
 
@@ -311,18 +274,11 @@ func (t *tracingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 		},
 	}
 
-	// Store metrics for this URL (will be retrieved in OnResponse)
 	t.metricsMap.Store(req.URL.String(), metrics)
-
-	// Attach trace to request context
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
-
-	// Perform the request
 	return t.transport.RoundTrip(req)
 }
 
-// New creates a new Crawler instance with the given configuration and optional ID
-// If config is nil, default configuration is used
 func New(config *Config, id ...string) *Crawler {
 	if config == nil {
 		config = DefaultConfig()
@@ -345,10 +301,7 @@ func New(config *Config, id ...string) *Crawler {
 		colly.AllowURLRevisit(),
 	)
 
-	// Set rate limiting with randomised delays between requests
-	// RateLimit determines base delay: Delay = 1s / RateLimit
-	// RandomDelay = 1s - Delay to create jitter range from base to 1s
-	// Example: RateLimit=5 → Delay=200ms, RandomDelay=800ms → Total: 200ms-1s per request
+	// Jitter requests over a 1s window: Delay=1s/RateLimit, RandomDelay tops up to 1s.
 	baseDelay := time.Second / time.Duration(config.RateLimit)
 	if err := c.Limit(&colly.LimitRule{
 		DomainGlob:  "*",
@@ -359,42 +312,34 @@ func New(config *Config, id ...string) *Crawler {
 		crawlerLog.Error("Failed to set crawler limits", "error", err)
 	}
 
-	// Create metrics map for this crawler instance
 	metricsMap := &sync.Map{}
 
-	// Set up base transport with SSRF-safe dialer.
 	baseTransport := newBaseHTTPTransport()
 
-	// Add SSRF-safe DialContext if protection is enabled
-	// This validates IPs at connection time to prevent DNS rebinding attacks
+	// SSRF dial validates IPs post-resolution to defeat DNS rebinding.
 	if !config.SkipSSRFCheck {
 		baseTransport.DialContext = ssrfSafeDialContext()
 	}
 
-	// Wrap with AIA transport to handle servers with incomplete cert chains
+	// AIA wrap repairs incomplete server cert chains.
 	aiaRT := newAIATransport(baseTransport)
 
-	// Wrap the base transport with our custom tracing transport
 	tracingTransport := &tracingRoundTripper{
 		transport:  aiaRT,
 		metricsMap: metricsMap,
 	}
 
-	// Set HTTP client with tracing transport and proper timeout
 	httpClient := &http.Client{
 		Timeout:   config.DefaultTimeout,
 		Transport: tracingTransport,
 	}
 	c.SetClient(httpClient)
 
-	// Add browser-like headers to avoid blocking
 	c.OnRequest(func(r *colly.Request) {
-		// Set browser-like headers
 		r.Headers.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
 		r.Headers.Set("Accept-Language", "en-US,en;q=0.9")
 		r.Headers.Set("Accept-Encoding", "gzip, deflate, br")
 
-		// Set Referer to site homepage for more browser-like behaviour
 		if r.URL.Host != "" {
 			r.Headers.Set("Referer", fmt.Sprintf("https://%s/", r.URL.Host))
 		}
@@ -402,13 +347,8 @@ func New(config *Config, id ...string) *Crawler {
 		crawlerLog.Debug("Crawler sending request", "url", r.URL.String())
 	})
 
-	// Note: OnHTML handler will be registered on the clone in WarmURL to ensure proper context access
-
-	// Build a shared probe transport for cache-status HEAD requests.
-	// Reusing a single client avoids leaking a new http.Transport per probe call.
-	// Derived from newBaseHTTPTransport so the H2 + compression posture stays
-	// consistent across the three crawler clients; only the pool sizes and
-	// idle timeout differ (probes are HEAD-only and can run with a smaller pool).
+	// Probe transport derives from the base so H2/compression posture stays consistent;
+	// smaller pool because probes are HEAD-only.
 	probeTransport := newBaseHTTPTransport()
 	probeTransport.MaxIdleConns = 20
 	probeTransport.MaxIdleConnsPerHost = 5
@@ -431,40 +371,28 @@ func New(config *Config, id ...string) *Crawler {
 	}
 }
 
-// isPrivateOrLocalIP checks if an IP address is in a private, loopback, or link-local range.
-// This prevents SSRF attacks by blocking requests to internal network resources.
+// SSRF guard: block loopback, link-local, RFC1918, and unspecified ranges.
 func isPrivateOrLocalIP(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-
-	// Check for loopback (127.x.x.x, ::1)
 	if ip.IsLoopback() {
 		return true
 	}
-
-	// Check for link-local (169.254.x.x, fe80::/10)
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true
 	}
-
-	// Check for private ranges (10.x, 172.16-31.x, 192.168.x, fc00::/7)
 	if ip.IsPrivate() {
 		return true
 	}
-
-	// Check for unspecified (0.0.0.0, ::)
 	if ip.IsUnspecified() {
 		return true
 	}
-
 	return false
 }
 
-// ssrfSafeDialContext returns a DialContext function that validates resolved IPs
-// before connecting, preventing DNS rebinding attacks and SSRF to private networks.
-// It performs DNS resolution, validates all IPs are public, then connects using
-// the validated IP (preferring IPv4 for compatibility).
+// Dials a connection to a resolved IP only after rejecting private/local addresses,
+// defeating DNS rebinding. Prefers IPv4 for upstream compatibility.
 func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
@@ -472,13 +400,11 @@ func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.
 			return nil, err
 		}
 
-		// Resolve hostname and validate all IPs
 		ips, err := net.LookupIP(host)
 		if err != nil {
 			return nil, fmt.Errorf("DNS lookup failed: %w", err)
 		}
 
-		// Check all resolved IPs for private/local addresses
 		for _, ip := range ips {
 			if isPrivateOrLocalIP(ip) {
 				crawlerLog.Warn("SSRF protection: blocked connection to private/local IP", "host", host, "ip", ip.String())
@@ -486,7 +412,6 @@ func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.
 			}
 		}
 
-		// Connect using a validated IP (prefer IPv4 for compatibility)
 		var connectAddr string
 		for _, ip := range ips {
 			if ip.To4() != nil {
@@ -503,9 +428,6 @@ func ssrfSafeDialContext() func(ctx context.Context, network, addr string) (net.
 	}
 }
 
-// validateCrawlRequest validates the crawl request parameters and URL format.
-// Note: SSRF protection is handled at connection time by ssrfSafeDialContext(),
-// which prevents DNS rebinding attacks by validating IPs after resolution.
 func validateCrawlRequest(ctx context.Context, targetURL string, _ bool) (*url.URL, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -523,24 +445,19 @@ func validateCrawlRequest(ctx context.Context, targetURL string, _ bool) (*url.U
 	return parsed, nil
 }
 
-// setupResponseHandlers configures Colly response and error handlers for crawl result collection
 func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *CrawlResult, startTime time.Time, targetURL string) {
-	// Handle response - collect cache headers, status, timing
 	collyClone.OnResponse(func(r *colly.Response) {
 		startTime := r.Ctx.GetAny("start_time").(time.Time)
 		result := r.Ctx.GetAny("result").(*CrawlResult)
 
-		// Retrieve performance metrics from the metrics map
 		if metricsVal, ok := c.metricsMap.LoadAndDelete(r.Request.URL.String()); ok {
 			performanceMetrics := metricsVal.(*PerformanceMetrics)
-			// Content transfer time is total response time minus TTFB
 			if performanceMetrics.TTFB > 0 {
 				performanceMetrics.ContentTransferTime = time.Since(startTime).Milliseconds() - performanceMetrics.TTFB
 			}
 			result.Performance = *performanceMetrics
 		}
 
-		// Calculate response time
 		result.ResponseTime = time.Since(startTime).Milliseconds()
 		result.StatusCode = r.StatusCode
 		result.ContentType = r.Headers.Get("Content-Type")
@@ -549,8 +466,7 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		result.RedirectURL = r.Request.URL.String()
 		requestHeaders := r.Request.Headers.Clone()
 
-		// Store body for tech detection and storage upload
-		// BodySample is truncated for wappalyzer detection, Body is the full content
+		// BodySample is truncated for wappalyzer detection; Body keeps the full content.
 		result.Body = r.Body
 		if len(r.Body) > MaxBodySampleSize {
 			result.BodySample = r.Body[:MaxBodySampleSize]
@@ -558,7 +474,6 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 			result.BodySample = r.Body
 		}
 
-		// Log comprehensive Cloudflare headers for analysis
 		cfCacheStatus := r.Headers.Get("CF-Cache-Status")
 		cfRay := r.Headers.Get("CF-Ray")
 		cfDatacenter := r.Headers.Get("CF-IPCountry")
@@ -578,7 +493,6 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		cacheMeta := buildCacheMetadata(result.Headers)
 		result.CacheStatus = cacheMeta.NormalisedStatus
 
-		// Set error for non-2xx status codes (to match test expectations)
 		if r.StatusCode < 200 || r.StatusCode >= 300 {
 			result.Error = fmt.Sprintf("non-success status code: %d", r.StatusCode)
 		}
@@ -603,7 +517,6 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 		)
 	})
 
-	// Handle errors
 	collyClone.OnError(func(r *colly.Response, err error) {
 		if r == nil || r.Ctx == nil {
 			return
@@ -651,14 +564,12 @@ func (c *Crawler) setupResponseHandlers(collyClone *colly.Collector, result *Cra
 	})
 }
 
-// performCacheValidation handles cache warming logic if cache miss is detected
 var errSoftCacheValidationFailure = errors.New("cache validation failed")
 var errCacheValidationSkipped = errors.New("cache validation skipped")
 
 func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, res *CrawlResult) (bool, error) {
 	ensureRequestDiagnostics(res)
 
-	// Only perform cache warming if we got a MISS or EXPIRED
 	if !shouldMakeSecondRequest(res.CacheStatus) {
 		observability.RecordCrawlerPhase(ctx, observability.CrawlerPhaseMetrics{
 			Phase:    "cache_validation_skip",
@@ -672,12 +583,11 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		return true, errCacheValidationSkipped
 	}
 
-	// Apply randomized delay between 500-1000ms to avoid hammering origins
+	// 500-1000ms jitter avoids hammering origins after a MISS.
 	randomInt := 0
 	if n, err := crand.Int(crand.Reader, big.NewInt(501)); err == nil {
 		randomInt = int(n.Int64())
 	} else {
-		// Fallback to basic rand if crypto rand fails
 		randomInt = rand.Intn(501) //nolint:gosec // safe fallback for non-sensitive jitter
 	}
 	jitteredDelay := 500 + randomInt
@@ -689,20 +599,16 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 		"calculated_delay_ms", jitteredDelay,
 	)
 
-	// Wait for initial delay to allow CDN to process and cache
 	select {
 	case <-time.After(time.Duration(jitteredDelay) * time.Millisecond):
-		// Continue with cache check loop
 	case <-ctx.Done():
-		// Context cancelled during wait
 		crawlerLog.Debug("Cache warming cancelled during initial delay", "url", targetURL)
 		return true, ctx.Err()
 	}
 
-	// Check cache status with HEAD requests in a loop
 	maxChecks := 3
 	delayBeforeAttempt := jitteredDelay
-	nextCheckDelay := 700 // Delay between subsequent HEAD checks
+	nextCheckDelay := 700
 	cacheHit := false
 
 	for i := range maxChecks {
@@ -744,13 +650,12 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 				"check_attempt", i+1,
 			)
 
-			// If cache is now HIT, we can proceed with second request
 			if cacheStatus == "HIT" || cacheStatus == "STALE" || cacheStatus == "REVALIDATED" {
 				cacheHit = true
 				break
 			}
 
-			// If CDN indicates the response will not be cached, skip further checks
+			// CDN says uncacheable — abandon further probes.
 			if !shouldMakeSecondRequest(cacheStatus) {
 				crawlerLog.Debug("Cache status indicates resource will not warm; skipping additional checks",
 					"url", targetURL,
@@ -761,22 +666,18 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			}
 		}
 
-		// If not the last check, wait before next attempt
 		if i < maxChecks-1 {
 			select {
 			case <-time.After(time.Duration(nextCheckDelay) * time.Millisecond):
 				delayBeforeAttempt = nextCheckDelay
-				// Continue to next check
 			case <-ctx.Done():
 				crawlerLog.Debug("Cache warming cancelled during check loop", "url", targetURL)
 				return true, ctx.Err()
 			}
-			// Increase delay for the next iteration
 			nextCheckDelay += 300
 		}
 	}
 
-	// Log whether cache became available
 	if cacheHit {
 		crawlerLog.Debug("Cache is now available, proceeding with second request", "url", targetURL)
 	} else {
@@ -787,7 +688,6 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 	}
 
 	if cacheHit {
-		// Perform second request to measure cached response time
 		secondStart := time.Now()
 		secondResult, err := c.makeSecondRequest(ctx, targetURL)
 		secondDuration := time.Since(secondStart)
@@ -822,7 +722,6 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 			res.SecondHeaders = secondResult.Headers
 			res.SecondPerformance = &secondResult.Performance
 
-			// Calculate improvement ratio for pattern analysis
 			improvementRatio := float64(0)
 			improvementRatioValid := res.SecondResponseTime > 0
 			if improvementRatioValid {
@@ -851,10 +750,8 @@ func (c *Crawler) performCacheValidation(ctx context.Context, targetURL string, 
 	return false, nil
 }
 
-// setupLinkExtraction configures Colly HTML handler for link extraction and categorization
 func setupLinkExtraction(collyClone *colly.Collector) {
 	collyClone.OnHTML("html", func(e *colly.HTMLElement) {
-		// Check if link extraction is enabled for this request
 		findLinksVal := e.Request.Ctx.GetAny("find_links")
 		if findLinksVal == nil {
 			crawlerLog.Debug("find_links not set in context - defaulting to enabled", "url", e.Request.URL.String())
@@ -896,15 +793,12 @@ func setupLinkExtraction(collyClone *colly.Collector) {
 			})
 		}
 
-		// Extract from header and footer first
 		extractLinks(e.DOM.Find("header"), "header")
 		extractLinks(e.DOM.Find("footer"), "footer")
 
-		// Remove header and footer to get body links
+		// Strip header/footer so the remainder becomes "body".
 		e.DOM.Find("header").Remove()
 		e.DOM.Find("footer").Remove()
-
-		// Extract remaining links as "body"
 		extractLinks(e.DOM, "body")
 
 		crawlerLog.Debug("Categorized links from page",
@@ -916,26 +810,20 @@ func setupLinkExtraction(collyClone *colly.Collector) {
 	})
 }
 
-// executeCollyRequest performs the HTTP request using Colly with context cancellation support
 func executeCollyRequest(ctx context.Context, collyClone *colly.Collector, targetURL string, res *CrawlResult) error {
-	// Set up context cancellation handling
 	done := make(chan error, 1)
 
-	// Visit the URL with Colly in a goroutine to support context cancellation
+	// Run colly off-thread so ctx cancellation can interrupt the request-level timeout.
 	go func() {
 		visitErr := collyClone.Visit(targetURL)
 		if visitErr != nil {
 			done <- visitErr
 			return
 		}
-		// Wait for async requests to complete
 		collyClone.Wait()
 		done <- nil
 	}()
 
-	// Wait for either completion or context cancellation
-	// Note: HTTP client timeout (DefaultTimeout) enforces request-level timeout
-	// Context timeout enforces overall task timeout
 	select {
 	case err := <-done:
 		if err != nil {
@@ -1024,7 +912,6 @@ func applyPhaseTiming(res *CrawlResult, phase string, duration time.Duration) {
 }
 
 func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool, allowCacheValidation bool, requestPhase string) (*CrawlResult, error) {
-	// Validate the crawl request (with SSRF protection unless skipped for tests)
 	_, err := validateCrawlRequest(ctx, targetURL, c.config.SkipSSRFCheck)
 	if err != nil {
 		res := &CrawlResult{URL: targetURL, Timestamp: time.Now().Unix(), Error: err.Error()}
@@ -1138,16 +1025,11 @@ func (c *Crawler) warmURL(ctx context.Context, targetURL string, findLinks bool,
 	return res, nil
 }
 
-// WarmURL performs a crawl of the specified URL and returns the result.
-// It respects context cancellation, enforces timeout, and treats non-2xx statuses as errors.
 func (c *Crawler) WarmURL(ctx context.Context, targetURL string, findLinks bool) (*CrawlResult, error) {
 	return c.warmURL(ctx, targetURL, findLinks, true, "primary_request")
 }
 
-// shouldMakeSecondRequest determines if we should make a second request for cache warming
 func shouldMakeSecondRequest(cacheStatus string) bool {
-	// Make second request only for cache misses and expired content
-	// Don't make second request for BYPASS/DYNAMIC (uncacheable), hits, stale, etc.
 	switch strings.ToUpper(cacheStatus) {
 	case "MISS", "EXPIRED":
 		return true
@@ -1156,8 +1038,6 @@ func shouldMakeSecondRequest(cacheStatus string) bool {
 	}
 }
 
-// makeSecondRequest performs a second request to verify cache warming
-// Reuses the main WarmURL logic but disables link extraction
 func (c *Crawler) makeSecondRequest(ctx context.Context, targetURL string) (*CrawlResult, error) {
 	return c.warmURL(ctx, targetURL, false, false, "secondary_request")
 }
@@ -1192,7 +1072,6 @@ func (c *Crawler) CheckCacheStatus(ctx context.Context, targetURL string) (Probe
 	}, nil
 }
 
-// CreateHTTPClient returns a configured HTTP client with SSRF protection
 func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 	if timeout == 0 {
 		timeout = c.config.DefaultTimeout
@@ -1200,7 +1079,6 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 
 	transport := newBaseHTTPTransport()
 
-	// Add SSRF-safe DialContext if protection is enabled
 	if !c.config.SkipSSRFCheck {
 		transport.DialContext = ssrfSafeDialContext()
 	}
@@ -1211,18 +1089,12 @@ func (c *Crawler) CreateHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
-// newBaseHTTPTransport returns the shared *http.Transport tuning used by
-// both the colly crawler and CreateHTTPClient. Callers are responsible for
-// attaching SSRF-safe DialContext and any wrapping round trippers.
-//
-// ForceAttemptHTTP2 is disabled: under sustained crawl load some upstreams
-// (notably misbehaving HTTP/2 servers) trigger Go's net/http2 stream state
-// machine to log "received DATA after END_STREAM" by the thousand. Falling
-// back to ALPN-negotiated HTTP/1.1 removes the noise without measurable
-// throughput impact for short-lived single-page fetches.
+// ForceAttemptHTTP2 disabled: misbehaving H2 upstreams flood logs with
+// "received DATA after END_STREAM" under sustained crawl load. ALPN H1.1
+// fallback removes the noise without measurable throughput impact.
 func newBaseHTTPTransport() *http.Transport {
 	return &http.Transport{
-		MaxIdleConns:        150, // Global cap — prevents idle socket accumulation across hosts
+		MaxIdleConns:        150,
 		MaxIdleConnsPerHost: 25,
 		MaxConnsPerHost:     50,
 		IdleConnTimeout:     120 * time.Second,
@@ -1232,17 +1104,12 @@ func newBaseHTTPTransport() *http.Transport {
 	}
 }
 
-// Config returns the Crawler's configuration.
 func (c *Crawler) Config() *Config {
 	return c.config
 }
 
-// isElementHidden checks if an element is hidden based on common inline styles,
-// accessibility attributes, and conventional CSS classes.
-// This is a best-effort check based on raw HTML attributes, as it does not
-// evaluate external or internal CSS stylesheets.
+// Best-effort visibility check on raw HTML; cannot evaluate external CSS.
 func isElementHidden(s *goquery.Selection) bool {
-	// Define the list of common hiding classes
 	hidingClasses := []string{
 		"hide",
 		"hidden",
@@ -1254,9 +1121,7 @@ func isElementHidden(s *goquery.Selection) bool {
 		"visually-hidden",
 	}
 
-	// Loop through the current element and all its parents up to the body
 	for n := s; n.Length() > 0 && !n.Is("body"); n = n.Parent() {
-		// 1. Check for explicit data attributes
 		if _, exists := n.Attr("data-hidden"); exists {
 			return true
 		}
@@ -1264,19 +1129,16 @@ func isElementHidden(s *goquery.Selection) bool {
 			return true
 		}
 
-		// 2. Check for aria-hidden="true" attribute
 		if ariaHidden, exists := n.Attr("aria-hidden"); exists && ariaHidden == "true" {
 			return true
 		}
 
-		// 3. Check for inline style attributes
 		if style, exists := n.Attr("style"); exists {
 			if strings.Contains(style, "display: none") || strings.Contains(style, "visibility: hidden") {
 				return true
 			}
 		}
 
-		// 4. Check for common hiding classes
 		if classAttr, exists := n.Attr("class"); exists {
 			padded := " " + classAttr + " "
 			for _, class := range hidingClasses {
@@ -1287,6 +1149,5 @@ func isElementHidden(s *goquery.Selection) bool {
 		}
 	}
 
-	// No hiding attributes or classes were found
 	return false
 }

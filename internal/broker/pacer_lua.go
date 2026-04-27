@@ -2,19 +2,11 @@ package broker
 
 import "github.com/redis/go-redis/v9"
 
-// Lua scripts for atomic domain pacing operations. Using scripts
-// avoids race conditions between read-modify-write cycles that would
-// occur with separate GET/SET calls across multiple workers.
+// Lua scripts: atomic read-modify-write for per-domain pacing across
+// multiple workers.
 
-// adaptiveDelayOnSuccessScript atomically:
-// 1. Increments success_streak
-// 2. Resets error_streak to 0
-// 3. If success_streak >= threshold, decreases adaptive_delay_ms by step (min = floor)
-//
 // KEYS[1] = hover:dom:cfg:{domain}
-// ARGV[1] = success threshold (e.g. 5)
-// ARGV[2] = step down ms (e.g. 500)
-//
+// ARGV[1] = success threshold; ARGV[2] = step down ms
 // Returns the new adaptive_delay_ms.
 var adaptiveDelayOnSuccessScript = redis.NewScript(`
 local key = KEYS[1]
@@ -47,19 +39,10 @@ redis.call('EXPIRE', key, 86400)
 return delay
 `)
 
-// tryAcquireScript atomically reads the effective per-domain delay from the
-// config hash and attempts to set the domain gate in one round-trip. This
-// replaces the pre-existing three-call sequence (HMGET + SET NX PX + PTTL)
-// which serialised the dispatcher at ~2-3 RTTs per task — under a 100-job
-// workload the cumulative RTT cost was the dominant throughput ceiling.
-//
-// KEYS[1] = hover:dom:cfg:{domain}
-// KEYS[2] = hover:dom:gate:{domain}
-//
-// Returns {acquired, delay_ms, ttl_ms}:
-//   - acquired = 1 if the gate was set (or delay was zero); 0 if already held
-//   - delay_ms = effective delay applied (max(base, adaptive))
-//   - ttl_ms   = remaining gate TTL when not acquired; 0 when acquired
+// KEYS[1] = hover:dom:cfg:{domain}; KEYS[2] = hover:dom:gate:{domain}
+// Returns {acquired, delay_ms, ttl_ms}. Replaces a 3-call sequence
+// (HMGET + SET NX PX + PTTL) that was the dispatcher's RTT bottleneck
+// under 100-job workloads.
 var tryAcquireScript = redis.NewScript(`
 local cfgKey = KEYS[1]
 local gateKey = KEYS[2]
@@ -91,15 +74,8 @@ end
 return {0, delay, ttl}
 `)
 
-// adaptiveDelayOnErrorScript atomically:
-// 1. Increments error_streak
-// 2. Resets success_streak to 0
-// 3. Increases adaptive_delay_ms by step (capped at max)
-//
 // KEYS[1] = hover:dom:cfg:{domain}
-// ARGV[1] = step up ms (e.g. 500)
-// ARGV[2] = max delay ms (e.g. 60000)
-//
+// ARGV[1] = step up ms; ARGV[2] = max delay ms
 // Returns the new adaptive_delay_ms.
 var adaptiveDelayOnErrorScript = redis.NewScript(`
 local key = KEYS[1]

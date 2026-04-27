@@ -10,40 +10,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// PacerConfig holds the tuning knobs for domain pacing, mirroring
-// the constants from the current in-memory DomainLimiter.
 type PacerConfig struct {
-	// SuccessThreshold is the number of consecutive successes before
-	// the adaptive delay decreases. Default 5. Override via
-	// GNH_RATE_LIMIT_SUCCESS_THRESHOLD. Lower values recover faster
-	// after a transient rate-limit event.
 	SuccessThreshold int
-
-	// DelayStepMS is the amount (milliseconds) the adaptive delay
-	// GROWS on each rate-limited release. Default 500.
-	DelayStepMS int
-
-	// DelayStepDownMS is the amount (milliseconds) the adaptive delay
-	// SHRINKS on each success once SuccessThreshold is reached. Default
-	// falls back to DelayStepMS (symmetric growth/recovery). Setting
-	// this higher than DelayStepMS makes recovery faster than the
-	// growth on rate-limit, which is usually the right default — a
-	// single spike of 429s shouldn't throttle a domain for 20 minutes.
+	DelayStepMS      int
+	// Defaults to DelayStepMS. Higher = faster recovery than growth, so
+	// a 429 spike doesn't throttle a domain for 20 minutes.
 	DelayStepDownMS int
-
-	// MaxDelayMS caps the adaptive delay. Default 60_000 (60s).
-	MaxDelayMS int
-
-	// MinPushbackMS is the floor applied to PaceResult.RetryAfter when
-	// the gate is already held. Prevents the dispatcher from tight-looping
-	// through rate-limited tasks whose gate TTL is near-zero — without
-	// this floor a domain with a 1ms residual delay would be re-fetched
-	// every Dispatcher tick (100ms). Named after the pre-merge constant
-	// domainDelayPause (internal/jobs/worker.go:147, 100ms default).
+	MaxDelayMS      int
+	// Floor on RetryAfter so a near-zero gate TTL doesn't tight-loop
+	// the dispatcher (Dispatcher tick is 100ms).
 	MinPushbackMS int
 }
 
-// DefaultPacerConfig returns production defaults.
 func DefaultPacerConfig() PacerConfig {
 	stepUp := envInt("GNH_RATE_LIMIT_DELAY_STEP_MS", 500)
 	stepDown := envInt("GNH_RATE_LIMIT_DELAY_STEP_DOWN_MS", stepUp)
@@ -56,24 +34,17 @@ func DefaultPacerConfig() PacerConfig {
 	}
 }
 
-// PaceResult is returned by TryAcquire.
 type PaceResult struct {
-	// Acquired is true if the domain time-gate was successfully set.
 	Acquired bool
-
-	// RetryAfter is how long the caller should wait before retrying.
 	// Only meaningful when Acquired is false.
 	RetryAfter time.Duration
 }
 
-// DomainPacer coordinates per-domain request rate across all worker
-// instances using Redis-backed time gates and adaptive delay state.
 type DomainPacer struct {
 	client *Client
 	cfg    PacerConfig
 }
 
-// NewDomainPacer creates a DomainPacer.
 func NewDomainPacer(client *Client, cfg PacerConfig) *DomainPacer {
 	return &DomainPacer{
 		client: client,
@@ -81,9 +52,7 @@ func NewDomainPacer(client *Client, cfg PacerConfig) *DomainPacer {
 	}
 }
 
-// Seed initialises the domain config hash with base delay values
-// (typically from robots.txt and Postgres domain record). Safe to
-// call multiple times — uses HSETNX so existing values are preserved.
+// HSETNX preserves existing values, so callers may re-seed safely.
 func (p *DomainPacer) Seed(ctx context.Context, domain string, baseDelayMS, adaptiveDelayMS, floorMS int) error {
 	key := DomainConfigKey(domain)
 	pipe := p.client.rdb.Pipeline()
@@ -102,14 +71,8 @@ func (p *DomainPacer) Seed(ctx context.Context, domain string, baseDelayMS, adap
 	return nil
 }
 
-// TryAcquire attempts to set the domain time-gate. If the gate is
-// already held (domain was recently accessed), it returns the
-// remaining wait time. This is non-blocking.
-//
-// Implemented as a single Lua EVALSHA so the effective-delay read and
-// SET NX PX / PTTL fallback all execute server-side. The earlier
-// three-call version (HMGET → SET NX PX → PTTL) was the dominant
-// dispatcher round-trip cost under multi-job workloads.
+// Single Lua EVALSHA — the prior three-call form (HMGET → SET NX PX →
+// PTTL) was the dominant dispatcher round-trip cost under multi-job loads.
 func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult, error) {
 	cfgKey := DomainConfigKey(domain)
 	gateKey := DomainGateKey(domain)
@@ -132,17 +95,13 @@ func (p *DomainPacer) TryAcquire(ctx context.Context, domain string) (PaceResult
 
 	ttl := time.Duration(ttlMS) * time.Millisecond
 	if ttl <= 0 {
-		// Gate TTL expired between the SET NX and the PTTL inside the
-		// script (rare, but possible under clock drift) — fall back to
-		// the full effective delay rather than zero so we still pause.
+		// Gate TTL expired between SET NX and PTTL inside the script
+		// (clock drift) — fall back to the full delay so we still pause.
 		ttl = time.Duration(delayMS) * time.Millisecond
 	}
 	return PaceResult{Acquired: false, RetryAfter: p.pushbackFloor(ttl)}, nil
 }
 
-// parseTryAcquireResult extracts the {acquired, delay_ms, ttl_ms} tuple from a
-// tryAcquireScript return value. The go-redis driver decodes Lua arrays as
-// []interface{} with int64 elements.
 func parseTryAcquireResult(raw interface{}) (acquired bool, delayMS, ttlMS int64, err error) {
 	arr, ok := raw.([]interface{})
 	if !ok || len(arr) != 3 {
@@ -154,10 +113,6 @@ func parseTryAcquireResult(raw interface{}) (acquired bool, delayMS, ttlMS int64
 	return ok0 == 1, d, t, nil
 }
 
-// pushbackFloor applies MinPushbackMS as a lower bound on pacer RetryAfter
-// durations. Pre-merge this was the domainDelayPause constant — a brief
-// back-off after a domain rate-limit push-back so the dispatcher does not
-// re-claim the same task on the next tick and spin on rate-limited work.
 func (p *DomainPacer) pushbackFloor(d time.Duration) time.Duration {
 	floor := time.Duration(p.cfg.MinPushbackMS) * time.Millisecond
 	if d < floor {
@@ -166,8 +121,6 @@ func (p *DomainPacer) pushbackFloor(d time.Duration) time.Duration {
 	return d
 }
 
-// Release is called after a crawl completes. It updates the adaptive
-// delay state based on the outcome.
 func (p *DomainPacer) Release(ctx context.Context, domain, jobID string, success, rateLimited bool) error {
 	cfgKey := DomainConfigKey(domain)
 
@@ -196,21 +149,13 @@ func (p *DomainPacer) Release(ctx context.Context, domain, jobID string, success
 		observability.RecordBrokerPacerPushback(ctx, domain, "rate_limited")
 	}
 
-	// Decrement inflight.
 	return p.DecrementInflight(ctx, domain, jobID)
 }
 
-// FlushAdaptiveDelays removes all accumulated per-domain adaptive
-// delay state (hover:dom:cfg:* keys). Pre-merge the DomainLimiter was
-// in-memory and reset on every worker restart — so a bad afternoon of
-// 429s from a flaky target could never throttle crawls for longer than
-// the worker's lifetime. Post-merge the state lives in Redis with a
-// 24h TTL, which means a single spike can keep a domain at the 60s
-// adaptive floor for a full day.
-//
-// Call this on worker startup to restore the pre-merge behaviour: the
-// pacer still grows delay on 429 during this run, but the slate is
-// clean on each deploy. Returns the number of keys deleted.
+// Restores pre-merge behaviour: in-memory limiter reset on each worker
+// restart, but the Redis-backed state has a 24h TTL so a single 429
+// spike can pin a domain at the 60s floor for a full day. Call on
+// worker startup to wipe the slate.
 func (p *DomainPacer) FlushAdaptiveDelays(ctx context.Context) (int, error) {
 	pattern := keyPrefix + "dom:cfg:*"
 	iter := p.client.rdb.Scan(ctx, 0, pattern, 500).Iterator()
@@ -225,7 +170,6 @@ func (p *DomainPacer) FlushAdaptiveDelays(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	// Delete in chunks of 500 to avoid oversized commands.
 	deleted := 0
 	const chunk = 500
 	for i := 0; i < len(keys); i += chunk {
@@ -242,20 +186,17 @@ func (p *DomainPacer) FlushAdaptiveDelays(ctx context.Context) (int, error) {
 	return deleted, nil
 }
 
-// IncrementInflight bumps the per-domain per-job inflight counter.
 func (p *DomainPacer) IncrementInflight(ctx context.Context, domain, jobID string) error {
 	key := DomainInflightKey(domain)
 	return p.client.rdb.HIncrBy(ctx, key, jobID, 1).Err()
 }
 
-// DecrementInflight reduces the per-domain per-job inflight counter.
 func (p *DomainPacer) DecrementInflight(ctx context.Context, domain, jobID string) error {
 	key := DomainInflightKey(domain)
 	val, err := p.client.rdb.HIncrBy(ctx, key, jobID, -1).Result()
 	if err != nil {
 		return err
 	}
-	// Clean up zero/negative entries.
 	if val <= 0 {
 		if err := p.client.rdb.HDel(ctx, key, jobID).Err(); err != nil {
 			brokerLog.Warn("failed to clean zero inflight entry", "error", err, "domain", domain, "job_id", jobID)
@@ -264,7 +205,6 @@ func (p *DomainPacer) DecrementInflight(ctx context.Context, domain, jobID strin
 	return nil
 }
 
-// GetInflight returns the current inflight count for a domain+job.
 func (p *DomainPacer) GetInflight(ctx context.Context, domain, jobID string) (int64, error) {
 	val, err := p.client.rdb.HGet(ctx, DomainInflightKey(domain), jobID).Int64()
 	if err == redis.Nil {

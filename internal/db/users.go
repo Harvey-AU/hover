@@ -12,15 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrDuplicateOrganisationName is returned when a user already has an organisation
-// with the same name (case-insensitive).
 var ErrDuplicateOrganisationName = errors.New("an organisation with that name already exists")
 
-// ErrUserNotFound is returned when a lookup does not match any user. Callers
-// can distinguish "no such user" from other errors via errors.Is.
 var ErrUserNotFound = errors.New("user not found")
 
-// User represents a user in the system
 type User struct {
 	ID                   string    `json:"id"`
 	Email                string    `json:"email"`
@@ -30,12 +25,11 @@ type User struct {
 	OrganisationID       *string   `json:"organisation_id,omitempty"`
 	ActiveOrganisationID *string   `json:"active_organisation_id,omitempty"`
 	SlackUserID          *string   `json:"slack_user_id,omitempty"`
-	WebhookToken         *string   `json:"-"` // Excluded from JSON - sensitive credential
+	WebhookToken         *string   `json:"-"` // Sensitive credential — never serialise to clients.
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
-// Organisation represents an organisation in the system
 type Organisation struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -43,7 +37,6 @@ type Organisation struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// GetUser retrieves a user by ID
 func (db *DB) GetUser(userID string) (*User, error) {
 	user := &User{}
 
@@ -67,7 +60,6 @@ func (db *DB) GetUser(userID string) (*User, error) {
 	return user, nil
 }
 
-// GetUserByWebhookToken retrieves a user by their webhook token
 func (db *DB) GetUserByWebhookToken(webhookToken string) (*User, error) {
 	user := &User{}
 
@@ -91,29 +83,21 @@ func (db *DB) GetUserByWebhookToken(webhookToken string) (*User, error) {
 	return user, nil
 }
 
-// GetOrCreateUser retrieves a user by ID, creating them if they don't exist
-// This is used for auto-creating users from valid JWT tokens
+// Auto-creates the user (with default org) when the lookup is a clean "not found" — used for first-touch JWTs.
 func (db *DB) GetOrCreateUser(userID, email string, fullName *string) (*User, error) {
-	// First try to get the existing user
 	user, err := db.GetUser(userID)
 	if err == nil {
-		// User exists, return them
 		return user, nil
 	}
-	// Only auto-create when the lookup cleanly returned "not found".
-	// A generic DB failure must surface so callers can retry rather than
-	// forcing a user insert on top of broken infrastructure.
+	// Only swallow ErrUserNotFound; generic DB errors must surface so we don't insert on top of broken infra.
 	if !errors.Is(err, ErrUserNotFound) {
 		return nil, fmt.Errorf("failed to look up user before auto-create: %w", err)
 	}
 
-	// User doesn't exist, auto-create them with a default organisation
 	dbLog.Info("Auto-creating user from JWT token", "user_id", userID)
 
-	// Determine organisation name based on email domain
 	orgName := deriveOrganisationName(email, fullName)
 
-	// Create the user
 	newUser, _, err := db.CreateUser(userID, email, nil, nil, fullName, orgName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to auto-create user: %w", err)
@@ -122,11 +106,8 @@ func (db *DB) GetOrCreateUser(userID, email string, fullName *string) (*User, er
 	return newUser, nil
 }
 
-// deriveOrganisationName extracts an organisation name from email and fullName
-// Business emails (non-common providers) use domain as org name
-// Personal emails (gmail, outlook, etc.) use fullName or "Personal Organisation"
+// Business emails derive the org from the domain; personal-provider emails fall back to fullName or email prefix.
 func deriveOrganisationName(email string, fullName *string) string {
-	// Common personal email providers
 	personalProviders := []string{
 		"gmail.com", "googlemail.com",
 		"outlook.com", "hotmail.com", "live.com",
@@ -138,10 +119,8 @@ func deriveOrganisationName(email string, fullName *string) string {
 		"fastmail.com",
 	}
 
-	// Extract domain from email
 	atIndex := strings.LastIndex(email, "@")
 	if atIndex == -1 {
-		// Invalid email format, fall back to personal
 		if fullName != nil && *fullName != "" {
 			return *fullName
 		}
@@ -151,19 +130,15 @@ func deriveOrganisationName(email string, fullName *string) string {
 	emailPrefix := email[:atIndex]
 	domain := strings.ToLower(email[atIndex+1:])
 
-	// Check for empty domain (e.g., "user@")
 	if domain == "" {
 		if fullName != nil && *fullName != "" {
 			return *fullName
 		}
-		// Use email prefix + " Organisation"
 		return titleCaseEmailPrefix(emailPrefix) + " Organisation"
 	}
 
-	// Check if it's a personal email provider
 	for _, provider := range personalProviders {
 		if domain == provider {
-			// Personal email - use fullName or email prefix
 			if fullName != nil && *fullName != "" {
 				return *fullName
 			}
@@ -171,11 +146,9 @@ func deriveOrganisationName(email string, fullName *string) string {
 		}
 	}
 
-	// Business email - derive organisation name from domain
-	// Remove common TLDs and convert to title case
 	orgName := domain
 
-	// Remove TLDs (.com, .co.uk, .com.au, etc.)
+	// Multi-level TLDs must precede single-level ones so .com.au strips before .com.
 	suffixes := []string{".com.au", ".co.uk", ".co.nz", ".com", ".co", ".net", ".org", ".io", ".ai", ".dev"}
 	for _, suffix := range suffixes {
 		if before, ok := strings.CutSuffix(orgName, suffix); ok {
@@ -184,8 +157,6 @@ func deriveOrganisationName(email string, fullName *string) string {
 		}
 	}
 
-	// Convert to title case (teamharvey -> Team Harvey)
-	// Simple approach: capitalize first letter
 	if len(orgName) > 0 {
 		orgName = strings.ToUpper(orgName[:1]) + orgName[1:]
 	}
@@ -193,7 +164,6 @@ func deriveOrganisationName(email string, fullName *string) string {
 	return orgName
 }
 
-// isBusinessEmail checks if an email is from a business domain (not a personal email provider)
 func isBusinessEmail(email string) bool {
 	personalProviders := []string{
 		"gmail.com", "googlemail.com",
@@ -216,30 +186,24 @@ func isBusinessEmail(email string) bool {
 	return !slices.Contains(personalProviders, domain)
 }
 
-// titleCaseEmailPrefix converts email prefix to title case
-// Examples: "simon.smallchua" -> "Simon.Smallchua", "user" -> "User"
 func titleCaseEmailPrefix(prefix string) string {
 	if prefix == "" {
 		return ""
 	}
 
-	// Split on common separators (., -, _)
 	parts := strings.FieldsFunc(prefix, func(r rune) bool {
 		return r == '.' || r == '-' || r == '_'
 	})
 
-	// Capitalize first letter of each part
 	for i, part := range parts {
 		if len(part) > 0 {
 			parts[i] = strings.ToUpper(part[:1]) + strings.ToLower(part[1:])
 		}
 	}
 
-	// Rejoin with the original separator (use . for simplicity)
 	return strings.Join(parts, ".")
 }
 
-// GetOrganisationByName retrieves an organisation by name (case-insensitive)
 func (db *DB) GetOrganisationByName(name string) (*Organisation, error) {
 	org := &Organisation{}
 
@@ -263,7 +227,6 @@ func (db *DB) GetOrganisationByName(name string) (*Organisation, error) {
 	return org, nil
 }
 
-// CreateOrganisation creates a new organisation
 func (db *DB) CreateOrganisation(name string) (*Organisation, error) {
 	org := &Organisation{
 		ID:   uuid.New().String(),
@@ -290,10 +253,7 @@ func (db *DB) CreateOrganisation(name string) (*Organisation, error) {
 	return org, nil
 }
 
-// CreateOrganisationForUser atomically checks for a duplicate name, creates the
-// organisation, adds the user as admin, and sets it as their active organisation.
-// Returns ErrDuplicateOrganisationName if the user already owns an organisation
-// with the same name (case-insensitive).
+// Returns ErrDuplicateOrganisationName when the user already owns an org of the same (case-insensitive) name.
 func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, error) {
 	tx, err := db.client.Begin()
 	if err != nil {
@@ -301,14 +261,13 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Lock the user row to serialise concurrent create requests for the same user.
+	// FOR UPDATE serialises concurrent creates for the same user so the duplicate-name check below is race-free.
 	lockQuery := `SELECT id FROM users WHERE id = $1 FOR UPDATE`
 	var lockedID string
 	if err := tx.QueryRow(lockQuery, userID).Scan(&lockedID); err != nil {
 		return nil, fmt.Errorf("failed to lock user row: %w", err)
 	}
 
-	// Check for duplicate name within this user's existing organisations.
 	dupQuery := `
 		SELECT EXISTS (
 			SELECT 1
@@ -326,7 +285,6 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 		return nil, ErrDuplicateOrganisationName
 	}
 
-	// Create the organisation.
 	org := &Organisation{
 		ID:   uuid.New().String(),
 		Name: name,
@@ -340,7 +298,6 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 		return nil, fmt.Errorf("failed to create organisation: %w", err)
 	}
 
-	// Add user as admin member.
 	insertMember := `
 		INSERT INTO organisation_members (user_id, organisation_id, role, created_at)
 		VALUES ($1, $2, 'admin', NOW())
@@ -350,7 +307,6 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 		return nil, fmt.Errorf("failed to add organisation member: %w", err)
 	}
 
-	// Set as active organisation.
 	updateActive := `UPDATE users SET active_organisation_id = $2, updated_at = NOW() WHERE id = $1`
 	if _, err := tx.Exec(updateActive, userID, org.ID); err != nil {
 		return nil, fmt.Errorf("failed to set active organisation: %w", err)
@@ -368,7 +324,6 @@ func (db *DB) CreateOrganisationForUser(userID, name string) (*Organisation, err
 	return org, nil
 }
 
-// GetOrganisation retrieves an organisation by ID
 func (db *DB) GetOrganisation(organisationID string) (*Organisation, error) {
 	org := &Organisation{}
 
@@ -426,50 +381,41 @@ func (db *DB) GetOrganisationMembers(organisationID string) ([]*User, error) {
 	return users, nil
 }
 
-// If user already exists, returns the existing user and their organisation
+// If the user exists, returns them with their organisation; otherwise creates both atomically.
 func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *string, orgName string) (*User, *Organisation, error) {
-	// First check if user already exists
 	existingUser, err := db.GetUser(userID)
 	if err == nil {
-		// User exists, get their organisation
 		if existingUser.OrganisationID != nil {
 			org, orgErr := db.GetOrganisation(*existingUser.OrganisationID)
 			if orgErr != nil {
-				// Surface the underlying lookup failure so callers do not silently
-				// receive a user stripped of their organisation context.
+				// Surface the lookup failure so callers don't silently lose org context.
 				return nil, nil, fmt.Errorf("failed to get existing user's organisation %s: %w", *existingUser.OrganisationID, orgErr)
 			}
 			dbLog.Info("User already exists, returning existing user and organisation", "user_id", userID)
 			return existingUser, org, nil
 		}
-		// User exists but has no organisation - this shouldn't happen but handle gracefully
 		dbLog.Info("User already exists but has no organisation", "user_id", userID)
 		return existingUser, nil, nil
 	}
-	// Only treat a clean "not found" as the cue to create a new record.
-	// Any other error (DB outage, scan failure) should propagate instead of
-	// masking as a fresh-user signup and causing a duplicate insert.
+	// Only swallow ErrUserNotFound; other errors must propagate to avoid duplicate inserts on flaky infra.
 	if !errors.Is(err, ErrUserNotFound) {
 		return nil, nil, fmt.Errorf("failed to look up user before create: %w", err)
 	}
 
-	// User doesn't exist, create new user and organisation
-	// Start a transaction for automatic operation
 	tx, err := db.client.Begin()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to start transaction: %w", err)
 	}
 	defer func() {
-		_ = tx.Rollback() // Rollback is safe to call even after commit
+		_ = tx.Rollback()
 	}()
 
-	// For business emails, check if organisation already exists
+	// Business emails join an existing org of the same name; personal emails always get a fresh one.
 	var org *Organisation
 	createdNewOrg := false
 	if isBusinessEmail(email) {
 		existingOrg, err := db.GetOrganisationByName(orgName)
 		if err == nil {
-			// Organisation exists, use it
 			org = existingOrg
 			dbLog.Info("Joining existing organisation (business email)",
 				"user_id", userID,
@@ -478,7 +424,6 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		}
 	}
 
-	// If no existing organisation found (or personal email), create new one
 	if org == nil {
 		createdNewOrg = true
 		org = &Organisation{
@@ -500,7 +445,6 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		}
 	}
 
-	// Create user with organisation reference and active organisation
 	user := &User{
 		ID:                   userID,
 		Email:                email,
@@ -524,12 +468,12 @@ func (db *DB) CreateUser(userID, email string, firstName, lastName, fullName *st
 		return nil, nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
+	// Creator of a new org becomes admin; existing-org joiners default to member.
 	memberRole := "member"
 	if createdNewOrg {
 		memberRole = "admin"
 	}
 
-	// Add user to organisation_members table
 	memberQuery := `
 		INSERT INTO organisation_members (user_id, organisation_id, role, created_at)
 		VALUES ($1, $2, $3, NOW())

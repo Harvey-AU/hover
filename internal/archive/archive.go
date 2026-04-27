@@ -12,13 +12,11 @@ import (
 	"strings"
 )
 
-// Config controls the cold-storage provider used by the HTML persister.
 type Config struct {
 	Provider string // "r2", "s3", "b2"
-	Bucket   string // cold-storage bucket name
+	Bucket   string
 }
 
-// DefaultConfig returns sensible defaults, overridable via environment.
 func DefaultConfig() Config {
 	return Config{
 		Provider: "r2",
@@ -26,8 +24,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// ConfigFromEnv builds a Config from ARCHIVE_* environment variables.
-// Returns nil if ARCHIVE_PROVIDER or ARCHIVE_BUCKET is unset (feature disabled).
+// Returns nil when ARCHIVE_PROVIDER or ARCHIVE_BUCKET is unset (feature disabled).
 func ConfigFromEnv() *Config {
 	provider := os.Getenv("ARCHIVE_PROVIDER")
 	if provider == "" {
@@ -44,13 +41,8 @@ func ConfigFromEnv() *Config {
 	return &cfg
 }
 
-// TaskHTMLObjectPath returns the canonical object path for a task HTML blob.
-//
-// When ARCHIVE_PATH_PREFIX is set, it is prepended (with a single "/" join)
-// so review-app deployments can land in their own R2 sub-tree without
-// touching the production bucket layout — e.g. ARCHIVE_PATH_PREFIX=347 on
-// a review app produces "347/jobs/<job>/tasks/<task>/page-content.html.gz".
-// Empty prefix preserves the original production path exactly.
+// ARCHIVE_PATH_PREFIX (when set) is prepended with a "/" join so
+// review-app deployments stay siloed from the production bucket layout.
 func TaskHTMLObjectPath(jobID, taskID string) string {
 	base := fmt.Sprintf("jobs/%s/tasks/%s/page-content.html.gz", jobID, taskID)
 	prefix := strings.Trim(strings.TrimSpace(os.Getenv("ARCHIVE_PATH_PREFIX")), "/")
@@ -60,23 +52,13 @@ func TaskHTMLObjectPath(jobID, taskID string) string {
 	return prefix + "/" + base
 }
 
-// ColdKey returns the canonical cold-storage object key for a task HTML blob.
 func ColdKey(jobID, taskID string) string {
 	return TaskHTMLObjectPath(jobID, taskID)
 }
 
-// LighthouseObjectPath returns the canonical object path for a
-// lighthouse audit's gzipped JSON report. When taskID is non-empty the
-// report is co-located with the matching crawl artefact under
-// "jobs/{jobID}/tasks/{taskID}/lighthouse-{profile}.json.gz" so the
-// two blobs can be discovered together. When taskID is empty (the
-// parent task was deleted via ON DELETE SET NULL on
-// lighthouse_runs.source_task_id) the path falls back to
-// "jobs/{jobID}/runs/{runID}/lighthouse-{profile}.json.gz" so the
-// audit is still archived.
-//
-// ARCHIVE_PATH_PREFIX prepends in the same way as TaskHTMLObjectPath so
-// review-app deployments stay siloed from production.
+// Empty taskID (parent deleted via ON DELETE SET NULL on
+// lighthouse_runs.source_task_id) falls back to a run-id keyed path so
+// the audit is still archived.
 func LighthouseObjectPath(jobID, taskID, profile string, runID int64) string {
 	var base string
 	if taskID == "" {

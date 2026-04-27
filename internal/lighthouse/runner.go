@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// Profile selects between Lighthouse's mobile and desktop presets.
-// v1 only schedules mobile audits; desktop is reserved for Phase 5.
+// v1 only schedules mobile; desktop reserved for Phase 5.
 type Profile string
 
 const (
@@ -16,15 +15,8 @@ const (
 	ProfileDesktop Profile = "desktop"
 )
 
-// AuditRequest is the input handed to a Runner. The scheduler builds
-// these from a lighthouse_runs row plus the matching tasks/pages
-// metadata. Timeout is the per-run budget; runners must respect it.
-//
-// SourceTaskID is the lighthouse_runs.source_task_id (empty when the
-// FK was NULLed via ON DELETE SET NULL). The local runner uses it to
-// co-locate the report with the matching crawl artefact under
-// jobs/{JobID}/tasks/{SourceTaskID}/. Empty falls back to a
-// run-id-keyed path so a deleted parent task doesn't lose the report.
+// SourceTaskID empty when FK was NULLed via ON DELETE SET NULL; runner
+// then falls back to a run-id-keyed path so the report isn't lost.
 type AuditRequest struct {
 	RunID        int64
 	JobID        string
@@ -35,13 +27,9 @@ type AuditRequest struct {
 	Timeout      time.Duration
 }
 
-// AuditResult is the output of a successful audit. ReportKey is the
-// R2 object key that the runner uploaded the full Lighthouse JSON to;
-// empty for the stub runner since it doesn't write to R2 in Phase 1.
-//
-// Optional metric fields are pointers so we can distinguish "not
-// produced" from "produced as zero" — Lighthouse occasionally omits
-// metrics on pages it can't audit cleanly.
+// Metric fields are pointers to distinguish "not produced" from
+// "produced as zero" — Lighthouse occasionally omits metrics on pages
+// it can't audit cleanly.
 type AuditResult struct {
 	PerformanceScore *int
 	LCPMs            *int
@@ -56,38 +44,20 @@ type AuditResult struct {
 	Duration         time.Duration
 }
 
-// Runner executes a single Lighthouse audit. The Phase 1 stub
-// implementation returns canned data so the rest of the pipeline can
-// be exercised before Chromium lands. Phase 3 adds a localRunner that
-// shells out to the bundled lighthouse binary.
 type Runner interface {
 	Run(ctx context.Context, req AuditRequest) (AuditResult, error)
 }
 
-// ErrRunnerNotImplemented is returned by the local runner shim until
-// Phase 3 wires Chromium into the analysis-app image. Keeping the
-// error here means the scheduler and DB layer can be exercised
-// end-to-end with the stub before any Chromium work lands.
 var ErrRunnerNotImplemented = errors.New("lighthouse local runner not implemented yet")
 
-// StubRunner is a deterministic Runner that returns canned metrics
-// without launching Chromium. Used for local development, CI, and
-// integration tests that drive a synthetic job through the full
-// schedule → enqueue → record pipeline.
-//
-// Metric values are fixed so test assertions stay simple. Tests that
-// need varied data should construct a custom Runner rather than
-// extending this one.
+// StubRunner returns canned metrics without launching Chromium so the
+// schedule → enqueue → record pipeline can be exercised end-to-end.
 type StubRunner struct{}
 
-// NewStubRunner returns a StubRunner ready for use.
 func NewStubRunner() *StubRunner {
 	return &StubRunner{}
 }
 
-// Run honours ctx cancellation and req.Timeout but otherwise sleeps
-// briefly to approximate the cost of an audit, then returns a canned
-// result.
 func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, error) {
 	if req.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -150,20 +120,16 @@ func (s *StubRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, er
 	return result, nil
 }
 
-// SanitiseAuditURL strips query strings and fragments before logging.
-// Lighthouse audit URLs come from customer crawls and can carry session
-// tokens, signed-link tokens, or other low-entropy PII in the query
-// string; the runner does not need them in central logs. Exported so
-// the analysis service (cmd/analysis) can apply the same rule to its
-// own info-level logs without redefining the helper.
+// SanitiseAuditURL strips query and fragment before logging — audit
+// URLs come from customer crawls and can carry session tokens or other
+// low-entropy PII.
 func SanitiseAuditURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		// Don't risk leaking the unparsed string — fall back to host
-		// only if we can extract one heuristically; otherwise drop.
+		// Drop rather than risk leaking the unparsed string.
 		return ""
 	}
 	u.RawQuery = ""

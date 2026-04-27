@@ -15,21 +15,14 @@ import (
 	"time"
 )
 
-// aiaTransport wraps an http.RoundTripper and, on TLS certificate
-// verification failure, attempts to fetch missing intermediate
-// certificates via the Authority Information Access (AIA) extension.
-//
-// Many web servers are misconfigured and don't send the full
-// certificate chain. Browsers handle this transparently by fetching
-// missing intermediates from the AIA URLs embedded in the leaf cert.
-// Go's net/http does not. This transport adds that behaviour so the
-// crawler can handle the real-world web.
+// On TLS verification failure, fetch missing intermediates via the AIA extension
+// (browsers do this transparently; Go's net/http does not).
 type aiaTransport struct {
 	base *http.Transport
 
 	mu            sync.RWMutex
-	intermediates []*x509.Certificate // fetched intermediate CAs; never added to a root trust store
-	cache         map[string]bool     // tracks AIA URLs we've already fetched
+	intermediates []*x509.Certificate // never added to a root trust store
+	cache         map[string]bool
 }
 
 func newAIATransport(base *http.Transport) *aiaTransport {
@@ -45,14 +38,12 @@ func (t *aiaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, err
 	}
 
-	// TLS verification failed — attempt AIA fetch and retry once.
 	if !t.fetchIntermediates(req.URL.Host) {
 		return resp, err
 	}
 
-	// Build a one-shot transport that verifies the chain using system roots +
-	// our fetched intermediates via VerifyConnection, so the intermediates are
-	// never injected into any root trust store.
+	// VerifyConnection re-runs verification with system roots + fetched
+	// intermediates, so intermediates never enter any root trust store.
 	hostname := req.URL.Hostname()
 	t.mu.RLock()
 	fetched := append([]*x509.Certificate(nil), t.intermediates...)
@@ -92,9 +83,6 @@ func (t *aiaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return retryTransport.RoundTrip(req)
 }
 
-// fetchIntermediates connects to the host with verification disabled,
-// reads the leaf cert's AIA URLs, fetches the intermediates, and adds
-// them to our intermediates slice. Returns true if any are available.
 func (t *aiaTransport) fetchIntermediates(host string) bool {
 	if !strings.Contains(host, ":") {
 		host += ":443"
@@ -105,9 +93,8 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		return false
 	}
 
-	// Connect with InsecureSkipVerify just to read the leaf certificate.
-	// Use ssrfSafeDialContext so IP checks happen at connect time (DNS rebinding
-	// protection), and disable redirect following so we only inspect the target host.
+	// ssrfSafeDialContext re-checks IPs at connect time to defeat DNS rebinding
+	// between the isPrivateHost check above and the actual TCP dial.
 	inspectTransport := &http.Transport{
 		TLSHandshakeTimeout: 10 * time.Second,
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, //nolint:gosec // intentional: reading cert only
@@ -144,7 +131,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 		seen := t.cache[aiaURL]
 		t.mu.RUnlock()
 		if seen {
-			installed = true // already fetched and stored
+			installed = true
 			continue
 		}
 
@@ -153,8 +140,7 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 			continue
 		}
 
-		// Accept only intermediate CAs — skip non-CA certs and self-signed
-		// (root) certs so we never treat a fetched cert as a trust anchor.
+		// Reject non-CA and self-signed certs — never let a fetched cert become a trust anchor.
 		if !cert.IsCA || !cert.BasicConstraintsValid {
 			crawlerLog.Debug("AIA: skipping non-CA certificate", "subject", cert.Subject.CommonName)
 			continue
@@ -179,7 +165,6 @@ func (t *aiaTransport) fetchIntermediates(host string) bool {
 	return installed
 }
 
-// fetchCertFromURL downloads a DER-encoded certificate from a URL.
 func fetchCertFromURL(rawURL string) *x509.Certificate {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -195,9 +180,7 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 		return nil
 	}
 
-	// Use ssrfSafeDialContext so IP validation happens at connect time, not just
-	// at URL-parse time — this prevents DNS rebinding between the isPrivateHost
-	// check above and the actual TCP dial.
+	// Connect-time IP check defeats DNS rebinding between isPrivateHost and dial.
 	aiaTransport := &http.Transport{
 		DialContext: ssrfSafeDialContext(),
 	}
@@ -227,10 +210,9 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 		return nil
 	}
 
-	// AIA endpoints typically serve DER-encoded certificates.
+	// AIA endpoints typically serve DER; some serve a PEM bundle — try both.
 	cert, err := x509.ParseCertificate(body)
 	if err != nil {
-		// Fallback: try parsing as multiple certs (PEM bundle)
 		certs, pemErr := x509.ParseCertificates(body)
 		if pemErr != nil || len(certs) == 0 {
 			crawlerLog.Debug("AIA: failed to parse certificate", "error", err, "host", parsed.Host)
@@ -242,24 +224,20 @@ func fetchCertFromURL(rawURL string) *x509.Certificate {
 	return cert
 }
 
-// isPrivateHost resolves the host and returns true if any of its IPs are
-// private, loopback, link-local, or unspecified. This guards against SSRF
-// where an attacker-controlled hostname resolves to an internal address.
+// SSRF guard: returns true for any IP that's private/loopback/link-local/unspecified.
+// Fails closed on resolution error so unresolvable/slow hosts can't bypass.
 func isPrivateHost(host string) bool {
-	// Strip port if present.
 	hostOnly := host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		hostOnly = h
 	}
 
-	// Bounded DNS resolution — 2 s timeout. On error (including timeout) we
-	// fail closed and treat the host as private to prevent SSRF.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, hostOnly)
 	if err != nil {
-		return true // fail-closed: treat unresolvable/timed-out hosts as private
+		return true
 	}
 
 	for _, addr := range addrs {
@@ -270,7 +248,6 @@ func isPrivateHost(host string) bool {
 	return false
 }
 
-// isUnknownAuthorityErr detects TLS errors caused by missing intermediates.
 func isUnknownAuthorityErr(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "certificate signed by unknown authority") ||

@@ -10,23 +10,15 @@ import (
 )
 
 const (
-	// fallbackJobConcurrency is the hardcoded last-resort default used when
-	// GNH_MAX_WORKERS is unset or unparseable. Pre-PR-330, the CreateJob
-	// path used workerPool.maxWorkers (which GNH_MAX_WORKERS fed) as the
-	// concurrency default for new jobs; restoring that dial keeps per-job
-	// dispatch ceilings tunable via env without reintroducing the pool.
+	// PR-330 removed the worker pool; this restores the per-job dispatch dial
+	// previously fed by GNH_MAX_WORKERS without reintroducing the pool.
 	fallbackJobConcurrency = 20
 
-	// discoveredLinks* constants control timeout behaviour for link persistence.
 	discoveredLinksDBTimeout  = 30 * time.Second
 	discoveredLinksMinRemain  = 8 * time.Second
 	discoveredLinksMinTimeout = 5 * time.Second
 )
 
-// jobDefaultConcurrency returns the default per-job concurrency used when a
-// job is created without an explicit Concurrency value. Reads GNH_MAX_WORKERS
-// (production default 130) and falls back to fallbackJobConcurrency if the env
-// var is unset, empty, or unparseable.
 func jobDefaultConcurrency() int {
 	if raw := strings.TrimSpace(os.Getenv("GNH_MAX_WORKERS")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -36,7 +28,6 @@ func jobDefaultConcurrency() int {
 	return fallbackJobConcurrency
 }
 
-// JobInfo caches job-specific data that doesn't change during execution.
 type JobInfo struct {
 	DomainID                 int
 	DomainName               string
@@ -46,13 +37,11 @@ type JobInfo struct {
 	Concurrency              int
 	AdaptiveDelay            int
 	AdaptiveDelayFloor       int
-	RobotsRules              *crawler.RobotsRules // Cached robots.txt rules for URL filtering
+	RobotsRules              *crawler.RobotsRules
 }
 
-// IsRateLimitError checks whether an error indicates rate limiting (429, 403,
-// 503, or common rate-limit messages). This intentionally matches a broader set
-// than isBlockingError in executor.go: isBlockingError drives retry/backoff
-// decisions while IsRateLimitError drives domain pacer state updates.
+// IsRateLimitError matches a broader set than isBlockingError: pacer state
+// updates fire even when the executor would not retry.
 func IsRateLimitError(err error) bool {
 	if err == nil {
 		return false
@@ -65,17 +54,13 @@ func IsRateLimitError(err error) bool {
 		strings.Contains(lower, "503")
 }
 
-// applyCrawlDelay sleeps for the task's robots.txt crawl delay. Crawl delay is
-// now primarily enforced by the broker's DomainPacer, but this helper is kept
-// for test compatibility.
+// applyCrawlDelay is retained for tests; production crawl-delay is enforced by the broker's DomainPacer.
 func applyCrawlDelay(task *Task) {
 	if task.CrawlDelay > 0 {
 		time.Sleep(time.Duration(task.CrawlDelay) * time.Second)
 	}
 }
 
-// classifyTaskOutcome maps a task processing result into an (outcome, reason)
-// pair for telemetry. Ported from the old WorkerPool.classifyTaskOutcome.
 func classifyTaskOutcome(o *TaskOutcome) (string, string) {
 	if o.Success {
 		return "success", "ok"
@@ -95,8 +80,6 @@ func classifyTaskOutcome(o *TaskOutcome) (string, string) {
 	return "failed", "non_retryable"
 }
 
-// linkDiscoveryMinPriorityFromEnv reads the minimum priority threshold for
-// discovered links from the GNH_LINK_DISCOVERY_MIN_PRIORITY env var.
 func linkDiscoveryMinPriorityFromEnv() float64 {
 	const fallback = 0.5
 	if raw := strings.TrimSpace(os.Getenv("GNH_LINK_DISCOVERY_MIN_PRIORITY")); raw != "" {

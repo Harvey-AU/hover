@@ -24,51 +24,35 @@ import (
 
 var jobsLog = logging.Component("jobs")
 
-// DbQueueProvider defines the interface for database operations
 type DbQueueProvider interface {
 	Execute(ctx context.Context, fn func(*sql.Tx) error) error
 	EnqueueURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error
 	CleanupStuckJobs(ctx context.Context) error
 }
 
-// JobManagerInterface defines the interface for job management operations
 type JobManagerInterface interface {
-	// Core job operations used by API layer
 	CreateJob(ctx context.Context, options *JobOptions) (*Job, error)
 	CancelJob(ctx context.Context, jobID string) error
 	GetJobStatus(ctx context.Context, jobID string) (*Job, error)
 
-	// Additional job operations
 	GetJob(ctx context.Context, jobID string) (*Job, error)
 	EnqueueJobURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error
 
-	// Job utility methods
 	IsJobComplete(job *Job) bool
 	CalculateJobProgress(job *Job) float64
 	ValidateStatusTransition(from, to JobStatus) error
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
 	MarkJobRunning(ctx context.Context, jobID string) error
 
-	// GetRobotsRules fetches parsed robots.txt rules for a domain.
-	// Used by worker-side link-discovery filtering. Returns nil (not an
-	// error) when the crawler is unavailable — callers treat nil rules
-	// as "no restriction", matching the historical behaviour.
+	// Returns nil rules (not error) when crawler is unavailable; callers treat that as "no restriction".
 	GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error)
 }
 
-// TaskScheduleCallback is called after tasks are successfully inserted
-// into Postgres. The callback receives the data needed to schedule
-// the tasks into an external broker (e.g. Redis). If nil, no external
-// scheduling occurs (legacy DB-queue mode).
+// Nil callback means legacy DB-queue mode (no external broker scheduling).
 type TaskScheduleCallback func(ctx context.Context, jobID string, entries []TaskScheduleEntry)
 
-// TaskScheduleEntry carries the minimal data needed to schedule a
-// newly inserted task into the Redis ZSET.
-//
-// RunAt is the earliest time at which the task may be dispatched. For
-// freshly created pending tasks this is typically "now", but for
-// waiting/retry rows it carries the backoff deadline so callbacks do
-// not mistakenly schedule them as ready-now.
+// RunAt is the earliest dispatch time; for waiting/retry rows it carries
+// the backoff deadline so callbacks don't schedule them as ready-now.
 type TaskScheduleEntry struct {
 	TaskID     string
 	PageID     int
@@ -82,63 +66,34 @@ type TaskScheduleEntry struct {
 	RunAt      time.Time
 }
 
-// JobManager handles job creation and lifecycle management
 type JobManager struct {
 	db      *sql.DB
 	dbQueue DbQueueProvider
 	crawler CrawlerInterface
 
-	// OnTasksEnqueued is called after successful Postgres task insertion.
-	// Set by the API server or worker service to schedule tasks into Redis.
+	// Fire-and-forget; nil is allowed (legacy DB-queue mode, tests).
 	OnTasksEnqueued TaskScheduleCallback
 
-	// OnProgressMilestone is called after a batch flush observes the
-	// per-job progress crossing a 10% boundary (floor(new/10) > floor(old/10)).
-	// Set by the lighthouse scheduler so audits can be enqueued progressively
-	// while the crawl runs. Fire-and-forget: never returns an error and must
-	// not block the batch loop. Nil callback is allowed (production deploys
-	// without the analysis app, tests).
+	// Fire-and-forget; must return promptly — runs on the batch flusher's goroutine.
 	OnProgressMilestone ProgressMilestoneCallback
 
-	// OnJobTerminated is called after a job's Postgres status has been
-	// flipped to a terminal state (cancelled, completed, failed). Set by
-	// the API server to drop the per-job Redis keys (schedule ZSET,
-	// streams, consumer groups, running-counter HASH field). Fire-and-
-	// forget: errors are logged inside the callback. Nil is allowed for
-	// tests and for deploys without REDIS_URL.
+	// Fire-and-forget; nil allowed for tests and deploys without REDIS_URL.
 	OnJobTerminated JobTerminatedCallback
 
-	// lastMilestoneFired is the in-process record of the last 10%
-	// boundary that has been signalled per job, gating MaybeFireMilestones
-	// against duplicate fires within this replica. Multiple replicas may
-	// each fire the same milestone independently — the lighthouse
-	// scheduler dedupes via lighthouse_runs.UNIQUE(job_id, page_id), so
-	// at-most-once-per-replica is acceptable.
+	// At-most-once-per-replica; downstream dedupes (e.g. lighthouse_runs UNIQUE).
 	milestoneMu        sync.Mutex
 	lastMilestoneFired map[string]int // jobID -> milestone (0,10,20...100)
 
-	// Map to track which pages have been processed for each job
-	processedPages map[string]struct{} // Key format: "jobID_pageID"
-	pagesMutex     sync.RWMutex        // Mutex for thread-safe access
+	processedPages map[string]struct{} // key: "jobID_pageID"
+	pagesMutex     sync.RWMutex
 
-	sitemapSem chan struct{} // limits concurrent sitemap batch insertions across all jobs
+	sitemapSem chan struct{} // caps concurrent sitemap batch insertions across all jobs
 }
 
-// ProgressMilestoneCallback is invoked when a job's progress crosses a
-// 10% boundary. oldPct and newPct are the integer percentages before
-// and after the flush that triggered the milestone. The callback is
-// fire-and-forget and runs on the batch flusher's goroutine, so
-// implementations must return promptly — long-running work belongs in a
-// goroutine inside the callback.
 type ProgressMilestoneCallback func(ctx context.Context, jobID string, oldPct, newPct int)
 
-// JobTerminatedCallback is invoked after a job has been moved to a
-// terminal state (cancelled, completed, failed). Implementations are
-// expected to release per-job Redis state. The callback is fire-and-
-// forget; errors must be handled inside the callback.
 type JobTerminatedCallback func(ctx context.Context, jobID string)
 
-// NewJobManager creates a new job manager
 func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface) *JobManager {
 	sitemapConcurrency := sitemapInsertConcurrency()
 	return &JobManager{
@@ -151,21 +106,8 @@ func NewJobManager(db *sql.DB, dbQueue DbQueueProvider, crawler CrawlerInterface
 	}
 }
 
-// MaybeFireMilestones inspects each job's current progress and, if its
-// 10% milestone has advanced since the last fire on this replica,
-// invokes the registered OnProgressMilestone callback once. Designed to
-// be wired as the BatchFlushCallback on a db.BatchManager:
-//
-//	batchMgr.SetOnBatchFlushed(jobsManager.MaybeFireMilestones)
-//
-// Cheap when no callback is set or when no milestones have changed —
-// the path is a single SELECT plus a map lookup per job.
-//
-// Multi-replica safety: multiple workers may each compute the same
-// milestone and fire concurrently. Downstream dedupe (lighthouse_runs
-// UNIQUE(job_id, page_id) for the lighthouse case) makes this safe; the
-// in-process map merely keeps a single replica from re-firing on every
-// flush.
+// Wired as the BatchFlushCallback on db.BatchManager. Multi-replica safe:
+// downstream dedupe handles concurrent fires from sibling replicas.
 func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) {
 	if jm == nil || jm.OnProgressMilestone == nil || len(jobIDs) == 0 {
 		return
@@ -202,8 +144,7 @@ func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) 
 		if total <= 0 {
 			continue
 		}
-		// Integer percent (0..100). Saturate at 100 in case triggers ever
-		// over-count.
+		// Saturate at 100 in case triggers ever over-count.
 		newPct := finishedTaskCnt * 100 / total
 		if newPct > 100 {
 			newPct = 100
@@ -216,12 +157,7 @@ func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) 
 			jm.milestoneMu.Unlock()
 			continue
 		}
-		// 0% is not a milestone — every fresh job sits at 0% before
-		// any tasks complete, and the first batch flush would otherwise
-		// emit a spurious (0, 0) callback on the very first observation
-		// (where ok is false). The lighthouse scheduler handles 0%
-		// fine via the no-completed-tasks branch, but the noise drowns
-		// the milestone signal in logs and metrics.
+		// 0% is not a milestone — suppresses a spurious (0,0) callback on first observation.
 		if newMilestone == 0 {
 			jm.lastMilestoneFired[jobID] = 0
 			jm.milestoneMu.Unlock()
@@ -232,7 +168,7 @@ func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) 
 
 		fires = append(fires, pending{
 			jobID:  jobID,
-			oldPct: oldMilestone, // 0 if first observation
+			oldPct: oldMilestone,
 			newPct: newMilestone,
 		})
 	}
@@ -247,11 +183,9 @@ func (jm *JobManager) MaybeFireMilestones(ctx context.Context, jobIDs []string) 
 	}
 }
 
-// handleExistingJobs checks for existing active jobs and cancels them if found
 func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, userID *string, organisationID *string) error {
-	// Need either user_id or organisation_id to check for duplicates
 	if (userID == nil || *userID == "") && (organisationID == nil || *organisationID == "") {
-		return nil // Skip check if neither ID is provided
+		return nil
 	}
 
 	var existingJobID string
@@ -259,12 +193,11 @@ func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, use
 	var existingOrgID sql.NullString
 	var existingUserID sql.NullString
 
-	// Build query dynamically based on available IDs
 	var query string
 	var args []any
 
 	if organisationID != nil && *organisationID != "" {
-		// Prefer organisation-level duplicate checking (multi-user organisations)
+		// Prefer organisation-level duplicate check so multi-user orgs share a single active job.
 		query = `
 			SELECT j.id, j.status, j.organisation_id, j.user_id
 			FROM jobs j
@@ -277,7 +210,6 @@ func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, use
 		`
 		args = []any{domain, *organisationID}
 	} else {
-		// Fall back to user-level checking for users without organisations
 		query = `
 			SELECT j.id, j.status, j.organisation_id, j.user_id
 			FROM jobs j
@@ -297,7 +229,6 @@ func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, use
 	})
 
 	if err == nil && existingJobID != "" {
-		// Found an existing active job for the same domain and user/organisation
 		args := []any{
 			"existing_job_id", existingJobID,
 			"existing_job_status", existingJobStatus,
@@ -313,17 +244,15 @@ func (jm *JobManager) handleExistingJobs(ctx context.Context, domain string, use
 
 		if err := jm.CancelJob(ctx, existingJobID); err != nil {
 			jobsLog.Error("Failed to cancel existing job", "error", err, "job_id", existingJobID)
-			// Continue with new job creation even if cancellation fails
 		}
 	} else if err != nil && err != sql.ErrNoRows {
-		// Log query error but continue with job creation
 		jobsLog.Warn("Error checking for existing jobs", "error", err, "domain", domain)
 	}
 
-	return nil // Always return nil to continue with job creation
+	// Always return nil — duplicate-check failures must not block new job creation.
+	return nil
 }
 
-// createJobObject creates a new Job instance with the given options and normalized domain
 func createJobObject(options *JobOptions, normalisedDomain string) *Job {
 	return &Job{
 		ID:                       uuid.New().String(),
@@ -352,22 +281,18 @@ func createJobObject(options *JobOptions, normalisedDomain string) *Job {
 	}
 }
 
-// setupJobDatabase creates domain and job records in the database
-// Returns the domain ID for use in subsequent operations
 func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalisedDomain string) (int, error) {
 	var domainID int
 
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// Get or create domain ID
 		err := tx.QueryRow(`
-			INSERT INTO domains(name) VALUES($1) 
-			ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name 
+			INSERT INTO domains(name) VALUES($1)
+			ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name
 			RETURNING id`, normalisedDomain).Scan(&domainID)
 		if err != nil {
 			return fmt.Errorf("failed to get or create domain: %w", err)
 		}
 
-		// Insert the job
 		_, err = tx.Exec(
 			`INSERT INTO jobs (
 				id, domain_id, user_id, organisation_id, status, progress, total_tasks, completed_tasks, failed_tasks, skipped_tasks,
@@ -393,10 +318,8 @@ func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalised
 	return domainID, nil
 }
 
-// GetRobotsRules fetches parsed robots.txt rules for a domain via the
-// underlying crawler. Returns nil rules (and nil error) when the crawler
-// is unavailable, matching the legacy worker behaviour where missing
-// rules mean "no restriction".
+// Returns nil (no error) when the crawler is unavailable; callers treat
+// nil rules as "no restriction".
 func (jm *JobManager) GetRobotsRules(ctx context.Context, domain string) (*crawler.RobotsRules, error) {
 	if jm.crawler == nil {
 		return nil, nil
@@ -411,17 +334,14 @@ func (jm *JobManager) GetRobotsRules(ctx context.Context, domain string) (*crawl
 	return result.RobotsRules, nil
 }
 
-// validateRootURLAccess checks robots.txt rules and validates root URL access
 func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, normalisedDomain string, rootPath string) (*crawler.RobotsRules, error) {
 	var robotsRules *crawler.RobotsRules
 
 	if jm.crawler != nil {
-		// Use DiscoverSitemapsAndRobots which already includes parsing
 		discoveryResult, err := jm.crawler.DiscoverSitemapsAndRobots(ctx, normalisedDomain)
 		if err != nil {
 			jobsLog.Error("Failed to fetch robots.txt for manual URL", "error", err, "domain", normalisedDomain)
 
-			// Update job with error
 			if updateErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 				_, err := tx.ExecContext(ctx, `
 					UPDATE jobs
@@ -435,21 +355,17 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 			return nil, fmt.Errorf("failed to fetch robots.txt: %w", err)
 		}
 
-		// Use the already parsed robots rules from discovery
 		robotsRules = discoveryResult.RobotsRules
 
-		// Store crawl delay if specified in robots.txt
 		if robotsRules != nil && robotsRules.CrawlDelay > 0 {
 			jm.updateDomainCrawlDelay(ctx, normalisedDomain, robotsRules.CrawlDelay)
 		}
 	}
 
-	// Check if root path is allowed by robots.txt
 	if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, rootPath) {
 		jobsLog.Warn("Root path is disallowed by robots.txt, job cannot proceed",
 			"job_id", job.ID, "domain", normalisedDomain, "path", rootPath)
 
-		// Update job with error
 		if updateErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				UPDATE jobs
@@ -466,7 +382,6 @@ func (jm *JobManager) validateRootURLAccess(ctx context.Context, job *Job, norma
 	return robotsRules, nil
 }
 
-// createManualRootTask creates page and task records for the root URL
 func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domainID int, rootPath string) error {
 	var taskID string
 	var pageID int
@@ -494,9 +409,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			return fmt.Errorf("failed to upsert domain host for root path: %w", err)
 		}
 
-		// Enqueue the root URL with its page ID.
-		// Root/homepage tasks get priority 1.0 so downstream link discovery
-		// (which multiplies by 0.9) produces non-zero child priorities.
+		// Priority 1.0 so downstream link discovery (×0.9) yields non-zero child priorities.
 		const rootPriority = 1.0
 		taskID = uuid.New().String()
 		now := time.Now().UTC()
@@ -512,8 +425,7 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 			return fmt.Errorf("failed to enqueue task for root path: %w", err)
 		}
 
-		// Mirror into task_outbox so the sweeper can durably push this
-		// task into Redis even if the OnTasksEnqueued callback fails.
+		// Outbox mirror so the sweeper can durably push to Redis if OnTasksEnqueued fails.
 		if err := db.InsertOutboxRow(ctx, tx, db.OutboxEntry{
 			TaskID:     taskID,
 			JobID:      job.ID,
@@ -537,8 +449,6 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 		return err
 	}
 
-	// Notify Redis broker if configured.
-	// RunAt = now: the root task is ready to dispatch immediately.
 	if jm.OnTasksEnqueued != nil {
 		jm.OnTasksEnqueued(ctx, job.ID, []TaskScheduleEntry{{
 			TaskID:     taskID,
@@ -557,11 +467,11 @@ func (jm *JobManager) createManualRootTask(ctx context.Context, job *Job, domain
 	return nil
 }
 
-// setupJobURLDiscovery handles URL discovery for the job (sitemap or manual)
 func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, options *JobOptions, domainID int, normalisedDomain string) error {
 	if options.UseSitemap {
 		jobID := job.ID
 		go func() {
+			// Detached from request ctx so the long sitemap fetch survives the HTTP handler returning.
 			procCtx, procCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer procCancel()
 			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
@@ -569,8 +479,6 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 		return nil
 	}
 
-	// Manual root URL creation - process in background for consistency
-	// Use detached context with timeout for background processing
 	backgroundCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	go func() {
 		defer cancel()
@@ -578,22 +486,18 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 		_, err := jm.validateRootURLAccess(backgroundCtx, job, normalisedDomain, rootPath)
 		if err != nil {
 			jobsLog.Error("Failed to validate root URL access", "error", err, "job_id", job.ID)
-			return // Error already logged and job updated by validateRootURLAccess
+			return
 		}
 
-		// Create page and task records for the root URL
 		if err := jm.createManualRootTask(backgroundCtx, job, domainID, rootPath); err != nil {
 			jobsLog.Error("Failed to create manual root task", "error", err, "job_id", job.ID)
 			return
 		}
-
-		// Note: task notification is handled via OnTasksEnqueued callback (Redis scheduling)
 	}()
 
 	return nil
 }
 
-// CreateJob creates a new job with the given options
 func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job, error) {
 	span := sentry.StartSpan(ctx, "manager.create_job")
 	defer span.Finish()
@@ -611,15 +515,12 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 		options.Concurrency = defaultConcurrency
 	}
 
-	// Handle any existing active jobs for the same domain and user/organisation
 	if err := jm.handleExistingJobs(ctx, normalisedDomain, options.UserID, options.OrganisationID); err != nil {
 		return nil, fmt.Errorf("failed to handle existing jobs: %w", err)
 	}
 
-	// Create a new job object
 	job := createJobObject(options, normalisedDomain)
 
-	// Setup database records for the job
 	domainID, err := jm.setupJobDatabase(ctx, job, normalisedDomain)
 	if err != nil {
 		span.SetTag("error", "true")
@@ -635,17 +536,16 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 		"max_pages", options.MaxPages,
 	)
 
-	// Setup URL discovery (sitemap or manual root URL)
 	if err := jm.setupJobURLDiscovery(ctx, job, options, domainID, normalisedDomain); err != nil {
 		span.SetTag("error", "true")
 		span.SetData("error.message", err.Error())
-		return job, err // Return job even on URL discovery error (some errors are expected)
+		// Return job even on discovery error so the caller can surface partial state.
+		return job, err
 	}
 
 	return job, nil
 }
 
-// Helper method to check if a page has been processed for a job
 func (jm *JobManager) isPageProcessed(jobID string, pageID int) bool {
 	key := fmt.Sprintf("%s_%d", jobID, pageID)
 	jm.pagesMutex.RLock()
@@ -654,7 +554,6 @@ func (jm *JobManager) isPageProcessed(jobID string, pageID int) bool {
 	return exists
 }
 
-// Helper method to mark a page as processed for a job
 func (jm *JobManager) markPageProcessed(jobID string, pageID int) {
 	key := fmt.Sprintf("%s_%d", jobID, pageID)
 	jm.pagesMutex.Lock()
@@ -662,12 +561,10 @@ func (jm *JobManager) markPageProcessed(jobID string, pageID int) {
 	jm.processedPages[key] = struct{}{}
 }
 
-// Helper method to clear processed pages for a job (when job is completed or canceled)
 func (jm *JobManager) clearProcessedPages(jobID string) {
 	jm.pagesMutex.Lock()
 	defer jm.pagesMutex.Unlock()
 
-	// Find all keys that start with this job ID
 	prefix := jobID + "_"
 	for key := range jm.processedPages {
 		if strings.HasPrefix(key, prefix) {
@@ -676,17 +573,14 @@ func (jm *JobManager) clearProcessedPages(jobID string) {
 	}
 }
 
-// clearMilestoneState removes the in-process milestone tracker entry for a
-// job. Called when the job reaches a terminal state so the map doesn't
-// grow unboundedly on a long-running worker that has serviced many jobs.
-// Idempotent — a missing entry is a no-op.
+// Idempotent; called on terminal-state to bound the per-job map on long-running workers.
 func (jm *JobManager) clearMilestoneState(jobID string) {
 	jm.milestoneMu.Lock()
 	defer jm.milestoneMu.Unlock()
 	delete(jm.lastMilestoneFired, jobID)
 }
 
-// EnqueueJobURLs is a wrapper around dbQueue.EnqueueURLs that adds duplicate detection
+// Wraps dbQueue.EnqueueURLs with duplicate-page filtering against the in-process processedPages map.
 func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []db.Page, sourceType string, sourceURL string) error {
 	span := sentry.StartSpan(ctx, "manager.enqueue_job_urls")
 	defer span.Finish()
@@ -698,17 +592,14 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 		return nil
 	}
 
-	// Filter out pages that have already been processed
 	var filteredPages []db.Page
-
 	for _, page := range pages {
 		if !jm.isPageProcessed(jobID, page.ID) {
+			// Don't mark yet — only after a successful enqueue.
 			filteredPages = append(filteredPages, page)
-			// Don't mark as processed yet - we'll do that after successful enqueue
 		}
 	}
 
-	// If all pages were already processed, just return success
 	if len(filteredPages) == 0 {
 		jobsLog.Debug("All URLs already processed, skipping", "job_id", jobID, "skipped_urls", len(pages))
 		return nil
@@ -721,18 +612,13 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 		"skipped_urls", len(pages)-len(filteredPages),
 	)
 
-	// Use the filtered lists to enqueue only new pages
 	err := jm.dbQueue.EnqueueURLs(ctx, jobID, filteredPages, sourceType, sourceURL)
 
-	// Only mark pages as processed if the enqueue was successful
 	if err == nil {
-
-		// Mark all successfully enqueued pages as processed
 		for _, page := range filteredPages {
 			jm.markPageProcessed(jobID, page.ID)
 		}
 
-		// Notify external scheduler (Redis) if configured.
 		if jm.OnTasksEnqueued != nil {
 			jm.scheduleEnqueuedTasks(ctx, jobID, filteredPages, sourceType, sourceURL)
 		}
@@ -744,15 +630,9 @@ func (jm *JobManager) EnqueueJobURLs(ctx context.Context, jobID string, pages []
 	return err
 }
 
-// scheduleEnqueuedTasks queries for tasks just inserted into Postgres
-// and passes them to the OnTasksEnqueued callback for Redis scheduling.
-//
-// NOTE: This re-queries by page_id which could theoretically pick up
-// pre-existing rows on conflict. In practice the ON CONFLICT in
-// EnqueueURLs only updates pending/waiting/skipped tasks (same states
-// we filter here), so the result set matches what was just inserted.
-// A cleaner approach (returning IDs from EnqueueURLs) requires changing
-// the DbQueueProvider interface — deferred to Stage 2.
+// Re-queries by page_id; safe because EnqueueURLs' ON CONFLICT only updates
+// pending/waiting/skipped, the same states filtered here. A cleaner contract
+// (returning IDs from EnqueueURLs) is deferred to Stage 2.
 func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, pages []db.Page, sourceType, sourceURL string) {
 	if jm.OnTasksEnqueued == nil || len(pages) == 0 {
 		return
@@ -798,14 +678,12 @@ func (jm *JobManager) scheduleEnqueuedTasks(ctx context.Context, jobID string, p
 	}
 }
 
-// CancelJob cancels a running job
 func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	span := sentry.StartSpan(ctx, "manager.cancel_job")
 	defer span.Finish()
 
 	span.SetTag("job_id", jobID)
 
-	// Get the job using our new method
 	job, err := jm.GetJob(ctx, jobID)
 	if err != nil {
 		span.SetTag("error", "true")
@@ -813,32 +691,25 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 		return fmt.Errorf("failed to get job: %w", err)
 	}
 
-	// Already-cancelled is a no-op success so duplicate clicks from a flaky
-	// network or an impatient user do not surface as red toasts.
+	// Already-cancelled is no-op success so duplicate clicks don't surface as red toasts.
 	if job.Status == JobStatusCancelled {
 		jobsLog.Debug("Cancel requested on already-cancelled job", "job_id", job.ID)
 		return nil
 	}
 
-	// Check if job can be canceled
 	if job.Status != JobStatusRunning && job.Status != JobStatusPending && job.Status != JobStatusPaused && job.Status != JobStatusInitialising {
 		return fmt.Errorf("job cannot be canceled: %s", job.Status)
 	}
 
-	// Update job status to cancelled
 	job.Status = JobStatusCancelled
 	job.CompletedAt = time.Now().UTC()
 
-	// Use dbQueue for transaction safety. Lock order matters here: workers
-	// update task rows first and the AFTER STATEMENT counter trigger then
-	// acquires jobs row locks in id order (see migrations 20260425000001
-	// and 20260426013451). The cancel transaction must follow the same
-	// tasks-before-jobs order or it deadlocks against any in-flight worker
-	// batch on the same job (HOVER: 40P01 on 30k-page cancels).
+	// Lock order: tasks before jobs. The AFTER STATEMENT counter trigger on
+	// task UPDATEs takes jobs row locks in id order (migrations 20260425000001,
+	// 20260426013451). Reversing this order deadlocks against worker batches
+	// on the same job (HOVER: 40P01 on 30k-page cancels).
 	err = jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// 1. Skip pending/waiting tasks first. ORDER BY id keeps the
-		//    row-lock graph acyclic across concurrent transactions, mirroring
-		//    promote_waiting_with_outbox (20260425000001).
+		// ORDER BY id keeps the row-lock graph acyclic vs promote_waiting_with_outbox.
 		_, err := tx.ExecContext(ctx, `
 			WITH picked AS (
 				SELECT id FROM tasks
@@ -856,12 +727,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 			return err
 		}
 
-		// 2. Flip the job status. The AFTER STATEMENT trigger on the
-		//    previous UPDATE has already taken the jobs row lock for us in
-		//    id order; this just writes the cancelled status under that
-		//    same lock. The trigger preserves jobs.status when it is
-		//    already 'cancelled' or 'failed', so no race with a late
-		//    completion fire.
+		// Trigger preserves jobs.status when already 'cancelled'/'failed', so no race with a late completion fire.
 		_, err = tx.ExecContext(ctx, `
 			UPDATE jobs
 			SET status = $1, completed_at = $2
@@ -871,11 +737,7 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 			return err
 		}
 
-		// 3. Drop any task_outbox rows for this job so the sweeper does
-		//    not waste work ZADDing tasks whose status has just flipped
-		//    to skipped. Without this, outbox rows for cancelled jobs
-		//    linger until their next sweep and inflate the outbox backlog
-		//    and oldest-age gauges.
+		// Drop outbox rows so the sweeper doesn't ZADD tasks already flipped to skipped.
 		_, err = tx.ExecContext(ctx, `
 			DELETE FROM task_outbox WHERE job_id = $1
 		`, job.ID)
@@ -890,13 +752,12 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 		return fmt.Errorf("failed to cancel job: %w", err)
 	}
 
-	// Clear processed pages for this job
 	jm.clearProcessedPages(job.ID)
 	jm.clearMilestoneState(job.ID)
 
-	// Drop per-job Redis keys. Without this the schedule ZSET, both
-	// streams + their consumer groups, and the running-counter HASH
-	// field linger forever — the dispatcher only scans active jobs.
+	// Without this the per-job Redis keys (schedule ZSET, streams, consumer
+	// groups, running-counter HASH field) leak — the dispatcher only scans
+	// active jobs.
 	if jm.OnJobTerminated != nil {
 		jm.OnJobTerminated(ctx, job.ID)
 	}
@@ -906,7 +767,6 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// GetJob retrieves a job by ID
 func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	span := sentry.StartSpan(ctx, "jobs.get_job")
 	defer span.Finish()
@@ -918,9 +778,7 @@ func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	var startedAt, completedAt sql.NullTime
 	var errorMessage, userID, organisationID sql.NullString
 
-	// Use DbQueue.Execute for transactional safety
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
-		// Query for job with domain join
 		err := tx.QueryRowContext(ctx, `
 			SELECT
 				j.id, d.name, j.status, j.progress, j.total_tasks, j.completed_tasks, j.failed_tasks, j.skipped_tasks,
@@ -949,7 +807,6 @@ func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
 
-	// Handle nullable fields
 	if startedAt.Valid {
 		job.StartedAt = startedAt.Time
 	}
@@ -970,7 +827,6 @@ func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 		job.OrganisationID = &organisationID.String
 	}
 
-	// Parse arrays from JSON
 	if len(includePaths) > 0 {
 		err = json.Unmarshal(includePaths, &job.IncludePaths)
 		if err != nil {
@@ -988,12 +844,9 @@ func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
 	return &job, nil
 }
 
-// GetJobStatus gets the current status of a job
 func (jm *JobManager) GetJobStatus(ctx context.Context, jobID string) (*Job, error) {
-	// First cleanup any stuck jobs using dbQueue
 	if err := jm.dbQueue.CleanupStuckJobs(ctx); err != nil {
 		jobsLog.Error("Failed to cleanup stuck jobs during status check", "error", err)
-		// Don't return error, continue with status check
 	}
 
 	span := sentry.StartSpan(ctx, "manager.get_job_status")
@@ -1011,20 +864,16 @@ func (jm *JobManager) GetJobStatus(ctx context.Context, jobID string) (*Job, err
 	return job, nil
 }
 
-// discoverAndParseSitemaps discovers and parses all sitemaps for a domain
 func (jm *JobManager) discoverAndParseSitemaps(ctx context.Context, domain string) ([]string, *crawler.RobotsRules, error) {
-	// Use the injected crawler if available, otherwise create a new one
 	var sitemapCrawler CrawlerInterface
 	if jm.crawler != nil {
 		sitemapCrawler = jm.crawler
 	} else {
-		// Create a crawler config that allows skipping already cached URLs
 		crawlerConfig := crawler.DefaultConfig()
 		crawlerConfig.SkipCachedURLs = false
 		sitemapCrawler = crawler.New(crawlerConfig)
 	}
 
-	// Discover sitemaps and robots.txt rules for the domain
 	discoveryResult, err := sitemapCrawler.DiscoverSitemapsAndRobots(ctx, domain)
 	if err != nil {
 		jobsLog.Error("Failed to discover sitemaps and robots rules", "error", err, "domain", domain)
@@ -1034,10 +883,8 @@ func (jm *JobManager) discoverAndParseSitemaps(ctx context.Context, domain strin
 	sitemaps := discoveryResult.Sitemaps
 	robotsRules := discoveryResult.RobotsRules
 
-	// Log discovered sitemaps
 	jobsLog.Info("Sitemaps discovered", "domain", domain, "sitemap_count", len(sitemaps))
 
-	// Process each sitemap to extract URLs
 	var urls []string
 	for _, sitemapURL := range sitemaps {
 		jobsLog.Info("Processing sitemap", "sitemap_url", sitemapURL)
@@ -1056,9 +903,7 @@ func (jm *JobManager) discoverAndParseSitemaps(ctx context.Context, domain strin
 	return urls, robotsRules, nil
 }
 
-// filterURLsAgainstRobots filters URLs against robots.txt rules and path patterns
 func (jm *JobManager) filterURLsAgainstRobots(urls []string, robotsRules *crawler.RobotsRules, includePaths, excludePaths []string) []string {
-	// Use the injected crawler if available for path filtering
 	var filteredURLs []string
 	if jm.crawler != nil && (len(includePaths) > 0 || len(excludePaths) > 0) {
 		filteredURLs = jm.crawler.FilterURLs(urls, includePaths, excludePaths)
@@ -1066,11 +911,9 @@ func (jm *JobManager) filterURLsAgainstRobots(urls []string, robotsRules *crawle
 		filteredURLs = urls
 	}
 
-	// Filter URLs against robots.txt rules
 	if robotsRules != nil && len(robotsRules.DisallowPatterns) > 0 {
 		var allowedURLs []string
 		for _, urlStr := range filteredURLs {
-			// Extract path from URL
 			if parsedURL, err := url.Parse(urlStr); err == nil {
 				path := parsedURL.Path
 				if crawler.IsPathAllowed(robotsRules, path) {
@@ -1091,13 +934,11 @@ func (jm *JobManager) filterURLsAgainstRobots(urls []string, robotsRules *crawle
 	return filteredURLs
 }
 
-// enqueueURLsForJob creates page records and enqueues URLs for a job
 func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain string, urls []string, sourceType string) error {
 	if len(urls) == 0 {
 		return nil
 	}
 
-	// Get domain ID from the job
 	var domainID int
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -1108,29 +949,25 @@ func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain strin
 		return fmt.Errorf("failed to get domain ID: %w", err)
 	}
 
-	// Create page records and get their IDs
 	pageIDs, hosts, paths, err := db.CreatePageRecords(ctx, jm.dbQueue, domainID, domain, urls)
 	if err != nil {
 		return fmt.Errorf("failed to create page records: %w", err)
 	}
 
-	// Prepare pages with priorities
 	pagesWithPriority := make([]db.Page, len(pageIDs))
 	for i, pageID := range pageIDs {
 		pagesWithPriority[i] = db.Page{
 			ID:       pageID,
 			Host:     hosts[i],
 			Path:     paths[i],
-			Priority: 0.1, // Default sitemap priority
+			Priority: 0.1,
 		}
-		// Set homepage priority to 1.000
 		if paths[i] == "/" {
 			pagesWithPriority[i].Priority = 1.000
 			jobsLog.Info("Set homepage priority to 1.000", "job_id", jobID)
 		}
 	}
 
-	// Use our wrapper function that checks for duplicates
 	baseURL := fmt.Sprintf("https://%s", domain)
 	if err := jm.EnqueueJobURLs(ctx, jobID, pagesWithPriority, sourceType, baseURL); err != nil {
 		return fmt.Errorf("failed to enqueue URLs: %w", err)
@@ -1139,7 +976,6 @@ func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain strin
 	jobsLog.Info("Added URLs to job queue",
 		"job_id", jobID, "domain", domain, "url_count", len(urls), "source_type", sourceType)
 
-	// Recalculate job statistics after bulk operation
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `SELECT recalculate_job_stats($1)`, jobID)
 		return err
@@ -1150,7 +986,6 @@ func (jm *JobManager) enqueueURLsForJob(ctx context.Context, jobID, domain strin
 	return nil
 }
 
-// updateDomainCrawlDelay updates the domain's crawl delay from robots.txt
 func (jm *JobManager) updateDomainCrawlDelay(ctx context.Context, domain string, crawlDelay int) {
 	if crawlDelay <= 0 {
 		return
@@ -1170,10 +1005,7 @@ func (jm *JobManager) updateDomainCrawlDelay(ctx context.Context, domain string,
 	}
 }
 
-// IsJobComplete checks if all tasks in a job are processed
 func (jm *JobManager) IsJobComplete(job *Job) bool {
-	// A job is complete when all tasks are either completed, failed, or skipped
-	// and the job is currently running
 	if job.Status != JobStatusRunning {
 		return false
 	}
@@ -1182,7 +1014,6 @@ func (jm *JobManager) IsJobComplete(job *Job) bool {
 	return processedTasks >= job.TotalTasks
 }
 
-// CalculateJobProgress calculates the progress percentage of a job
 func (jm *JobManager) CalculateJobProgress(job *Job) float64 {
 	if job.TotalTasks == 0 {
 		return 0.0
@@ -1192,20 +1023,18 @@ func (jm *JobManager) CalculateJobProgress(job *Job) float64 {
 	return float64(processedTasks) / float64(job.TotalTasks) * 100.0
 }
 
-// ValidateStatusTransition checks if a status transition is valid
 func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
-	// Allow restarts from completed/cancelled/failed states
+	// Allow restart from terminal states.
 	if to == JobStatusRunning && (from == JobStatusCompleted || from == JobStatusCancelled || from == JobStatusFailed) {
 		return nil
 	}
 
-	// Normal forward transitions
 	validTransitions := map[JobStatus][]JobStatus{
 		JobStatusPending:   {JobStatusRunning, JobStatusCancelled},
 		JobStatusRunning:   {JobStatusCompleted, JobStatusFailed, JobStatusCancelled},
-		JobStatusCompleted: {JobStatusRunning, JobStatusArchived}, // Restart or archive
-		JobStatusFailed:    {JobStatusRunning, JobStatusArchived}, // Retry or archive
-		JobStatusCancelled: {JobStatusRunning, JobStatusArchived}, // Restart or archive
+		JobStatusCompleted: {JobStatusRunning, JobStatusArchived},
+		JobStatusFailed:    {JobStatusRunning, JobStatusArchived},
+		JobStatusCancelled: {JobStatusRunning, JobStatusArchived},
 	}
 
 	allowed, exists := validTransitions[from]
@@ -1220,22 +1049,9 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	return fmt.Errorf("invalid status transition from %s to %s", from, to)
 }
 
-// MarkJobRunning transitions a pre-running job to running and stamps
-// started_at if not already set. Guarded UPDATE so it is a no-op once
-// the job has already moved past the pre-running statuses — safe to
-// call repeatedly, safe to call again after a worker restart.
-//
-// The guard accepts both 'pending' and 'initializing' because sitemap
-// jobs spend a real window in 'initializing' (sitemap fetch + parse)
-// before the dispatcher publishes their first task. Without that wider
-// match the first-dispatch hook would silently miss those jobs and
-// leave them stuck on the "Starting up" pill.
-//
-// Wired from the dispatcher's first successful publish for a job, so
-// the status reflects reality without any other code path needing to
-// know about the transition. Without this, jobs created via CreateJob
-// stay at their pre-running status forever (UpdateJobStatus has no
-// other callers in the production graph).
+// Idempotent. Guard accepts 'initializing' too: sitemap jobs spend a real
+// window in that state before first dispatch, and a narrower match would
+// strand them on the "Starting up" pill.
 func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
 	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -1249,7 +1065,6 @@ func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
 	})
 }
 
-// UpdateJobStatus updates the status of a job with appropriate timestamps
 func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error {
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		var query string
@@ -1273,11 +1088,7 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 		return err
 	}
 
-	// Drop in-process state once the job is terminal so long-running
-	// workers do not accumulate per-job map entries indefinitely.
-	// CancelJob has always cleared processedPages on cancellation; the
-	// completed / failed / archived paths previously relied on a worker
-	// restart to free those entries, so they are bundled here too.
+	// Drop in-process state on terminal status so long-running workers don't accumulate per-job map entries.
 	switch status {
 	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived:
 		jm.clearProcessedPages(jobID)
@@ -1286,7 +1097,6 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 	return nil
 }
 
-// updateJobWithError updates a job with an error message
 func (jm *JobManager) updateJobWithError(ctx context.Context, jobID, errorMessage string) {
 	if updateErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -1300,18 +1110,15 @@ func (jm *JobManager) updateJobWithError(ctx context.Context, jobID, errorMessag
 	}
 }
 
-// enqueueFallbackURL creates and enqueues a fallback root URL when no sitemap URLs are found
 func (jm *JobManager) enqueueFallbackURL(ctx context.Context, jobID, domain string) error {
 	jobsLog.Info("No URLs found in sitemap, falling back to root page", "job_id", jobID, "domain", domain)
 
-	// Create fallback root URL
 	rootURL := fmt.Sprintf("https://%s/", domain)
 	fallbackURLs := []string{rootURL}
 
 	if err := jm.enqueueURLsForJob(ctx, jobID, domain, fallbackURLs, "fallback"); err != nil {
 		jobsLog.Error("Failed to enqueue fallback root URL", "error", err, "job_id", jobID, "domain", domain)
 
-		// Update job with error
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to create fallback task: %v", err))
 		return err
 	}
@@ -1322,9 +1129,7 @@ func (jm *JobManager) enqueueFallbackURL(ctx context.Context, jobID, domain stri
 	return nil
 }
 
-// enqueueSitemapURLs enqueues discovered sitemap URLs for processing
 func (jm *JobManager) enqueueSitemapURLs(ctx context.Context, jobID, domain string, urls []string) error {
-	// Log URLs for debugging
 	for i, url := range urls {
 		jobsLog.Debug("URL from sitemap", "job_id", jobID, "domain", domain, "index", i, "url", url)
 	}
@@ -1337,9 +1142,7 @@ func (jm *JobManager) enqueueSitemapURLs(ctx context.Context, jobID, domain stri
 	return nil
 }
 
-// processSitemap fetches and processes a sitemap for a domain
 func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, includePaths, excludePaths []string) {
-	// Guard against nil dependencies (e.g., in test environments)
 	if jm.crawler == nil || jm.dbQueue == nil || jm.db == nil {
 		jobsLog.Warn("Skipping sitemap processing due to missing dependencies", "job_id", jobID, "domain", domain)
 		return
@@ -1351,8 +1154,7 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 	span.SetTag("job_id", jobID)
 	span.SetTag("domain", domain)
 
-	// Mark job as initialising so the worker pool doesn't prematurely
-	// complete it before sitemap URLs have been enqueued.
+	// Initialising state stops the worker pool from prematurely completing the job before URLs are enqueued.
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET status = $1
@@ -1376,7 +1178,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 
 	jobsLog.Info("Starting sitemap processing", "job_id", jobID, "domain", domain)
 
-	// Step 1: Discover and parse sitemaps
 	urls, robotsRules, err := jm.discoverAndParseSitemaps(ctx, domain)
 	if err != nil {
 		span.SetTag("error", "true")
@@ -1384,7 +1185,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		jobsLog.Error("Failed to discover sitemaps", "error", err, "job_id", jobID, "domain", domain)
 
 		jm.updateJobWithError(ctx, jobID, fmt.Sprintf("Failed to discover sitemaps: %v", err))
-		// Ensure job exits initialising state on error
 		if markErr := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
 				UPDATE jobs SET status = $1, completed_at = $2
@@ -1397,13 +1197,11 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		return
 	}
 
-	// Step 2: Update domain crawl delay if present
 	jm.updateDomainCrawlDelay(ctx, domain, robotsRules.CrawlDelay)
 
-	// Step 3: Filter URLs against robots.txt and path patterns
 	urls = jm.filterURLsAgainstRobots(urls, robotsRules, includePaths, excludePaths)
 
-	// Step 4: Record filtered sitemap URL count as a snapshot before any tasks are inserted.
+	// Snapshot before any tasks are inserted so progress denominator is stable.
 	if err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			UPDATE jobs SET sitemap_tasks_found = $1 WHERE id = $2
@@ -1413,14 +1211,11 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		jobsLog.Warn("Failed to record sitemap_tasks_found", "error", err, "job_id", jobID, "sitemap_tasks_found", len(urls))
 	}
 
-	// Step 5: Enqueue URLs in batches or create fallback
 	if len(urls) > 0 {
-		// Hoist the homepage to the front so it's in the first batch and gets
-		// priority 1.0 scoring regardless of its position in the sitemap.
+		// Homepage in the first batch guarantees its 1.0 priority regardless of sitemap order.
 		urls = hoistHomepageToFront(urls, domain)
 
-		// Throttled batch insertion — small batches with a sleep between each to
-		// avoid a write burst that spikes DB pressure and overwhelms Supabase.
+		// Throttled batches avoid a write burst that spikes Supabase DB pressure.
 		batchSize := sitemapBatchSize()
 		batchDelay := sitemapBatchDelay()
 		totalBatches := (len(urls) + batchSize - 1) / batchSize
@@ -1455,7 +1250,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 					"error", err, "job_id", jobID, "batch_number", batchNum,
 					"batch_start", i, "batch_size", len(batch),
 				)
-				// Continue to next batch even if one fails
 				continue
 			}
 
@@ -1467,24 +1261,20 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 				"total_urls", len(urls),
 			)
 
-			// After the first successful batch, open the job for workers immediately.
-			// Remaining batches continue inserting in the background while workers
-			// drain the already-enqueued tasks.
+			// Open for workers after the first batch lands; remaining batches insert in the background.
 			if !firstBatchDone {
 				firstBatchDone = true
 				if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 					jobsLog.Warn("Failed to open job after first batch", "error", err, "job_id", jobID)
 				}
-				// Task notification is handled via OnTasksEnqueued callback (Redis scheduling).
 			}
 
-			// Throttle between batches to spread DB write load.
 			if end < len(urls) {
 				time.Sleep(batchDelay)
 			}
 		}
 
-		// If every batch failed, still exit initialising so the job doesn't get stuck.
+		// If every batch failed, still exit initialising so the job isn't stuck.
 		if !firstBatchDone {
 			if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 				jobsLog.Warn("Failed to transition job from initialising to pending after all batches failed",
@@ -1496,7 +1286,6 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 		if err := jm.enqueueFallbackURL(ctx, jobID, domain); err != nil {
 			return
 		}
-		// Fallback URL enqueued — open the job for workers.
 		if err := jm.transitionInitialisingToPending(ctx, jobID); err != nil {
 			jobsLog.Warn("Failed to transition job from initialising to pending after fallback URL",
 				"error", err, "job_id", jobID)
@@ -1524,9 +1313,6 @@ func (jm *JobManager) clearInitialisingAfterSitemapCancel(jobID string, batchNum
 	}()
 }
 
-// transitionInitialisingToPending moves a job from initialising → pending so the
-// worker pool can pick it up. Safe to call mid-sitemap-crawl once the first batch
-// of tasks has been inserted.
 func (jm *JobManager) transitionInitialisingToPending(ctx context.Context, jobID string) error {
 	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
@@ -1547,9 +1333,7 @@ func (jm *JobManager) transitionInitialisingToPending(ctx context.Context, jobID
 	})
 }
 
-// hoistHomepageToFront moves the root path URL to the front of the list so it
-// is guaranteed to be in the first sitemap batch and scored with priority 1.0.
-// Sitemaps do not guarantee any ordering so we enforce this explicitly.
+// Sitemaps don't guarantee ordering, so the homepage is hoisted explicitly.
 func hoistHomepageToFront(urls []string, domain string) []string {
 	if len(urls) == 0 {
 		return urls
@@ -1566,7 +1350,6 @@ func hoistHomepageToFront(urls []string, domain string) []string {
 				if i == 0 {
 					return urls
 				}
-				// Swap to front
 				result := make([]string, len(urls))
 				result[0] = urls[i]
 				copy(result[1:], urls[:i])
@@ -1578,8 +1361,7 @@ func hoistHomepageToFront(urls []string, domain string) []string {
 	return urls
 }
 
-// sitemapInsertConcurrency returns the maximum number of jobs that may insert
-// sitemap batches concurrently. Configurable via GNH_SITEMAP_CONCURRENCY; defaults to 3.
+// GNH_SITEMAP_CONCURRENCY caps concurrent sitemap-batch inserters across all jobs; default 3.
 func sitemapInsertConcurrency() int {
 	const defaultConcurrency = 3
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_CONCURRENCY")); val != "" {
@@ -1595,8 +1377,7 @@ func sitemapInsertConcurrency() int {
 	return defaultConcurrency
 }
 
-// sitemapBatchSize returns the number of URLs to insert per sitemap batch.
-// Configurable via GNH_SITEMAP_BATCH_SIZE; defaults to 100.
+// GNH_SITEMAP_BATCH_SIZE — URLs per sitemap insert batch; default 100.
 func sitemapBatchSize() int {
 	const defaultSize = 100
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_SIZE")); val != "" {
@@ -1612,8 +1393,7 @@ func sitemapBatchSize() int {
 	return defaultSize
 }
 
-// sitemapBatchDelay returns the delay between sitemap insertion batches.
-// Configurable via GNH_SITEMAP_BATCH_DELAY_MS; defaults to 200ms.
+// GNH_SITEMAP_BATCH_DELAY_MS — pause between sitemap batches; default 200ms.
 func sitemapBatchDelay() time.Duration {
 	const defaultDelay = 200 * time.Millisecond
 	if val := strings.TrimSpace(os.Getenv("GNH_SITEMAP_BATCH_DELAY_MS")); val != "" {

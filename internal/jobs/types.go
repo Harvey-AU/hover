@@ -4,7 +4,6 @@ import (
 	"time"
 )
 
-// JobStatus represents the current status of a job
 type JobStatus string
 
 const (
@@ -18,7 +17,6 @@ const (
 	JobStatusArchived     JobStatus = "archived"
 )
 
-// TaskStatus represents the current status of a task
 type TaskStatus string
 
 const (
@@ -30,11 +28,7 @@ const (
 	TaskStatusSkipped   TaskStatus = "skipped"
 )
 
-// TaskType identifies which worker class should process a task.
-// 'crawl' is the default and covers existing HTTP fetch tasks;
-// 'lighthouse' routes to the hover-analysis app for performance audits.
-// Mirrors the tasks.task_type / task_outbox.task_type column added in
-// migration 20260427000001_add_task_type.sql.
+// Mirrors tasks.task_type / task_outbox.task_type (migration 20260427000001).
 type TaskType string
 
 const (
@@ -42,13 +36,11 @@ const (
 	TaskTypeLighthouse TaskType = "lighthouse"
 )
 
-// Maximum time a task can be "in progress" before being considered stale
 const (
 	TaskStaleTimeout = 3 * time.Minute
 	MaxTaskRetries   = 5
 )
 
-// Job represents a crawling job for a domain
 // CHECK: Do all of these currently get utilised somewhere in the app?
 type Job struct {
 	ID                       string    `json:"id"`
@@ -78,12 +70,10 @@ type Job struct {
 	SourceInfo               *string   `json:"source_info,omitempty"`
 	ErrorMessage             string    `json:"error_message,omitempty"`
 	SchedulerID              *string   `json:"scheduler_id,omitempty"`
-	// Calculated fields from database
-	DurationSeconds       *int     `json:"duration_seconds,omitempty"`
-	AvgTimePerTaskSeconds *float64 `json:"avg_time_per_task_seconds,omitempty"`
+	DurationSeconds          *int      `json:"duration_seconds,omitempty"`
+	AvgTimePerTaskSeconds    *float64  `json:"avg_time_per_task_seconds,omitempty"`
 }
 
-// Task represents a single URL to be crawled within a job
 type Task struct {
 	ID          string     `json:"id"`
 	JobID       string     `json:"job_id"`
@@ -100,11 +90,9 @@ type Task struct {
 	RetryCount  int        `json:"retry_count"`
 	Error       string     `json:"error,omitempty"`
 
-	// Source information
-	SourceType string `json:"source_type"`          // "sitemap", "link", "manual"
-	SourceURL  string `json:"source_url,omitempty"` // URL where this was discovered (for find_links)
+	SourceType string `json:"source_type"` // "sitemap", "link", "manual"
+	SourceURL  string `json:"source_url,omitempty"`
 
-	// Result data
 	StatusCode         int    `json:"status_code,omitempty"`
 	ResponseTime       int64  `json:"response_time,omitempty"`
 	CacheStatus        string `json:"cache_status,omitempty"`
@@ -112,19 +100,16 @@ type Task struct {
 	SecondResponseTime int64  `json:"second_response_time,omitempty"`
 	SecondCacheStatus  string `json:"second_cache_status,omitempty"`
 
-	// Priority
 	PriorityScore float64 `json:"priority_score"`
 
-	// Job configuration that affects processing
 	FindLinks                bool `json:"-"`
-	CrawlDelay               int  `json:"-"` // Crawl delay in seconds from robots.txt
+	CrawlDelay               int  `json:"-"` // seconds, from robots.txt
 	JobConcurrency           int  `json:"-"`
 	AdaptiveDelay            int  `json:"-"`
 	AdaptiveDelayFloor       int  `json:"-"`
 	AllowCrossSubdomainLinks bool `json:"-"`
 }
 
-// JobOptions defines configuration options for a crawl job
 type JobOptions struct {
 	Domain                   string   `json:"domain"`
 	UserID                   *string  `json:"user_id,omitempty"`
@@ -143,7 +128,6 @@ type JobOptions struct {
 	SchedulerID              *string  `json:"scheduler_id,omitempty"`
 }
 
-// QuotaExceededError represents when an org has exceeded their daily quota
 type QuotaExceededError struct {
 	Used     int       `json:"used"`
 	Limit    int       `json:"limit"`

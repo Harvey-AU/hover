@@ -39,9 +39,6 @@ const (
 	healthCheckInterval     = 5 * time.Minute
 )
 
-// startJobScheduler starts background service to create jobs from schedulers
-// It respects context cancellation for graceful shutdown
-// The WaitGroup must be marked Done when this function exits
 func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *jobs.JobManager, pgDB *db.DB) {
 	defer wg.Done()
 
@@ -58,13 +55,11 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 		case <-ticker.C:
 			schedulers, err := pgDB.GetSchedulersReadyToRun(ctx, schedulerBatchSize)
 			if err != nil {
-				// Warn not Error: this loop retries every 30s, so auto-capture
-				// would flood Sentry during any transient Postgres outage.
+				// Warn not Error: 30s retry loop would flood Sentry on transient Postgres outage.
 				startupLog.Warn("Failed to get schedulers ready to run", "error", err)
 				continue
 			}
 
-			// Batch lookup all domain names to avoid N+1 queries
 			domainIDs := make([]int, 0, len(schedulers))
 			for _, scheduler := range schedulers {
 				domainIDs = append(domainIDs, scheduler.DomainID)
@@ -83,7 +78,6 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 					continue
 				}
 
-				// Check if a job started too recently (within half the schedule interval)
 				lastJobStart, err := pgDB.GetLastJobStartTimeForScheduler(ctx, scheduler.ID)
 				if err != nil {
 					startupLog.Warn("Failed to get last job start time", "error", err, "scheduler_id", scheduler.ID)
@@ -102,7 +96,6 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 							"minimum_interval", minInterval,
 						)
 
-						// Update next_run_at to the next valid time slot
 						nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 						if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
 							startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
@@ -111,7 +104,6 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 					}
 				}
 
-				// Create JobOptions from scheduler
 				sourceType := "scheduler"
 				opts := &jobs.JobOptions{
 					Domain:                   domainName,
@@ -129,14 +121,12 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 					SchedulerID:              &scheduler.ID,
 				}
 
-				// Create job (standard flow)
 				job, err := jobsManager.CreateJob(ctx, opts)
 				if err != nil {
 					startupLog.Warn("Failed to create scheduled job", "error", err, "scheduler_id", scheduler.ID)
 					continue
 				}
 
-				// Update scheduler next_run_at
 				nextRun := time.Now().UTC().Add(time.Duration(scheduler.ScheduleIntervalHours) * time.Hour)
 				if err := pgDB.UpdateSchedulerNextRun(ctx, scheduler.ID, nextRun); err != nil {
 					startupLog.Warn("Failed to update scheduler next run", "error", err, "scheduler_id", scheduler.ID)
@@ -153,15 +143,9 @@ func startJobScheduler(ctx context.Context, wg *sync.WaitGroup, jobsManager *job
 	}
 }
 
-// startHealthMonitoring starts background monitoring for job completion and system health
-// It respects context cancellation for graceful shutdown
-// The WaitGroup must be marked Done when this function exits
-//
-// redisClient may be nil when REDIS_URL is unset; in that case the
-// per-job Redis cleanup on completion is skipped (there is nothing to
-// clean up).
+// redisClient may be nil when REDIS_URL is unset.
 func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB, redisClient *broker.Client) {
-	defer wg.Done() // Signal completion when exiting
+	defer wg.Done()
 
 	completionTicker := time.NewTicker(completionCheckInterval)
 	defer completionTicker.Stop()
@@ -169,7 +153,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 	healthTicker := time.NewTicker(healthCheckInterval)
 	defer healthTicker.Stop()
 
-	// Helper to check job completion
 	checkJobCompletion := func() {
 		rows, err := pgDB.GetDB().Query(`
 			UPDATE jobs
@@ -183,9 +166,8 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 			return
 		}
 
-		// Capture the IDs so we can release the rows before issuing
-		// per-job Redis cleanup — Postgres connection holds a row lock
-		// for the duration of an open Rows iterator.
+		// Release rows before per-job Redis cleanup; an open Rows iterator
+		// holds a row lock on the Postgres connection.
 		var completed []string
 		for rows.Next() {
 			var jobID string
@@ -196,12 +178,8 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 		}
 		_ = rows.Close()
 
-		// Drop per-job Redis keys (schedule ZSET, both streams + their
-		// consumer groups, running-counter HASH field). Without this the
-		// active-jobs query filters completed jobs out and their keys
-		// leak into resident data forever. Errors here do not roll the
-		// Postgres status change back — partial cleanup is acceptable
-		// and the one-off reclaim sweeper can reattempt.
+		// Without this Redis keys leak forever (active-jobs filter drops
+		// them). Partial cleanup is acceptable; reclaim sweeper retries.
 		if redisClient != nil {
 			for _, jobID := range completed {
 				if err := redisClient.RemoveJobKeys(ctx, jobID); err != nil {
@@ -212,9 +190,7 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 		}
 	}
 
-	// Helper to check system health (stuck jobs/tasks)
 	checkSystemHealth := func() {
-		// Check for stuck jobs - get total count first
 		var totalStuckJobs int
 		err := pgDB.GetDB().QueryRow(`
 			SELECT COUNT(*)
@@ -228,7 +204,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 			startupLog.Error("Failed to count stuck jobs", "error", err)
 		}
 
-		// Get sample of stuck jobs for details
 		type stuckJobInfo struct {
 			ID        string
 			DomainID  int
@@ -275,7 +250,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 			)
 		}
 
-		// Check for stuck tasks - get total counts first
 		var totalStuckTasks int
 		var totalAffectedJobs int
 
@@ -290,7 +264,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 			startupLog.Error("Failed to count stuck tasks", "error", err)
 		}
 
-		// Get sample of stuck tasks for details
 		type stuckTaskInfo struct {
 			ID         string
 			JobID      string
@@ -324,7 +297,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 		}
 
 		if totalStuckTasks > 0 && len(stuckTasks) > 0 {
-			// Get unique job IDs from sample for context
 			jobIDMap := make(map[string]struct{})
 			for _, task := range stuckTasks {
 				jobIDMap[task.JobID] = struct{}{}
@@ -346,7 +318,6 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 		}
 	}
 
-	// Run initial checks
 	checkJobCompletion()
 
 	startupLog.Info("Health monitoring started")
@@ -364,38 +335,33 @@ func startHealthMonitoring(ctx context.Context, wg *sync.WaitGroup, pgDB *db.DB,
 	}
 }
 
-// Config holds the application configuration loaded from environment variables
 type Config struct {
-	Port                  string // HTTP port to listen on
-	Env                   string // Environment (development/production)
-	SentryDSN             string // Sentry DSN for error tracking
-	LogLevel              string // Log level (debug, info, warn, error)
-	FlightRecorderEnabled bool   // Flight recorder for performance debugging
-	ObservabilityEnabled  bool   // Toggle OpenTelemetry + Prometheus exporters
-	MetricsAddr           string // Address for Prometheus metrics endpoint (":9464" style)
-	OTLPEndpoint          string // OTLP HTTP endpoint for trace export
-	OTLPHeaders           string // Comma separated headers for OTLP exporter
-	OTLPInsecure          bool   // Disable TLS verification for OTLP exporter
+	Port                  string
+	Env                   string
+	SentryDSN             string
+	LogLevel              string
+	FlightRecorderEnabled bool
+	ObservabilityEnabled  bool
+	MetricsAddr           string
+	OTLPEndpoint          string
+	OTLPHeaders           string
+	OTLPInsecure          bool
 }
 
 //nolint:gocyclo // main function setup is naturally complex but straightforward setup logic
 func main() {
-	// Parse command line flags
 	logLevelFlag := flag.String("log-level", "", "Log level (debug, info, warn, error) - overrides LOG_LEVEL env var")
 	flag.Parse()
 
-	// Load .env files - .env.local takes priority for development
 	if err := godotenv.Load(".env.local", ".env"); err != nil {
 		startupLog.Debug("Notice: .env files not loaded (expected in some environments)", "error", err)
 	}
 
-	// Determine log level: command line flag takes priority over environment variable
 	logLevel := getEnvWithDefault("LOG_LEVEL", "info")
 	if *logLevelFlag != "" {
 		logLevel = *logLevelFlag
 	}
 
-	// Load configuration
 	config := &Config{
 		Port:                  getEnvWithDefault("PORT", "8080"),
 		Env:                   getEnvWithDefault("APP_ENV", "development"),
@@ -409,7 +375,6 @@ func main() {
 		OTLPInsecure:          getEnvWithDefault("OTEL_EXPORTER_OTLP_INSECURE", "false") == "true",
 	}
 
-	// Start flight recorder if enabled
 	if config.FlightRecorderEnabled {
 		f, err := os.Create("trace.out")
 		if err != nil {
@@ -421,7 +386,6 @@ func main() {
 		}
 		startupLog.Info("Flight recorder enabled, writing to trace.out")
 
-		// Defer closing the trace and the file to the shutdown sequence
 		defer func() {
 			trace.Stop()
 			if err := f.Close(); err != nil {
@@ -433,17 +397,16 @@ func main() {
 
 	var err error
 
-	// Initialise Sentry before setupLogging so the fanout handler wires
-	// the Sentry client that already exists, not a nil one.
+	// Init before setupLogging so the fanout handler wires the existing client.
 	if config.SentryDSN != "" {
 		err := sentry.Init(sentry.ClientOptions{
 			Dsn:         config.SentryDSN,
 			Environment: config.Env,
 			TracesSampleRate: func() float64 {
 				if config.Env == "production" {
-					return 0.1 // 10% sampling in production
+					return 0.1
 				}
-				return 1.0 // 100% sampling in development
+				return 1.0
 			}(),
 			AttachStacktrace: true,
 			Debug:            config.Env == "development",
@@ -453,7 +416,6 @@ func main() {
 			startupLog.Warn("Failed to initialise Sentry", "error", err)
 		} else {
 			startupLog.Info("Sentry initialised successfully", "environment", config.Env)
-			// Ensure Sentry flushes before application exits
 			defer sentry.Flush(2 * time.Second)
 		}
 	} else {
@@ -462,9 +424,6 @@ func main() {
 
 	setupLogging(config)
 	defer func() {
-		// Flush any buffered log lines before the process exits.
-		// Idempotent, safe even if the async writer wasn't installed
-		// (e.g. dev mode, where StdoutAsync returns nil).
 		if a := logging.StdoutAsync(); a != nil {
 			a.Close()
 		}
@@ -476,8 +435,7 @@ func main() {
 	)
 
 	if config.ObservabilityEnabled {
-		// Derive service.name from FLY_APP_NAME so traces from review apps
-		// (e.g. hover-pr-342) are distinguishable from production.
+		// FLY_APP_NAME distinguishes review apps (hover-pr-342) from prod.
 		serviceName := strings.TrimSpace(os.Getenv("FLY_APP_NAME"))
 		if serviceName == "" {
 			serviceName = "hover"
@@ -509,9 +467,7 @@ func main() {
 					ReadHeaderTimeout: 5 * time.Second,
 				}
 
-				// Bind first, then log readiness so a bind failure surfaces as an
-				// error instead of a misleading "listening" line followed by a
-				// silent Serve crash.
+				// Bind before logging readiness so a bind failure surfaces correctly.
 				metricsListener, err := net.Listen("tcp", config.MetricsAddr)
 				if err != nil {
 					startupLog.Error("Metrics server failed to bind", "error", err, "addr", config.MetricsAddr)
@@ -537,8 +493,7 @@ func main() {
 
 	appEnv := os.Getenv("APP_ENV")
 
-	// Connect to PostgreSQL with retry logic to handle temporary unavailability
-	// Use a generous timeout to allow for Supabase maintenance windows
+	// 5m timeout accommodates Supabase maintenance windows.
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer dbCancel()
 
@@ -546,10 +501,8 @@ func main() {
 	if err != nil {
 		startupLog.Fatal("Failed to connect to PostgreSQL database", "error", err)
 	}
-	// Defer DB close - will execute AFTER worker pool stops due to defer LIFO order
 	defer func() {
 		startupLog.Info("Closing database connections")
-		// Give connections time to drain gracefully
 		time.Sleep(1 * time.Second)
 		if err := pgDB.Close(); err != nil {
 			startupLog.Error("Error closing database", "error", err)
@@ -561,8 +514,7 @@ func main() {
 
 	queueDB := pgDB
 	if queueURL := strings.TrimSpace(os.Getenv("DATABASE_QUEUE_URL")); queueURL != "" {
-		// Create fresh context for queue connection to ensure full retry budget
-		// (primary connection may have consumed most of the shared context)
+		// Fresh context: primary connection may have consumed shared budget.
 		queueCtx, queueCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer queueCancel()
 
@@ -584,22 +536,16 @@ func main() {
 		startupLog.Info("Queue database connection established")
 	}
 
-	// Initialise crawler
 	crawlerConfig := crawler.DefaultConfig()
-	cr := crawler.New(crawlerConfig) // QUESTION: Should we change cr to crawler for clarity, as others have clearer names.
+	cr := crawler.New(crawlerConfig)
 
-	// Create database queue for operations
 	dbQueue := db.NewDbQueue(queueDB)
 
-	// --- Redis scheduler (optional — tasks are dispatched via Redis, consumed by the worker service) ---
 	redisCfg := broker.ConfigFromEnv()
 
-	// Create job manager (no local worker pool — tasks are consumed by the worker service)
 	jobsManager := jobs.NewJobManager(pgDB.GetDB(), dbQueue, cr)
 
-	// redisClient is declared at the outer scope so the API handler can
-	// reach it for admin reset endpoints; it stays nil when REDIS_URL is
-	// unset and handlers tolerate that.
+	// Outer scope so admin reset endpoints can reach it; nil when REDIS_URL unset.
 	var redisClient *broker.Client
 
 	if redisCfg.URL != "" {
@@ -615,13 +561,10 @@ func main() {
 		}
 		startupLog.Info("connected to Redis")
 
-		// Use the DB-backed constructor for parity with the worker; the
-		// app rarely calls Reschedule but any call must dual-write too.
+		// DB-backed for parity with worker; any Reschedule call must dual-write.
 		scheduler := broker.NewSchedulerWithDB(redisClient, pgDB.GetDB())
 
-		// Wire callback: when tasks are inserted into Postgres, schedule them into Redis.
-		// Respect each entry's RunAt so waiting/retry rows keep their backoff deadline
-		// instead of being scheduled as ready-now.
+		// Respects RunAt so waiting/retry rows keep their backoff deadline.
 		jobsManager.OnTasksEnqueued = func(ctx context.Context, jobID string, entries []jobs.TaskScheduleEntry) {
 			schedEntries := make([]broker.ScheduleEntry, 0, len(entries))
 			for _, e := range entries {
@@ -653,10 +596,7 @@ func main() {
 			}
 		}
 
-		// Wire the terminal-state cleanup callback so CancelJob releases
-		// the per-job Redis keys. The completion-tick path in
-		// startHealthMonitoring takes the redisClient directly and does
-		// the same cleanup for auto-completed jobs.
+		// CancelJob path; auto-completion uses redisClient directly in startHealthMonitoring.
 		jobsManager.OnJobTerminated = func(ctx context.Context, jobID string) {
 			if err := redisClient.RemoveJobKeys(ctx, jobID); err != nil {
 				startupLog.Warn("failed to clean up Redis keys for terminated job",
@@ -667,7 +607,6 @@ func main() {
 		startupLog.Warn("REDIS_URL not set — task dispatch to Redis is disabled; API will still create tasks in Postgres")
 	}
 
-	// Create notification service with Slack channel
 	notificationService := notifications.NewService(pgDB)
 	slackChannel, err := notifications.NewSlackChannel(pgDB)
 	if err != nil {
@@ -677,24 +616,19 @@ func main() {
 		startupLog.Info("Slack notification channel enabled")
 	}
 
-	// Create context for background goroutines that need graceful shutdown
 	appCtx, appCancel := context.WithCancel(context.Background())
-	defer appCancel() // Ensure context is cancelled on exit
+	defer appCancel()
 
-	// WaitGroup to track background goroutines for clean shutdown
 	var backgroundWG sync.WaitGroup
 
-	// Create a rate limiter
 	limiter := newRateLimiter()
 
-	// Check GA4 integration availability
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if googleClientID == "" || googleClientSecret == "" {
 		startupLog.Info("GA4 integration unavailable: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not configured")
 	}
 
-	// Initialise Loops email client (nil-safe for dev environments)
 	var loopsClient *loops.Client
 	if loopsAPIKey := os.Getenv("LOOPS_API_KEY"); loopsAPIKey != "" {
 		loopsClient = loops.New(loopsAPIKey)
@@ -703,8 +637,6 @@ func main() {
 		startupLog.Info("Loops email client unavailable: LOOPS_API_KEY not configured")
 	}
 
-	// Create API handler with dependencies. redisClient may be nil when
-	// REDIS_URL is unset; admin reset endpoints handle that gracefully.
 	var brokerCleaner api.BrokerCleaner
 	if redisClient != nil {
 		brokerCleaner = redisClient
@@ -718,15 +650,11 @@ func main() {
 		googleClientSecret,
 	)
 
-	// Create HTTP multiplexer
 	mux := http.NewServeMux()
 
-	// Setup API routes
 	apiHandler.SetupRoutes(mux)
 
-	// Create middleware stack with rate limiting.
-	// Static assets are excluded — browsers request many files in parallel
-	// on hard refresh and these are cheap to serve.
+	// Static assets bypass rate limiting: hard refresh fires many parallel requests.
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		isStatic := strings.HasPrefix(p, "/js/") ||
@@ -747,7 +675,7 @@ func main() {
 		mux.ServeHTTP(w, r)
 	})
 
-	// Add middleware in reverse order (outermost first)
+	// Reverse order: outermost first.
 	handler = api.LoggingMiddleware(handler)
 	handler = api.RequestIDMiddleware(handler)
 	handler = api.SecurityHeadersMiddleware(handler)
@@ -755,29 +683,23 @@ func main() {
 	handler = api.CORSMiddleware(handler)
 	handler = observability.WrapHandler(handler, obsProviders)
 
-	// Create a new HTTP server
 	server := &http.Server{
 		Addr:              ":" + config.Port,
 		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second, // Fix G112: Potential Slowloris Attack
+		ReadHeaderTimeout: 5 * time.Second, // G112: Slowloris.
 	}
 
-	// Channel to listen for termination signals
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
-	// Channel to signal when the server has shut down
 	done := make(chan struct{})
 
-	// Channel to receive server errors
 	serverErrCh := make(chan error, 1)
 
 	go func() {
 		startupLog.Info("Starting server", "port", config.Port)
 
-		// Bind the listener first so that we only announce readiness once the
-		// port is actually accepting connections. If the bind fails we surface
-		// the error instead of claiming the server is ready at dead URLs.
+		// Bind before announcing readiness so bind failure surfaces correctly.
 		listener, err := net.Listen("tcp", ":"+config.Port)
 		if err != nil {
 			serverErrCh <- fmt.Errorf("failed to bind %s: %w", config.Port, err)
@@ -814,18 +736,14 @@ func main() {
 		close(done)
 	}()
 
-	// Note: no local worker pool — task execution is handled by the dedicated
-	// worker service (cmd/worker). The API server only schedules tasks into Redis.
+	// Task execution lives in cmd/worker; this server only schedules into Redis.
 
-	// Start background health monitoring with cancellable context
 	backgroundWG.Add(1)
 	go startHealthMonitoring(appCtx, &backgroundWG, pgDB, redisClient)
 
-	// Start scheduler service
 	backgroundWG.Add(1)
 	go startJobScheduler(appCtx, &backgroundWG, jobsManager, pgDB)
 
-	// Start notification listener (uses polling mode with Supabase pooler)
 	backgroundWG.Go(func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -836,7 +754,6 @@ func main() {
 		notifications.StartWithFallback(appCtx, pgDB.GetConfig().ConnectionString(), notificationService)
 	})
 
-	// Wait for either the server to exit or shutdown signal completion
 	var serverErr error
 	select {
 	case serverErr = <-serverErrCh:
@@ -844,7 +761,6 @@ func main() {
 		serverErr = <-serverErrCh
 	}
 
-	// Ensure background goroutines stop
 	appCancel()
 	backgroundWG.Wait()
 	startupLog.Info("All background goroutines stopped")
@@ -856,7 +772,6 @@ func main() {
 	startupLog.Info("Server stopped")
 }
 
-// getEnvWithDefault retrieves an environment variable or returns a default value if not set
 func getEnvWithDefault(key, defaultValue string) string {
 	value := os.Getenv(key)
 	if value == "" {
@@ -865,12 +780,10 @@ func getEnvWithDefault(key, defaultValue string) string {
 	return value
 }
 
-// setupLogging configures the logging system
 func setupLogging(config *Config) {
 	logging.Setup(logging.ParseLevel(config.LogLevel), config.Env)
 }
 
-// RateLimiter represents a rate limiting system based on client IP addresses
 type RateLimiter struct {
 	limits   map[string]*IPRateLimiter
 	mu       sync.Mutex
@@ -878,21 +791,18 @@ type RateLimiter struct {
 	capacity int
 }
 
-// IPRateLimiter wraps a token bucket rate limiter specific to an IP address
 type IPRateLimiter struct {
 	limiter *rate.Limiter
 }
 
-// newRateLimiter creates a new rate limiter with default settings
 func newRateLimiter() *RateLimiter {
 	return &RateLimiter{
 		limits:   make(map[string]*IPRateLimiter),
-		rate:     rate.Limit(20), // 20 requests per second for dashboard
-		capacity: 10,             // 10 burst capacity
+		rate:     rate.Limit(20),
+		capacity: 10,
 	}
 }
 
-// getLimiter returns the rate limiter for a specific IP address
 func (rl *RateLimiter) getLimiter(ip string) *IPRateLimiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -908,23 +818,19 @@ func (rl *RateLimiter) getLimiter(ip string) *IPRateLimiter {
 	return limiter
 }
 
-// Allow checks if a request from this IP should be allowed
 func (ipl *IPRateLimiter) Allow() bool {
 	return ipl.limiter.Allow()
 }
 
-// getClientIP extracts the client's IP address from a request
 func getClientIP(r *http.Request) string {
-	// Check for X-Forwarded-For header first (for clients behind proxies)
 	ip := r.Header.Get("X-Forwarded-For")
 	if ip != "" {
-		// X-Forwarded-For might contain multiple IPs, take the first one
+		// May contain multiple IPs; first is the originating client.
 		ips := strings.Split(ip, ",")
 		ip = strings.TrimSpace(ips[0])
 		return ip
 	}
 
-	// If no X-Forwarded-For, use RemoteAddr
 	ip, _, _ = net.SplitHostPort(r.RemoteAddr)
 	return ip
 }

@@ -23,22 +23,17 @@ import (
 	"time"
 )
 
-// Heartbeat is a monotonically increasing counter representing forward
-// progress in the worker's hot path. The watchdog observes the counter
-// at intervals; failure to increase across a stall window combined with
-// active workload triggers a forced exit.
+// Failure to increase across the stall window combined with active
+// workload triggers a forced exit.
 type Heartbeat struct {
 	beats atomic.Uint64
 }
 
-// Tick increments the heartbeat counter. Cheap and lock-free; safe to
-// call from hot paths.
+// Cheap and lock-free; safe from hot paths.
 func (h *Heartbeat) Tick() { h.beats.Add(1) }
 
-// Read returns the current heartbeat value.
 func (h *Heartbeat) Read() uint64 { return h.beats.Load() }
 
-// Options configures Run.
 type Options struct {
 	// StallThreshold is how long the heartbeat may stay flat before
 	// the watchdog considers the worker wedged. Default 90s.
@@ -65,9 +60,6 @@ type Options struct {
 	Exit func(code int)
 }
 
-// Run drives the watchdog loop until ctx is cancelled. Heartbeat is
-// observed every CheckInterval; if the heartbeat hasn't advanced in
-// StallThreshold and HasWork() is true, the configured Exit is called.
 func Run(ctx context.Context, hb *Heartbeat, opts Options) {
 	if hb == nil {
 		return
@@ -118,15 +110,13 @@ func Run(ctx context.Context, hb *Heartbeat, opts Options) {
 
 			hasWork := true
 			if opts.HasWork != nil {
-				// Bound the work check so it can't itself wedge the
-				// watchdog.
+				// Bounded so the check can't itself wedge the watchdog.
 				checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				hasWork = opts.HasWork(checkCtx)
 				cancel()
 			}
 			if !hasWork {
-				// Reset the change timestamp so we don't trip
-				// immediately when work resumes.
+				// Reset so we don't trip immediately when work resumes.
 				lastChange = now
 				continue
 			}
@@ -137,8 +127,8 @@ func Run(ctx context.Context, hb *Heartbeat, opts Options) {
 				"stall_threshold", opts.StallThreshold.String(),
 				"heartbeat", cur,
 			)
-			// Best-effort flush of stdout so the message reaches the
-			// log shipper before the process dies. Ignore errors.
+			// Best-effort flush so the message reaches the log shipper
+			// before exit.
 			_ = os.Stdout.Sync()
 			opts.Exit(1)
 			return

@@ -11,28 +11,16 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// LinkDiscoveryDeps bundles the dependencies that ProcessDiscoveredLinks
-// requires, allowing both WorkerPool and StreamWorkerPool to supply them.
 type LinkDiscoveryDeps struct {
 	DBQueue     DbQueueInterface
 	JobManager  JobManagerInterface
-	MinPriority float64 // linkDiscoveryMinPriority threshold
+	MinPriority float64
 }
 
-// ProcessDiscoveredLinks handles link processing and enqueueing for discovered
-// URLs. It filters links for same-site compliance and robots.txt rules,
-// creates page records, and enqueues new tasks via the JobManager.
-//
-// Priority promotion: when a URL is re-discovered at a higher priority
-// (e.g. first seen in body, later found in the homepage header), the
-// ON CONFLICT DO UPDATE clause in EnqueueURLs applies
-// `priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score)`
-// so the stored task is promoted. Pages returned by CreatePageRecords
-// cover both newly-inserted and pre-existing rows (its INSERT uses a
-// no-op DO UPDATE to force RETURNING to emit all matched rows), and
-// `page_analytics.traffic_score` enrichment is applied inside
-// EnqueueURLs for eligible inserts. No caller-level updateTaskPriorities
-// step is required.
+// Priority promotion is handled by EnqueueURLs via
+// `priority_score = GREATEST(tasks.priority_score, EXCLUDED.priority_score)`,
+// and CreatePageRecords' no-op DO UPDATE forces RETURNING to emit pre-existing
+// rows too — so no caller-level updateTaskPriorities step is required.
 func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *Task, links map[string][]string, sourceURL string, robotsRules *crawler.RobotsRules) {
 	if deps.JobManager == nil {
 		jobsLog.Warn("JobManager is nil; skipping link discovery", "task_id", task.ID)
@@ -45,7 +33,6 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 		"find_links_enabled", task.FindLinks,
 	)
 
-	// Use domain ID from task (already populated from job cache).
 	domainID := task.DomainID
 	if domainID == 0 {
 		jobsLog.Error("Missing domain ID; skipping link processing", "task_id", task.ID, "job_id", task.JobID)
@@ -79,7 +66,6 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			return
 		}
 
-		// 1. Filter links for same-site and robots.txt compliance.
 		var filtered []string
 		var blockedCount int
 		for _, link := range links {
@@ -101,7 +87,6 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 					linkURL.Path = strings.TrimSuffix(linkURL.Path, "/")
 				}
 
-				// Check robots.txt rules.
 				if robotsRules != nil && !crawler.IsPathAllowed(robotsRules, linkURL.Path) {
 					blockedCount++
 					jobsLog.Debug("Link blocked by robots.txt",
@@ -155,20 +140,17 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			)
 			return
 		}
-		// Derive the timeout from the parent ctx so CancelJob (or worker
-		// shutdown) propagates here; otherwise a late enqueue could
-		// repopulate a cancelled job with fresh pending work.
+		// Derive from parent ctx so CancelJob propagates — otherwise a late
+		// enqueue could repopulate a cancelled job with fresh pending work.
 		linkCtx, linkCancel := context.WithTimeout(ctx, linkCtxTimeout)
 		defer linkCancel()
 
-		// 2. Create page records.
 		pageIDs, hosts, paths, err := db.CreatePageRecords(linkCtx, deps.DBQueue, domainID, task.DomainName, filtered)
 		if err != nil {
 			jobsLog.Error("Failed to create page records for links", "error", err)
 			return
 		}
 
-		// 3. Build a slice of db.Page for enqueueing.
 		pagesToEnqueue := make([]db.Page, len(pageIDs))
 		for i := range pageIDs {
 			pagesToEnqueue[i] = db.Page{
@@ -179,14 +161,12 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 			}
 		}
 
-		// 4. Enqueue new tasks.
 		if err := deps.JobManager.EnqueueJobURLs(linkCtx, task.JobID, pagesToEnqueue, "link", sourceURL); err != nil {
 			jobsLog.Error("Failed to enqueue discovered links", "error", err)
 			return
 		}
 	}
 
-	// Apply priorities based on page type and link category.
 	if isHomepage {
 		jobsLog.Debug("Processing links from HOMEPAGE", "task_id", task.ID)
 		processLinkCategory(links["header"], 1.000)
@@ -198,19 +178,12 @@ func ProcessDiscoveredLinks(ctx context.Context, deps LinkDiscoveryDeps, task *T
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Pure helper functions (no WorkerPool dependency)
-// ---------------------------------------------------------------------------
-
-// normaliseComparableHost strips leading "www.", trailing dots, and lowercases.
 func normaliseComparableHost(host string) string {
 	host = strings.ToLower(strings.TrimSpace(host))
 	host = strings.TrimSuffix(host, ".")
 	return strings.TrimPrefix(host, "www.")
 }
 
-// sameRegistrableDomain returns true when both hosts share the same
-// registrable domain (eTLD+1).
 func sameRegistrableDomain(hostA, hostB string) bool {
 	normalisedA := normaliseComparableHost(hostA)
 	normalisedB := normaliseComparableHost(hostB)
@@ -227,15 +200,10 @@ func sameRegistrableDomain(hostA, hostB string) bool {
 	return rootA == rootB
 }
 
-// sameHostWithWWWEquivalence treats "www.example.com" and "example.com" as
-// equivalent after normalisation.
 func sameHostWithWWWEquivalence(hostA, hostB string) bool {
 	return normaliseComparableHost(hostA) == normaliseComparableHost(hostB)
 }
 
-// isLinkAllowedForTask determines whether a discovered hostname should be
-// queued for the given task, respecting cross-subdomain and www-equivalence
-// policies.
 func isLinkAllowedForTask(discoveredHost string, task *Task) bool {
 	if task == nil {
 		return false

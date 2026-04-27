@@ -10,36 +10,21 @@ import (
 	"time"
 )
 
-// Default tuning constants for the pressure controller.
-// High/low marks are overridable via env vars; everything else is hardcoded.
+// High/low marks are env-overridable; the rest are hardcoded.
 const (
-	pressureHighMarkDefaultMs = 500.0            // EMA above this → shed load
-	pressureLowMarkDefaultMs  = 100.0            // EMA below this → restore capacity
-	pressureEMAAlpha          = 0.15             // smoothing factor (lower = smoother)
-	pressureStepDownDefault   = int32(5)         // slots removed per shed adjustment
-	pressureStepUp            = int32(3)         // slots added per restore adjustment
-	pressureMinLimitDefault   = int32(30)        // never drop below this
-	pressureCooldownDown      = 10 * time.Second // min gap between shed adjustments
-	pressureCooldownUp        = 30 * time.Second // min gap between restore adjustments
-	pressureWarmupSamples     = 5                // samples required before acting
+	pressureHighMarkDefaultMs = 500.0
+	pressureLowMarkDefaultMs  = 100.0
+	pressureEMAAlpha          = 0.15
+	pressureStepDownDefault   = int32(5)
+	pressureStepUp            = int32(3)
+	pressureMinLimitDefault   = int32(30)
+	pressureCooldownDown      = 10 * time.Second
+	pressureCooldownUp        = 30 * time.Second
+	pressureWarmupSamples     = 5
 )
 
-// PressureController adaptively adjusts the queue semaphore's effective limit
-// based on observed query execution time per transaction.
-//
-// Signal: every completed Execute / ExecuteWithContext call reports its
-// cumulative exec_total (time spent actually running DB queries). An EMA of
-// those samples is compared against highMark / lowMark thresholds:
-//
-//   - EMA > highMark → reduce limit by stepDown every cooldownDown (floor: minLimit)
-//   - EMA < lowMark  → restore limit by stepUp every cooldownUp (ceiling: maxLimit)
-//   - Between marks  → hold steady
-//
-// Shedding is faster than restoring by design: react quickly to protect
-// Supabase, but open capacity back up cautiously.
-//
-// The controller starts at the configured initial limit which defaults to the
-// lane's hard cap so full throughput is available unless pressure rises.
+// Adjusts queue concurrency from per-transaction exec_total via an EMA:
+// shed fast (10s cooldown) to protect Supabase, restore slow (30s cooldown).
 type PressureController struct {
 	mu            sync.Mutex
 	ema           float64
@@ -47,12 +32,10 @@ type PressureController struct {
 	lastScaleDown time.Time
 	lastScaleUp   time.Time
 
-	// limit is read on every hot-path call to ensurePoolCapacity, so it must
-	// be accessed atomically. Writes happen at most once per cooldown period.
+	// Read on every ensurePoolCapacity call; written at most once per cooldown.
 	limit    atomic.Int32
 	maxLimit int32
 
-	// tuning — split by direction for asymmetric behaviour
 	highMark     float64
 	lowMark      float64
 	stepDown     int32
@@ -61,17 +44,11 @@ type PressureController struct {
 	cooldownUp   time.Duration
 	minLimit     int32
 
-	// OnAdjust is called after each scale-up or scale-down with direction "up" or "down".
-	// Must not block. Set once at construction time before any concurrent use.
+	// Must not block. Set once before concurrent use.
 	OnAdjust func(direction string)
 }
 
-// newPressureController creates a controller that starts at the configured
-// initial limit and clamps all values to the queue lane's hard cap.
-// (clamped to maxLimit) and adjusts dynamically as pool-wait observations arrive.
 func newPressureController(maxLimit int) *PressureController {
-	// Guard against int32 overflow — maxLimit is always a small pool size in
-	// practice, but clamp explicitly to satisfy the linter and be defensive.
 	safeMax := int32(math.MaxInt32)
 	if maxLimit <= math.MaxInt32 {
 		safeMax = int32(maxLimit) //nolint:gosec // G115: bounds-checked immediately above
@@ -79,8 +56,7 @@ func newPressureController(maxLimit int) *PressureController {
 	highMark := parsePressureFloat("GNH_PRESSURE_HIGH_MARK_MS", pressureHighMarkDefaultMs)
 	lowMark := parsePressureFloat("GNH_PRESSURE_LOW_MARK_MS", pressureLowMarkDefaultMs)
 
-	// Ensure a valid deadband. If env vars collapse or invert the band, log and
-	// fall back to defaults so the controller behaves predictably.
+	// Inverted/collapsed deadband would oscillate or stall — restore defaults.
 	if lowMark >= highMark {
 		dbLog.Warn("GNH_PRESSURE_LOW_MARK_MS >= GNH_PRESSURE_HIGH_MARK_MS — falling back to defaults",
 			"low_mark", lowMark,
@@ -91,8 +67,7 @@ func newPressureController(maxLimit int) *PressureController {
 		highMark = pressureHighMarkDefaultMs
 	}
 
-	// If the pool is configured smaller than the default floor, clamp the floor
-	// to maxLimit to avoid an unresolvable inconsistency where we can never shed.
+	// floor > cap would prevent any shedding — clamp.
 	minLimit := parsePressureInt32("GNH_PRESSURE_MIN_LIMIT", pressureMinLimitDefault)
 	if safeMax < minLimit {
 		dbLog.Warn("DB_QUEUE_MAX_CONCURRENCY smaller than pressure floor — clamping floor to max",
@@ -138,15 +113,12 @@ func newPressureController(maxLimit int) *PressureController {
 	return pc
 }
 
-// EffectiveLimit returns the current pressure-adjusted concurrency ceiling.
-// Safe to call from multiple goroutines concurrently.
 func (pc *PressureController) EffectiveLimit() int32 {
 	return pc.limit.Load()
 }
 
-// Record adds a query execution time observation (cumulative milliseconds for
-// one transaction) and adjusts the effective limit when thresholds are crossed.
-// Safe to call concurrently.
+// Record adds a per-transaction exec_total sample (ms) and adjusts the limit
+// when thresholds are crossed. Concurrent-safe.
 func (pc *PressureController) Record(execMs float64) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
@@ -164,15 +136,13 @@ func (pc *PressureController) Record(execMs float64) {
 	pc.maybeAdjust()
 }
 
-// EMA returns the current smoothed pool-wait estimate in milliseconds.
 func (pc *PressureController) EMA() float64 {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 	return pc.ema
 }
 
-// maybeAdjust checks whether a threshold has been crossed and fires an
-// adjustment if the relevant cooldown has elapsed. Must be called with mu held.
+// Caller must hold pc.mu.
 func (pc *PressureController) maybeAdjust() {
 	current := pc.limit.Load()
 

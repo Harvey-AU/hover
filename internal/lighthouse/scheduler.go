@@ -12,48 +12,27 @@ import (
 	"github.com/lib/pq"
 )
 
-// SchedulerDB is the narrow subset of *db.DB the scheduler needs. Kept
-// as an interface so unit tests can inject a fake without standing up a
-// full Postgres pool.
 type SchedulerDB interface {
 	GetCompletedTasksForLighthouseSampling(ctx context.Context, jobID string) ([]db.CompletedTaskForSampling, error)
 	GetLighthouseRunPageBands(ctx context.Context, jobID string) (map[int]db.LighthouseSelectionBand, error)
 }
 
-// TxRunner runs the supplied function inside a Postgres transaction.
-// Mirrors db.QueueExecutor.ExecuteWithContext so the scheduler can
-// reuse the same retry / pool semantics the rest of the codebase
-// already exercises.
 type TxRunner interface {
 	ExecuteWithContext(ctx context.Context, fn func(ctx context.Context, tx *sql.Tx) error) error
 }
 
-// Scheduler turns crawl progress into pending lighthouse_runs rows and
-// matching task_outbox entries. One scheduler is bound to a single
-// SchedulerDB / TxRunner pair; the JobManager invokes OnMilestone via
-// the OnProgressMilestone callback whenever a flush observes a 10%
-// boundary crossing.
 type Scheduler struct {
 	db    SchedulerDB
 	queue TxRunner
 }
 
-// NewScheduler constructs a Scheduler. Callers are expected to wire
-// the returned Scheduler.OnMilestone into JobManager.OnProgressMilestone
-// during bootstrap.
 func NewScheduler(database SchedulerDB, queue TxRunner) *Scheduler {
 	return &Scheduler{db: database, queue: queue}
 }
 
-// OnMilestone runs the sampler at the given milestone (0..100) and
-// enqueues any newly chosen audits. Safe to call from the milestone
-// callback path: errors are returned for the caller to log, but the
-// caller is expected to never let a scheduler failure block the batch
-// loop.
-//
-// At milestone == 100, samples are tagged as the 'reconcile' band so
-// the analytics layer can distinguish opportunistic per-decade picks
-// from the catch-up pass at job completion.
+// At milestone == 100, samples are tagged 'reconcile' so analytics can
+// distinguish opportunistic per-decade picks from the catch-up pass at
+// job completion.
 func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int) error {
 	if s == nil {
 		return nil
@@ -112,11 +91,8 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 		return b
 	}
 
-	// scheduledByBand is populated per-attempt and only published to
-	// the outer scope after the tx commits, so retries inside
-	// ExecuteWithContext cannot inflate the metrics counts. The closure
-	// owns the per-attempt map; the outer scope reads only after a
-	// successful return.
+	// Only published after tx commit so ExecuteWithContext retries
+	// can't inflate metrics counts.
 	var scheduledByBand map[SelectionBand]int
 	now := time.Now().UTC()
 
@@ -177,12 +153,8 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 			return nil
 		}
 
-		// Bulk-insert via unnest so the round-trip cost is one statement
-		// even for the maximum 100-audit per-job ceiling. task_id and
-		// job_id columns are TEXT (see migration 20260421090000), so we
-		// pass them as text arrays without a UUID cast — the lighthouse
-		// task_id is a freshly generated UUID in canonical text form,
-		// which the column accepts as-is.
+		// task_id and job_id are TEXT (migration 20260421090000); pass
+		// as text arrays without a UUID cast.
 		const insertOutbox = `
 			INSERT INTO task_outbox (
 				task_id, job_id, page_id, host, path,
@@ -246,9 +218,7 @@ func (s *Scheduler) OnMilestone(ctx context.Context, jobID string, milestone int
 	return nil
 }
 
-// lighthouseAuditURL composes the URL the runner should audit. Crawl
-// hosts are stored without a scheme; lighthouse always audits over
-// https in v1, matching what the crawler itself does.
+// Crawl hosts are stored without a scheme; v1 always audits over https.
 func lighthouseAuditURL(host, path string) string {
 	if host == "" {
 		return ""

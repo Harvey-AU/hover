@@ -23,7 +23,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/loops"
 )
 
-// Version is the current API version (can be set via ldflags at build time)
+// Set via ldflags at build time.
 var Version = "0.4.1"
 
 func buildConfigSnippet() ([]byte, error) {
@@ -81,7 +81,6 @@ func buildConfigSnippet() ([]byte, error) {
 			apiLog.Warn("invalid GNH_ENABLE_TURNSTILE value; falling back to default", "value", raw)
 		}
 	} else {
-		// Default: enable Turnstile only in production unless explicitly overridden
 		config["enableTurnstile"] = appEnv == "production"
 	}
 	bytes, err := json.Marshal(config)
@@ -91,7 +90,6 @@ func buildConfigSnippet() ([]byte, error) {
 	return fmt.Appendf(nil, "window.GNH_CONFIG=%s;", bytes), nil
 }
 
-// DBClient is an interface for database operations
 type DBClient interface {
 	GetDB() *sql.DB
 	GetOrCreateUser(userID, email string, orgID *string) (*db.User, error)
@@ -100,7 +98,6 @@ type DBClient interface {
 	GetSlowPages(organisationID string, startDate, endDate *time.Time) ([]db.SlowPage, error)
 	GetExternalRedirects(organisationID string, startDate, endDate *time.Time) ([]db.ExternalRedirect, error)
 	GetUserByWebhookToken(token string) (*db.User, error)
-	// Additional methods used by API handlers
 	GetUser(userID string) (*db.User, error)
 	UpdateUserNames(userID string, firstName, lastName, fullName *string) error
 	ResetSchema() error
@@ -109,7 +106,6 @@ type DBClient interface {
 	GetOrganisation(organisationID string) (*db.Organisation, error)
 	ListJobs(organisationID string, limit, offset int, status, dateRange, timezone string) ([]db.JobWithDomain, int, error)
 	ListJobsWithOffset(organisationID string, limit, offset int, status, dateRange string, tzOffsetMinutes int, includeStats bool) ([]db.JobWithDomain, int, error)
-	// Scheduler methods
 	CreateScheduler(ctx context.Context, scheduler *db.Scheduler) error
 	GetScheduler(ctx context.Context, schedulerID string) (*db.Scheduler, error)
 	ListSchedulers(ctx context.Context, organisationID string) ([]*db.Scheduler, error)
@@ -120,7 +116,6 @@ type DBClient interface {
 	GetLastJobStartTimeForScheduler(ctx context.Context, schedulerID string) (*time.Time, error)
 	GetDomainNameByID(ctx context.Context, domainID int) (string, error)
 	GetDomainNames(ctx context.Context, domainIDs []int) (map[int]string, error)
-	// Organisation membership methods
 	ListUserOrganisations(userID string) ([]db.UserOrganisation, error)
 	ValidateOrganisationMembership(userID, organisationID string) (bool, error)
 	SetActiveOrganisation(userID, organisationID string) error
@@ -131,7 +126,6 @@ type DBClient interface {
 	RemoveOrganisationMember(ctx context.Context, userID, organisationID string) error
 	UpdateOrganisationMemberRole(ctx context.Context, userID, organisationID, role string) error
 	CountOrganisationAdmins(ctx context.Context, organisationID string) (int, error)
-	// Organisation management methods
 	CreateOrganisation(name string) (*db.Organisation, error)
 	CreateOrganisationForUser(userID, name string) (*db.Organisation, error)
 	AddOrganisationMember(userID, organisationID, role string) error
@@ -143,7 +137,6 @@ type DBClient interface {
 	SetOrganisationPlan(ctx context.Context, organisationID, planID string) error
 	GetOrganisationPlanID(ctx context.Context, organisationID string) (string, error)
 	ListDailyUsage(ctx context.Context, organisationID string, startDate, endDate time.Time) ([]db.DailyUsageEntry, error)
-	// Slack integration methods
 	CreateSlackConnection(ctx context.Context, conn *db.SlackConnection) error
 	GetSlackConnection(ctx context.Context, connectionID string) (*db.SlackConnection, error)
 	ListSlackConnections(ctx context.Context, organisationID string) ([]*db.SlackConnection, error)
@@ -154,19 +147,16 @@ type DBClient interface {
 	DeleteSlackUserLink(ctx context.Context, userID, connectionID string) error
 	StoreSlackToken(ctx context.Context, connectionID, token string) error
 	GetSlackToken(ctx context.Context, connectionID string) (string, error)
-	// Notification methods
 	ListNotifications(ctx context.Context, organisationID string, limit, offset int, unreadOnly bool) ([]*db.Notification, int, error)
 	GetUnreadNotificationCount(ctx context.Context, organisationID string) (int, error)
 	MarkNotificationRead(ctx context.Context, notificationID, organisationID string) error
 	MarkAllNotificationsRead(ctx context.Context, organisationID string) error
-	// Webflow integration methods
 	CreateWebflowConnection(ctx context.Context, conn *db.WebflowConnection) error
 	GetWebflowConnection(ctx context.Context, connectionID string) (*db.WebflowConnection, error)
 	ListWebflowConnections(ctx context.Context, organisationID string) ([]*db.WebflowConnection, error)
 	DeleteWebflowConnection(ctx context.Context, connectionID, organisationID string) error
 	StoreWebflowToken(ctx context.Context, connectionID, token string) error
 	GetWebflowToken(ctx context.Context, connectionID string) (string, error)
-	// Google Analytics integration methods
 	CreateGoogleConnection(ctx context.Context, conn *db.GoogleAnalyticsConnection) error
 	GetGoogleConnection(ctx context.Context, connectionID string) (*db.GoogleAnalyticsConnection, error)
 	ListGoogleConnections(ctx context.Context, organisationID string) ([]*db.GoogleAnalyticsConnection, error)
@@ -185,7 +175,6 @@ type DBClient interface {
 	ApplyTrafficScoresToTasks(ctx context.Context, organisationID string, domainID int) error
 	GetOrCreateDomainID(ctx context.Context, domain string) (int, error)
 	UpsertOrganisationDomain(ctx context.Context, organisationID string, domainID int) error
-	// Google Analytics accounts methods (for persistent account storage)
 	UpsertGA4Account(ctx context.Context, account *db.GoogleAnalyticsAccount) error
 	ListGA4Accounts(ctx context.Context, organisationID string) ([]*db.GoogleAnalyticsAccount, error)
 	GetGA4Account(ctx context.Context, accountID string) (*db.GoogleAnalyticsAccount, error)
@@ -194,13 +183,10 @@ type DBClient interface {
 	GetGA4AccountToken(ctx context.Context, accountID string) (string, error)
 	GetGA4AccountWithToken(ctx context.Context, organisationID string) (*db.GoogleAnalyticsAccount, error)
 	GetGAConnectionWithToken(ctx context.Context, organisationID string) (*db.GoogleAnalyticsConnection, error)
-	// Platform integration mappings
 	UpsertPlatformOrgMapping(ctx context.Context, mapping *db.PlatformOrgMapping) error
 	GetPlatformOrgMapping(ctx context.Context, platform, platformID string) (*db.PlatformOrgMapping, error)
-	// Usage and plans methods
 	GetOrganisationUsageStats(ctx context.Context, orgID string) (*db.UsageStats, error)
 	GetActivePlans(ctx context.Context) ([]db.Plan, error)
-	// Webflow site settings methods
 	CreateOrUpdateSiteSetting(ctx context.Context, setting *db.WebflowSiteSetting) error
 	GetSiteSetting(ctx context.Context, organisationID, webflowSiteID string) (*db.WebflowSiteSetting, error)
 	GetSiteSettingByID(ctx context.Context, id string) (*db.WebflowSiteSetting, error)
@@ -213,15 +199,11 @@ type DBClient interface {
 	DeleteSiteSettingsByConnection(ctx context.Context, connectionID string) error
 }
 
-// BrokerCleaner is the subset of the broker client the API needs for
-// admin reset endpoints. The interface keeps the Handler trivially
-// mockable; production wiring uses *broker.Client.
 type BrokerCleaner interface {
 	ClearAll(ctx context.Context) (int, error)
 	ReclaimTerminalJobKeys(ctx context.Context, filter broker.TerminalFilter) (broker.ReclaimReport, error)
 }
 
-// Handler holds dependencies for API handlers
 type Handler struct {
 	DB                 DBClient
 	JobsManager        jobs.JobManagerInterface
@@ -231,9 +213,7 @@ type Handler struct {
 	GoogleClientSecret string
 }
 
-// NewHandler creates a new API handler with dependencies. broker may be
-// nil when Redis is not configured — admin reset endpoints will skip
-// the Redis clear in that case.
+// broker may be nil when Redis is not configured — admin reset endpoints skip the Redis clear in that case.
 func NewHandler(pgDB DBClient, jobsManager jobs.JobManagerInterface, loopsClient *loops.Client, broker BrokerCleaner, googleClientID, googleClientSecret string) *Handler {
 	return &Handler{
 		DB:                 pgDB,
@@ -245,9 +225,7 @@ func NewHandler(pgDB DBClient, jobsManager jobs.JobManagerInterface, loopsClient
 	}
 }
 
-// GetActiveOrganisation validates and returns the active organisation ID for the current user.
-// It writes an error response and returns an empty string if authentication fails or the user
-// doesn't belong to an organisation.
+// Writes the error response and returns "" on failure.
 func (h *Handler) GetActiveOrganisation(w http.ResponseWriter, r *http.Request) string {
 	userClaims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -270,8 +248,6 @@ func (h *Handler) GetActiveOrganisation(w http.ResponseWriter, r *http.Request) 
 	return orgID
 }
 
-// GetActiveOrganisationWithUser validates and returns both the user and active organisation ID.
-// It writes an error response and returns nil, "", false if authentication fails.
 func (h *Handler) GetActiveOrganisationWithUser(w http.ResponseWriter, r *http.Request) (*db.User, string, bool) {
 	userClaims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -294,38 +270,29 @@ func (h *Handler) GetActiveOrganisationWithUser(w http.ResponseWriter, r *http.R
 	return user, orgID, true
 }
 
-// SetupRoutes configures all API routes with proper middleware
 func (h *Handler) SetupRoutes(mux *http.ServeMux) {
-	// Health check endpoints (no auth required)
 	mux.HandleFunc("/health", h.HealthCheck)
 	mux.HandleFunc("/health/db", h.DatabaseHealthCheck)
 
-	// V1 API routes with authentication
 	mux.Handle("/v1/jobs", auth.AuthMiddleware(http.HandlerFunc(h.JobsHandler)))
-	mux.Handle("/v1/jobs/", auth.AuthMiddleware(http.HandlerFunc(h.JobHandler))) // For /v1/jobs/:id
+	mux.Handle("/v1/jobs/", auth.AuthMiddleware(http.HandlerFunc(h.JobHandler)))
 	mux.Handle("/v1/schedulers", auth.AuthMiddleware(http.HandlerFunc(h.SchedulersHandler)))
-	mux.Handle("/v1/schedulers/", auth.AuthMiddleware(http.HandlerFunc(h.SchedulerHandler))) // For /v1/schedulers/:id
-	// Shared job routes (public)
+	mux.Handle("/v1/schedulers/", auth.AuthMiddleware(http.HandlerFunc(h.SchedulerHandler)))
 	mux.HandleFunc("/v1/shared/jobs/", h.SharedJobHandler)
 	mux.HandleFunc("/shared/jobs/", h.ServeSharedJobPage)
 
-	// Dashboard API routes (require auth)
 	mux.Handle("/v1/dashboard/stats", auth.AuthMiddleware(http.HandlerFunc(h.DashboardStats)))
 	mux.Handle("/v1/dashboard/activity", auth.AuthMiddleware(http.HandlerFunc(h.DashboardActivity)))
 	mux.Handle("/v1/dashboard/slow-pages", auth.AuthMiddleware(http.HandlerFunc(h.DashboardSlowPages)))
 	mux.Handle("/v1/dashboard/external-redirects", auth.AuthMiddleware(http.HandlerFunc(h.DashboardExternalRedirects)))
 
-	// Metadata routes (require auth)
 	mux.Handle("/v1/metadata/metrics", auth.AuthMiddleware(http.HandlerFunc(h.MetadataHandler)))
 
-	// Authentication routes (no auth middleware)
 	mux.HandleFunc("/v1/auth/register", h.AuthRegister)
 	mux.HandleFunc("/v1/auth/session", h.AuthSession)
 
-	// Profile route (requires auth)
 	mux.Handle("/v1/auth/profile", auth.AuthMiddleware(http.HandlerFunc(h.AuthProfile)))
 
-	// Organisation routes (require auth)
 	mux.HandleFunc("/v1/organisations/invites/preview", h.OrganisationInvitePreviewHandler)
 	mux.Handle("/v1/organisations", auth.AuthMiddleware(http.HandlerFunc(h.OrganisationsHandler)))
 	mux.Handle("/v1/organisations/switch", auth.AuthMiddleware(http.HandlerFunc(h.SwitchOrganisationHandler)))
@@ -336,48 +303,38 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.Handle("/v1/organisations/invites/", auth.AuthMiddleware(http.HandlerFunc(h.OrganisationInviteHandler)))
 	mux.Handle("/v1/organisations/plan", auth.AuthMiddleware(http.HandlerFunc(h.OrganisationPlanHandler)))
 
-	// Domain routes (require auth)
 	mux.Handle("/v1/domains", auth.AuthMiddleware(http.HandlerFunc(h.DomainsHandler)))
 
-	// Usage routes (require auth)
 	mux.Handle("/v1/usage", auth.AuthMiddleware(http.HandlerFunc(h.UsageHandler)))
 	mux.Handle("/v1/usage/history", auth.AuthMiddleware(http.HandlerFunc(h.UsageHistoryHandler)))
 
-	// Plans route (public - for pricing page)
 	mux.Handle("/v1/plans", http.HandlerFunc(h.PlansHandler))
 
-	// Webhook endpoints (no auth required)
-	mux.HandleFunc("/v1/webhooks/webflow/", h.WebflowWebhook) // Note: trailing slash for path params
+	mux.HandleFunc("/v1/webhooks/webflow/", h.WebflowWebhook)
 
-	// Slack integration endpoints
 	mux.Handle("/v1/integrations/slack", auth.AuthMiddleware(http.HandlerFunc(h.SlackConnectionsHandler)))
 	mux.Handle("/v1/integrations/slack/", auth.AuthMiddleware(http.HandlerFunc(h.SlackConnectionHandler)))
-	mux.HandleFunc("/v1/integrations/slack/callback", h.SlackOAuthCallback) // No auth - state validation
+	mux.HandleFunc("/v1/integrations/slack/callback", h.SlackOAuthCallback)
 
-	// Webflow integration endpoints
 	mux.Handle("/v1/integrations/webflow", auth.AuthMiddleware(http.HandlerFunc(h.WebflowConnectionsHandler)))
-	mux.HandleFunc("/v1/integrations/webflow/callback", h.HandleWebflowOAuthCallback) // No auth - state validation
-	// Webflow site settings endpoints (must be before catch-all)
+	mux.HandleFunc("/v1/integrations/webflow/callback", h.HandleWebflowOAuthCallback)
+	// sites/ must precede the catch-all webflow/ route.
 	mux.Handle("/v1/integrations/webflow/sites/", auth.AuthMiddleware(http.HandlerFunc(h.webflowSitesRouter)))
 	mux.Handle("/v1/integrations/webflow/", auth.AuthMiddleware(http.HandlerFunc(h.WebflowConnectionHandler)))
 
-	// Google Analytics integration endpoints
 	mux.Handle("/v1/integrations/google", auth.AuthMiddleware(http.HandlerFunc(h.GoogleConnectionsHandler)))
 	mux.Handle("/v1/integrations/google/", auth.AuthMiddleware(http.HandlerFunc(h.GoogleConnectionHandler)))
-	mux.HandleFunc("/v1/integrations/google/callback", h.HandleGoogleOAuthCallback) // No auth - state validation
+	mux.HandleFunc("/v1/integrations/google/callback", h.HandleGoogleOAuthCallback)
 	mux.Handle("/v1/integrations/google/save-property", auth.AuthMiddleware(http.HandlerFunc(h.SaveGoogleProperty)))
 
-	// Notification endpoints
 	mux.Handle("/v1/notifications", auth.AuthMiddleware(http.HandlerFunc(h.NotificationsHandler)))
 	mux.Handle("/v1/notifications/read-all", auth.AuthMiddleware(http.HandlerFunc(h.NotificationsReadAllHandler)))
 	mux.Handle("/v1/notifications/", auth.AuthMiddleware(http.HandlerFunc(h.NotificationHandler)))
 
-	// Admin endpoints (require authentication and admin role)
 	mux.Handle("/v1/admin/reset-db", auth.AuthMiddleware(http.HandlerFunc(h.AdminResetDatabase)))
 	mux.Handle("/v1/admin/reset-data", auth.AuthMiddleware(http.HandlerFunc(h.AdminResetData)))
 	mux.Handle("/v1/admin/reclaim-redis", auth.AuthMiddleware(http.HandlerFunc(h.AdminReclaimRedis)))
 
-	// Protected pprof endpoints (system admin + auth required)
 	pprofProtected := func(handler http.Handler) http.Handler {
 		return auth.AuthMiddleware(requireSystemAdmin(handler))
 	}
@@ -392,14 +349,11 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.Handle("/debug/pprof/block", pprofProtected(pprof.Handler("block")))
 	mux.Handle("/debug/pprof/mutex", pprofProtected(pprof.Handler("mutex")))
 
-	// Dev-only: inject Supabase session into browser localStorage.
-	// Lets sandboxed preview browsers (e.g. Claude app) bypass the
-	// browser→Supabase network call that fails in those environments.
+	// Sandboxed preview browsers (e.g. Claude app) cannot reach Supabase directly; this endpoint injects a session server-side.
 	if os.Getenv("APP_ENV") == "development" {
 		mux.HandleFunc("/dev/auto-login", h.DevAutoLogin)
 	}
 
-	// Debug endpoints (no auth required)
 	mux.HandleFunc("/debug/fgtrace", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open("trace.out")
 		if err != nil {
@@ -417,8 +371,7 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 		}
 	}))
 
-	// Static files
-	mux.HandleFunc("/", h.ServeHomepage) // Marketing homepage
+	mux.HandleFunc("/", h.ServeHomepage)
 	mux.HandleFunc("/config.js", h.ServeConfigJS)
 	mux.HandleFunc("/test-login.html", h.ServeTestLogin)
 	mux.HandleFunc("/test-components.html", h.ServeTestComponents)
@@ -440,22 +393,18 @@ func (h *Handler) SetupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/debug-auth.html", h.ServeDebugAuth)
 	mux.HandleFunc("/jobs/", h.ServeJobDetails)
 
-	// Favicon — serve the app logo for browser tab icons.
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=604800")
 		http.ServeFile(w, r, "./web/static/assets/Good-Native_Hover_App_Logo_Webflow.png")
 	})
 
-	// Static assets — served with cache headers to reduce request volume.
 	mux.Handle("/js/", withCacheControl(http.StripPrefix("/js/", http.FileServer(http.Dir("./web/static/js/")))))
 	mux.Handle("/styles/", withCacheControl(http.StripPrefix("/styles/", http.FileServer(http.Dir("./web/static/styles/")))))
 	mux.Handle("/assets/", withCacheControl(http.StripPrefix("/assets/", http.FileServer(http.Dir("./web/static/assets/")))))
-	// ES module app — new frontend architecture (Phase 0+)
 	mux.Handle("/app/", withCacheControl(http.StripPrefix("/app/", http.FileServer(http.Dir("./web/static/app/")))))
 	mux.Handle("/web/", withCacheControl(http.StripPrefix("/web/", h.jsFileServer(http.Dir("./web/")))))
 }
 
-// requireSystemAdmin ensures the current request is authenticated and performed by a system administrator.
 func requireSystemAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := auth.GetUserFromContext(r.Context())
@@ -473,7 +422,6 @@ func requireSystemAdmin(next http.Handler) http.Handler {
 	})
 }
 
-// HealthCheck handles basic health check requests
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -483,14 +431,12 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	WriteHealthy(w, r, "hover", Version)
 }
 
-// DatabaseHealthCheck handles database health check requests
 func (h *Handler) DatabaseHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
 		return
 	}
 
-	// Guard against nil DB to prevent panic
 	if h.DB == nil {
 		WriteUnhealthy(w, r, "postgresql", fmt.Errorf("database connection not configured"))
 		return
@@ -504,27 +450,22 @@ func (h *Handler) DatabaseHealthCheck(w http.ResponseWriter, r *http.Request) {
 	WriteHealthy(w, r, "postgresql", "")
 }
 
-// ServeTestLogin serves the test login page
 func (h *Handler) ServeTestLogin(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "test-login.html")
 }
 
-// ServeTestComponents serves the Web Components test page
 func (h *Handler) ServeTestComponents(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "test-components.html")
 }
 
-// ServeTestDataComponents serves the data components test page
 func (h *Handler) ServeTestDataComponents(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "test-data-components.html")
 }
 
-// ServeDashboard serves the dashboard page
 func (h *Handler) ServeDashboard(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "dashboard.html")
 }
 
-// ServeSettings serves the settings page
 func (h *Handler) ServeSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -534,7 +475,6 @@ func (h *Handler) ServeSettings(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "settings.html")
 }
 
-// ServeWelcome serves the post-sign-in welcome page.
 func (h *Handler) ServeWelcome(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -548,7 +488,6 @@ func (h *Handler) ServeWelcome(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "welcome.html")
 }
 
-// ServeInviteWelcome serves the invite welcome page.
 func (h *Handler) ServeInviteWelcome(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -562,12 +501,10 @@ func (h *Handler) ServeInviteWelcome(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "invite-welcome.html")
 }
 
-// ServeNewDashboard serves the new Web Components dashboard page
 func (h *Handler) ServeNewDashboard(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "dashboard.html")
 }
 
-// ServeAuthModal serves the shared authentication modal
 func (h *Handler) ServeAuthModal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
@@ -575,7 +512,6 @@ func (h *Handler) ServeAuthModal(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "auth-modal.html")
 }
 
-// ServeAuthCallback serves the OAuth callback bridge page.
 func (h *Handler) ServeAuthCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
@@ -583,12 +519,10 @@ func (h *Handler) ServeAuthCallback(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "auth-callback.html")
 }
 
-// ServeDebugAuth serves the debug auth test page
 func (h *Handler) ServeDebugAuth(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "debug-auth.html")
 }
 
-// ServeExtensionAuth serves the extension auth popup bridge page.
 func (h *Handler) ServeExtensionAuth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -601,7 +535,6 @@ func (h *Handler) ServeExtensionAuth(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/templates/extension-auth.html")
 }
 
-// ServeJobDetails serves the standalone job details page
 func (h *Handler) ServeJobDetails(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -611,7 +544,6 @@ func (h *Handler) ServeJobDetails(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/templates/job-details.html")
 }
 
-// ServeSharedJobPage serves the public shared job view
 func (h *Handler) ServeSharedJobPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -621,9 +553,7 @@ func (h *Handler) ServeSharedJobPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "web/templates/job-details.html")
 }
 
-// ServeHomepage serves the marketing homepage
 func (h *Handler) ServeHomepage(w http.ResponseWriter, r *http.Request) {
-	// Only serve homepage for exact root path
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
@@ -631,7 +561,6 @@ func (h *Handler) ServeHomepage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "homepage.html")
 }
 
-// ServeConfigJS exposes Supabase configuration to static pages
 func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
@@ -641,8 +570,7 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	snippet, err := buildConfigSnippet()
 	if err != nil {
-		// Config is sourced from env vars fixed at startup — a misconfiguration
-		// would fire on every request, so suppress Sentry capture here.
+		// Config comes from startup env vars; suppress Sentry to avoid one capture per request on misconfig.
 		apiLog.ErrorContext(logging.NoCapture(r.Context()), "supabase config missing", "error", err)
 		message := "Supabase config unavailable"
 		if os.Getenv("APP_ENV") != "production" {
@@ -656,20 +584,17 @@ func (h *Handler) ServeConfigJS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DashboardStats handles dashboard statistics requests
 func (h *Handler) DashboardStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
 		return
 	}
 
-	// Get active organisation ID (handles auth and validation)
 	orgID := h.GetActiveOrganisation(w, r)
 	if orgID == "" {
-		return // Error already written
+		return
 	}
 
-	// Get query parameters
 	dateRange := r.URL.Query().Get("range")
 	if dateRange == "" {
 		dateRange = "last7"
@@ -679,10 +604,8 @@ func (h *Handler) DashboardStats(w http.ResponseWriter, r *http.Request) {
 		timezone = "UTC"
 	}
 
-	// Calculate date range for query
 	startDate, endDate := calculateDateRange(dateRange, timezone)
 
-	// Get job statistics
 	stats, err := h.DB.GetJobStats(orgID, startDate, endDate)
 	if err != nil {
 		if HandlePoolSaturation(w, r, err) {
@@ -705,20 +628,17 @@ func (h *Handler) DashboardStats(w http.ResponseWriter, r *http.Request) {
 	}, "Dashboard statistics retrieved successfully")
 }
 
-// DashboardActivity handles dashboard activity chart requests
 func (h *Handler) DashboardActivity(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
 		return
 	}
 
-	// Get active organisation ID (handles auth and validation)
 	orgID := h.GetActiveOrganisation(w, r)
 	if orgID == "" {
-		return // Error already written
+		return
 	}
 
-	// Get query parameters
 	dateRange := r.URL.Query().Get("range")
 	if dateRange == "" {
 		dateRange = "last7"
@@ -728,10 +648,8 @@ func (h *Handler) DashboardActivity(w http.ResponseWriter, r *http.Request) {
 		timezone = "UTC"
 	}
 
-	// Calculate date range for query
 	startDate, endDate := calculateDateRange(dateRange, timezone)
 
-	// Get activity data
 	activity, err := h.DB.GetJobActivity(orgID, startDate, endDate)
 	if err != nil {
 		DatabaseError(w, r, err)
@@ -746,78 +664,66 @@ func (h *Handler) DashboardActivity(w http.ResponseWriter, r *http.Request) {
 	}, "Dashboard activity retrieved successfully")
 }
 
-// calculateDateRange converts date range string to start and end times
 func calculateDateRange(dateRange, timezone string) (*time.Time, *time.Time) {
-	// Map common timezone aliases to canonical IANA names
+	// All Australian east-coast aliases share Sydney's DST rules.
 	timezoneAliases := map[string]string{
-		"Australia/Melbourne": "Australia/Sydney", // Melbourne uses Sydney timezone (AEST/AEDT)
-		"Australia/ACT":       "Australia/Sydney", // ACT uses Sydney timezone
-		"Australia/Canberra":  "Australia/Sydney", // Canberra uses Sydney timezone
-		"Australia/NSW":       "Australia/Sydney", // NSW uses Sydney timezone
-		"Australia/Victoria":  "Australia/Sydney", // Victoria uses Sydney timezone
+		"Australia/Melbourne": "Australia/Sydney",
+		"Australia/ACT":       "Australia/Sydney",
+		"Australia/Canberra":  "Australia/Sydney",
+		"Australia/NSW":       "Australia/Sydney",
+		"Australia/Victoria":  "Australia/Sydney",
 	}
 
-	// Check if timezone needs aliasing
 	if canonical, exists := timezoneAliases[timezone]; exists {
 		apiLog.Debug("Mapping timezone alias", "original", timezone, "canonical", canonical)
 		timezone = canonical
 	}
 
-	// Load timezone location, fall back to UTC if invalid
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		apiLog.Warn("Invalid timezone in calculateDateRange, falling back to UTC", "error", err, "timezone", timezone)
 		loc = time.UTC
 	}
 
-	// Get current time in user's timezone
 	now := time.Now().In(loc)
 	var startDate, endDate *time.Time
 
 	switch dateRange {
 	case "last_hour":
-		// Rolling 1 hour window from now
 		start := now.Add(-1 * time.Hour)
 		startDate = &start
 		endDate = &now
 	case "today":
-		// Calendar day boundaries in user's timezone
 		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 		end := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, loc)
 		startDate = &start
 		endDate = &end
 	case "last_24_hours", "last24":
-		// Rolling 24 hour window from now
 		start := now.Add(-24 * time.Hour)
 		startDate = &start
 		endDate = &now
 	case "yesterday":
-		// Previous calendar day in user's timezone
 		yesterday := now.AddDate(0, 0, -1)
 		start := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, loc)
 		end := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, loc)
 		startDate = &start
 		endDate = &end
 	case "7days", "last7":
-		// Last 7 days from now
 		start := now.AddDate(0, 0, -7)
 		startDate = &start
 		endDate = &now
 	case "30days", "last30":
-		// Last 30 days from now
 		start := now.AddDate(0, 0, -30)
 		startDate = &start
 		endDate = &now
 	case "last90":
-		// Last 90 days from now
 		start := now.AddDate(0, 0, -90)
 		startDate = &start
 		endDate = &now
 	case "all":
-		// Return nil for both to indicate no date filtering
+		// nil signals no date filter to the caller.
 		return nil, nil
 	default:
-		// Default to last 7 days
 		start := now.AddDate(0, 0, -7)
 		startDate = &start
 		endDate = &now
@@ -826,9 +732,7 @@ func calculateDateRange(dateRange, timezone string) (*time.Time, *time.Time) {
 	return startDate, endDate
 }
 
-// withCacheControl wraps a handler to set Cache-Control on static assets.
-// Uses a short max-age so browsers cache modules between navigations but
-// still revalidate within a reasonable window on deploy.
+// Short max-age keeps modules cached between navigations but revalidates within minutes of a deploy.
 func withCacheControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=60")
@@ -836,12 +740,10 @@ func withCacheControl(next http.Handler) http.Handler {
 	})
 }
 
-// jsFileServer creates a file server that sets correct MIME types for JavaScript files
 func (h *Handler) jsFileServer(root http.FileSystem) http.Handler {
 	fileServer := http.FileServer(root)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set correct MIME type for JavaScript files
 		if strings.HasSuffix(r.URL.Path, ".js") {
 			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		}
@@ -850,20 +752,17 @@ func (h *Handler) jsFileServer(root http.FileSystem) http.Handler {
 	})
 }
 
-// DashboardSlowPages handles requests for slow-loading pages analysis
 func (h *Handler) DashboardSlowPages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
 		return
 	}
 
-	// Get active organisation (validates auth and membership)
 	orgID := h.GetActiveOrganisation(w, r)
 	if orgID == "" {
-		return // Error already written
+		return
 	}
 
-	// Get query parameters
 	dateRange := r.URL.Query().Get("range")
 	if dateRange == "" {
 		dateRange = "last7"
@@ -873,10 +772,8 @@ func (h *Handler) DashboardSlowPages(w http.ResponseWriter, r *http.Request) {
 		timezone = "UTC"
 	}
 
-	// Calculate date range for query
 	startDate, endDate := calculateDateRange(dateRange, timezone)
 
-	// Get slow pages data
 	slowPages, err := h.DB.GetSlowPages(orgID, startDate, endDate)
 	if err != nil {
 		DatabaseError(w, r, err)
@@ -892,20 +789,17 @@ func (h *Handler) DashboardSlowPages(w http.ResponseWriter, r *http.Request) {
 	}, "Slow pages analysis retrieved successfully")
 }
 
-// DashboardExternalRedirects handles requests for external redirect analysis
 func (h *Handler) DashboardExternalRedirects(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		MethodNotAllowed(w, r)
 		return
 	}
 
-	// Get active organisation (validates auth and membership)
 	orgID := h.GetActiveOrganisation(w, r)
 	if orgID == "" {
-		return // Error already written
+		return
 	}
 
-	// Get query parameters
 	dateRange := r.URL.Query().Get("range")
 	if dateRange == "" {
 		dateRange = "last7"
@@ -915,10 +809,8 @@ func (h *Handler) DashboardExternalRedirects(w http.ResponseWriter, r *http.Requ
 		timezone = "UTC"
 	}
 
-	// Calculate date range for query
 	startDate, endDate := calculateDateRange(dateRange, timezone)
 
-	// Get external redirects data
 	redirects, err := h.DB.GetExternalRedirects(orgID, startDate, endDate)
 	if err != nil {
 		DatabaseError(w, r, err)
@@ -934,10 +826,9 @@ func (h *Handler) DashboardExternalRedirects(w http.ResponseWriter, r *http.Requ
 	}, "External redirects analysis retrieved successfully")
 }
 
-// WebflowWebhookPayload represents the structure of Webflow's site publish webhook
 type WebflowWebhookPayload struct {
 	TriggerType string `json:"triggerType"`
-	SiteID      string `json:"siteId,omitempty"` // Webflow site ID for per-site settings lookup
+	SiteID      string `json:"siteId,omitempty"`
 	Payload     struct {
 		Domains     []string `json:"domains"`
 		PublishedBy struct {
@@ -946,12 +837,8 @@ type WebflowWebhookPayload struct {
 	} `json:"payload"`
 }
 
-// WebflowWebhook handles Webflow site publish webhooks
 func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
-	// The legacy URL shape embeds the webhook token in the path
-	// (/v1/webhooks/webflow/{TOKEN}), and the workspace-scoped shape exposes the
-	// workspace ID. Redact both segments before building a request-scoped logger
-	// so the raw credential never reaches logs or Sentry breadcrumbs.
+	// Legacy path embeds the webhook token; redact it before logging so the credential never reaches Sentry.
 	var logger *logging.Logger
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/v1/webhooks/webflow/workspaces/"):
@@ -967,9 +854,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract identifier from URL path:
-	// Legacy: /v1/webhooks/webflow/WEBHOOK_TOKEN
-	// Org-scoped: /v1/webhooks/webflow/workspaces/WORKSPACE_ID
+	// Legacy: /v1/webhooks/webflow/WEBHOOK_TOKEN; org-scoped: /v1/webhooks/webflow/workspaces/WORKSPACE_ID.
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[3] == "" {
 		logger.Warn("Webflow webhook missing identifier in URL")
@@ -991,7 +876,6 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		webhookToken = pathParts[3]
 	}
 
-	// Parse webhook payload
 	var payload WebflowWebhookPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		logger.Warn("Failed to parse Webflow webhook payload", "error", err)
@@ -1009,7 +893,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 				NotFound(w, r, "Invalid Webflow workspace")
 				return
 			}
-			// Real DB failure — do not mask as 404; let the caller retry.
+			// Surface DB failures as 500 so Webflow retries instead of giving up on a 404.
 			logger.Error("Failed to resolve Webflow workspace mapping", "error", err, "workspace_id", workspaceID)
 			InternalError(w, r, fmt.Errorf("failed to resolve webflow workspace: %w", err))
 			return
@@ -1027,17 +911,15 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		orgID = mapping.OrganisationID
 	} else {
-		// Get user from database using webhook token
 		var err error
 		user, err = h.DB.GetUserByWebhookToken(webhookToken)
 		if err != nil {
 			if errors.Is(err, db.ErrUserNotFound) {
 				logger.Warn("Unknown webhook token")
-				// Return 404 to avoid leaking information about valid tokens
+				// 404 (not 401) so attackers cannot probe for valid tokens.
 				NotFound(w, r, "Invalid webhook token")
 				return
 			}
-			// Real DB failure — do not mask as 404; let the caller retry.
 			logger.Error("Failed to get user by webhook token", "error", err)
 			InternalError(w, r, fmt.Errorf("failed to resolve webhook user: %w", err))
 			return
@@ -1045,7 +927,6 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		orgID = h.DB.GetEffectiveOrganisationID(user)
 	}
 
-	// Log webhook received
 	logger.Info("Webflow webhook received",
 		"user_id", user.ID,
 		"trigger_type", payload.TriggerType,
@@ -1053,19 +934,16 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		"domains", payload.Payload.Domains,
 	)
 
-	// Validate it's a site publish event
 	if payload.TriggerType != "site_publish" {
 		logger.Warn("Ignoring non-site-publish webhook", "trigger_type", payload.TriggerType)
 		WriteSuccess(w, r, nil, "Webhook received but ignored (not site_publish)")
 		return
 	}
 
-	// Check if this site has auto-publish enabled (per-site settings)
 	if payload.SiteID != "" && orgID != "" {
 		siteSetting, err := h.DB.GetSiteSetting(r.Context(), orgID, payload.SiteID)
 		if err != nil {
 			if errors.Is(err, db.ErrWebflowSiteSettingNotFound) {
-				// Site not configured - expected scenario, ignore webhook
 				logger.Warn("Site not configured for auto-publish, ignoring webhook",
 					"site_id", payload.SiteID,
 					"organisation_id", orgID,
@@ -1073,7 +951,6 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 				WriteSuccess(w, r, nil, "Webhook received but site not configured for auto-publish")
 				return
 			}
-			// Unexpected database error - return 500 so Webflow can retry
 			logger.Error("Failed to check site settings", "error", err, "site_id", payload.SiteID)
 			InternalError(w, r, err)
 			return
@@ -1094,20 +971,18 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	// Validate domains are provided
 	if len(payload.Payload.Domains) == 0 {
 		logger.Warn("Webflow webhook missing domains")
 		BadRequest(w, r, "Domains are required")
 		return
 	}
 
-	// Use the first domain in the list (primary/canonical domain)
+	// Webflow lists the primary/canonical domain first.
 	selectedDomain := payload.Payload.Domains[0]
 
-	// Create job using shared logic with webhook defaults
 	useSitemap := true
 	findLinks := true
-	concurrency := 20 // Default concurrency for webhook jobs
+	concurrency := 20
 	if concurrencyParam := r.URL.Query().Get("concurrency"); concurrencyParam != "" {
 		parsed, err := strconv.Atoi(concurrencyParam)
 		if err != nil {
@@ -1120,11 +995,10 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		concurrency = min(parsed, 100)
 	}
-	maxPages := 0 // Unlimited pages for webhook-triggered jobs
+	maxPages := 0
 	sourceType := "webflow_webhook"
 	sourceDetail := payload.Payload.PublishedBy.DisplayName
 
-	// Store full webhook payload for debugging
 	sourceInfoBytes, _ := json.Marshal(payload)
 	sourceInfo := string(sourceInfoBytes)
 
@@ -1139,7 +1013,7 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		SourceInfo:   &sourceInfo,
 	}
 
-	// Shallow copy to avoid mutating the original user while injecting org context.
+	// Copy avoids mutating the cached user while injecting webhook-scoped org context.
 	userForJob := *user
 	if orgID != "" {
 		userForJob.ActiveOrganisationID = &orgID
@@ -1155,8 +1029,6 @@ func (h *Handler) WebflowWebhook(w http.ResponseWriter, r *http.Request) {
 		InternalError(w, r, err)
 		return
 	}
-
-	// Job processing starts automatically via worker pool when CreateJob adds it
 
 	logger.Info("Successfully created and started job from Webflow webhook",
 		"job_id", job.ID,

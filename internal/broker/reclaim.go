@@ -8,38 +8,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TerminalFilter receives a batch of jobIDs found in Redis and must
-// return the subset that have reached a terminal state in the
-// authoritative store (Postgres). Implementations can be batched (one
-// IN-clause SELECT) so the broker package stays free of SQL.
+// Returns the subset of jobIDs that are terminal in Postgres. Kept as
+// an interface so this package stays free of SQL.
 type TerminalFilter func(ctx context.Context, jobIDs []string) ([]string, error)
 
-// ReclaimReport summarises a one-off reclaim sweep.
 type ReclaimReport struct {
-	// CandidatesScanned is the number of unique jobIDs found in any
-	// per-job Redis key (schedule ZSET, streams, running-counter HASH).
 	CandidatesScanned int
-	// TerminalJobs is the number of jobIDs the filter classified as
-	// terminal — i.e. eligible for cleanup.
-	TerminalJobs int
-	// Cleaned is the number of jobs whose RemoveJobKeys call returned
-	// without error.
-	Cleaned int
-	// Failed is the number of jobs whose RemoveJobKeys call returned an
-	// error. The first such error is captured in FirstError so the caller
-	// can surface it without holding a slice of every failure.
-	Failed     int
+	TerminalJobs      int
+	Cleaned           int
+	Failed            int
+	// First failure only, to avoid retaining one error per failed job.
 	FirstError error
 }
 
-// ReclaimTerminalJobKeys is the one-off backfill sweeper described in
-// the Redis usage optimisation plan, phase 2. It enumerates jobIDs that
-// still own per-job Redis state, asks the supplied filter which of
-// those are terminal in Postgres, and runs RemoveJobKeys for each.
-//
-// Designed to be invoked manually after the completion-tick cleanup in
-// startHealthMonitoring is verified in production. Idempotent; safe to
-// re-run.
+// One-off backfill sweeper. Idempotent.
 func (c *Client) ReclaimTerminalJobKeys(ctx context.Context, filter TerminalFilter) (ReclaimReport, error) {
 	if filter == nil {
 		return ReclaimReport{}, fmt.Errorf("broker: ReclaimTerminalJobKeys requires a TerminalFilter")
@@ -75,11 +57,8 @@ func (c *Client) ReclaimTerminalJobKeys(ctx context.Context, filter TerminalFilt
 	return report, nil
 }
 
-// listJobIDsInRedis returns every jobID that owns at least one per-job
-// key in Redis. Sources scanned: schedule ZSETs, both stream variants,
-// and the running-counter HASH fields. Consumer-group keys live inside
-// streams so deleting the stream removes them implicitly — no separate
-// scan needed.
+// Consumer-group keys live inside streams, so deleting the stream
+// removes them — no separate scan needed.
 func (c *Client) listJobIDsInRedis(ctx context.Context) ([]string, error) {
 	const batch = 500
 	seen := make(map[string]struct{})
