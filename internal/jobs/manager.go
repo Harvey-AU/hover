@@ -1220,17 +1220,22 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	return fmt.Errorf("invalid status transition from %s to %s", from, to)
 }
 
-// MarkJobRunning transitions a pending job to running and stamps
+// MarkJobRunning transitions a pre-running job to running and stamps
 // started_at if not already set. Guarded UPDATE so it is a no-op once
-// the job has already moved past 'pending' — safe to call repeatedly,
-// safe to call again after a worker restart.
+// the job has already moved past the pre-running statuses — safe to
+// call repeatedly, safe to call again after a worker restart.
+//
+// The guard accepts both 'pending' and 'initializing' because sitemap
+// jobs spend a real window in 'initializing' (sitemap fetch + parse)
+// before the dispatcher publishes their first task. Without that wider
+// match the first-dispatch hook would silently miss those jobs and
+// leave them stuck on the "Starting up" pill.
 //
 // Wired from the dispatcher's first successful publish for a job, so
-// the status pill reflects reality without any other code path needing
-// to know about the transition. Without this, jobs created via
-// CreateJob stay at 'pending' forever (UpdateJobStatus has no other
-// callers in the production graph) and the dashboard's "Starting up"
-// label never goes away.
+// the status reflects reality without any other code path needing to
+// know about the transition. Without this, jobs created via CreateJob
+// stay at their pre-running status forever (UpdateJobStatus has no
+// other callers in the production graph).
 func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
 	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -1238,7 +1243,7 @@ func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
 			   SET status = 'running',
 			       started_at = COALESCE(started_at, NOW())
 			 WHERE id = $1
-			   AND status = 'pending'
+			   AND status IN ('pending', 'initializing')
 		`, jobID)
 		return err
 	})

@@ -154,29 +154,50 @@ func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 // cleanupInflightForJob scans every hover:dom:flight:* HASH and HDels
 // the given jobID field from each. Idempotent: HDel on a missing field
 // is a no-op. Used by RemoveJobKeys.
+//
+// Two-phase to keep SCAN safe: the SCAN cursor's iteration guarantees
+// degrade once the keyspace mutates mid-scan (HDel that empties a HASH
+// causes Redis to drop the key, and SCAN may then skip later keys).
+// Collect every matching key first, complete the iteration, then issue
+// the deletes in a separate pipeline.
 func (c *Client) cleanupInflightForJob(ctx context.Context, jobID string) error {
 	pattern := keyPrefix + "dom:flight:*"
+	keys, err := c.scanAll(ctx, pattern)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	pipe := c.rdb.Pipeline()
+	for _, key := range keys {
+		pipe.HDel(ctx, key, jobID)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("broker: HDel inflight pipeline: %w", err)
+	}
+	return nil
+}
+
+// scanAll walks every key matching pattern with SCAN and returns the
+// full key set. Used by cleanup helpers that need to mutate matching
+// keys, where issuing the mutation inline with SCAN risks skipping
+// later keys when an HDel empties (and Redis drops) a HASH.
+func (c *Client) scanAll(ctx context.Context, pattern string) ([]string, error) {
+	var keys []string
 	cursor := uint64(0)
 	for {
 		page, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
 		if err != nil {
-			return fmt.Errorf("broker: scan %s: %w", pattern, err)
+			return nil, fmt.Errorf("broker: scan %s: %w", pattern, err)
 		}
-		if len(page) > 0 {
-			pipe := c.rdb.Pipeline()
-			for _, key := range page {
-				pipe.HDel(ctx, key, jobID)
-			}
-			if _, err := pipe.Exec(ctx); err != nil {
-				return fmt.Errorf("broker: HDel inflight pipeline: %w", err)
-			}
-		}
+		keys = append(keys, page...)
 		cursor = next
 		if cursor == 0 {
 			break
 		}
 	}
-	return nil
+	return keys, nil
 }
 
 // SweepOrphanInflight scans every hover:dom:flight:* HASH and removes
@@ -197,39 +218,37 @@ func (c *Client) SweepOrphanInflight(ctx context.Context, activeJobIDs []string)
 		active[id] = struct{}{}
 	}
 
-	pattern := keyPrefix + "dom:flight:*"
-	cursor := uint64(0)
+	// Two-phase: complete the SCAN before issuing any HDel. Deleting
+	// the last field in a HASH causes Redis to drop the key, and SCAN
+	// makes no completeness guarantee against a mutating keyspace —
+	// later matches can be silently skipped, leaving orphan counters
+	// behind exactly when this sweep is most needed.
+	keys, err := c.scanAll(ctx, keyPrefix+"dom:flight:*")
+	if err != nil {
+		return 0, err
+	}
+
 	removed := 0
-	for {
-		page, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
+	for _, key := range keys {
+		fields, err := c.rdb.HKeys(ctx, key).Result()
 		if err != nil {
-			return removed, fmt.Errorf("broker: scan %s: %w", pattern, err)
+			brokerLog.Warn("HKeys failed during orphan sweep", "error", err, "key", key)
+			continue
 		}
-		for _, key := range page {
-			fields, err := c.rdb.HKeys(ctx, key).Result()
-			if err != nil {
-				brokerLog.Warn("HKeys failed during orphan sweep", "error", err, "key", key)
-				continue
+		var orphans []string
+		for _, jobID := range fields {
+			if _, ok := active[jobID]; !ok {
+				orphans = append(orphans, jobID)
 			}
-			var orphans []string
-			for _, jobID := range fields {
-				if _, ok := active[jobID]; !ok {
-					orphans = append(orphans, jobID)
-				}
-			}
-			if len(orphans) == 0 {
-				continue
-			}
-			if err := c.rdb.HDel(ctx, key, orphans...).Err(); err != nil {
-				brokerLog.Warn("HDel orphans failed", "error", err, "key", key, "orphans", len(orphans))
-				continue
-			}
-			removed += len(orphans)
 		}
-		cursor = next
-		if cursor == 0 {
-			break
+		if len(orphans) == 0 {
+			continue
 		}
+		if err := c.rdb.HDel(ctx, key, orphans...).Err(); err != nil {
+			brokerLog.Warn("HDel orphans failed", "error", err, "key", key, "orphans", len(orphans))
+			continue
+		}
+		removed += len(orphans)
 	}
 	return removed, nil
 }

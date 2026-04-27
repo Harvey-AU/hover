@@ -410,10 +410,12 @@ func TestJobManagerUpdateJobStatus(t *testing.T) {
 }
 
 // TestJobManager_MarkJobRunning verifies the guarded transition flips
-// pending → running and stamps started_at when not already set. The
-// WHERE status='pending' guard makes the call a no-op for jobs that
-// have already moved past pending, so dispatcher restarts that re-fire
-// OnFirstDispatch do not stomp on existing state.
+// the pre-running statuses → running and stamps started_at when not
+// already set. The WHERE clause matches both 'pending' and
+// 'initializing' so sitemap jobs that spend a real window in the
+// initialising state still flip on first dispatch — without that the
+// first-dispatch hook would silently miss them and the "Starting up"
+// pill would never go away.
 func TestJobManager_MarkJobRunning(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -425,7 +427,7 @@ func TestJobManager_MarkJobRunning(t *testing.T) {
 	jm := &JobManager{db: mockDB, dbQueue: mockDbQueue}
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE jobs\s+SET status = 'running',\s+started_at = COALESCE\(started_at, NOW\(\)\)\s+WHERE id = \$1\s+AND status = 'pending'`).
+	mock.ExpectExec(`UPDATE jobs\s+SET status = 'running',\s+started_at = COALESCE\(started_at, NOW\(\)\)\s+WHERE id = \$1\s+AND status IN \('pending', 'initializing'\)`).
 		WithArgs("job-mark").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

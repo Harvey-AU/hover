@@ -315,11 +315,10 @@ func main() {
 	// 'pending' forever (UpdateJobStatus has no other callers in the
 	// production graph) and the dashboard "Starting up" pill never
 	// goes away. MarkJobRunning is a guarded UPDATE so it is idempotent
-	// across worker restarts.
-	dispatcher.SetOnFirstDispatch(func(ctx context.Context, jobID string) {
-		if err := jobManager.MarkJobRunning(ctx, jobID); err != nil {
-			workerLog.Warn("MarkJobRunning failed", "error", err, "job_id", jobID)
-		}
+	// across worker restarts. Returning the error lets the dispatcher
+	// retry on the next tick if the DB call fails transiently.
+	dispatcher.SetOnFirstDispatch(func(ctx context.Context, jobID string) error {
+		return jobManager.MarkJobRunning(ctx, jobID)
 	})
 
 	// --- running counter DB sync ---

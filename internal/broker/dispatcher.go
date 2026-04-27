@@ -82,6 +82,11 @@ type Dispatcher struct {
 	// process restart, but the hook implementation must be idempotent
 	// (typical: a guarded UPDATE that no-ops once status moves past
 	// pending) so re-firing on restart costs at most one cheap UPDATE.
+	//
+	// Only populated on hook success — a transient hook failure leaves
+	// the entry absent so the next dispatch tick retries. Without that,
+	// one bad UPDATE could leave a job stranded in pending for the
+	// dispatcher's lifetime.
 	firstDispatched sync.Map
 
 	// onFirstDispatch is invoked the first time dispatchJob successfully
@@ -89,7 +94,13 @@ type Dispatcher struct {
 	// hook. Used by the worker to flip status pending → running so the
 	// status pill reflects reality without requiring every potential
 	// entry point to coordinate the transition.
-	onFirstDispatch func(ctx context.Context, jobID string)
+	//
+	// Returning a non-nil error signals a transient failure: the
+	// dispatcher does NOT mark the job as "first-dispatched", so the
+	// next dispatch tick will retry. Implementations should make this
+	// idempotent — the hook may fire repeatedly for the same job until
+	// it succeeds.
+	onFirstDispatch func(ctx context.Context, jobID string) error
 }
 
 // NewDispatcher creates a Dispatcher.
@@ -116,8 +127,9 @@ func NewDispatcher(
 // SetOnFirstDispatch installs a callback fired the first time
 // dispatchJob successfully publishes a task for a given jobID in this
 // dispatcher's lifetime. The hook must be idempotent — see
-// firstDispatched on Dispatcher.
-func (d *Dispatcher) SetOnFirstDispatch(fn func(ctx context.Context, jobID string)) {
+// firstDispatched on Dispatcher. Returning a non-nil error from the
+// hook causes the dispatcher to retry on the next dispatch.
+func (d *Dispatcher) SetOnFirstDispatch(fn func(ctx context.Context, jobID string) error) {
 	d.onFirstDispatch = fn
 }
 
@@ -272,13 +284,21 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		}
 
 		// First successful publish for this job in this dispatcher's
-		// lifetime → flip status pending → running. LoadOrStore returns
-		// loaded=false only the first time, so the hook fires exactly
-		// once per jobID per process. Cheap atomic on the hot path
-		// (sync.Map for an O(active-jobs) keyspace).
+		// lifetime → flip status pending → running. We Load before
+		// calling the hook and Store only after success: a transient
+		// failure must not be memoised, otherwise one bad UPDATE could
+		// leave a job stranded in pending for the dispatcher's whole
+		// lifetime. Worst case under load is a few duplicate UPDATEs
+		// while the database recovers; the hook is guarded so the
+		// extra UPDATEs are no-ops once a peer wins the race.
 		if d.onFirstDispatch != nil {
-			if _, loaded := d.firstDispatched.LoadOrStore(jobID, struct{}{}); !loaded {
-				d.onFirstDispatch(ctx, jobID)
+			if _, seen := d.firstDispatched.Load(jobID); !seen {
+				if err := d.onFirstDispatch(ctx, jobID); err != nil {
+					brokerLog.Warn("onFirstDispatch failed",
+						"error", err, "job_id", jobID)
+				} else {
+					d.firstDispatched.Store(jobID, struct{}{})
+				}
 			}
 		}
 
