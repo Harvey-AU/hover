@@ -28,6 +28,12 @@ On merge, CI will:
 
 ## [Unreleased]
 
+### Changed
+
+- Trimmed narrative comments across recent broker, stream worker, and Lighthouse
+  files (13 files, −1,055 lines net). Comment-only; no code logic changed.
+  Load-bearing WHYs preserved.
+
 ### Fixed
 
 - Job throughput could collapse to ~0.3 tasks/s after a same-domain
