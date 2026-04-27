@@ -1,12 +1,5 @@
-// cmd/analysis is the dedicated lighthouse audit service. It consumes
-// per-job streams (stream:{jobID}:lh) populated by the crawl-side
-// dispatcher when a milestone fires, runs each audit through a Runner,
-// and writes the results back into lighthouse_runs.
-//
-// Phase 2 ships this as a stub-runner skeleton — the Go binary, stream
-// consumer, and result-write loop. Phase 3 layers Chromium and the
-// lighthouse npm package on top via Dockerfile.analysis and swaps the
-// stub runner for a localRunner that shells out to the real binary.
+// Dedicated lighthouse audit service: consumes per-job streams
+// (stream:{jobID}:lh) and writes results back into lighthouse_runs.
 package main
 
 import (
@@ -36,8 +29,7 @@ import (
 
 var analysisLog = logging.Component("analysis")
 
-// stream-message field names. Mirror dispatcher.publishAndRemove so a
-// drift between producer and consumer is a quick grep away.
+// Mirror dispatcher.publishAndRemove so producer/consumer drift is greppable.
 const (
 	streamFieldRunID = "lighthouse_run_id"
 	streamFieldJobID = "job_id"
@@ -49,7 +41,7 @@ const (
 func main() {
 	appEnv := os.Getenv("APP_ENV")
 
-	// --- sentry first so logging.Setup can wire its handler ---
+	// Sentry first so logging.Setup can wire its handler.
 	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
 		if err := sentry.Init(sentry.ClientOptions{
 			Dsn:              dsn,
@@ -66,7 +58,6 @@ func main() {
 	logging.Setup(logging.ParseLevel(os.Getenv("LOG_LEVEL")), appEnv)
 	analysisLog.Info("hover analysis starting")
 
-	// --- observability ---
 	if os.Getenv("OBSERVABILITY_ENABLED") == "true" {
 		serviceName := strings.TrimSpace(os.Getenv("FLY_APP_NAME"))
 		if serviceName == "" {
@@ -120,7 +111,6 @@ func main() {
 		}
 	}
 
-	// --- postgres ---
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer dbCancel()
 	pgDB, err := db.WaitForDatabase(dbCtx, 5*time.Minute)
@@ -131,7 +121,6 @@ func main() {
 		_ = pgDB.Close()
 	}()
 
-	// --- redis ---
 	redisCfg := broker.ConfigFromEnv()
 	redisClient, err := broker.NewClient(redisCfg)
 	if err != nil {
@@ -143,7 +132,6 @@ func main() {
 	}
 	analysisLog.Info("connected to Redis")
 
-	// --- root context tied to OS signals ---
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -156,10 +144,8 @@ func main() {
 		"memory_shed_mb", cfg.memoryShedMB,
 	)
 
-	// --- archive provider (only required by the local runner) ---
 	provider, bucket := loadArchiveProvider(rootCtx, cfg.runner)
 
-	// --- runner ---
 	runner, err := selectRunner(cfg, provider, bucket)
 	if err != nil {
 		analysisLog.Fatal("failed to construct lighthouse runner", "error", err)
@@ -171,11 +157,8 @@ func main() {
 	analysisLog.Info("analysis service stopped")
 }
 
-// loadArchiveProvider builds a ColdStorageProvider from ARCHIVE_*
-// env vars. The stub runner doesn't need it, so a missing config is
-// only fatal when LIGHTHOUSE_RUNNER=local. For "stub" we log and
-// continue with a nil provider so review apps without R2 credentials
-// still boot.
+// Missing config is fatal only when LIGHTHOUSE_RUNNER=local; the stub runner
+// boots without R2 credentials so review apps still come up.
 func loadArchiveProvider(ctx context.Context, runner string) (archive.ColdStorageProvider, string) {
 	cfg := archive.ConfigFromEnv()
 	if cfg == nil {
@@ -206,16 +189,11 @@ func loadArchiveProvider(ctx context.Context, runner string) (archive.ColdStorag
 	return provider, cfg.Bucket
 }
 
-// runnerEnvKey selects the runner implementation. v1 only has the stub
-// runner; Phase 3 introduces 'local' which shells out to Chromium.
 const runnerEnvKey = "LIGHTHOUSE_RUNNER"
 
-// selectRunner builds the configured Runner. Returns an error rather
-// than falling back silently so a Dockerfile/toml drift (missing
-// LIGHTHOUSE_BIN, missing R2 credentials when local is requested) is a
-// loud boot failure rather than a degraded service that quietly stubs
-// every audit. Unknown choices stay loud-but-not-fatal: log and stub
-// so an inadvertent typo in env doesn't take the service down.
+// Returns an error rather than falling back silently so a Dockerfile/toml
+// drift surfaces as a loud boot failure. Unknown values fall back to stub so
+// a typo doesn't take the service down.
 func selectRunner(cfg consumerConfig, provider archive.ColdStorageProvider, bucket string) (lighthouse.Runner, error) {
 	switch cfg.runner {
 	case "stub":
@@ -240,7 +218,6 @@ func selectRunner(cfg consumerConfig, provider archive.ColdStorageProvider, buck
 	}
 }
 
-// consumerConfig holds the tunables the analysis service exposes via env.
 type consumerConfig struct {
 	maxConcurrency  int
 	auditTimeout    time.Duration
@@ -249,11 +226,10 @@ type consumerConfig struct {
 	reclaimMinIdle  time.Duration
 	consumerName    string
 
-	// Phase 3 additions. Only consulted when runner == "local".
 	runner        string // "stub" | "local"
-	lighthouseBin string // path to bundled lighthouse CLI
-	chromiumBin   string // path to bundled Chromium binary
-	memoryShedMB  int    // free-memory floor before deferring an audit
+	lighthouseBin string
+	chromiumBin   string
+	memoryShedMB  int // free-memory floor before deferring an audit
 }
 
 func loadConsumerConfig() consumerConfig {
@@ -266,10 +242,8 @@ func loadConsumerConfig() consumerConfig {
 		auditTimeout:    time.Duration(envIntDefault("LIGHTHOUSE_AUDIT_TIMEOUT_MS", 90_000)) * time.Millisecond,
 		pollInterval:    time.Duration(envIntDefault("LIGHTHOUSE_POLL_INTERVAL_MS", 1_000)) * time.Millisecond,
 		reclaimInterval: time.Duration(envIntDefault("LIGHTHOUSE_RECLAIM_INTERVAL_S", 60)) * time.Second,
-		// MinIdle is the floor the message must have been pending before
-		// XAUTOCLAIM will reassign it. Three minutes mirrors the crawl
-		// stream's REDIS_AUTOCLAIM_MIN_IDLE_S default and is safely
-		// longer than the per-audit timeout (default 90s) plus DB write.
+		// 180s mirrors the crawl stream default and exceeds the 90s audit
+		// timeout plus DB write.
 		reclaimMinIdle: time.Duration(envIntDefault("LIGHTHOUSE_RECLAIM_MIN_IDLE_S", 180)) * time.Second,
 		runner:         runner,
 		lighthouseBin:  strings.TrimSpace(os.Getenv("LIGHTHOUSE_BIN")),
@@ -299,12 +273,6 @@ func envIntDefault(key string, def int) int {
 	return def
 }
 
-// consumer is the analysis-side stream consumer. Each tick:
-//  1. List jobs with pending or running lighthouse_runs.
-//  2. For each, XReadGroup the lighthouse stream and dispatch messages
-//     onto a bounded worker pool.
-//  3. Each worker runs the audit via the configured Runner and writes
-//     the result back to the matching lighthouse_runs row.
 type consumer struct {
 	db     *db.DB
 	rdb    *broker.Client
@@ -332,9 +300,8 @@ func (c *consumer) run(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
-	// Run an immediate reclaim sweep on start so a fresh pod replacing
-	// a crashed one picks up its abandoned PEL entries before any new
-	// XReadGroup ">" deliveries land.
+	// Sweep on start so a fresh pod picks up the previous one's PEL
+	// before any new XReadGroup ">" deliveries land.
 	c.reclaimAllJobs(ctx, &wg)
 
 	for {
@@ -361,9 +328,6 @@ func (c *consumer) run(ctx context.Context) {
 	}
 }
 
-// reclaimAllJobs runs an XAUTOCLAIM sweep across every active job.
-// Cheap when nothing is stuck: each empty stream returns an empty
-// page in one round-trip.
 func (c *consumer) reclaimAllJobs(ctx context.Context, wg *sync.WaitGroup) {
 	jobs, err := c.activeJobIDs(ctx)
 	if err != nil {
@@ -378,17 +342,8 @@ func (c *consumer) reclaimAllJobs(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-// activeJobIDs returns distinct job IDs with at least one lighthouse_runs
-// row in pending or running. Switching to this from a generic "active
-// jobs" query keeps the consumer focused on jobs that actually have
-// lighthouse work waiting, which matters more than crawl status when
-// reconciliation passes outlive the crawl.
-//
-// No LIMIT is applied: the active-job count is bounded in practice by
-// the per-job 100-audit cap and the analysis app's own throughput, and
-// per-tick polling is non-blocking (Block: -1) so a wide active set
-// simply round-robins through more streams per tick rather than
-// starving anything.
+// No LIMIT: active-job count is bounded by the per-job 100-audit cap, and
+// non-blocking polling (Block: -1) round-robins rather than stalling.
 func (c *consumer) activeJobIDs(ctx context.Context) ([]string, error) {
 	rows, err := c.db.GetDB().QueryContext(ctx, `
 		SELECT DISTINCT job_id
@@ -411,16 +366,9 @@ func (c *consumer) activeJobIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// reclaimStale runs an XAUTOCLAIM sweep so a fresh consumer (e.g. a
-// freshly-deployed analysis pod) picks up messages stuck in another
-// consumer's PEL after a crash. Without this, a process that died
-// between MarkLighthouseRunRunning and XAck would leave the stream
-// message orphaned forever — XReadGroup ">" only delivers
-// never-delivered entries, so a new consumer never sees the abandoned
-// IDs.
-//
-// Reclaimed messages are dispatched through the same processOne path
-// as new deliveries.
+// Without this, a process that died between MarkLighthouseRunRunning and
+// XAck would orphan its stream message — XReadGroup ">" only delivers
+// never-delivered entries.
 func (c *consumer) reclaimStale(ctx context.Context, wg *sync.WaitGroup, jobID string) {
 	streamKey := broker.LighthouseStreamKey(jobID)
 	groupName := broker.LighthouseConsumerGroup(jobID)
@@ -459,13 +407,8 @@ func (c *consumer) reclaimStale(ctx context.Context, wg *sync.WaitGroup, jobID s
 	}
 }
 
-// consumeOne does one XReadGroup tick for a single job. Messages are
-// dispatched into the bounded worker pool and processed concurrently up
-// to LIGHTHOUSE_MAX_CONCURRENCY.
-//
-// Block: -1 makes XReadGroup return immediately when the stream is
-// empty, so a tick over many active jobs does not stall on any one of
-// them. The outer ticker (LIGHTHOUSE_POLL_INTERVAL_MS) sets the cadence.
+// Block: -1 returns immediately on an empty stream so a tick over many jobs
+// does not stall on any one of them.
 func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID string) {
 	streamKey := broker.LighthouseStreamKey(jobID)
 	groupName := broker.LighthouseConsumerGroup(jobID)
@@ -486,7 +429,6 @@ func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID str
 		return
 	}
 	if err != nil {
-		// Stream/group not yet created — common before first XADD lands.
 		if isNoGroupErr(err) {
 			return
 		}
@@ -499,9 +441,7 @@ func (c *consumer) consumeOne(ctx context.Context, wg *sync.WaitGroup, jobID str
 	}
 }
 
-// dispatchMessages turns a batch of stream entries (from either
-// XReadGroup or XAutoClaim) into runner work, sharing the bounded
-// worker pool. Malformed messages are ACKed to drop them.
+// Malformed messages are ACKed to drop them.
 func (c *consumer) dispatchMessages(
 	ctx context.Context,
 	wg *sync.WaitGroup,
@@ -531,8 +471,7 @@ func (c *consumer) dispatchMessages(
 			Timeout: c.cfg.auditTimeout,
 		}
 
-		// Acquire the semaphore before spawning so a backpressured
-		// consumer doesn't pile up goroutines waiting on the channel.
+		// Acquire before spawning so backpressure doesn't pile up goroutines.
 		select {
 		case c.sem <- struct{}{}:
 		case <-ctx.Done():
@@ -547,12 +486,9 @@ func (c *consumer) dispatchMessages(
 	}
 }
 
-// processOne transitions the lighthouse_runs row to running, executes
-// the audit, then writes the terminal status. The XAck only fires once
-// the DB write succeeds so a crash mid-run leaves the message redelivered
-// to a fresh consumer (CompleteLighthouseRun / FailLighthouseRun gate on
-// status='running' so the redelivery is a no-op for already-completed
-// rows — see internal/db/lighthouse.go).
+// XAck fires only once the DB write succeeds so a mid-run crash leaves the
+// message for redelivery; the status='running' guard in
+// internal/db/lighthouse.go makes the redelivery a no-op once terminal.
 func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, msgID, streamKey, groupName string) {
 	startedAt := time.Now()
 
@@ -563,11 +499,7 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 		return
 	}
 	if !moved {
-		// MarkLighthouseRunRunning accepts both pending and running, so
-		// the only way to land here is a terminal status — the row is
-		// already succeeded, failed, or skipped_quota. The stream entry
-		// is stale; ACK so the dispatcher's at-least-once redelivery
-		// stops re-driving completed work.
+		// Row is terminal; ACK the stale redelivery.
 		analysisLog.Debug("lighthouse run already terminal; acking stale redelivery",
 			"run_id", req.RunID, "job_id", req.JobID, "message_id", msgID)
 		_ = c.rdb.RDB().XAck(ctx, streamKey, groupName, msgID).Err()
@@ -578,9 +510,7 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 	analysisLog.Info("lighthouse audit started",
 		"run_id", req.RunID, "job_id", req.JobID,
 		"page_id", req.PageID,
-		// Strip query/fragment so customer session tokens or signed-link
-		// tokens aren't written to centralised logs. Mirrors the same
-		// rule applied inside StubRunner.Run.
+		// Strip query/fragment so session/signed-link tokens stay out of logs.
 		"url", lighthouse.SanitiseAuditURL(req.URL),
 		"profile", string(req.Profile),
 	)
@@ -589,31 +519,19 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 
 	if runErr != nil {
 		duration := time.Since(startedAt)
-		// Memory-shed defers the audit just like a shutdown: leave the
-		// row in 'running' and skip the ACK so XAUTOCLAIM redelivers
-		// once memory recovers. Treating it as a permanent failure
-		// would burn the audit slot and we'd never re-attempt.
+		// Memory-shed: leave the row 'running' and skip ACK so XAUTOCLAIM
+		// redelivers once memory recovers; failing it would burn the slot.
 		if errors.Is(runErr, lighthouse.ErrMemoryShed) {
 			analysisLog.Info("lighthouse audit shed (low memory); leaving for redelivery",
 				"run_id", req.RunID, "job_id", req.JobID,
 				"duration_ms", duration.Milliseconds(),
 			)
-			// Tick the shed outcome so a rising shed rate on Grafana
-			// is the unambiguous signal that the analysis fleet is
-			// memory-saturated. No duration histogram bucket — these
-			// audits never actually ran.
+			// No duration histogram — these audits never actually ran.
 			observability.RecordLighthouseRun(ctx, req.JobID, "shed")
 			return
 		}
-		// Shutdown cancellation must not be turned into a permanent
-		// 'failed' row. SIGTERM cancels the root context, which would
-		// otherwise mark the in-flight audit failed AND ACK the stream
-		// entry — a deploy would burn whatever was mid-flight. Leave
-		// the row in 'running' and skip the ACK so XAUTOCLAIM (or the
-		// next XReadGroup ">" delivery to a fresh consumer) redelivers
-		// the message; the status='running' guard on
-		// MarkLighthouseRunRunning makes the redelivery a no-op for
-		// already-handled rows.
+		// Shutdown cancellation: don't mark failed and don't ACK so the
+		// message redelivers to a fresh consumer after deploy.
 		if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			analysisLog.Info("lighthouse audit interrupted by shutdown; leaving for redelivery",
 				"run_id", req.RunID, "job_id", req.JobID,
@@ -628,7 +546,7 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 		if dbErr := c.db.FailLighthouseRun(ctx, req.RunID, runErr.Error(), int(duration.Milliseconds())); dbErr != nil {
 			analysisLog.Warn("FailLighthouseRun write failed",
 				"error", dbErr, "run_id", req.RunID, "job_id", req.JobID)
-			// Don't ACK — let the message redeliver so we retry the row write.
+			// Skip ACK so redelivery retries the row write.
 			return
 		}
 		observability.RecordLighthouseRun(ctx, req.JobID, "failed")
@@ -657,7 +575,7 @@ func (c *consumer) processOne(ctx context.Context, req lighthouse.AuditRequest, 
 	}); dbErr != nil {
 		analysisLog.Warn("CompleteLighthouseRun write failed",
 			"error", dbErr, "run_id", req.RunID, "job_id", req.JobID)
-		// Don't ACK — let the redelivery retry the write.
+		// Skip ACK so redelivery retries the write.
 		return
 	}
 
@@ -683,8 +601,6 @@ func (c *consumer) ensureGroup(ctx context.Context, streamKey, groupName string)
 	}
 	return err
 }
-
-// --- helpers ---
 
 func parseRunID(values map[string]interface{}) (int64, bool) {
 	raw, ok := values[streamFieldRunID].(string)

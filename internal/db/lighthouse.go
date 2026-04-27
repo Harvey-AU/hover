@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// LighthouseRunStatus values mirror the CHECK constraint on
-// lighthouse_runs.status.
+// Mirrors the CHECK constraint on lighthouse_runs.status.
 type LighthouseRunStatus string
 
 const (
@@ -20,8 +19,7 @@ const (
 	LighthouseRunSkippedQuota LighthouseRunStatus = "skipped_quota"
 )
 
-// LighthouseSelectionBand values mirror the CHECK constraint on
-// lighthouse_runs.selection_band.
+// Mirrors the CHECK constraint on lighthouse_runs.selection_band.
 type LighthouseSelectionBand string
 
 const (
@@ -30,9 +28,7 @@ const (
 	LighthouseBandReconcile LighthouseSelectionBand = "reconcile"
 )
 
-// LighthouseRun represents a row in the lighthouse_runs table. Optional
-// metric fields are pointers so we can distinguish "not yet measured"
-// from "measured zero".
+// Pointer metric fields distinguish "not yet measured" from "measured zero".
 type LighthouseRun struct {
 	ID                 int64
 	JobID              string
@@ -58,8 +54,6 @@ type LighthouseRun struct {
 	DurationMs         *int
 }
 
-// LighthouseRunInsert carries the fields populated by the scheduler when
-// a new audit is queued. Status defaults to 'pending' at the database.
 type LighthouseRunInsert struct {
 	JobID              string
 	PageID             int
@@ -68,8 +62,7 @@ type LighthouseRunInsert struct {
 	SelectionMilestone int
 }
 
-// LighthouseRunMetrics carries the headline metrics produced by a runner
-// after a successful audit. Pointers preserve "missing" semantics.
+// Pointers preserve "missing" semantics.
 type LighthouseRunMetrics struct {
 	PerformanceScore *int
 	LCPMs            *int
@@ -84,16 +77,9 @@ type LighthouseRunMetrics struct {
 	DurationMs       int
 }
 
-// ErrLighthouseRunNotFound is returned when a row lookup misses.
 var ErrLighthouseRunNotFound = errors.New("lighthouse run not found")
 
-// InsertLighthouseRun inserts a pending lighthouse_runs row. The
-// (job_id, page_id) UNIQUE constraint protects against duplicates if
-// the scheduler races across milestones; ON CONFLICT DO NOTHING returns
-// a zero rows-affected count so the caller can detect the dedupe.
-//
-// Returns the new row's id, or 0 if the insert was a no-op due to
-// the unique constraint.
+// Returns 0 when the (job_id, page_id) unique constraint dedupes the insert.
 func InsertLighthouseRun(ctx context.Context, tx *sql.Tx, insert LighthouseRunInsert) (int64, error) {
 	const q = `
 		INSERT INTO lighthouse_runs (
@@ -115,7 +101,6 @@ func InsertLighthouseRun(ctx context.Context, tx *sql.Tx, insert LighthouseRunIn
 	).Scan(&id)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		// Conflict path: row already exists for (job_id, page_id).
 		return 0, nil
 	}
 	if err != nil {
@@ -124,23 +109,11 @@ func InsertLighthouseRun(ctx context.Context, tx *sql.Tx, insert LighthouseRunIn
 	return id, nil
 }
 
-// MarkLighthouseRunRunning transitions a row into the running state and
-// stamps started_at. Accepts both 'pending' (first delivery) and
-// 'running' (reclaim of a row left in flight by a crashed or
-// shutting-down consumer) so XAUTOCLAIM can hand work off cleanly.
-//
-// Returns moved=false only when the row has reached a terminal state
-// ('succeeded', 'failed', 'skipped_quota'); the caller treats that as
-// "safe to ACK and drop the redelivered stream message". Double-running
-// races (two consumers reclaim the same idle row) are bounded by the
-// status='running' guard on CompleteLighthouseRun / FailLighthouseRun:
-// whichever finishes first writes the terminal row, the other gets
-// ErrLighthouseRunNotFound and ACKs.
-//
-// sourceTaskID is the row's source_task_id (empty string when NULL,
-// which can happen after the parent task is deleted via
-// ON DELETE SET NULL); the analysis-side runner uses it to build the
-// R2 report key without an extra SELECT.
+// Accepts 'pending' or 'running' so XAUTOCLAIM redeliveries can resume a row
+// left in flight by a crashed consumer. Returns moved=false only when the row
+// has reached a terminal state, signalling the caller to ACK and drop.
+// Double-running races are bounded by the status='running' guard on the
+// completion writers.
 func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (moved bool, sourceTaskID string, err error) {
 	const q = `
 		UPDATE lighthouse_runs
@@ -161,13 +134,8 @@ func (db *DB) MarkLighthouseRunRunning(ctx context.Context, runID int64) (moved 
 	return true, taskID, nil
 }
 
-// CompleteLighthouseRun records a successful audit's metrics on a row
-// and stamps completed_at + duration_ms. Status moves to 'succeeded'.
-//
-// The status='running' guard prevents a stale or duplicate-delivered
-// runner from clobbering a row that has already reached a terminal
-// state (succeeded, failed, or skipped_quota) — Redis stream redelivery
-// is at-least-once.
+// status='running' guard prevents an at-least-once redelivery from clobbering
+// a row that already reached a terminal state.
 func (db *DB) CompleteLighthouseRun(ctx context.Context, runID int64, metrics LighthouseRunMetrics) error {
 	const q = `
 		UPDATE lighthouse_runs
@@ -214,11 +182,8 @@ func (db *DB) CompleteLighthouseRun(ctx context.Context, runID int64, metrics Li
 	return nil
 }
 
-// FailLighthouseRun records a permanent failure's stderr/error message.
-// Used after the runner exhausts its retry budget. Like
-// CompleteLighthouseRun, gated on status='running' to avoid a
-// duplicate-delivered worker overwriting a row that already reached a
-// terminal state.
+// status='running' guard prevents an at-least-once redelivery from clobbering
+// a row that already reached a terminal state.
 func (db *DB) FailLighthouseRun(ctx context.Context, runID int64, errorMessage string, durationMs int) error {
 	const q = `
 		UPDATE lighthouse_runs
@@ -243,9 +208,7 @@ func (db *DB) FailLighthouseRun(ctx context.Context, runID int64, errorMessage s
 	return nil
 }
 
-// MarkLighthouseRunSkippedQuota records that a sampled page was dropped
-// because the plan-tier audit budget was exhausted. The row stays so
-// the UI can explain the absence.
+// Row is retained so the UI can explain the absence.
 func (db *DB) MarkLighthouseRunSkippedQuota(ctx context.Context, runID int64) error {
 	const q = `
 		UPDATE lighthouse_runs
@@ -267,9 +230,6 @@ func (db *DB) MarkLighthouseRunSkippedQuota(ctx context.Context, runID int64) er
 	return nil
 }
 
-// ListLighthouseRunsByJob returns all runs for a job ordered by
-// scheduled_at, oldest first. Used by the API surface layer to build
-// the per-job results view.
 func (db *DB) ListLighthouseRunsByJob(ctx context.Context, jobID string) ([]LighthouseRun, error) {
 	const q = `
 		SELECT id, job_id, page_id, source_task_id,
@@ -303,12 +263,8 @@ func (db *DB) ListLighthouseRunsByJob(ctx context.Context, jobID string) ([]Ligh
 	return runs, nil
 }
 
-// GetLighthouseRunPageBands returns the page IDs already queued for a
-// job, mapped to the band they were scheduled under. Used by the
-// sampler to enforce the per-band global cap (count existing
-// fastest/slowest rows when deciding how much to top up at each
-// milestone) and to dedupe page IDs across milestones regardless of
-// band.
+// Lets the sampler enforce per-band global caps and dedupe page IDs across
+// milestones.
 func (db *DB) GetLighthouseRunPageBands(ctx context.Context, jobID string) (map[int]LighthouseSelectionBand, error) {
 	const q = `
 		SELECT page_id, selection_band
@@ -339,11 +295,6 @@ func (db *DB) GetLighthouseRunPageBands(ctx context.Context, jobID string) (map[
 	return seen, nil
 }
 
-// CompletedTaskForSampling carries the per-task metadata the lighthouse
-// scheduler needs to both feed the sampler (PageID, TaskID, ResponseTime)
-// and write outbox rows (Host, Path, Priority). Source URL is computed
-// later by the scheduler from Host+Path so the structure stays in sync
-// with what the sampler exposes.
 type CompletedTaskForSampling struct {
 	TaskID       string
 	PageID       int
@@ -353,15 +304,9 @@ type CompletedTaskForSampling struct {
 	ResponseTime int64
 }
 
-// GetCompletedTasksForLighthouseSampling returns the metadata needed to
-// feed the lighthouse sampler and produce outbox rows. Restricted to
-// task_type='crawl' so an early lighthouse audit cannot become a sample
-// candidate for a later one. Excludes tasks without a response_time
-// (sampling is band-by-response-time; rows without it can't be ranked).
-//
-// jobID is the textual job identifier used elsewhere; the join into
-// tasks happens via tasks.job_id without coercion since the schema has
-// already aligned both columns to TEXT.
+// Restricted to task_type='crawl' so an earlier lighthouse audit cannot become
+// a sample candidate for a later one. Tasks without response_time are excluded
+// because sampling ranks by it.
 func (db *DB) GetCompletedTasksForLighthouseSampling(ctx context.Context, jobID string) ([]CompletedTaskForSampling, error) {
 	const q = `
 		SELECT id, page_id, host, path,

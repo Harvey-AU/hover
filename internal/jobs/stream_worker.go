@@ -16,27 +16,16 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// defaultActiveJobsLimit is the fallback cap on the number of active jobs
-// scanned by the dispatcher per refresh tick. Configurable via the
-// STREAM_ACTIVE_JOBS_LIMIT environment variable (explicit override), or
-// derived from GNH_MAX_WORKERS × GNH_PENDING_ADMISSION_WORKER_FACTOR with
-// a floor of GNH_PENDING_ADMISSION_LIMIT_MIN — matching pre-merge behaviour.
 const (
 	defaultActiveJobsLimit              = 200
 	defaultPendingAdmissionLimitMin     = 250
 	defaultPendingAdmissionWorkerFactor = 3
 )
 
-// activeJobsLimit returns the configured limit for refreshActiveJobs.
-//
-// Resolution order:
-//  1. STREAM_ACTIVE_JOBS_LIMIT (explicit override — keeps a single-dial
-//     escape hatch for ops).
-//  2. max(GNH_MAX_WORKERS × GNH_PENDING_ADMISSION_WORKER_FACTOR,
-//     GNH_PENDING_ADMISSION_LIMIT_MIN) — the pre-merge formula, so the
-//     admission breadth scales with the worker pool by default. At prod
-//     sizing (GNH_MAX_WORKERS=130, factor=3, min=250) this yields 390.
-//  3. defaultActiveJobsLimit (200) if nothing else is configured.
+// activeJobsLimit resolves: STREAM_ACTIVE_JOBS_LIMIT override →
+// max(GNH_MAX_WORKERS × GNH_PENDING_ADMISSION_WORKER_FACTOR,
+// GNH_PENDING_ADMISSION_LIMIT_MIN) → defaultActiveJobsLimit.
+// Prod (130 × 3, min 250) yields 390.
 func activeJobsLimit() int {
 	if v := strings.TrimSpace(os.Getenv("STREAM_ACTIVE_JOBS_LIMIT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -60,7 +49,6 @@ func activeJobsLimit() int {
 	return derived
 }
 
-// StreamWorkerDeps groups the dependencies for a StreamWorkerPool.
 type StreamWorkerDeps struct {
 	Consumer     *broker.Consumer
 	Scheduler    *broker.Scheduler
@@ -70,31 +58,19 @@ type StreamWorkerDeps struct {
 	BatchManager *db.BatchManager
 	DBQueue      DbQueueInterface
 	JobManager   JobManagerInterface
-
-	// HTMLPersister, when non-nil, receives the HTML payload from each
-	// completed task and is responsible for streaming it directly to R2
-	// before stamping the storage metadata back onto the task row. Left
-	// nil when ARCHIVE_PROVIDER is unset (e.g. local dev without R2),
-	// in which case completed tasks persist without HTML.
+	// HTMLPersister is nil when ARCHIVE_PROVIDER is unset (local dev
+	// without R2); completed tasks then persist without HTML.
 	HTMLPersister *HTMLPersister
 }
 
-// StreamWorkerOpts holds tunables for the stream worker pool.
 type StreamWorkerOpts struct {
-	// NumWorkers is the number of consumer goroutines.
 	NumWorkers int
-
-	// TasksPerWorker is the max concurrent in-flight tasks per consumer
-	// goroutine. Global parallelism ceiling = NumWorkers × TasksPerWorker.
-	// Mirrors the pre-Redis WorkerPool WORKER_CONCURRENCY semaphore.
-	// A value of 0 or 1 preserves the one-task-at-a-time legacy behaviour.
-	TasksPerWorker int
-
-	// ReclaimInterval is how often stale messages are reclaimed.
+	// TasksPerWorker caps in-flight tasks per consumer goroutine.
+	// Global ceiling = NumWorkers × TasksPerWorker.
+	TasksPerWorker  int
 	ReclaimInterval time.Duration
 }
 
-// DefaultStreamWorkerOpts returns production defaults.
 func DefaultStreamWorkerOpts() StreamWorkerOpts {
 	return StreamWorkerOpts{
 		NumWorkers:      30,
@@ -110,9 +86,8 @@ type cachedJobInfo struct {
 	expiresAt time.Time
 }
 
-// StreamWorkerPool consumes tasks from Redis Streams, executes them
-// via the TaskExecutor, and acts on the returned TaskOutcome
-// (ack, reschedule, persist results).
+// StreamWorkerPool consumes from Redis Streams, runs tasks via
+// TaskExecutor, and acts on the TaskOutcome.
 type StreamWorkerPool struct {
 	consumer      *broker.Consumer
 	scheduler     *broker.Scheduler
@@ -125,55 +100,38 @@ type StreamWorkerPool struct {
 	htmlPersister *HTMLPersister
 	opts          StreamWorkerOpts
 
-	// Job info cache with TTL eviction.
 	jobInfoCache map[string]*cachedJobInfo
 	jobInfoMutex sync.RWMutex
 	jobInfoGroup singleflight.Group
 
-	// Active job IDs — refreshed periodically for round-robin.
 	activeJobs   []string
 	activeJobsMu sync.RWMutex
 
-	// linkDiscoverySem caps concurrent calls into ProcessDiscoveredLinks.
-	// Each link-discovery call runs CreatePageRecords + EnqueueJobURLs on
-	// the bulk DB lane, so under heavy load all NumWorkers × TasksPerWorker
-	// goroutines used to pile onto the pool simultaneously and saturate it
-	// (HOVER-KG, 2k+ goroutines at one event). Capping this path leaves
-	// pool headroom for promotion, counter sync, and the outbox sweeper.
+	// linkDiscoverySem caps ProcessDiscoveredLinks fan-out. Without it
+	// NumWorkers × TasksPerWorker goroutines piled onto the bulk DB lane
+	// (HOVER-KG, 2k+ goroutines).
 	linkDiscoverySem chan struct{}
 
-	// heartbeat, when set, is ticked on each completed task outcome so
-	// the watchdog can detect a wedged worker. Optional — nil when no
-	// watchdog is wired (e.g. in tests).
 	heartbeat interface{ Tick() }
 
-	// reconcileMu serialises reconcileCounters invocations across the
-	// periodic reconcileLoop and on-demand TriggerReconcile callers so a
-	// flood of triggers collapses onto at most one in-flight reconcile.
-	// We use TryLock rather than a blocking acquire so a triggered
-	// reconcile never queues behind the periodic one — the in-flight
-	// pass already covers the requester.
+	// reconcileMu serialises reconcileCounters across the periodic
+	// loop and on-demand TriggerReconcile via TryLock so a flood of
+	// triggers collapses onto at most one in-flight reconcile.
 	reconcileMu sync.Mutex
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
 
-// SetHeartbeat installs a heartbeat sink that is ticked once per task
-// outcome. Wire this from cmd/worker so the watchdog can detect a stall.
 func (swp *StreamWorkerPool) SetHeartbeat(h interface{ Tick() }) {
 	swp.heartbeat = h
 }
 
-// defaultLinkDiscoveryMaxInflight: at 32 the cap throttled production
-// throughput to ~3–3.5k tasks/min (each call is bulk-pool-bound, so the
-// semaphore ceiling becomes the global enqueue ceiling). 128 keeps fan-out
-// well clear of the 2k+ goroutine event that motivated the cap while
-// restoring headroom above the previous 4k tasks/min run rate.
+// defaultLinkDiscoveryMaxInflight: 32 throttled prod to ~3–3.5k
+// tasks/min; 128 stays clear of the 2k+ goroutine event that motivated
+// the cap while restoring headroom above 4k tasks/min.
 const defaultLinkDiscoveryMaxInflight = 128
 
-// linkDiscoveryMaxInflight returns the configured cap on concurrent
-// in-flight ProcessDiscoveredLinks executions.
 func linkDiscoveryMaxInflight() int {
 	if v := strings.TrimSpace(os.Getenv("JOBS_LINK_DISCOVERY_MAX_INFLIGHT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -185,7 +143,6 @@ func linkDiscoveryMaxInflight() int {
 	return defaultLinkDiscoveryMaxInflight
 }
 
-// NewStreamWorkerPool creates a StreamWorkerPool.
 func NewStreamWorkerPool(deps StreamWorkerDeps, opts StreamWorkerOpts) *StreamWorkerPool {
 	return &StreamWorkerPool{
 		consumer:         deps.Consumer,
@@ -211,10 +168,8 @@ func (swp *StreamWorkerPool) Start(ctx context.Context) {
 	// Refresh active jobs first so reconcile knows which streams to probe.
 	swp.refreshActiveJobs(ctx)
 
-	// Reconcile running counters from the Redis PEL (XPENDING).
 	swp.reconcileCounters(ctx)
 
-	// Start consumer goroutines.
 	for i := range swp.opts.NumWorkers {
 		swp.wg.Add(1)
 		go func(id int) {
@@ -223,25 +178,21 @@ func (swp *StreamWorkerPool) Start(ctx context.Context) {
 		}(i)
 	}
 
-	// Start reclaim loop.
 	swp.wg.Add(1)
 	go func() {
 		defer swp.wg.Done()
 		swp.reclaimLoop(ctx)
 	}()
 
-	// Start active jobs refresh loop.
 	swp.wg.Add(1)
 	go func() {
 		defer swp.wg.Done()
 		swp.activeJobsRefreshLoop(ctx)
 	}()
 
-	// Start periodic counter reconciliation. reconcileCounters was
-	// previously called only at Start, so any mid-run drift (e.g. missed
-	// decrement after a worker crash, or a stale counter left over from a
-	// dead stream) persisted until the next deploy. Run it every couple of
-	// minutes so the counters self-heal against the authoritative PEL.
+	// Periodic reconcile against the authoritative PEL — without this,
+	// mid-run drift (missed decrement after worker crash, stale counter
+	// from dead stream) persisted until the next deploy.
 	swp.wg.Add(1)
 	go func() {
 		defer swp.wg.Done()
@@ -251,7 +202,6 @@ func (swp *StreamWorkerPool) Start(ctx context.Context) {
 	jobsLog.Info("stream worker pool started", "workers", swp.opts.NumWorkers)
 }
 
-// Stop signals all goroutines to stop and waits for them.
 func (swp *StreamWorkerPool) Stop() {
 	if swp.cancel != nil {
 		swp.cancel()
@@ -266,10 +216,6 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 	logger := jobsLog.With("worker_id", workerID)
 	logger.Debug("worker started")
 
-	// Per-worker semaphore controlling in-flight task concurrency.
-	// Global parallelism = NumWorkers × capacity. When TasksPerWorker is 0
-	// or 1 we keep the legacy one-at-a-time behaviour by using a capacity
-	// of 1 (sem still applied so the fan-out call site stays uniform).
 	perWorker := swp.opts.TasksPerWorker
 	if perWorker < 1 {
 		perWorker = 1
@@ -277,8 +223,6 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 	sem := make(chan struct{}, perWorker)
 	var inflight sync.WaitGroup
 
-	// dispatch runs processMessage on a child goroutine gated by sem.
-	// Callers must call inflight.Wait() before shutdown.
 	dispatch := func(msg broker.StreamMessage) {
 		select {
 		case sem <- struct{}{}:
@@ -300,10 +244,8 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 			return
 		}
 
-		// Round-robin across active jobs.
 		jobIDs := swp.getActiveJobs()
 		if len(jobIDs) == 0 {
-			// No active jobs — wait a bit.
 			select {
 			case <-ctx.Done():
 				return
@@ -331,13 +273,8 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 		}
 
 		if !processed {
-			// No messages from any stream — block briefly on one job.
-			//
-			// Previously every worker blocked on jobIDs[0] here, which meant
-			// under low load the first active job saw N workers queued on its
-			// stream while the other N-1 jobs saw none. Shard by workerID so
-			// workers spread across the active set instead, keeping BLOCK
-			// pressure evenly distributed.
+			// Shard the BLOCK target by workerID — previously every
+			// worker queued on jobIDs[0], starving the other jobs.
 			if n := len(jobIDs); n > 0 {
 				target := jobIDs[workerID%n]
 				msgs, err := swp.consumer.Read(ctx, target)
@@ -355,24 +292,20 @@ func (swp *StreamWorkerPool) workerLoop(ctx context.Context, workerID int) {
 func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.StreamMessage) {
 	logger := jobsLog.With("task_id", msg.TaskID, "job_id", msg.JobID)
 
-	// Load job info and build enriched Task.
 	task, err := swp.buildTask(ctx, msg)
 	if err != nil {
 		logger.Error("failed to build task from stream message", "error", err)
-		// Do NOT ACK — buildTask failures are typically transient (DB
-		// timeouts, connection errors). Leaving the message in the PEL
-		// lets XAUTOCLAIM redeliver it after the idle threshold.
+		// Do NOT ACK — buildTask failures are transient; leaving the
+		// message in the PEL lets XAUTOCLAIM redeliver it.
 		return
 	}
 
-	// Execute the crawl.
 	processStart := time.Now()
 	taskCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	outcome := swp.executor.Execute(taskCtx, task)
 	cancel()
 	processDuration := time.Since(processStart)
 
-	// Record task outcome telemetry.
 	outcomeLabel, reason := classifyTaskOutcome(outcome)
 	observability.RecordWorkerTaskOutcome(ctx, observability.WorkerTaskOutcomeMetrics{
 		JobID:    msg.JobID,
@@ -381,13 +314,10 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 		Duration: processDuration,
 	})
 
-	// Act on the outcome.
 	swp.handleOutcome(ctx, msg, outcome)
 
-	// Tick the watchdog heartbeat AFTER handleOutcome returns so we
-	// only count fully-handled outcomes as forward progress. A wedge
-	// inside handleOutcome will leave the heartbeat flat and the
-	// watchdog will trip.
+	// Tick AFTER handleOutcome so a wedge inside it leaves the
+	// heartbeat flat and the watchdog trips.
 	if swp.heartbeat != nil {
 		swp.heartbeat.Tick()
 	}
@@ -396,13 +326,9 @@ func (swp *StreamWorkerPool) processMessage(ctx context.Context, msg broker.Stre
 func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.StreamMessage, outcome *TaskOutcome) {
 	domain := msg.Host
 
-	// For retryable tasks, the retry enqueue and the ACK must be a single
-	// atomic Redis operation. A naive two-step (Schedule then Ack) has two
-	// failure modes: (a) if Schedule fails we leave the message in the PEL
-	// for redelivery — OK; but (b) if Schedule succeeds and Ack fails, the
-	// retry is queued AND the original message stays in the PEL, so
-	// XAUTOCLAIM will redeliver it and cause a duplicate crawl. The broker
-	// exposes ScheduleAndAck (MULTI/EXEC) to avoid both failure modes.
+	// Retry must use ScheduleAndAck (MULTI/EXEC) — a two-step Schedule
+	// then Ack would let XAUTOCLAIM redeliver and cause a duplicate
+	// crawl if Schedule succeeded but Ack failed.
 	if outcome.Retry != nil && outcome.Retry.ShouldRetry {
 		entry := broker.ScheduleEntry{
 			TaskID:     outcome.Task.ID,
@@ -421,29 +347,20 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 			return
 		}
 	} else {
-		// Non-retry path: just ACK.
 		if err := swp.consumer.Ack(ctx, msg.JobID, msg.MessageID); err != nil {
 			jobsLog.Error("failed to ACK, skipping bookkeeping", "error", err, "message_id", msg.MessageID)
 			return
 		}
 	}
 
-	// Decrement running counter.
 	decrementedOK := true
 	if _, err := swp.counters.Decrement(ctx, msg.JobID); err != nil {
 		decrementedOK = false
 		jobsLog.Warn("counter decrement failed", "error", err, "job_id", msg.JobID)
 	}
 
-	// A concurrency slot just freed. Promote one waiting task for this
-	// job into pending so the freshly vacated slot doesn't sit idle
-	// until the next link-discovery burst arrives. Skipped when the
-	// decrement failed because the counter state is ambiguous and
-	// double-promotion on retry would exceed the concurrency cap.
-	//
-	// Intentionally synchronous: the promoter is a single UPDATE +
-	// INSERT and runs on the bulk lane, so adding a goroutine here
-	// would just introduce a race for no throughput benefit.
+	// Promote on success only — double-promotion on a failed decrement
+	// would exceed the concurrency cap.
 	if decrementedOK && swp.dbQueue != nil {
 		if _, err := swp.dbQueue.PromoteWaitingToPending(ctx, msg.JobID, 1); err != nil {
 			jobsLog.Warn("waiting->pending promotion failed",
@@ -451,23 +368,13 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 		}
 	}
 
-	// Release domain pacer.
 	if err := swp.pacer.Release(ctx, domain, msg.JobID, outcome.Success, outcome.RateLimited); err != nil {
 		jobsLog.Warn("pacer release failed", "error", err, "domain", domain)
 	}
 
-	// Queue task update for batch persistence. Hand the payload to the
-	// HTML persister BEFORE queueing the row so the persister always sees
-	// a fresh *db.Task pointer — the batch manager mutates the row in
-	// place under its own lock, and the persister reads only the IDs we
-	// captured at Enqueue time.
-	//
-	// Enqueue is non-blocking by design: HTML capture is best-effort and
-	// must not back-pressure the stream worker (queueing an HTML payload
-	// must never gate task completion). When the queue is saturated the
-	// persister already increments the "skipped" outcome counter; we add
-	// a callsite warn so an operator can correlate the drop with the
-	// specific task without combing the persister logs.
+	// Hand the payload to the persister BEFORE QueueTaskUpdate — the
+	// batch manager mutates the row in place. Enqueue is non-blocking
+	// so HTML capture never back-pressures the stream worker.
 	if outcome.HTMLUpload != nil && swp.htmlPersister != nil {
 		if !swp.htmlPersister.Enqueue(ctx, outcome.Task, outcome.HTMLUpload) {
 			jobsLog.Warn("html persister queue saturated — payload dropped",
@@ -479,7 +386,6 @@ func (swp *StreamWorkerPool) handleOutcome(ctx context.Context, msg broker.Strea
 	}
 	swp.batchManager.QueueTaskUpdate(outcome.Task)
 
-	// Handle discovered links — enqueue to Postgres then schedule.
 	if len(outcome.DiscoveredLinks) > 0 {
 		swp.handleDiscoveredLinks(ctx, outcome)
 	}
@@ -490,10 +396,9 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 		return
 	}
 
-	// Cap concurrent link-discovery DB chains so the bulk pool isn't
-	// drained by every worker hitting CreatePageRecords + EnqueueJobURLs
-	// simultaneously (HOVER-KG). Block on the semaphore so the caller
-	// goroutine backpressures naturally; ctx cancellation aborts the wait.
+	// Block on the semaphore so the caller backpressures naturally —
+	// without this every worker drained the bulk pool simultaneously
+	// (HOVER-KG).
 	if swp.linkDiscoverySem != nil {
 		select {
 		case swp.linkDiscoverySem <- struct{}{}:
@@ -503,18 +408,16 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 		}
 	}
 
-	// Build a Task with the fields ProcessDiscoveredLinks needs.
 	task := &Task{
 		ID:                       outcome.Task.ID,
 		JobID:                    outcome.Task.JobID,
 		Host:                     outcome.Task.Host,
 		Path:                     outcome.Task.Path,
 		PriorityScore:            outcome.Task.PriorityScore,
-		FindLinks:                true, // only called when links exist
+		FindLinks:                true,
 		AllowCrossSubdomainLinks: false,
 	}
 
-	// Enrich from job info cache.
 	info, err := swp.loadJobInfo(ctx, outcome.Task.JobID)
 	if err != nil {
 		jobsLog.Error("failed to load job info for link discovery", "error", err, "job_id", outcome.Task.JobID)
@@ -538,11 +441,8 @@ func (swp *StreamWorkerPool) handleDiscoveredLinks(ctx context.Context, outcome 
 	ProcessDiscoveredLinks(ctx, deps, task, outcome.DiscoveredLinks, sourceURL, info.RobotsRules)
 }
 
-// defaultReconcileIntervalS is how often the background loop rebuilds
-// the running-counters HASH from the authoritative XPENDING view when
-// REDIS_COUNTER_RECONCILE_INTERVAL_S is unset. Two minutes is a
-// compromise between prompt drift recovery and XPENDING cost across
-// hundreds of active jobs.
+// 120s balances drift-recovery latency against XPENDING cost across
+// hundreds of active jobs. Override via REDIS_COUNTER_RECONCILE_INTERVAL_S.
 const defaultReconcileIntervalS = 120
 
 func reconcileInterval() time.Duration {
@@ -563,22 +463,13 @@ func (swp *StreamWorkerPool) reconcileLoop(ctx context.Context) {
 	}
 }
 
-// TriggerReconcile runs an immediate counter reconcile from the PEL
-// when something upstream (typically the dispatcher's stuck-detection
-// heuristic) suspects the running counter has drifted out of sync
-// with reality. Concurrent callers collapse onto the in-flight pass
-// via TryLock — the contract is "at least one reconcile after the
-// most recent trigger", not "one reconcile per trigger". Returning
-// without running is the correct response when a reconcile is already
-// in flight.
+// TriggerReconcile runs an immediate reconcile, collapsing concurrent
+// calls onto an in-flight pass via TryLock. Contract: at least one
+// reconcile after the most recent trigger.
 func (swp *StreamWorkerPool) TriggerReconcile(ctx context.Context) {
 	swp.runReconcileSerialised(ctx)
 }
 
-// runReconcileSerialised wraps reconcileCounters with the package
-// reconcile mutex. Returns true if the reconcile actually ran, false
-// if another reconcile was already in flight and this call collapsed
-// onto it.
 func (swp *StreamWorkerPool) runReconcileSerialised(ctx context.Context) bool {
 	if !swp.reconcileMu.TryLock() {
 		return false
@@ -613,13 +504,11 @@ func (swp *StreamWorkerPool) reclaimStaleMessages(ctx context.Context) {
 			continue
 		}
 
-		// Re-process reclaimed messages.
 		for _, msg := range reclaimed {
 			jobsLog.Info("reclaimed stale task", "task_id", msg.TaskID, "message_id", msg.MessageID)
 			swp.processMessage(ctx, msg)
 		}
 
-		// Dead-letter messages that exceeded max deliveries.
 		for _, msg := range deadLetter {
 			jobsLog.Warn("dead-lettering task after max deliveries", "task_id", msg.TaskID, "retry_count", msg.RetryCount)
 			if err := swp.consumer.Ack(ctx, jobID, msg.MessageID); err != nil {
@@ -629,12 +518,10 @@ func (swp *StreamWorkerPool) reclaimStaleMessages(ctx context.Context) {
 			if _, err := swp.counters.Decrement(ctx, jobID); err != nil {
 				jobsLog.Warn("counter decrement on dead-letter failed", "error", err)
 			}
-			// Release domain pacer inflight slot.
 			if err := swp.pacer.Release(ctx, msg.Host, jobID, false, false); err != nil {
 				jobsLog.Warn("pacer release on dead-letter failed", "error", err, "domain", msg.Host)
 			}
 
-			// Mark as failed in Postgres.
 			dbTask := &db.Task{
 				ID:          msg.TaskID,
 				JobID:       msg.JobID,
@@ -669,11 +556,8 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 	var jobIDs []string
 	limit := activeJobsLimit()
 	err := swp.dbQueue.ExecuteControl(ctx, func(tx *sql.Tx) error {
-		// Pre-merge ordering (FIFO): oldest updated first so long-running
-		// jobs don't starve when more than `limit` jobs are in flight.
-		// The new-world default of `created_at DESC` (newest first) was a
-		// regression — under deep backlog it starved older jobs. Matches
-		// pre-merge internal/jobs/worker.go:2273-2276.
+		// FIFO by updated_at ASC — created_at DESC starved older jobs
+		// under deep backlog. Mirrors pre-merge worker.go:2273-2276.
 		rows, err := tx.QueryContext(ctx,
 			`SELECT id FROM jobs
 			 WHERE status IN ('running', 'pending')
@@ -696,18 +580,16 @@ func (swp *StreamWorkerPool) refreshActiveJobs(ctx context.Context) {
 		return rows.Err()
 	})
 	if err != nil {
-		// Downgrade to Warn: the refresh runs every 10s, so a transient control
-		// DB outage would otherwise flood Sentry with one event per tick.
+		// Warn (not Error): refresh runs every 10s; a control-DB blip
+		// would otherwise flood Sentry once per tick.
 		jobsLog.Warn("failed to refresh active jobs", "error", err)
 		return
 	}
 
-	// Never evict a job whose Redis PEL still holds in-flight work. The active-
-	// list ordering + limit can shuffle a mid-flight job off the window, which
-	// freezes both dispatch (counter gate stuck at the cap) and consume (no
-	// worker reads that job's stream). Union the Postgres-derived set with any
-	// job that has a non-zero running_counters entry so those streams keep
-	// draining until the PEL is genuinely empty.
+	// Never evict a job whose PEL still holds in-flight work — the
+	// limit window can shuffle a mid-flight job off the active set,
+	// freezing both dispatch and consume for it. Union with any job
+	// that has a non-zero running_counters entry.
 	counters, counterErr := swp.counters.GetAll(ctx)
 	if counterErr != nil {
 		jobsLog.Warn("failed to read running counters for active-job merge", "error", counterErr)
@@ -745,7 +627,6 @@ func (swp *StreamWorkerPool) getActiveJobs() []string {
 	return swp.activeJobs
 }
 
-// ActiveJobIDs implements broker.JobLister for the dispatcher.
 func (swp *StreamWorkerPool) ActiveJobIDs(ctx context.Context) ([]string, error) {
 	return swp.getActiveJobs(), nil
 }
@@ -845,18 +726,13 @@ func (swp *StreamWorkerPool) fetchJobInfo(ctx context.Context, jobID string) (*J
 		info.AdaptiveDelayFloor = int(adaptiveFloor.Int64)
 	}
 
-	// Hydrate robots.txt rules so link discovery can enforce them.
-	// Without this, ProcessDiscoveredLinks sees a nil ruleset and
-	// lets every discovered URL through, bypassing disallow rules.
-	// Fetch lives in JobManager because it already owns a crawler
-	// handle. The caller caches the whole JobInfo for jobInfoTTL,
-	// so this fetch runs at most once every 5 minutes per job.
+	// Without robots rules, link discovery would let every URL through
+	// regardless of disallow.
 	if swp.jobManager != nil {
 		rules, robotsErr := swp.jobManager.GetRobotsRules(ctx, info.DomainName)
 		if robotsErr != nil {
-			// Log and continue with nil rules — better to enqueue a few
-			// extra URLs than to stall the worker when robots.txt is
-			// temporarily unavailable. Matches legacy behaviour.
+			// Better to enqueue a few extra URLs than stall when
+			// robots.txt is temporarily unavailable.
 			jobsLog.Warn("failed to load robots rules for job info, continuing without",
 				"error", robotsErr, "domain", info.DomainName)
 		} else {
@@ -869,17 +745,10 @@ func (swp *StreamWorkerPool) fetchJobInfo(ctx context.Context, jobID string) (*J
 
 // --- counter reconciliation ---
 
-// reconcileCounters rebuilds the per-job RunningCounters HASH in Redis
-// from the authoritative stream PEL (XPENDING). The previous version
-// queried Postgres for tasks where status='running', but the batch
-// writer never transitions tasks through that status — they go
-// pending → completed/failed in one UPDATE — so the query always
-// returned zero and the reconcile silently wiped the counters,
-// stalling dispatch until the next decrement restored them.
-//
-// The PEL is the source of truth for in-flight work per job because
-// a message stays in the PEL from XREADGROUP delivery until XACK,
-// which brackets the worker's crawl + persist lifecycle.
+// reconcileCounters rebuilds RunningCounters from XPENDING. The PEL
+// brackets the worker's crawl+persist lifecycle so it's the source of
+// truth — a Postgres-status-based reconcile silently zeroed counters
+// because the batch writer never transitions through 'running'.
 func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	activeSet := swp.getActiveJobs()
 	activeLookup := make(map[string]struct{}, len(activeSet))
@@ -888,9 +757,8 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 	}
 	jobIDs := append([]string(nil), activeSet...)
 
-	// Also include any job currently present in the Redis counters hash,
-	// in case refreshActiveJobs hasn't surfaced it yet (e.g. a job that
-	// just transitioned status).
+	// Include jobs in the counters hash that refreshActiveJobs hasn't
+	// surfaced yet (e.g. just-transitioned status).
 	existing, err := swp.counters.GetAll(ctx)
 	if err != nil {
 		jobsLog.Warn("failed to read existing running counters; continuing with active-job set only", "error", err)
@@ -908,9 +776,8 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 		n, err := swp.consumer.PendingCount(ctx, jobID)
 		if err != nil {
 			jobsLog.Warn("PendingCount failed during reconcile; skipping job", "job_id", jobID, "error", err)
-			// Preserve the existing counter rather than zeroing it on a
-			// transient Redis hiccup — better to over-count briefly than
-			// to flood a job with extra dispatches.
+			// Preserve existing counter on transient hiccup — over-count
+			// briefly beats flooding the job with extra dispatches.
 			if prev, ok := existing[jobID]; ok {
 				counts[jobID] = prev
 			}
@@ -918,19 +785,14 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 		}
 		if n > 0 {
 			counts[jobID] = n
-			// A job with a non-zero PEL that isn't in the worker's active
-			// set is a stalled-dispatch smoking gun: no one will read from
-			// its stream, so those messages sit forever. Surface this as a
-			// dedicated metric so we can alert on it.
+			// Non-zero PEL with no active consumer is a stalled-dispatch
+			// signal — surface for alerting.
 			if _, isActive := activeLookup[jobID]; !isActive {
 				orphanPELCount++
 				jobsLog.Warn("job has pending work but is not in active-job set",
 					"job_id", jobID, "pending", n)
 			}
 		}
-		// Record the skew between the old Redis HASH value and the
-		// authoritative PEL so we can detect leaks continuously, not only
-		// by eyeballing Postgres.
 		prev := existing[jobID]
 		diff := prev - n
 		if diff < 0 {
@@ -957,10 +819,7 @@ func (swp *StreamWorkerPool) reconcileCounters(ctx context.Context) {
 		"orphan_pel_jobs", orphanPELCount)
 }
 
-// --- concurrency checking (for dispatcher) ---
-
-// CanDispatch returns true if the job has capacity for more in-flight
-// tasks. Implements broker.ConcurrencyChecker.
+// CanDispatch implements broker.ConcurrencyChecker.
 func (swp *StreamWorkerPool) CanDispatch(ctx context.Context, jobID string) (bool, error) {
 	info, err := swp.loadJobInfo(ctx, jobID)
 	if err != nil {
@@ -969,7 +828,7 @@ func (swp *StreamWorkerPool) CanDispatch(ctx context.Context, jobID string) (boo
 
 	concurrency := info.Concurrency
 	if concurrency <= 0 {
-		concurrency = fallbackJobConcurrency // 20, same as API default
+		concurrency = fallbackJobConcurrency
 	}
 
 	running, err := swp.counters.Get(ctx, jobID)

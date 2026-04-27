@@ -14,35 +14,22 @@ import (
 	"github.com/Harvey-AU/hover/internal/observability"
 )
 
-// HTMLPersisterConfig holds the runtime knobs for the persister pool.
-// Values come from cmd/worker, which reads HTML_PERSIST_* env vars.
 type HTMLPersisterConfig struct {
-	// Workers is the number of upload goroutines draining the queue.
 	Workers int
-	// QueueSize is the buffered channel capacity. When full, new enqueues
-	// drop the payload (with a metric increment) rather than blocking the
-	// stream worker loop — HTML capture is best-effort.
-	QueueSize int
-	// BatchSize bounds how many successfully uploaded rows accumulate per
-	// worker before a metadata UPDATE is flushed.
-	BatchSize int
-	// FlushInterval forces a metadata flush even when the per-worker batch
-	// is short of BatchSize, so a quiet tail doesn't sit on staged rows.
+	// When full, new enqueues drop the payload — HTML capture is best-effort
+	// and must not block the stream worker loop.
+	QueueSize     int
+	BatchSize     int
 	FlushInterval time.Duration
-	// UploadTimeout caps a single PutObject call. R2 can stall under
-	// network turbulence; without a per-call cap a hung connection would
-	// occupy a worker indefinitely and starve the queue.
+	// Without a per-call cap a hung R2 connection would occupy a worker
+	// indefinitely and starve the queue.
 	UploadTimeout time.Duration
-	// Bucket is the destination R2 bucket (read from archive config).
-	Bucket string
-	// Provider name (e.g. "r2") — copied onto each persisted row.
-	Provider string
+	Bucket        string
+	Provider      string
 }
 
-// DefaultHTMLPersisterConfig returns persister defaults tuned for the
-// current ~4k tasks/min throughput baseline. The 256-deep queue keeps
-// memory bounded while a transient R2 hiccup drains; 8 workers match
-// the historical pre-Redis pool size that ran cleanly under load.
+// Defaults tuned for ~4k tasks/min: 256-deep queue absorbs transient R2
+// hiccups; 8 workers matches the historical pool that ran cleanly under load.
 func DefaultHTMLPersisterConfig() HTMLPersisterConfig {
 	return HTMLPersisterConfig{
 		Workers:       8,
@@ -53,60 +40,41 @@ func DefaultHTMLPersisterConfig() HTMLPersisterConfig {
 	}
 }
 
-// HTMLPersisterDeps wires the persister to its collaborators. Injected so
-// tests can swap fakes in for the cold-storage provider and DB writer.
 type HTMLPersisterDeps struct {
 	Provider archive.ColdStorageProvider
 	DBQueue  DbQueueInterface
 }
 
-// persistJob carries one task's payload through the queue.
 type persistJob struct {
 	taskID string
 	jobID  string
 	upload *TaskHTMLUpload
 }
 
-// HTMLPersister streams completed-task HTML payloads directly to R2 and
-// stamps the resulting metadata onto the task row. It is the Stage 2
-// replacement for the deleted Supabase Storage hop — see issue #332 and
-// CHANGELOG (2026-04-25 entry).
-//
-// The pool is intentionally simple: a single bounded channel feeds N
-// upload workers, each of which accumulates successful uploads into a
-// per-worker buffer and flushes a single metadata UPDATE when the buffer
-// fills or a flush tick fires. Failed uploads are logged and dropped;
-// HTML capture is best-effort and must not block the hot worker loop.
+// HTMLPersister streams completed-task HTML payloads to R2 and stamps the
+// resulting metadata onto the task row. See issue #332 for context.
 type HTMLPersister struct {
 	cfg  HTMLPersisterConfig
 	deps HTMLPersisterDeps
 
 	queue chan persistJob
 
-	// uploadWG tracks the upload workers separately from probeWG so Stop
-	// can wait for the queue to drain before tearing down the probe loop
-	// and cancelling the shared context.
+	// Separate WGs so Stop waits for the queue to drain before tearing
+	// down the probe loop and cancelling the shared context.
 	uploadWG sync.WaitGroup
 	probeWG  sync.WaitGroup
 	cancel   context.CancelFunc
 
-	// stopped gates Enqueue once Stop begins, so callers see a clean false
-	// instead of a panic on a closed channel.
+	// Gates Enqueue once Stop begins, so concurrent senders can't race
+	// the channel close.
 	stopped atomic.Bool
 
-	// stopCh signals the probe loop to exit; closed during Stop after the
-	// queue has drained. Worker loops use the closed-queue signal instead.
 	stopCh chan struct{}
 
-	// startOnce / stopOnce keep Start/Stop idempotent so a graceful
-	// shutdown that races with a context cancellation can't panic on
-	// closed channels.
 	startOnce sync.Once
 	stopOnce  sync.Once
 }
 
-// NewHTMLPersister constructs a persister but does not start its
-// goroutines. Call Start to begin draining the queue.
 func NewHTMLPersister(cfg HTMLPersisterConfig, deps HTMLPersisterDeps) (*HTMLPersister, error) {
 	if deps.Provider == nil {
 		return nil, errors.New("html persister: cold storage provider is required")
@@ -144,8 +112,6 @@ func NewHTMLPersister(cfg HTMLPersisterConfig, deps HTMLPersisterDeps) (*HTMLPer
 	}, nil
 }
 
-// Start launches the upload workers and the queue-depth probe.
-// Safe to call once; subsequent calls are no-ops.
 func (p *HTMLPersister) Start(ctx context.Context) {
 	p.startOnce.Do(func() {
 		ctx, p.cancel = context.WithCancel(ctx)
@@ -173,27 +139,17 @@ func (p *HTMLPersister) Start(ctx context.Context) {
 	})
 }
 
-// Stop drains already-accepted uploads before exiting. New Enqueue calls
-// are rejected immediately; the upload workers consume the rest of the
-// queue under the live context (so per-upload timeouts still apply), then
-// the probe loop is signalled and the shared context is cancelled.
-//
-// If the parent ctx passed to Start is cancelled externally before Stop
-// returns, in-flight uploads abort via uploadCtx and the remaining queue
-// is dropped — that is the unavoidable hard-exit path.
+// Stop drains already-accepted uploads before exiting. Hand-off ordering:
+// flip stopped → close queue → wait for uploads → close stopCh → cancel ctx.
+// If the parent ctx is cancelled externally first, in-flight uploads abort
+// via uploadCtx and the remaining queue is dropped.
 func (p *HTMLPersister) Stop() {
 	p.stopOnce.Do(func() {
-		// Reject further Enqueue calls before closing the channel so a
-		// concurrent send can't race with the close and panic.
 		p.stopped.Store(true)
 		close(p.queue)
 
-		// Workers see ok=false on the queue read once it's drained, flush
-		// their final batch, and exit. uploadWG.Wait blocks until then.
 		p.uploadWG.Wait()
 
-		// Now that no upload work remains, tear down the probe loop and
-		// the shared context together.
 		close(p.stopCh)
 		if p.cancel != nil {
 			p.cancel()
@@ -203,10 +159,8 @@ func (p *HTMLPersister) Stop() {
 	})
 }
 
-// Enqueue tries to hand a payload to a worker. The send is
-// non-blocking: if the queue is full we drop the payload (HTML capture
-// is best-effort) and emit an "skipped" metric so dashboards surface
-// sustained backpressure. Returns true when the payload was accepted.
+// Enqueue is non-blocking: a full queue drops the payload and emits a
+// "skipped" metric. Returns true when the payload was accepted.
 func (p *HTMLPersister) Enqueue(ctx context.Context, task *db.Task, upload *TaskHTMLUpload) bool {
 	if p == nil || task == nil || upload == nil {
 		return false
@@ -229,8 +183,6 @@ func (p *HTMLPersister) Enqueue(ctx context.Context, task *db.Task, upload *Task
 	}
 }
 
-// QueueDepth returns the current number of pending payloads. Exposed for
-// tests; the probeLoop emits this to telemetry on its own cadence.
 func (p *HTMLPersister) QueueDepth() int {
 	if p == nil {
 		return 0
@@ -238,35 +190,28 @@ func (p *HTMLPersister) QueueDepth() int {
 	return len(p.queue)
 }
 
-// workerLoop drains the shared queue, uploads each payload to R2, and
-// accumulates successful rows for periodic metadata UPDATE flushes.
 func (p *HTMLPersister) workerLoop(ctx context.Context, workerID int) {
 	log := jobsLog.With("html_persist_worker", workerID)
 	batch := make([]db.TaskHTMLMetadataRow, 0, p.cfg.BatchSize)
 	ticker := time.NewTicker(p.cfg.FlushInterval)
 	defer ticker.Stop()
 
-	// Cap the retained-on-error batch so a sustained DB outage can't grow
-	// per-worker memory without bound. Once we exceed this, drop the
-	// oldest rows (best-effort: R2 still has the payload, we just lose
-	// the metadata pointer for those).
+	// Cap retained-on-error batch so a sustained DB outage can't grow
+	// per-worker memory without bound.
 	maxRetained := p.cfg.BatchSize * 8
 
 	flush := func(reason string) {
 		if len(batch) == 0 {
 			return
 		}
-		// Use a detached background context for the flush so a cancellation
-		// arriving between upload-success and metadata-write doesn't strand
-		// just-uploaded rows without their metadata. The UPDATE itself is
-		// idempotent — re-running with the same payload key is a safe
-		// no-op via COALESCE/NULLIF.
+		// Detached context so a cancellation between upload-success and
+		// metadata-write doesn't strand just-uploaded rows without their
+		// metadata. UPDATE is idempotent via COALESCE/NULLIF.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := p.deps.DBQueue.BatchUpsertTaskHTMLMetadata(flushCtx, batch); err != nil {
-			// Keep the batch so the next tick/size flush retries — losing
-			// the metadata UPDATE here would orphan the just-uploaded R2
-			// objects (no row pointer back to them).
+			// Retain batch so the next flush retries — dropping it would
+			// orphan the just-uploaded R2 objects.
 			observability.RecordHTMLPersistUpload(flushCtx, "flush_err")
 			log.Error("html metadata flush failed — retaining batch for retry",
 				"error", err, "rows", len(batch), "reason", reason)
@@ -306,9 +251,6 @@ func (p *HTMLPersister) workerLoop(ctx context.Context, workerID int) {
 	}
 }
 
-// uploadOne pushes a single payload to R2. On success it returns the
-// metadata row to be batched into the next UPDATE; on failure it logs,
-// emits the err counter, and returns (_, false).
 func (p *HTMLPersister) uploadOne(ctx context.Context, log *logging.Logger, job persistJob) (db.TaskHTMLMetadataRow, bool) {
 	uploadCtx, cancel := context.WithTimeout(ctx, p.cfg.UploadTimeout)
 	defer cancel()
@@ -359,19 +301,14 @@ func (p *HTMLPersister) uploadOne(ctx context.Context, log *logging.Logger, job 
 			CompressedSizeBytes: upload.CompressedSizeBytes,
 			SHA256:              upload.SHA256,
 			CapturedAt:          upload.CapturedAt,
-			// Stamping ArchivedAt at write time keeps the archive sweep's
-			// candidate query (html_archived_at IS NULL) from re-picking
-			// these rows — R2 IS the hot store now, so a sweeper-driven
-			// R2-to-R2 copy would be a wasteful no-op.
+			// Stamp ArchivedAt at write time so the archive sweep
+			// (html_archived_at IS NULL) doesn't re-pick these rows for a
+			// wasteful R2-to-R2 copy.
 			ArchivedAt: upload.CapturedAt,
 		},
 	}, true
 }
 
-// probeLoop emits the queue-depth gauge so dashboards can spot
-// sustained backpressure before drops start. Cadence matches the
-// flush tick — frequent enough to catch transient saturation, cheap
-// enough that it adds no measurable overhead.
 func (p *HTMLPersister) probeLoop(ctx context.Context) {
 	ticker := time.NewTicker(p.cfg.FlushInterval)
 	defer ticker.Stop()

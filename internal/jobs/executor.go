@@ -25,9 +25,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-// RetryDecision describes what should happen after a task error.
-// The caller (stream worker) uses this to decide whether to
-// reschedule via Redis or mark the task as permanently failed.
 type RetryDecision struct {
 	ShouldRetry        bool
 	NextRunAt          time.Time
@@ -35,37 +32,16 @@ type RetryDecision struct {
 	IsPermanentFailure bool
 }
 
-// TaskOutcome is the result of executing a single task.
 type TaskOutcome struct {
-	// Task is the populated db.Task with status, metrics, and JSONB
-	// fields set. Ready to be passed to the batch manager.
-	Task *db.Task
-
-	// CrawlResult is the raw crawler output (may be nil on error).
-	CrawlResult *crawler.CrawlResult
-
-	// Retry is set when the task should be rescheduled instead of
-	// permanently completed/failed.
-	Retry *RetryDecision
-
-	// DiscoveredLinks, if non-empty, should be persisted and
-	// scheduled into the ZSET.
+	Task            *db.Task
+	CrawlResult     *crawler.CrawlResult
+	Retry           *RetryDecision
 	DiscoveredLinks map[string][]string
-
-	// HTMLUpload, if non-nil, should be uploaded to storage.
-	HTMLUpload *TaskHTMLUpload
-
-	// RateLimited is true when the crawl received a 429/403/503,
-	// used by the caller to update domain pacer state.
-	RateLimited bool
-
-	// Success is true when the crawl completed without error.
-	Success bool
+	HTMLUpload      *TaskHTMLUpload
+	RateLimited     bool
+	Success         bool
 }
 
-// TaskHTMLUpload holds the data needed to upload HTML to storage.
-// The destination bucket is owned by the persister (built from the
-// archive provider's config), so we don't bake it into the payload.
 type TaskHTMLUpload struct {
 	Path                string
 	ContentType         string
@@ -78,7 +54,6 @@ type TaskHTMLUpload struct {
 	Payload             []byte
 }
 
-// ExecutorConfig holds configuration for the task executor.
 type ExecutorConfig struct {
 	MaxBlockingRetries int
 	MaxTaskRetries     int
@@ -86,10 +61,6 @@ type ExecutorConfig struct {
 	MaxDelayMS         int
 }
 
-// DefaultExecutorConfig returns production defaults, allowing env overrides
-// for retry backoff. GNH_RATE_LIMIT_BASE_DELAY_MS and GNH_RATE_LIMIT_MAX_DELAY_MS
-// mirror the pre-Redis in-memory DomainLimiter dials — they now control the
-// TaskExecutor retry schedule after transient failures.
 func DefaultExecutorConfig() ExecutorConfig {
 	return ExecutorConfig{
 		MaxBlockingRetries: 3,
@@ -99,9 +70,7 @@ func DefaultExecutorConfig() ExecutorConfig {
 	}
 }
 
-// envIntWithDefault parses an integer env var, returning fallback if unset,
-// empty, or unparseable. Non-positive parsed values also fall through to
-// the default — retry delays must be > 0.
+// Non-positive values fall through to fallback; retry delays must be > 0.
 func envIntWithDefault(key string, fallback int) int {
 	if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
@@ -111,15 +80,13 @@ func envIntWithDefault(key string, fallback int) int {
 	return fallback
 }
 
-// TaskExecutor runs crawl tasks and produces outcomes without
-// side effects on counters, schedulers, or persistence. The caller
-// is responsible for acting on the returned TaskOutcome.
+// TaskExecutor runs crawl tasks and returns outcomes; it has no side effects
+// on counters, schedulers, or persistence — the caller must act on the outcome.
 type TaskExecutor struct {
 	crawler CrawlerInterface
 	cfg     ExecutorConfig
 }
 
-// NewTaskExecutor creates a TaskExecutor.
 func NewTaskExecutor(c CrawlerInterface, cfg ExecutorConfig) *TaskExecutor {
 	return &TaskExecutor{
 		crawler: c,
@@ -127,13 +94,7 @@ func NewTaskExecutor(c CrawlerInterface, cfg ExecutorConfig) *TaskExecutor {
 	}
 }
 
-// Execute runs a crawl for the given task and returns the outcome.
-// It does NOT modify any external state — all decisions are returned
-// in the TaskOutcome for the caller to act on.
-//
-// The task parameter is a jobs.Task (enriched with job info like
-// DomainName, FindLinks, CrawlDelay). The returned TaskOutcome
-// contains a *db.Task populated for batch persistence.
+// Execute does not modify external state; all decisions are returned in TaskOutcome.
 func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 	start := time.Now()
 	status := "success"
@@ -196,8 +157,6 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 		return e.buildErrorOutcome(ctx, task, result, err, rateLimited)
 	}
 
-	// Guard against nil result — crawler should always return a result
-	// on success, but defensive check prevents downstream panics.
 	if result == nil {
 		status = "error"
 		nilErr := fmt.Errorf("crawler returned nil result for %s", urlStr)
@@ -218,9 +177,6 @@ func (e *TaskExecutor) Execute(ctx context.Context, task *Task) *TaskOutcome {
 	return e.buildSuccessOutcome(task, result)
 }
 
-// --- outcome builders ---
-
-// taskToDBTask converts a jobs.Task to a db.Task for persistence.
 func taskToDBTask(t *Task) *db.Task {
 	return &db.Task{
 		ID:            t.ID,
@@ -245,8 +201,7 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 	dbTask := taskToDBTask(task)
 	dbTask.Status = string(TaskStatusCompleted)
 	dbTask.CompletedAt = now
-	// Clear any error text inherited from a prior failed attempt so a
-	// retried-then-succeeded task doesn't persist stale failure context.
+	// Clear stale error text from a prior failed attempt.
 	dbTask.Error = ""
 
 	populateResponseFields(dbTask, result)
@@ -258,17 +213,12 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 		Success:     true,
 	}
 
-	// Discovered links.
 	if len(result.Links) > 0 {
 		outcome.DiscoveredLinks = cloneDiscoveredLinks(result.Links)
 	}
 
-	// HTML upload: stage the payload on outcome.HTMLUpload so the
-	// HTML persister in the worker can stream it directly to R2. The
-	// task row is persisted by the batch manager without any HTML
-	// metadata; the persister stamps the html_* columns in a separate
-	// metadata-only UPDATE once the R2 upload has succeeded, so we
-	// never leave dangling references to objects that don't exist.
+	// html_* columns are stamped by the persister after a successful R2 upload,
+	// so the batch-persisted task row never references a missing object.
 	if upload, ok := buildHTMLUpload(dbTask, result, now); ok {
 		outcome.HTMLUpload = upload
 	}
@@ -279,17 +229,13 @@ func (e *TaskExecutor) buildSuccessOutcome(task *Task, result *crawler.CrawlResu
 func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result *crawler.CrawlResult, taskErr error, rateLimited bool) *TaskOutcome {
 	now := time.Now().UTC()
 	dbTask := taskToDBTask(task)
-	// When the crawler returned a response alongside the error (e.g. 403,
-	// 429, 503 rate-limit cases) preserve the full response metadata so the
-	// failed row carries the same diagnostics the success path would.
+	// Preserve response diagnostics on rate-limit errors (403/429/503) that
+	// still carry a result.
 	if result != nil {
 		populateResponseFields(dbTask, result)
 		populateJSONBFields(dbTask, result)
 	} else {
-		// Nil-result fallback (crawler contract breach). Seed the same
-		// JSONB defaults as populateJSONBFields so every persisted row —
-		// success, error-with-response, or error-without-response —
-		// carries the same shape.
+		// Seed JSONB defaults so every persisted row has the same shape.
 		dbTask.Headers = []byte("{}")
 		dbTask.SecondHeaders = []byte("{}")
 		dbTask.CacheCheckAttempts = []byte("[]")
@@ -302,10 +248,8 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 		RateLimited: rateLimited,
 	}
 
-	// A rate-limited response (detected upstream from the crawler result)
-	// must take the blocking retry path even when taskErr itself is a
-	// generic error — otherwise a 429/403/503 with an unrecognised error
-	// string falls through to permanent failure and defeats domain pacing.
+	// rateLimited forces the blocking path so 429/403/503 with a generic error
+	// string can't fall through to permanent failure and defeat domain pacing.
 	isBlocking := rateLimited || isBlockingError(taskErr)
 	isRetryable := isRetryableError(taskErr)
 
@@ -361,8 +305,6 @@ func (e *TaskExecutor) buildErrorOutcome(ctx context.Context, task *Task, result
 	return outcome
 }
 
-// --- backoff computation ---
-
 func (e *TaskExecutor) blockingBackoff(retryCount int) time.Duration {
 	base := time.Duration(e.cfg.BaseDelayMS) * time.Millisecond
 	delay := base * (1 << retryCount) // exponential
@@ -381,10 +323,6 @@ func (e *TaskExecutor) retryableBackoff(retryCount int) time.Duration {
 	return delay
 }
 
-// --- shared helpers (extracted from worker.go) ---
-
-// ConstructTaskURL builds a full URL from task path, host, and domain.
-// Exported so the stream worker can use it.
 func ConstructTaskURL(path, host, domainName string) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return util.NormaliseURL(path)
@@ -395,8 +333,6 @@ func ConstructTaskURL(path, host, domainName string) string {
 	}
 	return util.NormaliseURL(path)
 }
-
-// Error classification — unchanged from worker.go.
 
 func isRetryableError(err error) bool {
 	if err == nil {
@@ -434,10 +370,6 @@ func isBlockingError(err error) bool {
 		strings.Contains(errorStr, "service unavailable")
 }
 
-// populateResponseFields copies the HTTP response metadata from a crawl
-// result onto a task row. It is called on both the success and error
-// paths so that failed attempts which still produced a response (403,
-// 429, 503, etc.) persist the same diagnostics as successful ones.
 func populateResponseFields(task *db.Task, result *crawler.CrawlResult) {
 	if task == nil || result == nil {
 		return
@@ -453,17 +385,14 @@ func populateResponseFields(task *db.Task, result *crawler.CrawlResult) {
 		task.RedirectURL = result.RedirectURL
 	}
 
-	// Performance metrics.
 	task.DNSLookupTime = result.Performance.DNSLookupTime
 	task.TCPConnectionTime = result.Performance.TCPConnectionTime
 	task.TLSHandshakeTime = result.Performance.TLSHandshakeTime
 	task.TTFB = result.Performance.TTFB
 	task.ContentTransferTime = result.Performance.ContentTransferTime
 
-	// Second request metrics. SecondContentLength is a top-level field on
-	// CrawlResult and is populated independently of SecondPerformance, so
-	// persist it unconditionally; only the timing fields depend on the
-	// performance metrics pointer being non-nil.
+	// SecondContentLength is independent of SecondPerformance; persist
+	// unconditionally. Timing fields require the performance pointer.
 	task.SecondResponseTime = result.SecondResponseTime
 	task.SecondCacheStatus = result.SecondCacheStatus
 	task.SecondContentLength = result.SecondContentLength
@@ -475,8 +404,6 @@ func populateResponseFields(task *db.Task, result *crawler.CrawlResult) {
 		task.SecondContentTransferTime = result.SecondPerformance.ContentTransferTime
 	}
 }
-
-// --- JSONB helpers ---
 
 func populateJSONBFields(task *db.Task, result *crawler.CrawlResult) {
 	task.Headers = []byte("{}")
@@ -513,19 +440,11 @@ func populateRequestDiagnostics(task *db.Task, result *crawler.CrawlResult) {
 	}
 }
 
-// --- HTML helpers ---
-
 const (
 	htmlContentEncoding = "gzip"
 
-	// maxHTMLUploadBodyBytes caps the body size we will stage for the
-	// R2 upload. The raw body and its gzipped copy are held on the
-	// TaskOutcome until the persister flushes, so a high cap multiplied
-	// across a wide worker pool can materially inflate RSS. The crawler
-	// itself does not bound CrawlResult.Body, so this is the point at
-	// which we refuse oversized pages rather than archive them. 8 MiB
-	// covers the long tail of modern HTML without opening a
-	// memory-exhaustion vector.
+	// Caps body size staged for R2 upload; crawler does not bound CrawlResult.Body
+	// and a wide worker pool can inflate RSS. 8 MiB covers modern HTML.
 	maxHTMLUploadBodyBytes = 8 * 1024 * 1024
 )
 
@@ -540,10 +459,7 @@ func buildHTMLUpload(task *db.Task, result *crawler.CrawlResult, capturedAt time
 	}
 
 	if len(result.Body) > maxHTMLUploadBodyBytes {
-		// Demoted from Warn to Debug: the skip is safe (no archive is
-		// uploaded but crawl results still propagate) and a single large
-		// site can spam thousands of these per job. Volume metrics already
-		// surface the skip count at the dashboard level.
+		// Debug, not Warn: a single large site can emit thousands per job.
 		jobsLog.Debug("Skipping HTML archive upload: body exceeds size cap",
 			"task_id", task.ID,
 			"size_bytes", len(result.Body),
@@ -627,7 +543,6 @@ func statusCodeOrZero(result *crawler.CrawlResult) int {
 	return 0
 }
 
-// Sentinel errors.
 var (
 	ErrDomainDelay = errors.New("domain rate limit delay")
 )

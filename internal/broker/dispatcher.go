@@ -14,33 +14,20 @@ import (
 
 // DispatcherOpts controls the dispatcher's scan behaviour.
 type DispatcherOpts struct {
-	// ScanInterval is how often the dispatcher sweeps all active job
-	// ZSETs for due items. Default 100ms.
 	ScanInterval time.Duration
+	BatchSize    int64
 
-	// BatchSize is the maximum number of ZSET entries fetched per job
-	// per scan tick. Default 50.
-	BatchSize int64
-
-	// ParallelJobs caps how many per-job dispatch goroutines run
-	// concurrently inside a single tick. Pre-change the tick processed
-	// jobs serially, which made the per-task Redis round-trip cost scale
-	// O(N_jobs × batch). Under a 100-job workload that serialised the
-	// dispatcher into a ~70× backlog. Default 32. Override via
-	// REDIS_DISPATCH_PARALLEL_JOBS.
+	// ParallelJobs caps per-tick dispatch goroutines. Serial dispatch
+	// scaled O(N_jobs × batch) and produced a ~70× backlog under 100
+	// jobs. Default 32; override via REDIS_DISPATCH_PARALLEL_JOBS.
 	ParallelJobs int
 
-	// StuckThreshold is how long a single job may sit blocked on the
-	// CanDispatch capacity gate (with due work in its ZSET) before the
-	// dispatcher fires a self-heal counter reconcile. Default 30s,
-	// overridable via REDIS_DISPATCH_STUCK_THRESHOLD_S. Self-heal is
-	// rate-limited to one trigger per 2× this value per job so a
-	// genuinely-at-capacity job can't burn Redis with reconciles.
+	// StuckThreshold gates the self-heal reconcile. Default 30s, env
+	// REDIS_DISPATCH_STUCK_THRESHOLD_S; rate-limited to one trigger
+	// per 2× threshold per job.
 	StuckThreshold time.Duration
 }
 
-// DefaultDispatcherOpts returns production defaults, optionally
-// overridden by environment variables.
 func DefaultDispatcherOpts() DispatcherOpts {
 	interval := time.Duration(envInt("REDIS_DISPATCH_INTERVAL_MS", 100)) * time.Millisecond
 	batch := int64(envInt("REDIS_DISPATCH_BATCH_SIZE", 50))
@@ -54,34 +41,25 @@ func DefaultDispatcherOpts() DispatcherOpts {
 	}
 }
 
-// JobLister returns the set of active job IDs the dispatcher should
-// scan. Implementations typically query Postgres.
 type JobLister interface {
 	ActiveJobIDs(ctx context.Context) ([]string, error)
 }
 
-// ConcurrencyChecker determines whether a job has capacity for more
-// in-flight tasks.
 type ConcurrencyChecker interface {
-	// CanDispatch returns true if the job has room for another task.
 	CanDispatch(ctx context.Context, jobID string) (bool, error)
 }
 
-// Reconciler triggers an immediate per-job counter reconciliation
-// from the authoritative Redis PEL. The dispatcher invokes this as a
-// last-resort self-heal when CanDispatch keeps refusing dispatch
-// despite due work sitting in the ZSET — the symptom of a drifted
-// `hover:running` counter pinning a job at its concurrency cap.
-//
-// Implementations must be safe for concurrent invocation and should
-// debounce a flood of triggers down to at most one in-flight
-// reconcile (the StreamWorkerPool implementation uses a TryLock).
+// Reconciler is the dispatcher's self-heal target when CanDispatch
+// keeps refusing dispatch despite due ZSET work — the signature of
+// `hover:running` counter drift. Implementations must be safe for
+// concurrent invocation and should debounce a flood of triggers to
+// at most one in-flight reconcile.
 type Reconciler interface {
 	TriggerReconcile(ctx context.Context)
 }
 
-// Dispatcher is a long-running goroutine that moves due items from
-// per-job Redis ZSETs into per-job Redis Streams.
+// Dispatcher moves due items from per-job Redis ZSETs into per-job
+// Redis Streams.
 type Dispatcher struct {
 	scheduler *Scheduler
 	pacer     *DomainPacer
@@ -91,67 +69,28 @@ type Dispatcher struct {
 	concCheck ConcurrencyChecker
 	opts      DispatcherOpts
 
-	// groupEnsured remembers per-job consumer groups we have already
-	// created. XGroupCreateMkStream is idempotent but still a Redis
-	// round-trip; calling it once per dispatched task was the second
-	// biggest RTT cost in the serial tick. The map is never cleared
-	// intentionally — the keyspace is bounded by the number of jobs the
-	// worker has ever dispatched for, which is small in practice and
-	// released when the worker process exits.
+	// groupEnsured memoises XGroupCreateMkStream calls. The call is
+	// idempotent but still a full Redis RTT; per-task invocation was
+	// the second-largest cost in the serial dispatcher. Never cleared:
+	// keyspace is bounded by jobs-ever-dispatched-for in this process.
 	groupEnsured sync.Map
 
-	// firstDispatched remembers jobs we have already fired the
-	// onFirstDispatch hook for in this dispatcher's lifetime. Resets on
-	// process restart, but the hook implementation must be idempotent
-	// (typical: a guarded UPDATE that no-ops once status moves past
-	// pending) so re-firing on restart costs at most one cheap UPDATE.
-	//
-	// Only populated on hook success — a transient hook failure leaves
-	// the entry absent so the next dispatch tick retries. Without that,
-	// one bad UPDATE could leave a job stranded in pending for the
-	// dispatcher's lifetime.
+	// firstDispatched is populated on hook success only — a transient
+	// hook failure leaves the entry absent so the next tick retries.
+	// Memoising before the call would strand the job in pending for
+	// the dispatcher's lifetime if that one call failed.
 	firstDispatched sync.Map
 
-	// onFirstDispatch is invoked the first time dispatchJob successfully
-	// publishes a task for a given jobID. Optional: nil disables the
-	// hook. Used by the worker to flip status pending → running so the
-	// status pill reflects reality without requiring every potential
-	// entry point to coordinate the transition.
-	//
-	// Returning a non-nil error signals a transient failure: the
-	// dispatcher does NOT mark the job as "first-dispatched", so the
-	// next dispatch tick will retry. Implementations should make this
-	// idempotent — the hook may fire repeatedly for the same job until
-	// it succeeds.
 	onFirstDispatch func(ctx context.Context, jobID string) error
+	reconciler      Reconciler
 
-	// reconciler, when non-nil, is invoked as a self-heal when a job
-	// has been blocked on the capacity gate for longer than
-	// opts.StuckThreshold while its ZSET still has due work. Optional:
-	// nil disables the self-heal path entirely (covers tests and any
-	// embedded scenarios where the worker pool isn't wired in).
-	reconciler Reconciler
-
-	// stuckMu guards stuckSince and lastTrigger. Held only for the few
-	// map-mutating ops in maybeTriggerReconcile and clearStuck — the
-	// reconciler call itself runs outside the lock.
-	stuckMu sync.Mutex
-
-	// stuckSince records, per jobID, the timestamp of the first
-	// dispatcher tick where the capacity gate fired with due work in
-	// the ZSET. Cleared the moment that job dispatches successfully or
-	// runs a tick with no due items, so transient at-capacity bursts
-	// (the normal path for a healthy fast job) never trip the heuristic.
+	stuckMu    sync.Mutex
 	stuckSince map[string]time.Time
-
-	// lastTrigger records, per jobID, when we last fired the reconciler
-	// for that job. Persisted across stuck/recover cycles so a job
-	// flapping between stuck and not-stuck can't drive reconcile faster
-	// than the rate-limit window allows.
+	// lastTrigger persists across clearStuck so a flapping job can't
+	// drive reconcile faster than the rate-limit window.
 	lastTrigger map[string]time.Time
 }
 
-// NewDispatcher creates a Dispatcher.
 func NewDispatcher(
 	client *Client,
 	scheduler *Scheduler,
@@ -172,26 +111,20 @@ func NewDispatcher(
 	}
 }
 
-// SetOnFirstDispatch installs a callback fired the first time
-// dispatchJob successfully publishes a task for a given jobID in this
-// dispatcher's lifetime. The hook must be idempotent — see
-// firstDispatched on Dispatcher. Returning a non-nil error from the
-// hook causes the dispatcher to retry on the next dispatch.
+// SetOnFirstDispatch installs an idempotent hook fired the first time
+// dispatchJob publishes a task for a jobID. A non-nil return triggers
+// retry on the next dispatch.
 func (d *Dispatcher) SetOnFirstDispatch(fn func(ctx context.Context, jobID string) error) {
 	d.onFirstDispatch = fn
 }
 
-// SetReconciler installs the self-heal target invoked when a single
-// job sits blocked on the CanDispatch capacity gate for longer than
-// opts.StuckThreshold while its ZSET still has due work. Pass nil to
-// disable the self-heal path; nil is the default and is tolerated
-// throughout the dispatcher hot path.
+// SetReconciler installs the self-heal target. Nil disables self-heal
+// and is tolerated throughout the hot path.
 func (d *Dispatcher) SetReconciler(r Reconciler) {
 	d.reconciler = r
 }
 
-// Run is the dispatcher's main loop. It blocks until ctx is
-// cancelled. Start it as a goroutine.
+// Run blocks until ctx is cancelled. Start as a goroutine.
 func (d *Dispatcher) Run(ctx context.Context) {
 	ticker := time.NewTicker(d.opts.ScanInterval)
 	defer ticker.Stop()
@@ -221,11 +154,6 @@ func (d *Dispatcher) tick(ctx context.Context) {
 
 	now := time.Now()
 
-	// Parallelise per-job dispatch. Each job operates on its own ZSET,
-	// Stream, and counter, and dispatchJob's only cross-job dependency
-	// is the shared Redis client (goroutine-safe) and pacer (likewise).
-	// A bounded semaphore keeps the fan-out predictable under 100+ jobs
-	// without opening the pool to unbounded goroutine growth.
 	concurrency := d.opts.ParallelJobs
 	if concurrency < 1 {
 		concurrency = 1
@@ -247,8 +175,7 @@ loop:
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
-			// `break` inside a select only exits the select; use a
-			// label so we actually stop fanning out new work.
+			// Labelled break — `break` inside select exits the select only.
 			break loop
 		}
 		wg.Add(1)
@@ -275,12 +202,6 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		return 0, err
 	}
 	if len(entries) == 0 {
-		// No due work this tick — whatever stuck state we'd been
-		// tracking is no longer load-bearing. Clearing here matters
-		// when a job's tasks all reschedule into the future: we must
-		// not carry the old stuck-since timestamp into the next time
-		// items come due, otherwise the heuristic would treat the
-		// wall-clock gap as continuous capacity-blocked time.
 		d.clearStuck(jobID)
 		return 0, nil
 	}
@@ -289,7 +210,6 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 	for i := range entries {
 		entry := &entries[i]
 
-		// Check job-level concurrency.
 		canDispatch, err := d.concCheck.CanDispatch(ctx, jobID)
 		if err != nil {
 			brokerLog.Warn("concurrency check failed, skipping batch", "error", err, "job_id", jobID)
@@ -297,28 +217,14 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			break
 		}
 		if !canDispatch {
-			// Job at capacity — remaining items stay in ZSET. We're
-			// inside the entries loop, so we already know there is at
-			// least one due task right now: that's the precondition
-			// for the self-heal heuristic. The stuck timer is reset
-			// the next time we observe canDispatch=true (below), so
-			// the heuristic only fires when the gate stays shut for
-			// opts.StuckThreshold of wall-clock time.
 			observability.RecordBrokerDispatch(ctx, jobID, "capacity")
 			d.maybeTriggerReconcile(ctx, jobID, now)
 			break
 		}
-
-		// canDispatch=true falsifies the "counter pinned at cap"
-		// hypothesis, so any stuck timer accumulated from a previous
-		// tick is no longer load-bearing. Clear here rather than only
-		// on a successful dispatch: a paced or transient-publish-error
-		// path can land us on canDispatch=true without dispatched++,
-		// and we must not let those iterations carry forward stale
-		// stuck state into a later capacity-blocked window.
+		// canDispatch=true falsifies the stuck hypothesis even if the
+		// dispatch then loses to pacer pushback or a publish error.
 		d.clearStuck(jobID)
 
-		// Check domain pacing.
 		domain := entry.Host
 		paceResult, err := d.pacer.TryAcquire(ctx, domain)
 		if err != nil {
@@ -327,13 +233,10 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			continue
 		}
 		if !paceResult.Acquired {
-			// Domain in delay window — reschedule with estimated wait.
-			// Redis-only: pacer push-back is ephemeral (hundreds of ms to
-			// a few seconds). Doing a synchronous Postgres UPDATE per
-			// paced op serialised the dispatcher and collapsed throughput
-			// on 2026-04-22 when "paced" dominated at 100 ops/s. If Redis
-			// loses state the OutboxSweeper rehydrates from tasks.run_at —
-			// a missed push-back just means one extra TryAcquire round-trip.
+			// Redis-only reschedule: a synchronous Postgres UPDATE per
+			// paced op collapsed throughput on 2026-04-22 at 100 ops/s.
+			// Pacer push-back is ephemeral; OutboxSweeper rehydrates
+			// from tasks.run_at if Redis loses state.
 			newRunAt := now.Add(paceResult.RetryAfter)
 			if err := d.scheduler.RescheduleZSet(ctx, *entry, newRunAt); err != nil {
 				brokerLog.Warn("reschedule failed", "error", err, "task_id", entry.TaskID)
@@ -343,34 +246,21 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			continue
 		}
 
-		// Publish to stream and remove from ZSET atomically via pipeline.
-		// On failure, the TryAcquire gate is left to expire on its own; we
-		// must not call Release here because IncrementInflight has not run
-		// yet, so Release would decrement a counter that was never incremented.
+		// On failure the TryAcquire gate expires on its own; do NOT
+		// call Release because IncrementInflight has not run yet.
 		if err := d.publishAndRemove(ctx, entry); err != nil {
 			brokerLog.Warn("stream publish+remove failed", "error", err, "task_id", entry.TaskID)
 			observability.RecordBrokerDispatch(ctx, jobID, "err")
 			continue
 		}
 
-		// Increment running counter.
 		if _, err := d.counters.Increment(ctx, jobID); err != nil {
 			brokerLog.Warn("counter increment failed", "error", err, "job_id", jobID)
 		}
-
-		// Increment domain inflight counter.
 		if err := d.pacer.IncrementInflight(ctx, domain, jobID); err != nil {
 			brokerLog.Warn("inflight increment failed", "error", err, "domain", domain)
 		}
 
-		// First successful publish for this job in this dispatcher's
-		// lifetime → flip status pending → running. We Load before
-		// calling the hook and Store only after success: a transient
-		// failure must not be memoised, otherwise one bad UPDATE could
-		// leave a job stranded in pending for the dispatcher's whole
-		// lifetime. Worst case under load is a few duplicate UPDATEs
-		// while the database recovers; the hook is guarded so the
-		// extra UPDATEs are no-ops once a peer wins the race.
 		if d.onFirstDispatch != nil {
 			if _, seen := d.firstDispatched.Load(jobID); !seen {
 				if err := d.onFirstDispatch(ctx, jobID); err != nil {
@@ -389,26 +279,16 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 	return dispatched, nil
 }
 
-// maybeTriggerReconcile updates the per-job stuck timestamp and, if
-// the job has been stuck for opts.StuckThreshold and we're outside
-// the per-job rate-limit window, invokes the installed Reconciler.
-//
-// This is the dispatcher's only self-heal lever: PR #362 closed the
-// known sources of `hover:running` drift, but the cost of an unknown
-// future drift class is a job that throttles to ~0% throughput while
-// peers run at full speed. Triggering an immediate reconcile from
-// the authoritative PEL re-aligns the counter with reality without
-// waiting up to 120s for the periodic reconcileLoop.
+// maybeTriggerReconcile fires the Reconciler when a job has been
+// stuck for StuckThreshold, rate-limited to one trigger per 2×
+// threshold. Closes the gap PR #362 left for unknown future
+// `hover:running` drift classes.
 func (d *Dispatcher) maybeTriggerReconcile(ctx context.Context, jobID string, now time.Time) {
 	if d.reconciler == nil {
 		return
 	}
-
 	threshold := d.opts.StuckThreshold
 	if threshold <= 0 {
-		// Self-heal explicitly disabled by configuration. Don't even
-		// record a stuck timestamp — keeps the maps tidy when the
-		// feature is off.
 		return
 	}
 
@@ -430,13 +310,7 @@ func (d *Dispatcher) maybeTriggerReconcile(ctx context.Context, jobID string, no
 		d.stuckMu.Unlock()
 		return
 	}
-
-	rateLimit := 2 * threshold
-	if last, seen := d.lastTrigger[jobID]; seen && now.Sub(last) < rateLimit {
-		// Still stuck, but we already nudged the reconciler recently.
-		// Letting the next nudge wait until the rate-limit window
-		// expires keeps the cost predictable for a job that's just
-		// genuinely at its concurrency cap.
+	if last, seen := d.lastTrigger[jobID]; seen && now.Sub(last) < 2*threshold {
 		d.stuckMu.Unlock()
 		return
 	}
@@ -448,9 +322,6 @@ func (d *Dispatcher) maybeTriggerReconcile(ctx context.Context, jobID string, no
 	d.reconciler.TriggerReconcile(ctx)
 }
 
-// clearStuck removes the per-job stuck timestamp. lastTrigger is
-// intentionally preserved so the rate limit survives a brief
-// recovery window.
 func (d *Dispatcher) clearStuck(jobID string) {
 	d.stuckMu.Lock()
 	defer d.stuckMu.Unlock()
@@ -459,17 +330,10 @@ func (d *Dispatcher) clearStuck(jobID string) {
 	}
 }
 
-// publishAndRemove atomically XADDs the task to the job's stream
-// and ZREMs it from the schedule ZSET in a single Redis pipeline,
-// preventing double-dispatch if either operation were to fail alone.
-//
-// Stream selection is driven by entry.TaskType:
-//   - "crawl" (default) → StreamKey(jobID): the legacy crawl stream
-//     consumed by hover-worker.
-//   - "lighthouse"      → LighthouseStreamKey(jobID): consumed by the
-//     hover-analysis service. The payload carries lighthouse_run_id so
-//     the consumer can update the matching lighthouse_runs row without
-//     a Postgres lookup.
+// publishAndRemove atomically XADDs the task and ZREMs the ZSET entry
+// in a single pipeline so a partial failure can't double-dispatch.
+// Routes to StreamKey for "crawl" or LighthouseStreamKey for
+// "lighthouse"; an unknown task_type is rejected.
 func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry) error {
 	taskType := entry.TaskType
 	if taskType == "" {
@@ -485,26 +349,18 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 		streamKey = StreamKey(entry.JobID)
 		groupName = ConsumerGroup(entry.JobID)
 	case "lighthouse":
-		// A lighthouse outbox row without lighthouse_run_id is a
-		// poison message — the analysis consumer reads run_id straight
-		// off the stream payload and has no way to fall back to the
-		// DB. Reject early so the bad row stays in the outbox and gets
-		// surfaced via the existing dead-letter path rather than
-		// silently churning through the stream.
+		// The analysis consumer reads run_id from the payload with no
+		// DB fallback; reject so the row routes to dead-letter.
 		if entry.LighthouseRunID <= 0 {
 			return fmt.Errorf("broker: lighthouse task %s missing lighthouse_run_id", entry.TaskID)
 		}
 		streamKey = LighthouseStreamKey(entry.JobID)
 		groupName = LighthouseConsumerGroup(entry.JobID)
 	default:
-		// Unknown task_type means a producer drift the dispatcher
-		// can't safely route. Don't silently fall through to the crawl
-		// stream — that would put lighthouse-shaped work in front of
-		// crawl workers and produce hard-to-debug runtime parse errors.
+		// Fail fast rather than silently routing to the crawl stream.
 		return fmt.Errorf("broker: unknown task_type %q for task %s", taskType, entry.TaskID)
 	}
 
-	// Ensure consumer group exists (idempotent).
 	if err := d.ensureConsumerGroup(ctx, streamKey, groupName); err != nil {
 		return fmt.Errorf("broker: ensure consumer group %s: %w", groupName, err)
 	}
@@ -522,8 +378,6 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 		"task_type":   taskType,
 	}
 	if taskType == "lighthouse" {
-		// Already validated non-zero above; emit unconditionally so the
-		// consumer never sees a lighthouse message without it.
 		values["lighthouse_run_id"] = strconv.FormatInt(entry.LighthouseRunID, 10)
 	}
 
@@ -538,13 +392,9 @@ func (d *Dispatcher) publishAndRemove(ctx context.Context, entry *ScheduleEntry)
 	return err
 }
 
-// ensureConsumerGroup creates the consumer group if it doesn't exist.
-// Returns nil if the group already exists or was created successfully.
-//
-// Results are memoised per group name so the hot per-task path short-circuits
-// after the first successful create. XGroupCreateMkStream is idempotent but
-// even a BUSYGROUP reply still costs a full Redis RTT — under the serial
-// dispatcher that was the second largest per-task cost after the pacer.
+// ensureConsumerGroup creates the group idempotently and memoises the
+// result. XGroupCreateMkStream is a full RTT even on BUSYGROUP — was
+// the second largest per-task cost in the serial dispatcher.
 func (d *Dispatcher) ensureConsumerGroup(ctx context.Context, streamKey, groupName string) error {
 	if _, ok := d.groupEnsured.Load(groupName); ok {
 		return nil

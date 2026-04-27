@@ -17,29 +17,13 @@ import (
 	"github.com/Harvey-AU/hover/internal/observability"
 )
 
-// ErrMemoryShed is returned by LocalRunner.Run when free memory is
-// below LIGHTHOUSE_MEMORY_SHED_THRESHOLD_MB. The consumer treats this
-// like a shutdown cancellation: leave the lighthouse_runs row in
-// 'running' so XAUTOCLAIM redelivers it once memory recovers, and skip
-// the XAck so the Redis stream entry survives.
+// ErrMemoryShed signals the consumer to leave the row in 'running' and skip XAck so XAUTOCLAIM redelivers once memory recovers.
 var ErrMemoryShed = errors.New("lighthouse runner shed audit due to low memory")
 
-// stderrTailBytes caps the bytes we keep from a failing Chromium run.
-// 16 KiB is enough to capture the trailing stack/protocol-error context
-// without bloating lighthouse_runs.error_message; the column is plain
-// TEXT and would otherwise grow unbounded.
+// 16 KiB keeps the trailing stack/protocol-error context without bloating the TEXT error_message column.
 const stderrTailBytes = 16 * 1024
 
-// transientStderrSubstrings flag a Chromium failure as worth one retry
-// rather than a permanent fail. Each entry pairs a stderr substring
-// with a short low-cardinality reason tag emitted on the
-// bee.lighthouse.run_retries_total metric so a rising retry rate can
-// be split by failure mode in Grafana.
-//
-// These match the patterns Lighthouse emits when its CDP attach to
-// Chromium drops or the renderer crashes — both well-known transient
-// failure modes that recover on a fresh browser. Anything outside this
-// list is a hard failure.
+// Stderr substrings recognised as transient Chromium failures worth one retry; the reason tag feeds the run_retries_total metric.
 var transientStderrSubstrings = []struct {
 	pattern string
 	reason  string
@@ -51,9 +35,6 @@ var transientStderrSubstrings = []struct {
 	{"Target closed", "target_closed"},
 }
 
-// LocalRunnerConfig captures the bits the local runner needs from
-// the analysis service config. Kept separate from cmd/analysis so the
-// runner is testable without the whole consumer scaffolding.
 type LocalRunnerConfig struct {
 	LighthouseBin string
 	ChromiumBin   string
@@ -63,22 +44,12 @@ type LocalRunnerConfig struct {
 	ProfilePreset Profile // defaults to ProfileMobile if empty
 }
 
-// LocalRunner shells out to the bundled lighthouse CLI to perform real
-// audits. Implements the Runner interface. Phase 3's only Runner
-// alternative to StubRunner.
 type LocalRunner struct {
-	cfg LocalRunnerConfig
-	// readMemAvailableMB and now are pluggable for tests so we can
-	// exercise the memory-shed and timeout paths without wrangling
-	// /proc/meminfo or wall-clock time.
+	cfg                LocalRunnerConfig
 	readMemAvailableMB func() (int, error)
 	now                func() time.Time
 }
 
-// NewLocalRunner constructs a LocalRunner with the supplied config.
-// Returns an error if the config is missing pieces the runner needs to
-// operate (binary paths, bucket, archive provider) — better to fail at
-// boot than to discover the missing config on the first audit.
 func NewLocalRunner(cfg LocalRunnerConfig) (*LocalRunner, error) {
 	if strings.TrimSpace(cfg.LighthouseBin) == "" {
 		return nil, errors.New("local runner: LighthouseBin is required")
@@ -108,12 +79,7 @@ func NewLocalRunner(cfg LocalRunnerConfig) (*LocalRunner, error) {
 	}, nil
 }
 
-// validateExecutable confirms a binary path resolves to an existing,
-// executable, non-directory file. Catching this at boot turns a
-// Dockerfile/toml drift (binary moved, wrong path, accidentally a
-// directory) into a loud fatal during analysis-app startup rather than
-// an ENOENT on the first audit — by which point the lighthouse_runs row
-// already moved to 'running' and a redelivery storm is in motion.
+// Fail at boot rather than ENOENT on the first audit, which would already have moved the row to 'running' and triggered a redelivery storm.
 func validateExecutable(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -128,21 +94,11 @@ func validateExecutable(path string) error {
 	return nil
 }
 
-// Run executes a single Lighthouse audit, parses the JSON result,
-// uploads the gzipped raw report to R2, and returns the populated
-// AuditResult. Honours req.Timeout via context wrapping; the caller's
-// XAck/Fail flow on the consumer side decides what to do with errors.
-//
-// Retry policy: at most one retry on a transient Chromium failure,
-// recognised via stderr substring match. After that, the most recent
-// error (with stderr tail) is propagated up.
+// At most one retry on a transient Chromium failure detected via stderr substring match.
 func (l *LocalRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, error) {
 	if l.cfg.MemoryShedMB > 0 {
 		avail, err := l.readMemAvailableMB()
 		if err != nil {
-			// /proc/meminfo missing is a packaging bug; log via the
-			// shared lighthouse logger and continue rather than
-			// blocking every audit on a transient read.
 			lighthouseLog.Warn("memory shed check failed; proceeding",
 				"error", err, "run_id", req.RunID, "job_id", req.JobID,
 			)
@@ -191,21 +147,13 @@ func (l *LocalRunner) Run(ctx context.Context, req AuditRequest) (AuditResult, e
 	return result, nil
 }
 
-// runOnce performs a single shellout to the lighthouse CLI, capturing
-// stdout (the JSON report) and a capped tail of stderr. On non-zero
-// exit it returns an error wrapping the stderr tail so callers can
-// surface it into lighthouse_runs.error_message.
 func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, error) {
 	profile := req.Profile
 	if profile == "" {
 		profile = l.cfg.ProfilePreset
 	}
 
-	// Lighthouse 12.x's --preset flag only accepts 'desktop',
-	// 'experimental', or 'perf'. Mobile is the implicit default and
-	// passing --preset=mobile fails the CLI's argument validation
-	// before Chromium even launches. So: pass --preset=desktop only
-	// for the desktop profile; otherwise omit the flag entirely.
+	// Lighthouse 12.x --preset accepts only 'desktop', 'experimental', or 'perf'; mobile is implicit and --preset=mobile fails CLI validation.
 	args := []string{
 		"--output=json",
 		"--quiet",
@@ -217,19 +165,11 @@ func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, er
 	}
 	args = append(args, req.URL)
 
-	// #nosec G204 -- LighthouseBin is sourced from trusted env config
-	// baked into the analysis image at build time, not user input. The
-	// only positional arg is req.URL which Lighthouse itself validates;
-	// every flag is hard-coded above.
+	// #nosec G204 -- LighthouseBin is trusted env config; req.URL is validated by Lighthouse and all flags are hard-coded.
 	cmd := exec.CommandContext(ctx, l.cfg.LighthouseBin, args...)
-	// Setpgid puts Chromium and any helper renderers into their own
-	// process group so a context-cancelled Run can kill the whole tree
-	// with a single negative-pid signal. Without this a dying parent
-	// orphans renderers that keep eating memory.
+	// Own process group so a cancelled Run can SIGKILL renderers via negative-pid; without this they orphan and eat memory.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// CHROMIUM_BIN tells lighthouse which binary to launch. Lighthouse
-	// otherwise tries to discover Chrome via $PATH and platform-specific
-	// fallbacks, which inside a slim container often means failure.
+	// CHROME_PATH avoids Lighthouse's $PATH discovery, which fails in slim containers.
 	cmd.Env = append(os.Environ(),
 		"CHROME_PATH="+l.cfg.ChromiumBin,
 	)
@@ -249,9 +189,7 @@ func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, er
 
 	select {
 	case <-ctx.Done():
-		// Kill the whole process group; ignore errors because the
-		// process may already have exited between the select fire and
-		// the syscall.
+		// Process may already have exited between select fire and syscall.
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		<-waitDone
 		return nil, ctx.Err()
@@ -266,9 +204,6 @@ func (l *LocalRunner) runOnce(ctx context.Context, req AuditRequest) ([]byte, er
 	return stdout.Bytes(), nil
 }
 
-// uploadReport gzips the raw lighthouse JSON and uploads it to the
-// configured cold store, returning the object key written to
-// lighthouse_runs.report_key.
 func (l *LocalRunner) uploadReport(ctx context.Context, req AuditRequest, raw []byte) (string, error) {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -301,14 +236,7 @@ func (l *LocalRunner) uploadReport(ctx context.Context, req AuditRequest, raw []
 	return key, nil
 }
 
-// transientRetryReason decides whether a runOnce failure is worth one
-// retry and, if so, returns the short reason tag attached to the
-// retries metric. Empty return means "not transient — fail fast".
-//
-// Context cancellation/deadline are never retried — those are caller
-// signals. Everything else is checked against the stderr substring
-// allowlist so Chromium's well-known transient crashes get a second
-// shot but a missing-binary or argument error fails immediately.
+// Empty return means fail fast; context cancel/deadline are never retried since they are caller signals.
 func transientRetryReason(err error) string {
 	if err == nil {
 		return ""
@@ -325,11 +253,7 @@ func transientRetryReason(err error) string {
 	return ""
 }
 
-// tailBuffer keeps only the last `cap` bytes written to it. Streaming
-// long Chromium stderr through a regular bytes.Buffer would blow up
-// memory on a wedged audit (Lighthouse's debug output runs to
-// megabytes); a ring buffer caps the cost while preserving the most
-// recent context, which is what diagnostics need.
+// Ring buffer keeping only the last `cap` bytes; a wedged Lighthouse run can emit megabytes of debug stderr.
 type tailBuffer struct {
 	cap  int
 	buf  []byte
@@ -344,7 +268,6 @@ func newTailBuffer(cap int) *tailBuffer {
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	if n >= t.cap {
-		// Single write larger than cap — keep only the last cap bytes.
 		t.buf = append(t.buf[:0], p[n-t.cap:]...)
 		t.full = true
 		t.pos = 0
@@ -358,7 +281,6 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 		}
 		return n, nil
 	}
-	// At cap — wrap.
 	if !t.full {
 		t.buf = append(t.buf, make([]byte, t.cap-len(t.buf))...)
 		t.full = true
@@ -371,7 +293,6 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// tail returns the buffer's contents in chronological order.
 func (t *tailBuffer) tail() []byte {
 	if !t.full {
 		out := make([]byte, len(t.buf))
@@ -384,8 +305,7 @@ func (t *tailBuffer) tail() []byte {
 	return out
 }
 
-// truncateForLog keeps stderr error text small enough to log without
-// blowing the structured-log line size limit on Grafana.
+// Caps stderr text to fit Grafana's structured-log line size limit.
 func truncateForLog(b []byte) string {
 	const max = 2048
 	if len(b) <= max {
@@ -394,19 +314,8 @@ func truncateForLog(b []byte) string {
 	return "..." + string(b[len(b)-max:])
 }
 
-// sanitiseRunnerStderr strips the audited URL's query/fragment from a
-// stderr tail before it lands in lighthouse_runs.error_message. The
-// startup log already calls SanitiseAuditURL on req.URL, but Lighthouse
-// (and Chromium error paths) routinely echo the raw URL into stderr,
-// which would otherwise leak session tokens or signed-link tokens
-// through the failure path. Strips only the exact request URL so the
-// rest of the stderr context (stack frames, protocol-error details)
-// stays usable for diagnostics.
-//
-// Order matters: redact the full tail first, then truncate. If we
-// truncated first, a URL that straddled the 2 KiB cut-off would no
-// longer match the rawURL string and the partial query/fragment would
-// leak through.
+// Lighthouse and Chromium echo the raw URL into stderr, which can leak session/signed-link tokens via error_message.
+// Order matters: redact before truncating, otherwise a URL straddling the 2 KiB cut-off would no longer match and leak partial query/fragment.
 func sanitiseRunnerStderr(rawURL string, tail []byte) string {
 	msg := string(tail)
 	if rawURL != "" {
@@ -415,10 +324,7 @@ func sanitiseRunnerStderr(rawURL string, tail []byte) string {
 	return truncateForLog([]byte(msg))
 }
 
-// defaultReadMemAvailableMB reads /proc/meminfo's MemAvailable line and
-// returns the available memory in megabytes. On non-Linux platforms or
-// when the file is unreadable it returns an error so the caller can
-// log and continue rather than treating that as zero free memory.
+// Returns an error rather than zero on non-Linux or unreadable /proc/meminfo so the caller can log-and-continue.
 func defaultReadMemAvailableMB() (int, error) {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -428,7 +334,6 @@ func defaultReadMemAvailableMB() (int, error) {
 		if !strings.HasPrefix(line, "MemAvailable:") {
 			continue
 		}
-		// Format: "MemAvailable:    1234567 kB"
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			return 0, fmt.Errorf("malformed MemAvailable line: %q", line)
@@ -442,7 +347,4 @@ func defaultReadMemAvailableMB() (int, error) {
 	return 0, errors.New("MemAvailable not found in /proc/meminfo")
 }
 
-// Compile-time interface check: LocalRunner satisfies Runner. Without
-// this an accidental signature drift on the interface side would only
-// surface at the consumer call site.
 var _ Runner = (*LocalRunner)(nil)

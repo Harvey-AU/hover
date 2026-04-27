@@ -11,47 +11,24 @@ import (
 	"github.com/lib/pq"
 )
 
-// DefaultOutboxMaxAttempts is the retry cap before a row is dead-lettered.
-// Chosen so the worst-case age of a row stuck in backoff is bounded by
-// MaxAttempts × MaxBackoff — at the defaults, 10 × 5 min = 50 min, which
-// caps the oldest-age gauge even if a subset of rows can never be dispatched.
+// DefaultOutboxMaxAttempts caps the worst-case stuck-row age at
+// MaxAttempts × MaxBackoff (10 × 5 min = 50 min at defaults).
 const DefaultOutboxMaxAttempts = 10
 
-// OutboxSweeperOpts configures a Sweeper.
 type OutboxSweeperOpts struct {
-	// Interval between sweep ticks. Default: 500ms.
-	Interval time.Duration
-	// BatchSize caps how many rows are claimed per tick. Default: 200.
-	BatchSize int
-	// BaseBackoff is the first retry delay on ScheduleBatch failure.
-	// Default: 2s. Each subsequent attempt doubles up to MaxBackoff.
+	Interval    time.Duration
+	BatchSize   int
 	BaseBackoff time.Duration
-	// MaxBackoff caps the retry delay. Default: 5 minutes.
-	MaxBackoff time.Duration
-	// MaxAttempts is the retry cap before a row is moved to
-	// task_outbox_dead. Default: 10.
+	MaxBackoff  time.Duration
 	MaxAttempts int
-	// StatementTimeout bounds each sweep tick's total DB work. Guards
-	// against a pathological sweeper tx holding locks indefinitely. 0
-	// leaves the DB's default in place. Default: 5s.
+	// StatementTimeout bounds tick DB work; guards against a wedged
+	// sweeper tx holding locks indefinitely. 0 keeps DB default.
 	StatementTimeout time.Duration
 }
 
-// DefaultOutboxSweeperOpts returns sensible production defaults.
-//
-// The sweep interval was lowered from 5s to 500ms because the outbox
-// sits on the hot path between newly-authored tasks and the Redis
-// ZSET that dispatchers poll. At 5s, each just-completed task waited
-// up to 5s for its newly-discovered siblings to reach a worker, which
-// dominated end-to-end throughput on small jobs. The sweep is an
-// index-only SKIP LOCKED query; running it 10× more often is cheap.
-//
-// StatementTimeout was raised from 5s to 15s after HOVER-K3: when the
-// shared queue pool saturates under bulk-lane load, pool acquire alone
-// can eat several seconds of the tick budget, leaving sub-second
-// headroom for the actual SELECT/UPDATE work and surfacing as
-// "bump attempts: context deadline exceeded". 15s is comfortably
-// shorter than session/idle timeouts but tolerates pool wait spikes.
+// DefaultOutboxSweeperOpts: 500ms interval (5s starved end-to-end
+// latency on small jobs); 15s StatementTimeout (HOVER-K3 — pool
+// acquire ate several seconds of tick budget under bulk-lane load).
 func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 	return OutboxSweeperOpts{
 		Interval:         500 * time.Millisecond,
@@ -63,19 +40,15 @@ func DefaultOutboxSweeperOpts() OutboxSweeperOpts {
 	}
 }
 
-// Sweeper polls task_outbox for due rows and pushes them into Redis
-// via Scheduler.ScheduleBatch. Deletes rows on success; bumps attempts
-// and run_at on failure.
-//
-// Safe to run multiple replicas: each claim tx uses FOR UPDATE SKIP
-// LOCKED so replicas partition the due rows rather than contending.
+// Sweeper drains task_outbox into Redis via Scheduler.ScheduleBatch.
+// Multi-replica safe: FOR UPDATE SKIP LOCKED partitions due rows
+// across sweepers.
 type Sweeper struct {
 	db        *sql.DB
 	scheduler *Scheduler
 	opts      OutboxSweeperOpts
 }
 
-// NewOutboxSweeper constructs a Sweeper.
 func NewOutboxSweeper(db *sql.DB, scheduler *Scheduler, opts OutboxSweeperOpts) *Sweeper {
 	if opts.Interval <= 0 {
 		opts.Interval = 500 * time.Millisecond
@@ -95,8 +68,7 @@ func NewOutboxSweeper(db *sql.DB, scheduler *Scheduler, opts OutboxSweeperOpts) 
 	return &Sweeper{db: db, scheduler: scheduler, opts: opts}
 }
 
-// Run drives the sweeper loop until ctx is cancelled. Errors from
-// individual ticks are logged; the loop keeps going.
+// Run drives the sweeper loop until ctx is cancelled.
 func (s *Sweeper) Run(ctx context.Context) {
 	brokerLog.Info("outbox sweeper started",
 		"interval", s.opts.Interval, "batch_size", s.opts.BatchSize)
@@ -117,7 +89,6 @@ func (s *Sweeper) Run(ctx context.Context) {
 	}
 }
 
-// outboxRow mirrors the columns read from task_outbox.
 type outboxRow struct {
 	id              int64
 	taskID          string
@@ -135,15 +106,11 @@ type outboxRow struct {
 	lighthouseRunID sql.NullInt64
 }
 
-// Tick runs a single sweep iteration. Exported for tests so they
-// can deterministically trigger a sweep without waiting for the
-// ticker.
+// Tick runs a single sweep iteration. Exported for tests.
 func (s *Sweeper) Tick(ctx context.Context) error {
-	// Bound the whole tick — DB work and the Redis ScheduleBatch call —
-	// to StatementTimeout. SET LOCAL statement_timeout only fires while a
-	// SQL statement is executing, so if ScheduleBatch wedges on Redis the
-	// row locks would persist; a tx-level context deadline cancels the
-	// transaction and releases the locks instead.
+	// Tx-level context deadline so ScheduleBatch wedging on Redis
+	// can't hold row locks indefinitely (SET LOCAL only fires
+	// during SQL execution).
 	tickCtx := ctx
 	cancel := func() {}
 	if s.opts.StatementTimeout > 0 {
@@ -155,12 +122,9 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("outbox: begin tx: %w", err)
 	}
-	// Rollback is a no-op after successful commit.
 	defer func() { _ = tx.Rollback() }()
 
-	// Belt-and-braces: if the server somehow outlives the client context
-	// (e.g. pgbouncer masking cancellation), the DB-side timeout still
-	// aborts the statement.
+	// Belt-and-braces in case pgbouncer masks the client cancellation.
 	if s.opts.StatementTimeout > 0 {
 		if _, err := tx.ExecContext(tickCtx,
 			fmt.Sprintf(`SET LOCAL statement_timeout = %d`,
@@ -203,7 +167,6 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	}
 
 	if len(claimed) == 0 {
-		// Nothing to do — commit the empty tx and wait for the next tick.
 		return tx.Commit()
 	}
 
@@ -211,9 +174,8 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	for _, r := range claimed {
 		taskType := r.taskType
 		if taskType == "" {
-			// Defensive default — column has NOT NULL DEFAULT 'crawl' so
-			// this branch should never fire, but the dispatcher routes on
-			// taskType and an empty string would silently misroute.
+			// Defensive — column has NOT NULL DEFAULT 'crawl' but the
+			// dispatcher routes on this and an empty would misroute.
 			taskType = "crawl"
 		}
 		var lhRunID int64
@@ -238,12 +200,8 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 
 	schedErr := s.scheduler.ScheduleBatch(tickCtx, entries)
 
-	// Partition the claimed rows into successes and failures based on
-	// what ScheduleBatch actually did:
-	//   * nil error:     every ZADD succeeded — delete all rows.
-	//   * *BatchError:   pipeline completed but some entries failed —
-	//                    delete the succeeded ones, bump the failed ones.
-	//   * other error:   pipeline could not execute — treat all as failed.
+	// Partition by ScheduleBatch outcome: nil → delete all, *BatchError
+	// → split, other → all retry.
 	var (
 		succeeded  []int64     // task_outbox.id values to DELETE
 		retry      []outboxRow // rows to bump attempts / run_at
@@ -278,10 +236,8 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		lastErrMsg = schedErr.Error()
 	}
 
-	// Classify retries over the attempts cap as dead-letters. We check
-	// attempts+1 because the retry path is about to perform a +1 bump,
-	// so a row currently at MaxAttempts-1 would reach MaxAttempts this
-	// tick and should be terminal.
+	// attempts+1 because bumpAttempts will +1 this tick — a row at
+	// MaxAttempts-1 reaches MaxAttempts now and is terminal.
 	if len(retry) > 0 && s.opts.MaxAttempts > 0 {
 		kept := retry[:0]
 		for _, r := range retry {
@@ -323,9 +279,6 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 		return fmt.Errorf("outbox: commit: %w", err)
 	}
 
-	// Per-row outcomes are mutually exclusive. A pipeline-level failure
-	// shows up as all rows in `retried` (or `dead_lettered` if capped);
-	// it is not emitted as a separate row-count to avoid double counting.
 	observability.RecordBrokerOutboxSweep(ctx, "dispatched", len(succeeded))
 	observability.RecordBrokerOutboxSweep(ctx, "retried", len(retry))
 	observability.RecordBrokerOutboxSweep(ctx, "dead_lettered", len(deadLetter))
@@ -344,9 +297,8 @@ func (s *Sweeper) Tick(ctx context.Context) error {
 	return nil
 }
 
-// moveToDeadLetter copies the given rows into task_outbox_dead with the
-// failing error message attached, and deletes them from task_outbox. Runs
-// in the caller's tx so the move is atomic with the rest of the sweep.
+// moveToDeadLetter copies rows to task_outbox_dead and deletes from
+// task_outbox in the caller's tx so the move is atomic.
 func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outboxRow, lastErr string) error {
 	if len(rows) == 0 {
 		return nil
@@ -355,10 +307,6 @@ func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outbo
 	for _, r := range rows {
 		ids = append(ids, r.id)
 	}
-	// Copy first, delete second. The SELECT filters by id rather than
-	// re-scanning so rows we never claimed (locked by another replica)
-	// are not touched. task_type and lighthouse_run_id are propagated so
-	// the dead-letter forensic trail keeps the routing context intact.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO task_outbox_dead (
 			original_id, task_id, job_id, page_id, host, path,
@@ -386,9 +334,8 @@ func (s *Sweeper) moveToDeadLetter(ctx context.Context, tx *sql.Tx, rows []outbo
 	return nil
 }
 
-// bumpAttempts advances attempts and run_at for claimed rows after a
-// ScheduleBatch failure. Backoff grows exponentially in BaseBackoff
-// doublings, capped at MaxBackoff.
+// bumpAttempts grows backoff exponentially in BaseBackoff doublings,
+// capped at MaxBackoff.
 func (s *Sweeper) bumpAttempts(ctx context.Context, tx *sql.Tx, ids []int64) error {
 	_, err := tx.ExecContext(ctx, `
 		UPDATE task_outbox
@@ -406,8 +353,6 @@ func (s *Sweeper) bumpAttempts(ctx context.Context, tx *sql.Tx, ids []int64) err
 	return err
 }
 
-// intervalString formats a Go duration as a Postgres interval literal
-// in milliseconds. Postgres accepts "%d milliseconds" in interval casts.
 func intervalString(d time.Duration) string {
 	if d < 0 {
 		d = 0

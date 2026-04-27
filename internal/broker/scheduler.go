@@ -11,18 +11,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ScheduleEntry contains the data needed to schedule a task into
-// the Redis ZSET. The entry is stored as a pipe-delimited member
-// string; the score is the earliest unix-millisecond timestamp at
-// which the task may run.
-//
-// TaskType routes the entry to the correct Redis stream:
-//   - "crawl"      -> StreamKey(jobID)            (default, legacy)
-//   - "lighthouse" -> LighthouseStreamKey(jobID)  (Phase 2+)
-//
-// LighthouseRunID is populated only when TaskType == "lighthouse"; it
-// links the stream message back to the lighthouse_runs row that the
-// analysis app updates on completion.
+// ScheduleEntry is encoded as a pipe-delimited ZSET member with the
+// run-at unix-ms as the score. TaskType routes to a stream:
+// "crawl" → StreamKey, "lighthouse" → LighthouseStreamKey.
 type ScheduleEntry struct {
 	TaskID          string
 	JobID           string
@@ -38,7 +29,6 @@ type ScheduleEntry struct {
 	LighthouseRunID int64
 }
 
-// Member returns the pipe-delimited string stored in the ZSET.
 func (e ScheduleEntry) Member() string {
 	taskType := e.TaskType
 	if taskType == "" {
@@ -52,17 +42,12 @@ func (e ScheduleEntry) Member() string {
 	)
 }
 
-// Score returns the ZSET score (unix milliseconds).
 func (e ScheduleEntry) Score() float64 {
 	return float64(e.RunAt.UnixMilli())
 }
 
-// ParseScheduleEntry reconstructs a ScheduleEntry from its
-// pipe-delimited ZSET member string plus the score.
-//
-// Accepts both the 9-field legacy format (pre-Phase-2) and the 11-field
-// current format. Legacy members are returned with TaskType="crawl" and
-// LighthouseRunID=0 so a rolling deploy can drain the ZSET without a flush.
+// ParseScheduleEntry accepts both the 9-field legacy format and the
+// 11-field current format so a rolling deploy drains without a flush.
 func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
 	parts := strings.SplitN(member, "|", 11)
 	if len(parts) != 9 && len(parts) != 11 {
@@ -113,38 +98,29 @@ func ParseScheduleEntry(member string, score float64) (ScheduleEntry, error) {
 	}, nil
 }
 
-// runAtExecer is the narrow subset of *sql.DB used by Reschedule to
-// mirror the new run-at time into Postgres. It is an interface so tests
-// can inject sqlmock.
+// runAtExecer is *sql.DB's narrow subset used by Reschedule, behind
+// an interface so tests can inject sqlmock.
 type runAtExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// Scheduler manages delayed task scheduling via Redis sorted sets.
-//
-// When constructed via NewSchedulerWithDB, Reschedule dual-writes the new
-// run-at time to the tasks.run_at column so pacing push-backs survive a
-// Redis flush. The db dependency is optional (nil in unit tests that
-// don't exercise the durability path).
+// Scheduler manages delayed scheduling via Redis sorted sets.
+// NewSchedulerWithDB enables dual-write of Reschedule's run-at into
+// tasks.run_at so pacing push-backs survive a Redis flush.
 type Scheduler struct {
 	client *Client
 	db     runAtExecer
 }
 
-// NewScheduler creates a Scheduler without Postgres mirroring. Reschedule
-// writes only to the Redis ZSET. Suitable for tests that don't need the
-// durability path.
+// NewScheduler creates a Scheduler without Postgres mirroring.
 func NewScheduler(client *Client) *Scheduler {
 	return &Scheduler{client: client}
 }
 
-// NewSchedulerWithDB creates a Scheduler that mirrors Reschedule run-at
-// updates to the tasks.run_at column. This is the production constructor.
 func NewSchedulerWithDB(client *Client, db *sql.DB) *Scheduler {
 	return &Scheduler{client: client, db: db}
 }
 
-// Schedule adds a single task to the job's ZSET.
 func (s *Scheduler) Schedule(ctx context.Context, entry ScheduleEntry) error {
 	key := ScheduleKey(entry.JobID)
 	z := redis.Z{Score: entry.Score(), Member: entry.Member()}
@@ -155,15 +131,8 @@ func (s *Scheduler) Schedule(ctx context.Context, entry ScheduleEntry) error {
 	return nil
 }
 
-// BatchError is returned by ScheduleBatch when some (but not all) entries
-// in the pipeline failed. FailedIndices lists the indices within the input
-// slice whose ZADD returned an error; the remaining entries were scheduled
-// successfully. Err is the first per-entry error encountered, for logging.
-//
-// Callers that need to retry only the failures can type-assert via
-// errors.As and use FailedIndices to partition the batch. Callers that treat
-// any failure as fatal can just check err != nil; the error message includes
-// the failure count.
+// BatchError is returned by ScheduleBatch on partial pipeline
+// failure. Type-assert via errors.As to retry FailedIndices.
 type BatchError struct {
 	FailedIndices []int
 	Total         int
@@ -177,14 +146,9 @@ func (e *BatchError) Error() string {
 
 func (e *BatchError) Unwrap() error { return e.Err }
 
-// ScheduleBatch adds multiple tasks to their respective job ZSETs using a
-// pipeline for efficiency.
-//
-// Returns nil on full success. Returns a *BatchError when the pipeline
-// completed but individual ZADDs failed — callers can partition the batch
-// via err.(*BatchError).FailedIndices. Returns a non-BatchError error when
-// the pipeline itself could not execute (e.g. Redis unreachable), in which
-// case callers must treat all entries as failed.
+// ScheduleBatch returns *BatchError when the pipeline ran but
+// individual ZADDs failed; a non-BatchError means the pipeline itself
+// failed and all entries must be treated as failed.
 func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) error {
 	if len(entries) == 0 {
 		return nil
@@ -222,21 +186,13 @@ func (s *Scheduler) ScheduleBatch(ctx context.Context, entries []ScheduleEntry) 
 	return &BatchError{FailedIndices: failed, Total: len(entries), Err: firstErr}
 }
 
-// Remove deletes a task from the job's ZSET (e.g. on cancellation).
 func (s *Scheduler) Remove(ctx context.Context, jobID, member string) error {
 	return s.client.rdb.ZRem(ctx, ScheduleKey(jobID), member).Err()
 }
 
-// ScheduleAndAck atomically enqueues a retry into the job's ZSET and
-// acknowledges (removes) the original stream message in a single
-// Redis MULTI/EXEC. This prevents the two-step race where Schedule
-// succeeds but Ack fails — which would leave the retry queued while
-// the original stays in the PEL, allowing XAUTOCLAIM to redeliver it
-// and causing a duplicate crawl.
-//
-// Redis MULTI/EXEC is atomic on a single server: either both
-// operations apply or neither does. The caller receives a single
-// error to act on.
+// ScheduleAndAck atomically enqueues the retry and ACKs the original
+// in one MULTI/EXEC. Two-step would let XAUTOCLAIM redeliver a stuck
+// PEL entry and double-crawl if Ack failed after Schedule succeeded.
 func (s *Scheduler) ScheduleAndAck(ctx context.Context, entry ScheduleEntry, ackJobID, messageID string) error {
 	schedKey := ScheduleKey(entry.JobID)
 	streamKey := StreamKey(ackJobID)
@@ -259,9 +215,8 @@ func (s *Scheduler) ScheduleAndAck(ctx context.Context, entry ScheduleEntry, ack
 	return nil
 }
 
-// DueItems returns up to limit entries whose score is <= now from the
-// given job's ZSET. Items are returned but not removed — the caller
-// is responsible for ZREM after successful dispatch.
+// DueItems returns up to limit entries with score ≤ now. Items are
+// not removed — caller ZREMs after successful dispatch.
 func (s *Scheduler) DueItems(ctx context.Context, jobID string, now time.Time, limit int64) ([]ScheduleEntry, error) {
 	key := ScheduleKey(jobID)
 	nowMS := fmt.Sprintf("%d", now.UnixMilli())
@@ -300,20 +255,13 @@ func (s *Scheduler) DueItems(ctx context.Context, jobID string, now time.Time, l
 	return entries, nil
 }
 
-// Reschedule updates the score (run-at time) for an existing entry in
-// the ZSET. Used when the dispatcher cannot dispatch yet (domain pacing,
-// concurrency limit) and needs to push the item back.
+// Reschedule pushes an existing entry's run-at later. With *sql.DB
+// configured it dual-writes Postgres first so a crash between writes
+// leaves the durable store with the newer time.
 //
-// When the Scheduler was constructed with a *sql.DB, the new run-at is
-// also written to the tasks.run_at column. Postgres is written first so
-// that if the process crashes or Redis is flushed between the two
-// writes, the durable store holds the newer time; the next dispatch
-// attempt will see the correct pacing window.
-//
-// TODO(run-at-reconcile): once the task-lifecycle redesign lands (a
-// dedicated 'scheduled' status flipped by the dispatcher on XADD), add a
-// startup sweep that re-seeds the ZSET from tasks.run_at for
-// status='scheduled' rows with no ZSET member. Blocked on the outbox PR.
+// TODO(run-at-reconcile): once tasks have a dedicated 'scheduled'
+// status, add a startup sweep that re-seeds ZSET from tasks.run_at
+// for scheduled rows missing a ZSET member.
 func (s *Scheduler) Reschedule(ctx context.Context, entry ScheduleEntry, newRunAt time.Time) error {
 	if s.db != nil {
 		if _, err := s.db.ExecContext(ctx,
@@ -327,18 +275,10 @@ func (s *Scheduler) Reschedule(ctx context.Context, entry ScheduleEntry, newRunA
 	return s.rescheduleZSet(ctx, entry, newRunAt)
 }
 
-// RescheduleZSet is Reschedule without the Postgres mirror. Use this on
-// the hot pacer push-back path where every dispatcher iteration would
-// otherwise issue a synchronous UPDATE — at 100 paced ops/sec the
-// per-op DB latency stalled the single dispatcher goroutine and the ZSET
-// backed up to 80k+ entries on 2026-04-22.
-//
-// Safety: pacer push-back is ephemeral (seconds, not minutes). If Redis
-// loses the ZSET between a push-back and dispatch, OutboxSweeper rehydrates
-// from tasks.run_at. The authoritative run_at in Postgres is written on
-// initial enqueue; a missed push-back just means the task is re-attempted
-// slightly sooner than its pacer gate allows — the next TryAcquire will
-// push it back again. No task is lost.
+// RescheduleZSet is Reschedule without the Postgres mirror, for the
+// hot pacer-pushback path. The synchronous UPDATE backed up the ZSET
+// to 80k+ entries at 100 paced ops/sec on 2026-04-22. Safe because
+// OutboxSweeper rehydrates from tasks.run_at if Redis loses state.
 func (s *Scheduler) RescheduleZSet(ctx context.Context, entry ScheduleEntry, newRunAt time.Time) error {
 	return s.rescheduleZSet(ctx, entry, newRunAt)
 }
@@ -347,20 +287,17 @@ func (s *Scheduler) rescheduleZSet(ctx context.Context, entry ScheduleEntry, new
 	key := ScheduleKey(entry.JobID)
 	score := float64(newRunAt.UnixMilli())
 
-	// ZADD XX updates only if the member already exists.
+	// ZADD XX: update only if member exists.
 	return s.client.rdb.ZAddArgs(ctx, key, redis.ZAddArgs{
 		XX:      true,
 		Members: []redis.Z{{Score: score, Member: entry.Member()}},
 	}).Err()
 }
 
-// PendingCount returns the total number of scheduled items for a job.
 func (s *Scheduler) PendingCount(ctx context.Context, jobID string) (int64, error) {
 	return s.client.rdb.ZCard(ctx, ScheduleKey(jobID)).Result()
 }
 
-// RemoveJobSchedule deletes the entire ZSET for a job
-// (used on job cancellation or completion).
 func (s *Scheduler) RemoveJobSchedule(ctx context.Context, jobID string) error {
 	return s.client.rdb.Del(ctx, ScheduleKey(jobID)).Err()
 }

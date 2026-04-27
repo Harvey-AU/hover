@@ -484,10 +484,6 @@ func TestDispatcher_OnFirstDispatch_NoMemoiseOnError(t *testing.T) {
 
 // --- Self-heal reconcile trigger ---------------------------------------
 
-// togglableConcurrency is a ConcurrencyChecker whose answer can be
-// flipped between ticks, so a test can hold the gate shut for the
-// stuck-threshold window and then let a successful dispatch through
-// to verify the stuck-state reset.
 type togglableConcurrency struct {
 	mu  sync.Mutex
 	can bool
@@ -505,9 +501,6 @@ func (c *togglableConcurrency) set(v bool) {
 	c.can = v
 }
 
-// stubReconciler counts TriggerReconcile invocations so tests can
-// assert exactly when (and how often) the dispatcher fires the
-// self-heal hook.
 type stubReconciler struct {
 	mu    sync.Mutex
 	calls int
@@ -525,10 +518,8 @@ func (s *stubReconciler) Calls() int {
 	return s.calls
 }
 
-// TestDispatcher_SelfHeal_FiresAfterThreshold verifies the dispatcher
-// trips the reconcile hook once continuous capacity-blocked time
-// passes opts.StuckThreshold while the ZSET still has due work — the
-// signature of running-counter drift pinning a job at its cap.
+// Trips the reconcile hook once continuous capacity-blocked time
+// exceeds StuckThreshold with due work in the ZSET.
 func TestDispatcher_SelfHeal_FiresAfterThreshold(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-stuck"}}
 	conc := &togglableConcurrency{can: false}
@@ -541,26 +532,20 @@ func TestDispatcher_SelfHeal_FiresAfterThreshold(t *testing.T) {
 	t0 := time.Now()
 	seedEntry(t, s, "job-stuck", "t1", "x.com", t0)
 
-	// First tick records stuck-since but does not yet trigger.
 	_, err := d.dispatchJob(ctx, "job-stuck", t0)
 	require.NoError(t, err)
 	assert.Equal(t, 0, rec.Calls(), "must not trigger on first stuck tick")
 
-	// Tick within the threshold window — still no trigger.
 	_, err = d.dispatchJob(ctx, "job-stuck", t0.Add(50*time.Millisecond))
 	require.NoError(t, err)
 	assert.Equal(t, 0, rec.Calls(), "must not trigger before threshold elapses")
 
-	// Tick past the threshold — trigger fires exactly once.
 	_, err = d.dispatchJob(ctx, "job-stuck", t0.Add(150*time.Millisecond))
 	require.NoError(t, err)
 	assert.Equal(t, 1, rec.Calls(), "must trigger once threshold elapsed")
 }
 
-// TestDispatcher_SelfHeal_ResetsOnSuccessfulDispatch confirms a
-// successful dispatch invalidates the stuck-since timestamp, so a
-// job that briefly sits at capacity and then drains never trips the
-// heuristic.
+// A successful dispatch within the window must reset the stuck timer.
 func TestDispatcher_SelfHeal_ResetsOnSuccessfulDispatch(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-reset"}}
 	conc := &togglableConcurrency{can: false}
@@ -573,37 +558,26 @@ func TestDispatcher_SelfHeal_ResetsOnSuccessfulDispatch(t *testing.T) {
 	t0 := time.Now()
 	seedEntry(t, s, "job-reset", "t1", "x.com", t0)
 
-	// Tick once stuck so stuck-since is recorded.
 	_, err := d.dispatchJob(ctx, "job-reset", t0)
 	require.NoError(t, err)
 
-	// Open the gate and let a dispatch succeed before the threshold.
 	conc.set(true)
 	seedEntry(t, s, "job-reset", "t2", "x.com", t0.Add(50*time.Millisecond))
 	n, err := d.dispatchJob(ctx, "job-reset", t0.Add(50*time.Millisecond))
 	require.NoError(t, err)
 	require.Greater(t, n, 0, "expected at least one successful dispatch")
 
-	// Close the gate again, seed more work, advance well past threshold.
 	conc.set(false)
 	seedEntry(t, s, "job-reset", "t3", "x.com", t0.Add(60*time.Millisecond))
 	_, err = d.dispatchJob(ctx, "job-reset", t0.Add(300*time.Millisecond))
 	require.NoError(t, err)
 
-	// Stuck-since reset by the successful dispatch, so the second
-	// stuck window has barely begun. No trigger should fire yet.
 	assert.Equal(t, 0, rec.Calls(),
 		"successful dispatch must reset stuck timer")
 }
 
-// TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced verifies
-// the stuck timer is cleared the moment CanDispatch returns true,
-// not only on a successful dispatch. Reaching canDispatch=true
-// falsifies the "counter pinned at cap" hypothesis even if the
-// dispatch then loses to pacer pushback or a transient publish error
-// — without this reset, a previous stuck window could carry over and
-// trip the heuristic spuriously the next time CanDispatch flips back
-// to false.
+// canDispatch=true must reset the stuck timer even when the dispatch
+// then loses to pacer pushback (no successful dispatch).
 func TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-paced"}}
 	conc := &togglableConcurrency{can: false}
@@ -616,16 +590,11 @@ func TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced(t *testing.T) {
 	t0 := time.Now()
 	seedEntry(t, s, "job-paced", "t1", "slow.com", t0)
 
-	// Establish a stuck timestamp via one capacity-blocked tick.
 	_, err := d.dispatchJob(ctx, "job-paced", t0)
 	require.NoError(t, err)
 
-	// Open the capacity gate but force the pacer to push back so no
-	// dispatch actually lands. dispatched stays 0 — the only path
-	// that clears stuck state is the canDispatch=true branch. The
-	// pacer's first TryAcquire always wins, so we burn that slot
-	// outside the dispatcher to guarantee the subsequent dispatchJob
-	// hits the !paceResult.Acquired branch.
+	// Burn the pacer's first TryAcquire outside the dispatcher so the
+	// subsequent dispatchJob hits the !paceResult.Acquired branch.
 	conc.set(true)
 	require.NoError(t, pacer.Seed(ctx, "slow.com", 5000, 0, 0))
 	preGate, err := pacer.TryAcquire(ctx, "slow.com")
@@ -635,9 +604,6 @@ func TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "pacer pushback should block dispatch")
 
-	// Slam the gate shut again and tick well past the original
-	// stuck-since timestamp. With the reset, the second stuck window
-	// has barely begun and no trigger should fire.
 	conc.set(false)
 	seedEntry(t, s, "job-paced", "t2", "slow.com", t0.Add(60*time.Millisecond))
 	_, err = d.dispatchJob(ctx, "job-paced", t0.Add(300*time.Millisecond))
@@ -648,9 +614,7 @@ func TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced(t *testing.T) {
 			"dispatch loses to pacer pushback")
 }
 
-// TestDispatcher_SelfHeal_NoTriggerWhenZSETEmpty ensures a job with
-// no due items in its ZSET never trips the heuristic, even after
-// many ticks: the early-return path clears stuck state explicitly.
+// Empty ZSET must never trip the heuristic.
 func TestDispatcher_SelfHeal_NoTriggerWhenZSETEmpty(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-empty"}}
 	conc := &togglableConcurrency{can: false}
@@ -662,7 +626,6 @@ func TestDispatcher_SelfHeal_NoTriggerWhenZSETEmpty(t *testing.T) {
 	ctx := context.Background()
 	t0 := time.Now()
 
-	// Tick repeatedly with an empty ZSET, well past the threshold.
 	for i := 0; i < 10; i++ {
 		_, err := d.dispatchJob(ctx, "job-empty",
 			t0.Add(time.Duration(i*100)*time.Millisecond))
@@ -673,10 +636,7 @@ func TestDispatcher_SelfHeal_NoTriggerWhenZSETEmpty(t *testing.T) {
 		"empty ZSET must never trip the self-heal heuristic")
 }
 
-// TestDispatcher_SelfHeal_RateLimited ensures a continuously-stuck
-// job nudges the reconciler at most once per 2× threshold window —
-// otherwise a job that's genuinely at its concurrency cap could
-// drive a reconcile burst on every dispatcher tick.
+// Continuously-stuck job nudges the reconciler at most once per 2× threshold.
 func TestDispatcher_SelfHeal_RateLimited(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-rl"}}
 	conc := &togglableConcurrency{can: false}
@@ -689,14 +649,12 @@ func TestDispatcher_SelfHeal_RateLimited(t *testing.T) {
 	t0 := time.Now()
 	seedEntry(t, s, "job-rl", "t1", "x.com", t0)
 
-	// First trip: tick at t=150ms (past threshold) → fires once.
 	_, err := d.dispatchJob(ctx, "job-rl", t0)
 	require.NoError(t, err)
 	_, err = d.dispatchJob(ctx, "job-rl", t0.Add(150*time.Millisecond))
 	require.NoError(t, err)
 	require.Equal(t, 1, rec.Calls(), "expected first trigger past threshold")
 
-	// Tick repeatedly within the rate-limit window — must not refire.
 	for i := 0; i < 5; i++ {
 		_, err := d.dispatchJob(ctx, "job-rl",
 			t0.Add(150*time.Millisecond+time.Duration(i*10)*time.Millisecond))
@@ -705,24 +663,18 @@ func TestDispatcher_SelfHeal_RateLimited(t *testing.T) {
 	assert.Equal(t, 1, rec.Calls(),
 		"must not refire inside 2× threshold window")
 
-	// Past 2× threshold from first trigger (150ms + 200ms = 350ms),
-	// another nudge is allowed.
 	_, err = d.dispatchJob(ctx, "job-rl", t0.Add(360*time.Millisecond))
 	require.NoError(t, err)
 	assert.Equal(t, 2, rec.Calls(),
 		"must refire once rate-limit window has elapsed")
 }
 
-// TestDispatcher_SelfHeal_NilReconcilerTolerated guards the default
-// case: a dispatcher without a reconciler installed must not panic
-// when the capacity gate fires, no matter how long the gate stays
-// shut.
+// Nil reconciler must not panic when the capacity gate fires.
 func TestDispatcher_SelfHeal_NilReconcilerTolerated(t *testing.T) {
 	lister := &staticJobLister{ids: []string{"job-nil"}}
 	conc := &togglableConcurrency{can: false}
 	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
 	d.opts.StuckThreshold = 50 * time.Millisecond
-	// Intentionally skip SetReconciler.
 
 	ctx := context.Background()
 	t0 := time.Now()

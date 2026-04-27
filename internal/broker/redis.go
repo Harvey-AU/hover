@@ -13,29 +13,22 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// brokerLog is the package-scoped structured logger for all broker components.
 var brokerLog = logging.Component("broker")
 
-// Config holds Redis connection parameters, typically loaded from
-// environment variables.
 type Config struct {
-	URL        string
-	PoolSize   int
-	TLSEnabled bool
-
+	URL          string
+	PoolSize     int
+	TLSEnabled   bool
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	MaxRetries   int
 }
 
-// ConfigFromEnv builds a Config from the process environment.
-// TLS is inferred from the URL scheme (rediss:// = TLS) unless
-// REDIS_TLS_ENABLED is explicitly set.
+// ConfigFromEnv infers TLS from the URL scheme (rediss://) unless
+// REDIS_TLS_ENABLED overrides.
 func ConfigFromEnv() Config {
 	poolSize := envInt("REDIS_POOL_SIZE", 200)
 	url := os.Getenv("REDIS_URL")
-
-	// Default TLS from scheme: rediss:// → true, redis:// → false.
 	tlsDefault := strings.HasPrefix(url, "rediss://")
 	tlsEnabled := envBool("REDIS_TLS_ENABLED", tlsDefault)
 
@@ -49,12 +42,10 @@ func ConfigFromEnv() Config {
 	}
 }
 
-// Client wraps a go-redis client with convenience helpers.
 type Client struct {
 	rdb *redis.Client
 }
 
-// NewClient parses cfg.URL and returns a connected Client.
 func NewClient(cfg Config) (*Client, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("broker: REDIS_URL is required")
@@ -82,30 +73,19 @@ func NewClient(cfg Config) (*Client, error) {
 	return &Client{rdb: rdb}, nil
 }
 
-// Ping verifies the connection is alive.
 func (c *Client) Ping(ctx context.Context) error {
 	return c.rdb.Ping(ctx).Err()
 }
 
-// Close releases the underlying connection pool.
 func (c *Client) Close() error {
 	return c.rdb.Close()
 }
 
-// RDB exposes the raw go-redis client for packages that need direct
-// access (e.g. Lua scripts, pipelines).
 func (c *Client) RDB() *redis.Client { return c.rdb }
 
-// RemoveJobKeys deletes every Redis key owned by the broker for a single
-// terminal (completed/cancelled/failed) job. Called from the completion
-// tick and CancelJob to stop the per-job key set leaking into resident
-// data — without it the schedule ZSET, both streams, both consumer
-// groups, and the running-counter HASH field persist forever once the
-// dispatcher stops scanning the job.
-//
-// The two XGroupDestroy calls are best-effort: NOGROUP/no-such-stream
-// errors are tolerated so a partially-cleaned job (or a job that never
-// produced lighthouse work) doesn't abort the rest of the cleanup.
+// RemoveJobKeys clears all per-job broker state for a terminal job.
+// XGroupDestroy errors are tolerated so a partially-cleaned or
+// lighthouse-less job doesn't abort the rest of the cleanup.
 func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("broker: RemoveJobKeys requires a jobID")
@@ -114,9 +94,6 @@ func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 	streamKey := StreamKey(jobID)
 	lhStreamKey := LighthouseStreamKey(jobID)
 
-	// Destroy consumer groups before deleting the streams. Failures here
-	// are non-fatal — the group may already be gone, or the stream may
-	// never have been created (e.g. a job cancelled before any task ran).
 	if err := c.rdb.XGroupDestroy(ctx, streamKey, ConsumerGroup(jobID)).Err(); err != nil && !isMissingGroup(err) {
 		brokerLog.Warn("XGroupDestroy crawl group failed", "error", err, "job_id", jobID)
 	}
@@ -131,19 +108,10 @@ func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 		return fmt.Errorf("broker: remove job keys for %s: %w", jobID, err)
 	}
 
-	// Drop the job's field from every per-host dom:flight HASH. Without
-	// this sweep, every cancel/restart on the same domain leaves a stale
-	// per-job entry that grows unbounded. Today GetInflight has no
-	// production callers gating dispatch, so the leak is observability
-	// noise only — but anything that starts reading the counter as a cap
-	// would deadlock on the drift, and the job we hit (HOVER stuck job
-	// 91026da8) carried a 12h-old c7d00550 entry that confirmed cleanup
-	// has never happened on this path. SCAN-based because RemoveJobKeys
-	// receives only a jobID; the dom:flight key set is bounded by domain
-	// count (O(thousands)), trivially smaller than ZSET/stream volumes,
-	// so the scan is cheap on the cleanup path. Errors are non-fatal:
-	// leaked fields are the existing behaviour, so failure here cannot
-	// regress correctness.
+	// Drop dom:flight fields for this job. dom:flight has no dedicated
+	// reconciler so leaks accumulate across cancel/restart cycles — job
+	// 91026da8 carried a 12h-old entry that confirmed it. Errors are
+	// non-fatal; leaked fields match prior behaviour.
 	if err := c.cleanupInflightForJob(ctx, jobID); err != nil {
 		brokerLog.Warn("dom:flight cleanup failed", "error", err, "job_id", jobID)
 	}
@@ -151,15 +119,9 @@ func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// cleanupInflightForJob scans every hover:dom:flight:* HASH and HDels
-// the given jobID field from each. Idempotent: HDel on a missing field
-// is a no-op. Used by RemoveJobKeys.
-//
-// Two-phase to keep SCAN safe: the SCAN cursor's iteration guarantees
-// degrade once the keyspace mutates mid-scan (HDel that empties a HASH
-// causes Redis to drop the key, and SCAN may then skip later keys).
-// Collect every matching key first, complete the iteration, then issue
-// the deletes in a separate pipeline.
+// cleanupInflightForJob is two-phase (collect-then-delete) because
+// HDel-emptying a HASH causes Redis to drop it, and SCAN may then
+// skip later keys.
 func (c *Client) cleanupInflightForJob(ctx context.Context, jobID string) error {
 	pattern := keyPrefix + "dom:flight:*"
 	keys, err := c.scanAll(ctx, pattern)
@@ -179,10 +141,8 @@ func (c *Client) cleanupInflightForJob(ctx context.Context, jobID string) error 
 	return nil
 }
 
-// scanAll walks every key matching pattern with SCAN and returns the
-// full key set. Used by cleanup helpers that need to mutate matching
-// keys, where issuing the mutation inline with SCAN risks skipping
-// later keys when an HDel empties (and Redis drops) a HASH.
+// scanAll returns every key matching pattern. Two-phase callers use
+// this to avoid the SCAN-during-mutation skip hazard.
 func (c *Client) scanAll(ctx context.Context, pattern string) ([]string, error) {
 	var keys []string
 	cursor := uint64(0)
@@ -200,29 +160,16 @@ func (c *Client) scanAll(ctx context.Context, pattern string) ([]string, error) 
 	return keys, nil
 }
 
-// SweepOrphanInflight scans every hover:dom:flight:* HASH and removes
-// jobID fields that are not present in activeJobIDs. Returns the number
-// of fields removed.
-//
-// Intended for worker startup: dom:flight is incremented by the
-// dispatcher on publish and decremented by the worker on pacer.Release.
-// A hard SIGKILL (Fly OOM, panic, force-redeploy) bypasses the graceful
-// shutdown that drains in-flight tasks, so the increment runs but the
-// matching decrement never does. Unlike the running-counter HASH there
-// is no dedicated reconciler for dom:flight, so drift accumulates
-// across every restart on every domain that had work in flight at the
-// SIGTERM moment.
+// SweepOrphanInflight removes dom:flight fields for jobs absent from
+// activeJobIDs. Drift source: SIGKILL bypasses the graceful drain so
+// dispatcher increments without a matching pacer.Release decrement.
+// dom:flight has no dedicated reconciler.
 func (c *Client) SweepOrphanInflight(ctx context.Context, activeJobIDs []string) (int, error) {
 	active := make(map[string]struct{}, len(activeJobIDs))
 	for _, id := range activeJobIDs {
 		active[id] = struct{}{}
 	}
 
-	// Two-phase: complete the SCAN before issuing any HDel. Deleting
-	// the last field in a HASH causes Redis to drop the key, and SCAN
-	// makes no completeness guarantee against a mutating keyspace —
-	// later matches can be silently skipped, leaving orphan counters
-	// behind exactly when this sweep is most needed.
 	keys, err := c.scanAll(ctx, keyPrefix+"dom:flight:*")
 	if err != nil {
 		return 0, err
@@ -253,9 +200,6 @@ func (c *Client) SweepOrphanInflight(ctx context.Context, activeJobIDs []string)
 	return removed, nil
 }
 
-// isMissingGroup reports whether err is the Redis NOGROUP / no-such-key
-// response from XGroupDestroy on a stream or group that does not exist.
-// Tolerated by RemoveJobKeys so cleanup is idempotent.
 func isMissingGroup(err error) bool {
 	if err == nil || err == redis.Nil {
 		return false
@@ -266,14 +210,9 @@ func isMissingGroup(err error) bool {
 		strings.Contains(msg, "requires the key to exist")
 }
 
-// ClearAll deletes every Redis key the broker writes to. Used by admin
-// reset endpoints. Does not call FLUSHDB — only touches hover:* prefixes
-// owned by this package, so it stays safe on a shared Redis. Returns the
-// number of keys deleted.
+// ClearAll deletes every hover:* key the broker writes. Does NOT
+// FLUSHDB — safe on shared Redis.
 func (c *Client) ClearAll(ctx context.Context) (int, error) {
-	// Patterns covering every prefix defined in keys.go. Deleting the
-	// per-job stream keys also removes their attached consumer groups,
-	// so there is no separate hover:cg:* key to scan.
 	patterns := []string{
 		keyPrefix + "sched:*",
 		keyPrefix + "stream:*",
@@ -291,7 +230,6 @@ func (c *Client) ClearAll(ctx context.Context) (int, error) {
 		total += n
 	}
 
-	// RunningCountersKey is a single fixed key — no scan needed.
 	deleted, err := c.rdb.Del(ctx, RunningCountersKey).Result()
 	if err != nil {
 		return total, fmt.Errorf("broker: clear %s: %w", RunningCountersKey, err)
@@ -301,8 +239,6 @@ func (c *Client) ClearAll(ctx context.Context) (int, error) {
 	return total, nil
 }
 
-// scanAndDelete walks every key matching pattern with SCAN and deletes
-// them in batches of up to 500 per DEL call.
 func (c *Client) scanAndDelete(ctx context.Context, pattern string) (int, error) {
 	const batch = 500
 	var (
@@ -322,7 +258,6 @@ func (c *Client) scanAndDelete(ctx context.Context, pattern string) (int, error)
 		}
 		keys = append(keys, page...)
 
-		// Flush whenever we have enough to make a worthwhile DEL call.
 		for len(keys) >= batch {
 			n, err := c.rdb.Del(ctx, keys[:batch]...).Result()
 			if err != nil {
