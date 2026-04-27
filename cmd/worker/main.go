@@ -630,10 +630,15 @@ func sweepOrphanInflightOnBoot(redisClient *broker.Client, sqlDB *sql.DB) {
 	defer cancel()
 
 	var activeJobIDs []string
+	// 'initializing' is a live pre-running state (sitemap fetch + parse)
+	// that the rest of the lifecycle treats as active — including
+	// MarkJobRunning, which flips initializing → running on the
+	// dispatcher's first publish. Excluding it here would let the sweep
+	// wipe dom:flight entries for jobs that are about to dispatch.
 	err := sqlDB.QueryRowContext(ctx, `
 		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[])
 		  FROM jobs
-		 WHERE status IN ('running', 'pending')
+		 WHERE status IN ('running', 'pending', 'initializing')
 	`).Scan(pq.Array(&activeJobIDs))
 	if err != nil {
 		workerLog.Warn("dom:flight orphan sweep skipped — active job query failed",
