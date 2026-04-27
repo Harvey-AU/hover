@@ -174,6 +174,104 @@ func TestClient_RemoveJobKeys_RejectsEmpty(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestClient_RemoveJobKeys_ClearsDomFlight verifies that RemoveJobKeys
+// drops the cancelled job's field from every per-host dom:flight HASH.
+// Without this the per-job field accumulates forever — see redis.go:99
+// for the production rationale and the cursor.com stuck-job postmortem
+// (HOVER 91026da8) that traced back to a 12h-old leftover field.
+func TestClient_RemoveJobKeys_ClearsDomFlight(t *testing.T) {
+	client, _ := newTestClientWithMiniredis(t)
+	ctx := context.Background()
+
+	const target = "job-target"
+	const survivor = "job-survivor"
+
+	// Two hosts, both with both jobs in flight.
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("a.example.com"), target, 4).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("a.example.com"), survivor, 2).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("b.example.com"), target, 1).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("b.example.com"), survivor, 7).Err())
+
+	require.NoError(t, client.RemoveJobKeys(ctx, target))
+
+	for _, host := range []string{"a.example.com", "b.example.com"} {
+		exists, err := client.rdb.HExists(ctx,
+			DomainInflightKey(host), target).Result()
+		require.NoError(t, err)
+		assert.False(t, exists,
+			"target field for host %s must be deleted", host)
+
+		survVal, err := client.rdb.HGet(ctx,
+			DomainInflightKey(host), survivor).Int64()
+		require.NoError(t, err)
+		assert.Greater(t, survVal, int64(0),
+			"survivor field for host %s must remain", host)
+	}
+}
+
+// TestClient_SweepOrphanInflight verifies the startup sweep removes
+// fields whose jobID is not in the active set, leaves active fields
+// alone, and tolerates HASH keys that have no orphans.
+func TestClient_SweepOrphanInflight(t *testing.T) {
+	client, _ := newTestClientWithMiniredis(t)
+	ctx := context.Background()
+
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host1"), "active-1", 3).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host1"), "orphan-A", 9).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host2"), "orphan-B", 5).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host3"), "active-2", 1).Err())
+
+	removed, err := client.SweepOrphanInflight(ctx,
+		[]string{"active-1", "active-2"})
+	require.NoError(t, err)
+	assert.Equal(t, 2, removed)
+
+	orphanA, err := client.rdb.HExists(ctx,
+		DomainInflightKey("host1"), "orphan-A").Result()
+	require.NoError(t, err)
+	assert.False(t, orphanA)
+
+	orphanB, err := client.rdb.HExists(ctx,
+		DomainInflightKey("host2"), "orphan-B").Result()
+	require.NoError(t, err)
+	assert.False(t, orphanB)
+
+	active1, err := client.rdb.HGet(ctx,
+		DomainInflightKey("host1"), "active-1").Int64()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), active1)
+
+	active2, err := client.rdb.HGet(ctx,
+		DomainInflightKey("host3"), "active-2").Int64()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), active2)
+}
+
+// TestClient_SweepOrphanInflight_NoActiveJobs covers the all-orphan
+// case: every field in every dom:flight HASH belongs to a job that
+// is no longer active, so the sweep wipes them all.
+func TestClient_SweepOrphanInflight_NoActiveJobs(t *testing.T) {
+	client, _ := newTestClientWithMiniredis(t)
+	ctx := context.Background()
+
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host1"), "ghost-1", 4).Err())
+	require.NoError(t, client.rdb.HSet(ctx,
+		DomainInflightKey("host2"), "ghost-2", 6).Err())
+
+	removed, err := client.SweepOrphanInflight(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, removed)
+}
+
 // TestClient_ClearAll_ManyKeys exercises the SCAN+DEL batch path by
 // seeding well over the 500-batch threshold.
 func TestClient_ClearAll_ManyKeys(t *testing.T) {

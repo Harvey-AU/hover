@@ -365,3 +365,55 @@ func TestConsumer_ReclaimStaleMessage(t *testing.T) {
 	require.Len(t, reclaimed, 1, "stale message should be reclaimed")
 	assert.Equal(t, msgs[0].TaskID, reclaimed[0].TaskID)
 }
+
+// --- OnFirstDispatch hook -----------------------------------------------
+
+// TestDispatcher_OnFirstDispatch_FiresExactlyOncePerJob verifies the
+// hook fires the first time a task lands in the stream for a given
+// jobID and never again in the same dispatcher's lifetime, even after
+// many dispatches across multiple ticks.
+func TestDispatcher_OnFirstDispatch_FiresExactlyOncePerJob(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-A", "job-B"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	calls := make(map[string]int)
+	d.SetOnFirstDispatch(func(_ context.Context, jobID string) {
+		calls[jobID]++
+	})
+
+	// Seed several tasks for two different jobs.
+	now := time.Now()
+	seedEntry(t, s, "job-A", "a1", "a.com", now)
+	seedEntry(t, s, "job-A", "a2", "a.com", now)
+	seedEntry(t, s, "job-A", "a3", "a.com", now)
+	seedEntry(t, s, "job-B", "b1", "b.com", now)
+	seedEntry(t, s, "job-B", "b2", "b.com", now)
+
+	for _, id := range []string{"job-A", "job-B"} {
+		_, err := d.dispatchJob(ctx, id, now)
+		require.NoError(t, err)
+		// Run a second tick to confirm the hook does not fire again.
+		_, err = d.dispatchJob(ctx, id, now)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 1, calls["job-A"], "job-A hook must fire exactly once")
+	assert.Equal(t, 1, calls["job-B"], "job-B hook must fire exactly once")
+}
+
+// TestDispatcher_OnFirstDispatch_NotInvokedWhenUnset confirms the
+// dispatcher tolerates a nil hook (default state) without panicking.
+func TestDispatcher_OnFirstDispatch_NotInvokedWhenUnset(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-N"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	seedEntry(t, s, "job-N", "n1", "n.com", time.Now())
+
+	n, err := d.dispatchJob(ctx, "job-N", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}

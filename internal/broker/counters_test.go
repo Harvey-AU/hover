@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,4 +80,63 @@ func TestRunningCounters_Reconcile(t *testing.T) {
 	val, err = rc.Get(ctx, "j1")
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), val)
+}
+
+// TestRunningCounters_Reconcile_Empty covers the no-running-tasks
+// branch: Reconcile must clear the hash without invoking the script.
+func TestRunningCounters_Reconcile_Empty(t *testing.T) {
+	client := newTestClient(t)
+	rc := NewRunningCounters(client)
+	ctx := context.Background()
+
+	_, err := rc.Increment(ctx, "ghost")
+	require.NoError(t, err)
+
+	require.NoError(t, rc.Reconcile(ctx, nil))
+
+	all, err := rc.GetAll(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, all)
+}
+
+// TestRunningCounters_Reconcile_AllNonPositive verifies the path where
+// every supplied count is <=0: the hash is cleared, no fields written.
+func TestRunningCounters_Reconcile_AllNonPositive(t *testing.T) {
+	client := newTestClient(t)
+	rc := NewRunningCounters(client)
+	ctx := context.Background()
+
+	_, err := rc.Increment(ctx, "old")
+	require.NoError(t, err)
+
+	require.NoError(t, rc.Reconcile(ctx, map[string]int64{
+		"a": 0,
+		"b": -3,
+	}))
+
+	all, err := rc.GetAll(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, all)
+}
+
+// TestRunningCounters_Reconcile_Atomic exercises the Lua script via a
+// large fan-in: many fields land in one EVAL. Catches regressions
+// where the script mishandles long ARGV or unpack widths.
+func TestRunningCounters_Reconcile_Atomic(t *testing.T) {
+	client := newTestClient(t)
+	rc := NewRunningCounters(client)
+	ctx := context.Background()
+
+	counts := make(map[string]int64, 200)
+	for i := 0; i < 200; i++ {
+		counts[fmt.Sprintf("job-%03d", i)] = int64(i + 1)
+	}
+	require.NoError(t, rc.Reconcile(ctx, counts))
+
+	got, err := rc.GetAll(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, len(counts), len(got))
+	for k, v := range counts {
+		assert.Equal(t, v, got[k], "field %s", k)
+	}
 }

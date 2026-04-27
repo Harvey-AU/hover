@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,7 @@ import (
 	"github.com/Harvey-AU/hover/internal/observability"
 	"github.com/Harvey-AU/hover/internal/watchdog"
 	"github.com/getsentry/sentry-go"
+	"github.com/lib/pq"
 )
 
 var workerLog = logging.Component("worker")
@@ -204,6 +206,10 @@ func main() {
 		}
 	}
 
+	// Sweep stale per-job entries from every dom:flight HASH. See
+	// sweepOrphanInflightOnBoot for the full rationale.
+	sweepOrphanInflightOnBoot(redisClient, pgDB.GetDB())
+
 	machineName := os.Getenv("FLY_MACHINE_ID")
 	if machineName == "" {
 		machineName, _ = os.Hostname()
@@ -303,6 +309,18 @@ func main() {
 		swp, // implements broker.ConcurrencyChecker
 		dispatcherOpts,
 	)
+
+	// Flip pending → running on the first successful publish for each
+	// job. Without this hook, jobs created via CreateJob stay at
+	// 'pending' forever (UpdateJobStatus has no other callers in the
+	// production graph) and the dashboard "Starting up" pill never
+	// goes away. MarkJobRunning is a guarded UPDATE so it is idempotent
+	// across worker restarts.
+	dispatcher.SetOnFirstDispatch(func(ctx context.Context, jobID string) {
+		if err := jobManager.MarkJobRunning(ctx, jobID); err != nil {
+			workerLog.Warn("MarkJobRunning failed", "error", err, "job_id", jobID)
+		}
+	})
 
 	// --- running counter DB sync ---
 	counterSyncSec := envInt("REDIS_COUNTER_SYNC_INTERVAL_S", 5)
@@ -590,6 +608,49 @@ func buildHTMLPersister(log *logging.Logger, dbQueue *db.DbQueue) *jobs.HTMLPers
 		"batch_size", cfg.BatchSize,
 	)
 	return persister
+}
+
+// sweepOrphanInflightOnBoot scans hover:dom:flight:* and removes
+// per-job fields whose jobID is no longer in the active Postgres set.
+//
+// dom:flight is incremented by the dispatcher on publish and
+// decremented by the worker on pacer.Release; a hard SIGKILL (Fly OOM,
+// panic, force-redeploy) bypasses the graceful shutdown that drains
+// in-flight tasks, so the increment runs but the decrement never does.
+// Unlike the running-counter HASH there is no dedicated reconciler for
+// dom:flight, so drift accumulates across every restart on every
+// domain that had work in flight at SIGTERM. Run once on boot, before
+// the dispatcher starts, so new dispatches in this run write into a
+// clean slate. Active set comes from Postgres to avoid wiping fields
+// for jobs the dispatcher will resume.
+//
+// All failures are logged and tolerated: the sweep is a best-effort
+// hygiene pass, not load-bearing for correctness.
+func sweepOrphanInflightOnBoot(redisClient *broker.Client, sqlDB *sql.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var activeJobIDs []string
+	err := sqlDB.QueryRowContext(ctx, `
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[])
+		  FROM jobs
+		 WHERE status IN ('running', 'pending')
+	`).Scan(pq.Array(&activeJobIDs))
+	if err != nil {
+		workerLog.Warn("dom:flight orphan sweep skipped — active job query failed",
+			"error", err)
+		return
+	}
+
+	removed, err := redisClient.SweepOrphanInflight(ctx, activeJobIDs)
+	if err != nil {
+		workerLog.Warn("dom:flight orphan sweep failed", "error", err)
+		return
+	}
+	if removed > 0 {
+		workerLog.Info("dom:flight orphan sweep complete",
+			"fields_removed", removed, "active_jobs", len(activeJobIDs))
+	}
 }
 
 // Compile-time interface checks.

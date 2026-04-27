@@ -76,6 +76,20 @@ type Dispatcher struct {
 	// worker has ever dispatched for, which is small in practice and
 	// released when the worker process exits.
 	groupEnsured sync.Map
+
+	// firstDispatched remembers jobs we have already fired the
+	// onFirstDispatch hook for in this dispatcher's lifetime. Resets on
+	// process restart, but the hook implementation must be idempotent
+	// (typical: a guarded UPDATE that no-ops once status moves past
+	// pending) so re-firing on restart costs at most one cheap UPDATE.
+	firstDispatched sync.Map
+
+	// onFirstDispatch is invoked the first time dispatchJob successfully
+	// publishes a task for a given jobID. Optional: nil disables the
+	// hook. Used by the worker to flip status pending → running so the
+	// status pill reflects reality without requiring every potential
+	// entry point to coordinate the transition.
+	onFirstDispatch func(ctx context.Context, jobID string)
 }
 
 // NewDispatcher creates a Dispatcher.
@@ -97,6 +111,14 @@ func NewDispatcher(
 		concCheck: concCheck,
 		opts:      opts,
 	}
+}
+
+// SetOnFirstDispatch installs a callback fired the first time
+// dispatchJob successfully publishes a task for a given jobID in this
+// dispatcher's lifetime. The hook must be idempotent — see
+// firstDispatched on Dispatcher.
+func (d *Dispatcher) SetOnFirstDispatch(fn func(ctx context.Context, jobID string)) {
+	d.onFirstDispatch = fn
 }
 
 // Run is the dispatcher's main loop. It blocks until ctx is
@@ -247,6 +269,17 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		// Increment domain inflight counter.
 		if err := d.pacer.IncrementInflight(ctx, domain, jobID); err != nil {
 			brokerLog.Warn("inflight increment failed", "error", err, "domain", domain)
+		}
+
+		// First successful publish for this job in this dispatcher's
+		// lifetime → flip status pending → running. LoadOrStore returns
+		// loaded=false only the first time, so the hook fires exactly
+		// once per jobID per process. Cheap atomic on the hot path
+		// (sync.Map for an O(active-jobs) keyspace).
+		if d.onFirstDispatch != nil {
+			if _, loaded := d.firstDispatched.LoadOrStore(jobID, struct{}{}); !loaded {
+				d.onFirstDispatch(ctx, jobID)
+			}
 		}
 
 		observability.RecordBrokerDispatch(ctx, jobID, "ok")

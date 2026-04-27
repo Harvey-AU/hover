@@ -130,7 +130,108 @@ func (c *Client) RemoveJobKeys(ctx context.Context, jobID string) error {
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("broker: remove job keys for %s: %w", jobID, err)
 	}
+
+	// Drop the job's field from every per-host dom:flight HASH. Without
+	// this sweep, every cancel/restart on the same domain leaves a stale
+	// per-job entry that grows unbounded. Today GetInflight has no
+	// production callers gating dispatch, so the leak is observability
+	// noise only — but anything that starts reading the counter as a cap
+	// would deadlock on the drift, and the job we hit (HOVER stuck job
+	// 91026da8) carried a 12h-old c7d00550 entry that confirmed cleanup
+	// has never happened on this path. SCAN-based because RemoveJobKeys
+	// receives only a jobID; the dom:flight key set is bounded by domain
+	// count (O(thousands)), trivially smaller than ZSET/stream volumes,
+	// so the scan is cheap on the cleanup path. Errors are non-fatal:
+	// leaked fields are the existing behaviour, so failure here cannot
+	// regress correctness.
+	if err := c.cleanupInflightForJob(ctx, jobID); err != nil {
+		brokerLog.Warn("dom:flight cleanup failed", "error", err, "job_id", jobID)
+	}
+
 	return nil
+}
+
+// cleanupInflightForJob scans every hover:dom:flight:* HASH and HDels
+// the given jobID field from each. Idempotent: HDel on a missing field
+// is a no-op. Used by RemoveJobKeys.
+func (c *Client) cleanupInflightForJob(ctx context.Context, jobID string) error {
+	pattern := keyPrefix + "dom:flight:*"
+	cursor := uint64(0)
+	for {
+		page, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
+		if err != nil {
+			return fmt.Errorf("broker: scan %s: %w", pattern, err)
+		}
+		if len(page) > 0 {
+			pipe := c.rdb.Pipeline()
+			for _, key := range page {
+				pipe.HDel(ctx, key, jobID)
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
+				return fmt.Errorf("broker: HDel inflight pipeline: %w", err)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
+// SweepOrphanInflight scans every hover:dom:flight:* HASH and removes
+// jobID fields that are not present in activeJobIDs. Returns the number
+// of fields removed.
+//
+// Intended for worker startup: dom:flight is incremented by the
+// dispatcher on publish and decremented by the worker on pacer.Release.
+// A hard SIGKILL (Fly OOM, panic, force-redeploy) bypasses the graceful
+// shutdown that drains in-flight tasks, so the increment runs but the
+// matching decrement never does. Unlike the running-counter HASH there
+// is no dedicated reconciler for dom:flight, so drift accumulates
+// across every restart on every domain that had work in flight at the
+// SIGTERM moment.
+func (c *Client) SweepOrphanInflight(ctx context.Context, activeJobIDs []string) (int, error) {
+	active := make(map[string]struct{}, len(activeJobIDs))
+	for _, id := range activeJobIDs {
+		active[id] = struct{}{}
+	}
+
+	pattern := keyPrefix + "dom:flight:*"
+	cursor := uint64(0)
+	removed := 0
+	for {
+		page, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
+		if err != nil {
+			return removed, fmt.Errorf("broker: scan %s: %w", pattern, err)
+		}
+		for _, key := range page {
+			fields, err := c.rdb.HKeys(ctx, key).Result()
+			if err != nil {
+				brokerLog.Warn("HKeys failed during orphan sweep", "error", err, "key", key)
+				continue
+			}
+			var orphans []string
+			for _, jobID := range fields {
+				if _, ok := active[jobID]; !ok {
+					orphans = append(orphans, jobID)
+				}
+			}
+			if len(orphans) == 0 {
+				continue
+			}
+			if err := c.rdb.HDel(ctx, key, orphans...).Err(); err != nil {
+				brokerLog.Warn("HDel orphans failed", "error", err, "key", key, "orphans", len(orphans))
+				continue
+			}
+			removed += len(orphans)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return removed, nil
 }
 
 // isMissingGroup reports whether err is the Redis NOGROUP / no-such-key

@@ -47,6 +47,7 @@ type JobManagerInterface interface {
 	CalculateJobProgress(job *Job) float64
 	ValidateStatusTransition(from, to JobStatus) error
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
+	MarkJobRunning(ctx context.Context, jobID string) error
 
 	// GetRobotsRules fetches parsed robots.txt rules for a domain.
 	// Used by worker-side link-discovery filtering. Returns nil (not an
@@ -1217,6 +1218,30 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	}
 
 	return fmt.Errorf("invalid status transition from %s to %s", from, to)
+}
+
+// MarkJobRunning transitions a pending job to running and stamps
+// started_at if not already set. Guarded UPDATE so it is a no-op once
+// the job has already moved past 'pending' — safe to call repeatedly,
+// safe to call again after a worker restart.
+//
+// Wired from the dispatcher's first successful publish for a job, so
+// the status pill reflects reality without any other code path needing
+// to know about the transition. Without this, jobs created via
+// CreateJob stay at 'pending' forever (UpdateJobStatus has no other
+// callers in the production graph) and the dashboard's "Starting up"
+// label never goes away.
+func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
+	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			   SET status = 'running',
+			       started_at = COALESCE(started_at, NOW())
+			 WHERE id = $1
+			   AND status = 'pending'
+		`, jobID)
+		return err
+	})
 }
 
 // UpdateJobStatus updates the status of a job with appropriate timestamps

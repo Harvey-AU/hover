@@ -408,3 +408,28 @@ func TestJobManagerUpdateJobStatus(t *testing.T) {
 		})
 	}
 }
+
+// TestJobManager_MarkJobRunning verifies the guarded transition flips
+// pending → running and stamps started_at when not already set. The
+// WHERE status='pending' guard makes the call a no-op for jobs that
+// have already moved past pending, so dispatcher restarts that re-fire
+// OnFirstDispatch do not stomp on existing state.
+func TestJobManager_MarkJobRunning(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	ctx := context.Background()
+
+	mockDbQueue := &mockDbQueueWrapper{mockDB: mockDB}
+	jm := &JobManager{db: mockDB, dbQueue: mockDbQueue}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE jobs\s+SET status = 'running',\s+started_at = COALESCE\(started_at, NOW\(\)\)\s+WHERE id = \$1\s+AND status = 'pending'`).
+		WithArgs("job-mark").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, jm.MarkJobRunning(ctx, "job-mark"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
