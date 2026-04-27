@@ -47,6 +47,7 @@ type JobManagerInterface interface {
 	CalculateJobProgress(job *Job) float64
 	ValidateStatusTransition(from, to JobStatus) error
 	UpdateJobStatus(ctx context.Context, jobID string, status JobStatus) error
+	MarkJobRunning(ctx context.Context, jobID string) error
 
 	// GetRobotsRules fetches parsed robots.txt rules for a domain.
 	// Used by worker-side link-discovery filtering. Returns nil (not an
@@ -1217,6 +1218,35 @@ func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	}
 
 	return fmt.Errorf("invalid status transition from %s to %s", from, to)
+}
+
+// MarkJobRunning transitions a pre-running job to running and stamps
+// started_at if not already set. Guarded UPDATE so it is a no-op once
+// the job has already moved past the pre-running statuses — safe to
+// call repeatedly, safe to call again after a worker restart.
+//
+// The guard accepts both 'pending' and 'initializing' because sitemap
+// jobs spend a real window in 'initializing' (sitemap fetch + parse)
+// before the dispatcher publishes their first task. Without that wider
+// match the first-dispatch hook would silently miss those jobs and
+// leave them stuck on the "Starting up" pill.
+//
+// Wired from the dispatcher's first successful publish for a job, so
+// the status reflects reality without any other code path needing to
+// know about the transition. Without this, jobs created via CreateJob
+// stay at their pre-running status forever (UpdateJobStatus has no
+// other callers in the production graph).
+func (jm *JobManager) MarkJobRunning(ctx context.Context, jobID string) error {
+	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			   SET status = 'running',
+			       started_at = COALESCE(started_at, NOW())
+			 WHERE id = $1
+			   AND status IN ('pending', 'initializing')
+		`, jobID)
+		return err
+	})
 }
 
 // UpdateJobStatus updates the status of a job with appropriate timestamps

@@ -28,7 +28,31 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Job throughput could collapse to ~0.3 tasks/s after a same-domain
+  cancel-and-restart, while concurrent jobs on other domains kept running at 5–8
+  tasks/s. Root cause was stale per-job broker state from the previous run
+  leaking into the new dispatcher loop.
+  - `RemoveJobKeys` now also clears the cancelled job's field from every
+    per-host `hover:dom:flight:*` HASH. Without this every cancel left a
+    leftover counter that drifted unbounded across restarts.
+  - On worker boot, scan `hover:dom:flight:*` and drop fields whose job is not
+    in the active Postgres set. Hard SIGKILL bypasses the graceful-shutdown
+    drain, so the dispatcher's increment runs but the worker's `pacer.Release`
+    decrement never does — `dom:flight` has no dedicated reconciler, so drift
+    used to accumulate forever.
+  - `RunningCounters.Reconcile` is now atomic: a single Lua EVAL replaces the
+    previous `DEL + HSET` pipeline. Concurrent `Increment` / `Decrement` could
+    land between the two commands and have its update silently lost when the
+    rewrite landed, freezing dispatch for any job whose counter floated up to
+    its concurrency cap until the next 120s reconcile.
+
+- Job status pill stayed on "Starting up" forever because `UpdateJobStatus` had
+  no callers in the production graph. The dispatcher now flips
+  `pending → running` on the first successful publish for a job via a new
+  `JobManager.MarkJobRunning` (guarded UPDATE, idempotent across worker
+  restarts).
 
 ## Full changelog history
 

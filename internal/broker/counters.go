@@ -76,30 +76,50 @@ func (rc *RunningCounters) GetAll(ctx context.Context) (map[string]int64, error)
 	return counts, nil
 }
 
+// reconcileScript atomically clears RunningCountersKey and rewrites
+// it with the field/value pairs in ARGV. ARGV is laid out as
+// jobID, count, jobID, count, ...
+//
+// Replaces a non-atomic Del+HSet pipeline. Under that earlier shape a
+// concurrent Increment or Decrement could land between the Del and the
+// HSet and have its update silently lost when the rewrite landed —
+// drift then persisted until the next reconcile (every 120s) and any
+// job whose counter floated up to its concurrency cap could freeze
+// dispatch in the meantime. The Lua wrapper closes that race because
+// EVAL runs as one server-side step, blocking the HIncrBy call until
+// the rewrite is complete.
+var reconcileScript = redis.NewScript(`
+redis.call('DEL', KEYS[1])
+if #ARGV >= 2 then
+    redis.call('HSET', KEYS[1], unpack(ARGV))
+end
+return 1
+`)
+
 // Reconcile sets the running counters from an authoritative source
-// (typically a Postgres query on startup). This overwrites any
-// stale state in Redis.
+// (typically PEL counts on the periodic tick or a Postgres query on
+// startup). Atomic: a single server-side EVAL replaces the previous
+// Del+HSet pipeline so concurrent Increment/Decrement cannot lose
+// updates in the gap between the clear and the rewrite.
 func (rc *RunningCounters) Reconcile(ctx context.Context, counts map[string]int64) error {
 	if len(counts) == 0 {
-		// No running tasks — clear the hash.
+		// No running tasks — clear the hash. Single-command op already
+		// atomic; no need to invoke the script for the empty case.
 		return rc.client.rdb.Del(ctx, RunningCountersKey).Err()
 	}
 
-	pipe := rc.client.rdb.Pipeline()
-	// Delete existing hash and rebuild.
-	pipe.Del(ctx, RunningCountersKey)
-	fields := make([]interface{}, 0, len(counts)*2)
+	args := make([]interface{}, 0, len(counts)*2)
 	for jobID, count := range counts {
 		if count > 0 {
-			fields = append(fields, jobID, strconv.FormatInt(count, 10))
+			args = append(args, jobID, strconv.FormatInt(count, 10))
 		}
 	}
-	if len(fields) > 0 {
-		pipe.HSet(ctx, RunningCountersKey, fields...)
+	if len(args) == 0 {
+		// All counts non-positive — equivalent to the empty case above.
+		return rc.client.rdb.Del(ctx, RunningCountersKey).Err()
 	}
 
-	_, err := pipe.Exec(ctx)
-	return err
+	return reconcileScript.Run(ctx, rc.client.rdb, []string{RunningCountersKey}, args...).Err()
 }
 
 // RemoveJob clears the running counter for a specific job

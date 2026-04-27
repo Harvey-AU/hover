@@ -365,3 +365,118 @@ func TestConsumer_ReclaimStaleMessage(t *testing.T) {
 	require.Len(t, reclaimed, 1, "stale message should be reclaimed")
 	assert.Equal(t, msgs[0].TaskID, reclaimed[0].TaskID)
 }
+
+// --- OnFirstDispatch hook -----------------------------------------------
+
+// TestDispatcher_OnFirstDispatch_FiresExactlyOncePerJob verifies the
+// hook fires the first time a task lands in the stream for a given
+// jobID and never again in the same dispatcher's lifetime, even after
+// many dispatches across multiple ticks.
+func TestDispatcher_OnFirstDispatch_FiresExactlyOncePerJob(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-A", "job-B"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	calls := make(map[string]int)
+	d.SetOnFirstDispatch(func(_ context.Context, jobID string) error {
+		calls[jobID]++
+		return nil
+	})
+
+	// Seed several tasks for two different jobs.
+	now := time.Now()
+	seedEntry(t, s, "job-A", "a1", "a.com", now)
+	seedEntry(t, s, "job-A", "a2", "a.com", now)
+	seedEntry(t, s, "job-A", "a3", "a.com", now)
+	seedEntry(t, s, "job-B", "b1", "b.com", now)
+	seedEntry(t, s, "job-B", "b2", "b.com", now)
+
+	for _, id := range []string{"job-A", "job-B"} {
+		_, err := d.dispatchJob(ctx, id, now)
+		require.NoError(t, err)
+		// Run a second tick to confirm the hook does not fire again.
+		_, err = d.dispatchJob(ctx, id, now)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 1, calls["job-A"], "job-A hook must fire exactly once")
+	assert.Equal(t, 1, calls["job-B"], "job-B hook must fire exactly once")
+}
+
+// TestDispatcher_OnFirstDispatch_RetriesOnFailure verifies the hook is
+// re-invoked on subsequent dispatches if the previous call returned
+// an error — closes a class of bugs where a transient DB failure on
+// the very first dispatch would leave the job stranded in 'pending'
+// for the dispatcher's whole lifetime.
+func TestDispatcher_OnFirstDispatch_RetriesOnFailure(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-R"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	var calls int
+	d.SetOnFirstDispatch(func(_ context.Context, _ string) error {
+		calls++
+		if calls < 3 {
+			return errors.New("transient")
+		}
+		return nil
+	})
+
+	now := time.Now()
+	for i := 0; i < 4; i++ {
+		seedEntry(t, s, "job-R",
+			"r-"+string(rune('a'+i)), "r.com", now)
+		_, err := d.dispatchJob(ctx, "job-R", now)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 3, calls,
+		"hook must retry until success, then stop firing")
+}
+
+// TestDispatcher_OnFirstDispatch_NotInvokedWhenUnset confirms the
+// dispatcher tolerates a nil hook (default state) without panicking.
+func TestDispatcher_OnFirstDispatch_NotInvokedWhenUnset(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-N"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	seedEntry(t, s, "job-N", "n1", "n.com", time.Now())
+
+	n, err := d.dispatchJob(ctx, "job-N", time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
+
+// TestDispatcher_OnFirstDispatch_NoMemoiseOnError exposes the regression
+// the LoadOrStore variant introduced: marking the job as "first
+// dispatched" before the hook runs means a transient error never
+// retries. With Load+Store-on-success that bug is closed — exercised
+// here with a stub that fails forever, asserting the hook is called
+// on every dispatch (one call per attempt) until it succeeds.
+func TestDispatcher_OnFirstDispatch_NoMemoiseOnError(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-E"}}
+	conc := &staticConcurrency{can: true}
+	d, s, _, _, _, _ := newDispatcherRig(t, lister, conc)
+	ctx := context.Background()
+
+	var calls int
+	d.SetOnFirstDispatch(func(_ context.Context, _ string) error {
+		calls++
+		return errors.New("always fail")
+	})
+
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		seedEntry(t, s, "job-E",
+			"e-"+string(rune('a'+i)), "e.com", now)
+		_, err := d.dispatchJob(ctx, "job-E", now)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 5, calls,
+		"failing hook must fire on every dispatch, never memoised")
+}
