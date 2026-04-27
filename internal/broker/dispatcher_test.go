@@ -596,6 +596,58 @@ func TestDispatcher_SelfHeal_ResetsOnSuccessfulDispatch(t *testing.T) {
 		"successful dispatch must reset stuck timer")
 }
 
+// TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced verifies
+// the stuck timer is cleared the moment CanDispatch returns true,
+// not only on a successful dispatch. Reaching canDispatch=true
+// falsifies the "counter pinned at cap" hypothesis even if the
+// dispatch then loses to pacer pushback or a transient publish error
+// — without this reset, a previous stuck window could carry over and
+// trip the heuristic spuriously the next time CanDispatch flips back
+// to false.
+func TestDispatcher_SelfHeal_ResetsOnCanDispatchTrueEvenIfPaced(t *testing.T) {
+	lister := &staticJobLister{ids: []string{"job-paced"}}
+	conc := &togglableConcurrency{can: false}
+	d, s, pacer, _, _, _ := newDispatcherRig(t, lister, conc)
+	d.opts.StuckThreshold = 100 * time.Millisecond
+	rec := &stubReconciler{}
+	d.SetReconciler(rec)
+
+	ctx := context.Background()
+	t0 := time.Now()
+	seedEntry(t, s, "job-paced", "t1", "slow.com", t0)
+
+	// Establish a stuck timestamp via one capacity-blocked tick.
+	_, err := d.dispatchJob(ctx, "job-paced", t0)
+	require.NoError(t, err)
+
+	// Open the capacity gate but force the pacer to push back so no
+	// dispatch actually lands. dispatched stays 0 — the only path
+	// that clears stuck state is the canDispatch=true branch. The
+	// pacer's first TryAcquire always wins, so we burn that slot
+	// outside the dispatcher to guarantee the subsequent dispatchJob
+	// hits the !paceResult.Acquired branch.
+	conc.set(true)
+	require.NoError(t, pacer.Seed(ctx, "slow.com", 5000, 0, 0))
+	preGate, err := pacer.TryAcquire(ctx, "slow.com")
+	require.NoError(t, err)
+	require.True(t, preGate.Acquired, "pre-gate acquire should succeed")
+	n, err := d.dispatchJob(ctx, "job-paced", t0.Add(50*time.Millisecond))
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "pacer pushback should block dispatch")
+
+	// Slam the gate shut again and tick well past the original
+	// stuck-since timestamp. With the reset, the second stuck window
+	// has barely begun and no trigger should fire.
+	conc.set(false)
+	seedEntry(t, s, "job-paced", "t2", "slow.com", t0.Add(60*time.Millisecond))
+	_, err = d.dispatchJob(ctx, "job-paced", t0.Add(300*time.Millisecond))
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, rec.Calls(),
+		"canDispatch=true must reset stuck timer even when the "+
+			"dispatch loses to pacer pushback")
+}
+
 // TestDispatcher_SelfHeal_NoTriggerWhenZSETEmpty ensures a job with
 // no due items in its ZSET never trips the heuristic, even after
 // many ticks: the early-return path clears stuck state explicitly.

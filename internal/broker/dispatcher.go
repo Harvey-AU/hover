@@ -300,14 +300,23 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			// Job at capacity — remaining items stay in ZSET. We're
 			// inside the entries loop, so we already know there is at
 			// least one due task right now: that's the precondition
-			// for the self-heal heuristic. A genuinely-busy job clears
-			// the stuck-since timestamp on its very next successful
-			// dispatch, so the heuristic only fires when the gate
-			// stays shut for opts.StuckThreshold of wall-clock time.
+			// for the self-heal heuristic. The stuck timer is reset
+			// the next time we observe canDispatch=true (below), so
+			// the heuristic only fires when the gate stays shut for
+			// opts.StuckThreshold of wall-clock time.
 			observability.RecordBrokerDispatch(ctx, jobID, "capacity")
 			d.maybeTriggerReconcile(ctx, jobID, now)
 			break
 		}
+
+		// canDispatch=true falsifies the "counter pinned at cap"
+		// hypothesis, so any stuck timer accumulated from a previous
+		// tick is no longer load-bearing. Clear here rather than only
+		// on a successful dispatch: a paced or transient-publish-error
+		// path can land us on canDispatch=true without dispatched++,
+		// and we must not let those iterations carry forward stale
+		// stuck state into a later capacity-blocked window.
+		d.clearStuck(jobID)
 
 		// Check domain pacing.
 		domain := entry.Host
@@ -375,15 +384,6 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 
 		observability.RecordBrokerDispatch(ctx, jobID, "ok")
 		dispatched++
-	}
-
-	if dispatched > 0 {
-		// Any forward progress for this job invalidates the stuck
-		// hypothesis. We deliberately do not clear lastTrigger here —
-		// that's the rate-limit memory and must persist across
-		// stuck/recover cycles to stop a flapping job from driving
-		// reconcile faster than the rate-limit window allows.
-		d.clearStuck(jobID)
 	}
 
 	return dispatched, nil
