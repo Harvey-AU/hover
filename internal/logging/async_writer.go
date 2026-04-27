@@ -80,7 +80,6 @@ func (a *AsyncWriter) drain() {
 		case line := <-a.ch:
 			a.writeLine(line)
 		case <-a.stop:
-			// Flush remaining buffer then exit.
 			for {
 				select {
 				case line := <-a.ch:

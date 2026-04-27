@@ -5,7 +5,6 @@ import (
 	"io"
 )
 
-// UploadOptions controls metadata attached to a cold-storage object.
 type UploadOptions struct {
 	ContentType     string
 	ContentEncoding string
@@ -14,15 +13,11 @@ type UploadOptions struct {
 
 // ColdStorageProvider abstracts an S3-compatible object store.
 type ColdStorageProvider interface {
-	// Ping verifies that the provider can reach the given bucket.
-	// Call once at startup to catch bad credentials/endpoints early.
+	// Call at startup to catch bad credentials/endpoints early.
 	Ping(ctx context.Context, bucket string) error
-	// Upload writes data to the given bucket/key.
 	Upload(ctx context.Context, bucket, key string, data io.Reader, opts UploadOptions) error
-	// Download retrieves an object by bucket/key.
 	Download(ctx context.Context, bucket, key string) (io.ReadCloser, error)
-	// Exists returns true if the object exists and is readable.
 	Exists(ctx context.Context, bucket, key string) (bool, error)
-	// Provider returns the short name of the backend ("r2", "s3", "b2").
+	// Returns one of: "r2", "s3", "b2".
 	Provider() string
 }

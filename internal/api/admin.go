@@ -14,8 +14,6 @@ import (
 	"github.com/lib/pq"
 )
 
-// organisationIDOrNone returns the organisation ID as a string, or "none"
-// when the user has no organisation assigned. Used for audit log fields.
 func organisationIDOrNone(orgID *string) string {
 	if orgID == nil {
 		return "none"
@@ -23,8 +21,7 @@ func organisationIDOrNone(orgID *string) string {
 	return *orgID
 }
 
-// AdminResetDatabase handles the admin database reset endpoint
-// Requires valid JWT with admin role and explicit environment enablement
+// Requires admin JWT and ALLOW_DB_RESET=true.
 func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
@@ -33,27 +30,23 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require explicit enablement
 	if os.Getenv("ALLOW_DB_RESET") != "true" {
 		Forbidden(w, r, "Database reset not enabled. Set ALLOW_DB_RESET=true to enable")
 		return
 	}
 
-	// Get user claims from context (set by AuthMiddleware)
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
 		Unauthorised(w, r, "Authentication required for admin endpoint")
 		return
 	}
 
-	// Verify system admin role
 	if !hasSystemAdminRole(claims) {
 		logger.Warn("Non-system-admin user attempted to access database reset endpoint", "user_id", claims.UserID)
 		Forbidden(w, r, "System administrator privileges required")
 		return
 	}
 
-	// Verify user exists in database
 	user, err := h.DB.GetUser(claims.UserID)
 	if err != nil {
 		logger.Error("Failed to verify admin user", "error", err, "user_id", claims.UserID)
@@ -61,7 +54,6 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log the admin action with full context
 	logger.Warn("Admin database reset requested",
 		"user_id", user.ID,
 		"organisation_id", organisationIDOrNone(user.OrganisationID),
@@ -69,7 +61,6 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 		"user_agent", r.Header.Get("User-Agent"),
 	)
 
-	// Capture in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("event_type", "admin_action")
 		scope.SetTag("action", "database_reset")
@@ -85,13 +76,11 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 		sentry.CaptureMessage("Admin database reset action")
 	})
 
-	// Perform the database reset
 	resetStart := time.Now()
 	if err := h.DB.ResetSchema(); err != nil {
 		resetDuration := time.Since(resetStart)
 		logger.Error("Failed to reset database schema", "error", err, "user_id", user.ID, "duration", resetDuration)
 
-		// Capture failure in Sentry
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetLevel(sentry.LevelError)
 			scope.SetTag("event_type", "admin_action_failed")
@@ -114,12 +103,9 @@ func (h *Handler) AdminResetDatabase(w http.ResponseWriter, r *http.Request) {
 	resetDuration := time.Since(resetStart)
 	logger.Warn("Database schema reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
-	// Clear Redis broker state so the reset is genuinely a fresh slate.
-	// Order matters: Postgres has been truncated above, so no new tasks
-	// can repopulate Redis during the SCAN+DEL pass.
+	// Postgres truncated above, so the SCAN+DEL pass can't race new dispatch.
 	redisCleared, redisKeysDeleted, redisErr := clearBrokerState(r.Context(), h.Broker, logger, user.ID)
 
-	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelInfo)
 		scope.SetTag("event_type", "admin_action_success")
@@ -159,27 +145,23 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require explicit enablement
 	if os.Getenv("ALLOW_DB_RESET") != "true" {
 		Forbidden(w, r, "Database operations not enabled. Set ALLOW_DB_RESET=true to enable")
 		return
 	}
 
-	// Get user claims from context (set by AuthMiddleware)
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
 		Unauthorised(w, r, "Authentication required for admin endpoint")
 		return
 	}
 
-	// Verify system admin role
 	if !hasSystemAdminRole(claims) {
 		logger.Warn("Non-system-admin user attempted to access data reset endpoint", "user_id", claims.UserID)
 		Forbidden(w, r, "System administrator privileges required")
 		return
 	}
 
-	// Verify user exists in database
 	user, err := h.DB.GetUser(claims.UserID)
 	if err != nil {
 		logger.Error("Failed to verify admin user", "error", err, "user_id", claims.UserID)
@@ -187,7 +169,6 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Log the admin action with full context
 	logger.Warn("Admin data-only reset requested",
 		"user_id", user.ID,
 		"organisation_id", organisationIDOrNone(user.OrganisationID),
@@ -195,7 +176,6 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 		"user_agent", r.Header.Get("User-Agent"),
 	)
 
-	// Capture in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetTag("event_type", "admin_action")
 		scope.SetTag("action", "data_reset")
@@ -211,13 +191,11 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 		sentry.CaptureMessage("Admin data reset action")
 	})
 
-	// Perform the data-only reset
 	resetStart := time.Now()
 	if err := h.DB.ResetDataOnly(); err != nil {
 		resetDuration := time.Since(resetStart)
 		logger.Error("Failed to reset data", "error", err, "user_id", user.ID, "duration", resetDuration)
 
-		// Capture failure in Sentry
 		sentry.WithScope(func(scope *sentry.Scope) {
 			scope.SetLevel(sentry.LevelError)
 			scope.SetTag("event_type", "admin_action_failed")
@@ -240,11 +218,9 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	resetDuration := time.Since(resetStart)
 	logger.Warn("Data reset completed successfully by admin", "user_id", user.ID, "duration", resetDuration)
 
-	// Clear Redis broker state. Postgres is already empty at this point,
-	// so the SCAN+DEL pass cannot race with new task dispatch.
+	// Postgres is empty by here; SCAN+DEL pass cannot race new dispatch.
 	redisCleared, redisKeysDeleted, redisErr := clearBrokerState(r.Context(), h.Broker, logger, user.ID)
 
-	// Capture success in Sentry for audit trail
 	sentry.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentry.LevelInfo)
 		scope.SetTag("event_type", "admin_action_success")
@@ -274,17 +250,8 @@ func (h *Handler) AdminResetData(w http.ResponseWriter, r *http.Request) {
 	WriteSuccess(w, r, payload, msg)
 }
 
-// AdminReclaimRedis runs the one-off backfill sweeper that drops Redis
-// keys for jobs that have already reached a terminal state (completed,
-// cancelled, failed, archived) but never had their per-job keys cleaned
-// up. Targets the historical leak introduced by RemoveJobSchedule and
-// RemoveJob being defined-but-unused; phase 1 fixes the forward path,
-// this endpoint reclaims data already resident.
-//
-// Idempotent and intentionally simple: no batching, no progress
-// streaming. The expected use is a single curl after deploy. Gated on
-// ALLOW_DB_RESET (already used by the other admin reset endpoints) so
-// the endpoint cannot be hit without explicit operator opt-in.
+// One-off backfill sweep for terminal-status jobs whose Redis keys
+// were never cleaned. Idempotent; gated on ALLOW_DB_RESET.
 func (h *Handler) AdminReclaimRedis(w http.ResponseWriter, r *http.Request) {
 	logger := loggerWithRequest(r)
 
@@ -358,10 +325,7 @@ func (h *Handler) AdminReclaimRedis(w http.ResponseWriter, r *http.Request) {
 	WriteSuccess(w, r, payload, "Redis reclaim sweep completed")
 }
 
-// terminalJobFilter returns a broker.TerminalFilter that selects job
-// IDs whose Postgres status is in the terminal set (completed, failed,
-// cancelled, archived). Jobs missing from the jobs table are also
-// treated as terminal — their Redis state is orphaned by definition.
+// Treats missing-from-jobs as terminal (orphaned Redis state).
 func terminalJobFilter(sqlDB interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }) broker.TerminalFilter {
@@ -395,10 +359,8 @@ func terminalJobFilter(sqlDB interface {
 			return nil, err
 		}
 
-		// Find any candidates that did not appear in the result — those
-		// are either still active or no longer in the jobs table at
-		// all. A second query bounds 'still active' so deletion-by-
-		// missing-row only fires for genuine orphans.
+		// Bound 'still active' so deletion-by-missing-row only fires
+		// for genuine orphans.
 		stillActive, err := lookupActiveJobs(ctx, sqlDB, jobIDs)
 		if err != nil {
 			return nil, err
@@ -419,9 +381,6 @@ func terminalJobFilter(sqlDB interface {
 	}
 }
 
-// lookupActiveJobs returns the subset of jobIDs whose row in the jobs
-// table is still in a non-terminal state. Used by terminalJobFilter to
-// distinguish "row missing — orphan" from "row present and running".
 func lookupActiveJobs(ctx context.Context, sqlDB interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }, jobIDs []string) ([]string, error) {
@@ -446,11 +405,8 @@ func lookupActiveJobs(ctx context.Context, sqlDB interface {
 	return active, rows.Err()
 }
 
-// clearBrokerState invokes broker.ClearAll when the broker is wired and
-// reports the outcome. Errors are logged and forwarded to Sentry but do
-// not abort the response — Postgres has already been reset by the time
-// this runs, so the operator needs a successful HTTP reply with enough
-// detail to flush Redis manually if needed.
+// Errors logged + sent to Sentry but do not abort — operator needs
+// the HTTP reply to know whether to flush Redis manually.
 func clearBrokerState(ctx context.Context, broker BrokerCleaner, logger *logging.Logger, userID string) (bool, int, error) {
 	if broker == nil {
 		logger.Debug("Reset: broker not configured, skipping Redis clear")
@@ -470,20 +426,16 @@ func clearBrokerState(ctx context.Context, broker BrokerCleaner, logger *logging
 	return true, n, nil
 }
 
-// hasSystemAdminRole checks if the user has system administrator privileges via app_metadata
-// This is distinct from organisation-level admin roles - system admins are Hover operators
-// who have elevated privileges for system-level operations like database resets
+// system_role is distinct from organisation-level admin: Hover
+// operators only, gates platform-level destructive ops.
 func hasSystemAdminRole(claims *auth.UserClaims) bool {
 	if claims == nil || claims.AppMetadata == nil {
 		return false
 	}
-
-	// Check for system_role = "system_admin" in app_metadata
 	if systemRole, exists := claims.AppMetadata["system_role"]; exists {
 		if roleStr, ok := systemRole.(string); ok && roleStr == "system_admin" {
 			return true
 		}
 	}
-
 	return false
 }

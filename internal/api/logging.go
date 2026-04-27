@@ -8,8 +8,6 @@ import (
 
 var apiLog = logging.Component("api")
 
-// loggerWithRequest returns a logger enriched with request context so that all
-// API logs include correlation identifiers without repeating boilerplate.
 func loggerWithRequest(r *http.Request) *logging.Logger {
 	if r == nil {
 		return apiLog
@@ -21,10 +19,8 @@ func loggerWithRequest(r *http.Request) *logging.Logger {
 	)
 }
 
-// loggerWithRequestPath returns a request-scoped logger but overrides the
-// `path` field with the caller-supplied value. Use this for routes where the
-// raw URL path contains a secret (e.g. legacy webhook-token URLs) so bearer
-// credentials do not end up in logs or Sentry breadcrumbs.
+// Use for routes whose raw URL path embeds a secret (e.g. legacy
+// webhook-token URLs) so credentials don't reach logs or Sentry.
 func loggerWithRequestPath(r *http.Request, path string) *logging.Logger {
 	if r == nil {
 		return apiLog.With("path", path)

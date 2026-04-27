@@ -1,9 +1,5 @@
 // Package archive uploads task HTML to cold object storage (R2, S3, B2)
-// and exposes the canonical key layout used by the live HTML persister.
-//
-// The legacy hot-to-cold sweep (Supabase Storage → R2) was removed once
-// R2 became the hot store. Only the cold-storage provider plumbing and
-// the path constructors remain.
+// and exposes the canonical key layout used by the HTML persister.
 package archive
 
 import (

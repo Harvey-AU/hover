@@ -1,18 +1,7 @@
-// Package watchdog detects worker process wedges and forcibly exits so
-// the platform's restart policy can recover the service.
-//
-// The pattern is deliberately simple: a heartbeat counter is bumped from
-// the hot path (per-task completion in the worker), and a background
-// loop verifies the counter has advanced within the configured stall
-// window. If the counter has not advanced AND a "should be working"
-// predicate returns true, the process logs a high-priority message and
-// calls os.Exit(1).
-//
-// This is the last line of defence against latent Go-side wedges (e.g.
-// blocked stdout pipe, mutex deadlock, exhausted resource pool) that no
-// amount of in-process recovery can clear. It does not replace fixing
-// the underlying cause — it bounds the blast radius while the real fix
-// is being developed.
+// Package watchdog forces process exit when the worker heartbeat
+// goes flat with active workload, letting the platform's restart
+// policy recover from latent Go-side wedges (blocked pipe, mutex
+// deadlock, exhausted resource pool).
 package watchdog
 
 import (
@@ -23,40 +12,26 @@ import (
 	"time"
 )
 
-// Failure to increase across the stall window combined with active
-// workload triggers a forced exit.
 type Heartbeat struct {
 	beats atomic.Uint64
 }
 
-// Cheap and lock-free; safe from hot paths.
-func (h *Heartbeat) Tick() { h.beats.Add(1) }
-
+// Lock-free; safe from hot paths.
+func (h *Heartbeat) Tick()        { h.beats.Add(1) }
 func (h *Heartbeat) Read() uint64 { return h.beats.Load() }
 
 type Options struct {
-	// StallThreshold is how long the heartbeat may stay flat before
-	// the watchdog considers the worker wedged. Default 90s.
+	// Defaults: 90s / 15s / 2m.
 	StallThreshold time.Duration
+	CheckInterval  time.Duration
+	GracePeriod    time.Duration
 
-	// CheckInterval is how often the watchdog samples. Default 15s.
-	CheckInterval time.Duration
-
-	// GracePeriod after Run starts before any check fires; protects
-	// against trip during slow startup. Default 2 minutes.
-	GracePeriod time.Duration
-
-	// HasWork returns true if the worker should be doing something.
-	// When false (no jobs alive), heartbeat staleness is ignored.
-	// If nil, the watchdog assumes work always exists.
+	// HasWork=nil → assume work always exists. Returning false skips
+	// the staleness check (no jobs alive → can't be wedged).
 	HasWork func(ctx context.Context) bool
 
-	// Logger receives the pre-exit message; required.
 	Logger *slog.Logger
-
-	// Exit is called when a wedge is detected. Tests substitute a
-	// non-fatal handler; production leaves it nil so the default
-	// (os.Exit(1)) runs.
+	// Tests substitute a non-fatal handler. Default os.Exit.
 	Exit func(code int)
 }
 
@@ -110,13 +85,13 @@ func Run(ctx context.Context, hb *Heartbeat, opts Options) {
 
 			hasWork := true
 			if opts.HasWork != nil {
-				// Bounded so the check can't itself wedge the watchdog.
+				// Bound so the check can't wedge the watchdog itself.
 				checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				hasWork = opts.HasWork(checkCtx)
 				cancel()
 			}
 			if !hasWork {
-				// Reset so we don't trip immediately when work resumes.
+				// Reset so we don't trip the moment work resumes.
 				lastChange = now
 				continue
 			}

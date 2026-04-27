@@ -12,21 +12,13 @@ import (
 	"time"
 )
 
-// devClient is used for the local Supabase sign-in request. Timeout prevents
-// indefinite hangs if Supabase is unresponsive.
 var devClient = &http.Client{Timeout: 10 * time.Second}
 
-// DevAutoLogin signs in as the dev seed user server-side and injects the
-// Supabase session directly into the browser's localStorage. This sidesteps the
-// browser→Supabase network call that fails in sandboxed preview environments
-// (e.g. the Claude app's embedded browser, which can reach localhost:8847 but
-// not 127.0.0.1:54321 directly).
-//
-// Only active when APP_ENV=development. Returns 404 in all other environments.
-//
-// Usage: navigate to /dev/auto-login — you will be signed in as dev@example.com
-// and redirected to /dashboard. An optional ?redirect=/path query parameter
-// overrides the redirect target (same-origin paths only).
+// DevAutoLogin signs in as dev@example.com server-side and injects
+// the session into localStorage. Sidesteps the browser→Supabase call
+// that sandboxed preview browsers can't make (they reach
+// localhost:8847 but not 127.0.0.1:54321). 404 outside APP_ENV=development.
+// Optional ?redirect=/path query parameter (same-origin only).
 func (h *Handler) DevAutoLogin(w http.ResponseWriter, r *http.Request) {
 	if os.Getenv("APP_ENV") != "development" {
 		http.NotFound(w, r)
