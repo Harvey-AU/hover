@@ -147,6 +147,14 @@ type StreamWorkerPool struct {
 	// watchdog is wired (e.g. in tests).
 	heartbeat interface{ Tick() }
 
+	// reconcileMu serialises reconcileCounters invocations across the
+	// periodic reconcileLoop and on-demand TriggerReconcile callers so a
+	// flood of triggers collapses onto at most one in-flight reconcile.
+	// We use TryLock rather than a blocking acquire so a triggered
+	// reconcile never queues behind the periodic one — the in-flight
+	// pass already covers the requester.
+	reconcileMu sync.Mutex
+
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
@@ -550,9 +558,34 @@ func (swp *StreamWorkerPool) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			swp.reconcileCounters(ctx)
+			swp.runReconcileSerialised(ctx)
 		}
 	}
+}
+
+// TriggerReconcile runs an immediate counter reconcile from the PEL
+// when something upstream (typically the dispatcher's stuck-detection
+// heuristic) suspects the running counter has drifted out of sync
+// with reality. Concurrent callers collapse onto the in-flight pass
+// via TryLock — the contract is "at least one reconcile after the
+// most recent trigger", not "one reconcile per trigger". Returning
+// without running is the correct response when a reconcile is already
+// in flight.
+func (swp *StreamWorkerPool) TriggerReconcile(ctx context.Context) {
+	swp.runReconcileSerialised(ctx)
+}
+
+// runReconcileSerialised wraps reconcileCounters with the package
+// reconcile mutex. Returns true if the reconcile actually ran, false
+// if another reconcile was already in flight and this call collapsed
+// onto it.
+func (swp *StreamWorkerPool) runReconcileSerialised(ctx context.Context) bool {
+	if !swp.reconcileMu.TryLock() {
+		return false
+	}
+	defer swp.reconcileMu.Unlock()
+	swp.reconcileCounters(ctx)
+	return true
 }
 
 // --- reclaim loop ---

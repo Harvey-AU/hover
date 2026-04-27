@@ -29,6 +29,14 @@ type DispatcherOpts struct {
 	// dispatcher into a ~70× backlog. Default 32. Override via
 	// REDIS_DISPATCH_PARALLEL_JOBS.
 	ParallelJobs int
+
+	// StuckThreshold is how long a single job may sit blocked on the
+	// CanDispatch capacity gate (with due work in its ZSET) before the
+	// dispatcher fires a self-heal counter reconcile. Default 30s,
+	// overridable via REDIS_DISPATCH_STUCK_THRESHOLD_S. Self-heal is
+	// rate-limited to one trigger per 2× this value per job so a
+	// genuinely-at-capacity job can't burn Redis with reconciles.
+	StuckThreshold time.Duration
 }
 
 // DefaultDispatcherOpts returns production defaults, optionally
@@ -37,10 +45,12 @@ func DefaultDispatcherOpts() DispatcherOpts {
 	interval := time.Duration(envInt("REDIS_DISPATCH_INTERVAL_MS", 100)) * time.Millisecond
 	batch := int64(envInt("REDIS_DISPATCH_BATCH_SIZE", 50))
 	parallel := envInt("REDIS_DISPATCH_PARALLEL_JOBS", 32)
+	stuck := time.Duration(envInt("REDIS_DISPATCH_STUCK_THRESHOLD_S", 30)) * time.Second
 	return DispatcherOpts{
-		ScanInterval: interval,
-		BatchSize:    batch,
-		ParallelJobs: parallel,
+		ScanInterval:   interval,
+		BatchSize:      batch,
+		ParallelJobs:   parallel,
+		StuckThreshold: stuck,
 	}
 }
 
@@ -55,6 +65,19 @@ type JobLister interface {
 type ConcurrencyChecker interface {
 	// CanDispatch returns true if the job has room for another task.
 	CanDispatch(ctx context.Context, jobID string) (bool, error)
+}
+
+// Reconciler triggers an immediate per-job counter reconciliation
+// from the authoritative Redis PEL. The dispatcher invokes this as a
+// last-resort self-heal when CanDispatch keeps refusing dispatch
+// despite due work sitting in the ZSET — the symptom of a drifted
+// `hover:running` counter pinning a job at its concurrency cap.
+//
+// Implementations must be safe for concurrent invocation and should
+// debounce a flood of triggers down to at most one in-flight
+// reconcile (the StreamWorkerPool implementation uses a TryLock).
+type Reconciler interface {
+	TriggerReconcile(ctx context.Context)
 }
 
 // Dispatcher is a long-running goroutine that moves due items from
@@ -101,6 +124,31 @@ type Dispatcher struct {
 	// idempotent — the hook may fire repeatedly for the same job until
 	// it succeeds.
 	onFirstDispatch func(ctx context.Context, jobID string) error
+
+	// reconciler, when non-nil, is invoked as a self-heal when a job
+	// has been blocked on the capacity gate for longer than
+	// opts.StuckThreshold while its ZSET still has due work. Optional:
+	// nil disables the self-heal path entirely (covers tests and any
+	// embedded scenarios where the worker pool isn't wired in).
+	reconciler Reconciler
+
+	// stuckMu guards stuckSince and lastTrigger. Held only for the few
+	// map-mutating ops in maybeTriggerReconcile and clearStuck — the
+	// reconciler call itself runs outside the lock.
+	stuckMu sync.Mutex
+
+	// stuckSince records, per jobID, the timestamp of the first
+	// dispatcher tick where the capacity gate fired with due work in
+	// the ZSET. Cleared the moment that job dispatches successfully or
+	// runs a tick with no due items, so transient at-capacity bursts
+	// (the normal path for a healthy fast job) never trip the heuristic.
+	stuckSince map[string]time.Time
+
+	// lastTrigger records, per jobID, when we last fired the reconciler
+	// for that job. Persisted across stuck/recover cycles so a job
+	// flapping between stuck and not-stuck can't drive reconcile faster
+	// than the rate-limit window allows.
+	lastTrigger map[string]time.Time
 }
 
 // NewDispatcher creates a Dispatcher.
@@ -131,6 +179,15 @@ func NewDispatcher(
 // hook causes the dispatcher to retry on the next dispatch.
 func (d *Dispatcher) SetOnFirstDispatch(fn func(ctx context.Context, jobID string) error) {
 	d.onFirstDispatch = fn
+}
+
+// SetReconciler installs the self-heal target invoked when a single
+// job sits blocked on the CanDispatch capacity gate for longer than
+// opts.StuckThreshold while its ZSET still has due work. Pass nil to
+// disable the self-heal path; nil is the default and is tolerated
+// throughout the dispatcher hot path.
+func (d *Dispatcher) SetReconciler(r Reconciler) {
+	d.reconciler = r
 }
 
 // Run is the dispatcher's main loop. It blocks until ctx is
@@ -218,6 +275,13 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		return 0, err
 	}
 	if len(entries) == 0 {
+		// No due work this tick — whatever stuck state we'd been
+		// tracking is no longer load-bearing. Clearing here matters
+		// when a job's tasks all reschedule into the future: we must
+		// not carry the old stuck-since timestamp into the next time
+		// items come due, otherwise the heuristic would treat the
+		// wall-clock gap as continuous capacity-blocked time.
+		d.clearStuck(jobID)
 		return 0, nil
 	}
 
@@ -233,8 +297,15 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 			break
 		}
 		if !canDispatch {
-			// Job at capacity — remaining items stay in ZSET.
+			// Job at capacity — remaining items stay in ZSET. We're
+			// inside the entries loop, so we already know there is at
+			// least one due task right now: that's the precondition
+			// for the self-heal heuristic. A genuinely-busy job clears
+			// the stuck-since timestamp on its very next successful
+			// dispatch, so the heuristic only fires when the gate
+			// stays shut for opts.StuckThreshold of wall-clock time.
 			observability.RecordBrokerDispatch(ctx, jobID, "capacity")
+			d.maybeTriggerReconcile(ctx, jobID, now)
 			break
 		}
 
@@ -306,7 +377,86 @@ func (d *Dispatcher) dispatchJob(ctx context.Context, jobID string, now time.Tim
 		dispatched++
 	}
 
+	if dispatched > 0 {
+		// Any forward progress for this job invalidates the stuck
+		// hypothesis. We deliberately do not clear lastTrigger here —
+		// that's the rate-limit memory and must persist across
+		// stuck/recover cycles to stop a flapping job from driving
+		// reconcile faster than the rate-limit window allows.
+		d.clearStuck(jobID)
+	}
+
 	return dispatched, nil
+}
+
+// maybeTriggerReconcile updates the per-job stuck timestamp and, if
+// the job has been stuck for opts.StuckThreshold and we're outside
+// the per-job rate-limit window, invokes the installed Reconciler.
+//
+// This is the dispatcher's only self-heal lever: PR #362 closed the
+// known sources of `hover:running` drift, but the cost of an unknown
+// future drift class is a job that throttles to ~0% throughput while
+// peers run at full speed. Triggering an immediate reconcile from
+// the authoritative PEL re-aligns the counter with reality without
+// waiting up to 120s for the periodic reconcileLoop.
+func (d *Dispatcher) maybeTriggerReconcile(ctx context.Context, jobID string, now time.Time) {
+	if d.reconciler == nil {
+		return
+	}
+
+	threshold := d.opts.StuckThreshold
+	if threshold <= 0 {
+		// Self-heal explicitly disabled by configuration. Don't even
+		// record a stuck timestamp — keeps the maps tidy when the
+		// feature is off.
+		return
+	}
+
+	d.stuckMu.Lock()
+	if d.stuckSince == nil {
+		d.stuckSince = make(map[string]time.Time)
+	}
+	if d.lastTrigger == nil {
+		d.lastTrigger = make(map[string]time.Time)
+	}
+
+	first, ok := d.stuckSince[jobID]
+	if !ok {
+		d.stuckSince[jobID] = now
+		d.stuckMu.Unlock()
+		return
+	}
+	if now.Sub(first) < threshold {
+		d.stuckMu.Unlock()
+		return
+	}
+
+	rateLimit := 2 * threshold
+	if last, seen := d.lastTrigger[jobID]; seen && now.Sub(last) < rateLimit {
+		// Still stuck, but we already nudged the reconciler recently.
+		// Letting the next nudge wait until the rate-limit window
+		// expires keeps the cost predictable for a job that's just
+		// genuinely at its concurrency cap.
+		d.stuckMu.Unlock()
+		return
+	}
+	d.lastTrigger[jobID] = now
+	d.stuckMu.Unlock()
+
+	brokerLog.Warn("dispatcher self-heal: triggering counter reconcile",
+		"job_id", jobID, "stuck_for", now.Sub(first).String())
+	d.reconciler.TriggerReconcile(ctx)
+}
+
+// clearStuck removes the per-job stuck timestamp. lastTrigger is
+// intentionally preserved so the rate limit survives a brief
+// recovery window.
+func (d *Dispatcher) clearStuck(jobID string) {
+	d.stuckMu.Lock()
+	defer d.stuckMu.Unlock()
+	if d.stuckSince != nil {
+		delete(d.stuckSince, jobID)
+	}
 }
 
 // publishAndRemove atomically XADDs the task to the job's stream

@@ -321,6 +321,14 @@ func main() {
 		return jobManager.MarkJobRunning(ctx, jobID)
 	})
 
+	// Self-heal lever for the running-counter drift class PR #362
+	// could not fully eliminate. When CanDispatch keeps refusing
+	// dispatch despite due work in the ZSET for longer than
+	// REDIS_DISPATCH_STUCK_THRESHOLD_S, the dispatcher fires a single
+	// reconcile against the authoritative PEL via the worker pool.
+	// Rate-limited internally to one trigger per 2× threshold per job.
+	dispatcher.SetReconciler(swp)
+
 	// --- running counter DB sync ---
 	counterSyncSec := envInt("REDIS_COUNTER_SYNC_INTERVAL_S", 5)
 	if counterSyncSec < 1 {
@@ -661,4 +669,5 @@ func sweepOrphanInflightOnBoot(redisClient *broker.Client, sqlDB *sql.DB) {
 var (
 	_ broker.JobLister          = (*jobs.StreamWorkerPool)(nil)
 	_ broker.ConcurrencyChecker = (*jobs.StreamWorkerPool)(nil)
+	_ broker.Reconciler         = (*jobs.StreamWorkerPool)(nil)
 )
