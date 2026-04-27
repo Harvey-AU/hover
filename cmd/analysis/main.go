@@ -191,9 +191,10 @@ func loadArchiveProvider(ctx context.Context, runner string) (archive.ColdStorag
 
 const runnerEnvKey = "LIGHTHOUSE_RUNNER"
 
-// Returns an error rather than falling back silently so a Dockerfile/toml
-// drift surfaces as a loud boot failure. Unknown values fall back to stub so
-// a typo doesn't take the service down.
+// Unknown LIGHTHOUSE_RUNNER values log a warning and fall back to the stub
+// runner so a typo doesn't take the service down. The error return is unused
+// today but preserved on the signature so a future stricter mode can surface
+// Dockerfile/toml drift as a loud boot failure.
 func selectRunner(cfg consumerConfig, provider archive.ColdStorageProvider, bucket string) (lighthouse.Runner, error) {
 	switch cfg.runner {
 	case "stub":
