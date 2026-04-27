@@ -54,6 +54,18 @@ On merge, CI will:
   `JobManager.MarkJobRunning` (guarded UPDATE, idempotent across worker
   restarts).
 
+- Dispatcher now self-heals against unknown future drift classes in the per-job
+  `hover:running` counter. When `CanDispatch` keeps refusing dispatch for a
+  single job for longer than `REDIS_DISPATCH_STUCK_THRESHOLD_S` (default 30s)
+  while the job's schedule ZSET still has due tasks, the dispatcher fires an
+  immediate `RunningCounters.Reconcile` from the authoritative Redis PEL via the
+  worker pool's new `TriggerReconcile` hook. Triggers are rate-limited to one
+  per 2× threshold per job and collapse onto any in-flight reconcile via
+  `TryLock`, so a genuinely-at-capacity job can't drive a reconcile burst. This
+  is a safety net layered on top of the existing 120s `reconcileLoop`, not a
+  replacement — closes the gap PR #362 left for future drift classes we haven't
+  yet identified.
+
 ## Full changelog history
 
 ## [0.33.11] – 2026-04-26
