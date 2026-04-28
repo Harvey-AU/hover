@@ -28,8 +28,15 @@ On merge, CI will:
 
 ## [Unreleased]
 
+_Add unreleased changes here._
+
+## Full changelog history
+
+## [0.33.12] – 2026-04-28
+
 ### Changed
 
+- Crawler UA: `HoverBot` → `Hover`. Refs #365.
 - Trimmed narrative comments across recent broker, stream worker, and Lighthouse
   files (13 files, −1,055 lines net). Comment-only; no code logic changed.
   Load-bearing WHYs preserved.
@@ -71,8 +78,6 @@ On merge, CI will:
   is a safety net layered on top of the existing 120s `reconcileLoop`, not a
   replacement — closes the gap PR #362 left for future drift classes we haven't
   yet identified.
-
-## Full changelog history
 
 ## [0.33.11] – 2026-04-26
 
