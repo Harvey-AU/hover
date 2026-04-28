@@ -4,6 +4,15 @@ import (
 	"time"
 )
 
+// JobStatus is the canonical job state enum. Adding a new value here
+// requires three coordinated changes:
+//   - extend ValidateStatusTransition in manager.go with allowed
+//     transitions to/from the new state,
+//   - if the new state is terminal, add it to terminalJobStatuses in
+//     internal/db/queue.go and to the status preservation list in the
+//     statement-level counter trigger,
+//   - add a row to docs/architecture/CRAWL_HANDLING.md describing the
+//     case that triggers it and what happens to the job's tasks.
 type JobStatus string
 
 const (

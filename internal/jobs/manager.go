@@ -1233,6 +1233,10 @@ func (jm *JobManager) CalculateJobProgress(job *Job) float64 {
 	return float64(processedTasks) / float64(job.TotalTasks) * 100.0
 }
 
+// ValidateStatusTransition is the single source of truth for legal job
+// state transitions. The case → action mapping that motivates each
+// allowed edge lives in docs/architecture/CRAWL_HANDLING.md. When you
+// add or change an edge here, update that doc in the same change.
 func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	// Allow restart from terminal states.
 	if to == JobStatusRunning && (from == JobStatusCompleted || from == JobStatusCancelled || from == JobStatusFailed || from == JobStatusBlocked) {
