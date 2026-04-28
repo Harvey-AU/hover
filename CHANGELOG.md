@@ -30,13 +30,7 @@ On merge, CI will:
 
 ### Changed
 
-- Crawler user-agent renamed from `HoverBot/1.0` to `Hover/1.0` to reduce naive
-  substring filtering on the word "bot" (e.g. amazon.com, which now returns
-  200). target.com.au and woolworths.com.au remain 403 — both are protected by
-  Akamai Bot Manager and 403 any non-browser UA, so they belong to the row 1
-  WAF-detection / row 3(b) allowlist work tracked in #365, not this rename.
-  Contact URL preserved; robots.txt parser now matches per-bot rules under
-  `User-agent: Hover`. Refs #365.
+- Crawler UA: `HoverBot` → `Hover`. Refs #365.
 - Trimmed narrative comments across recent broker, stream worker, and Lighthouse
   files (13 files, −1,055 lines net). Comment-only; no code logic changed.
   Load-bearing WHYs preserved.
