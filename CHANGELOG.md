@@ -30,6 +30,10 @@ On merge, CI will:
 
 ### Changed
 
+- Crawler user-agent renamed from `HoverBot/1.0` to `Hover/1.0` to bypass naive
+  substring filters (e.g. Amazon, target.com.au, woolworths.com.au) that block
+  the word "bot". Contact URL preserved; robots.txt parser now matches per-bot
+  rules under `User-agent: Hover`. Refs #365.
 - Trimmed narrative comments across recent broker, stream worker, and Lighthouse
   files (13 files, −1,055 lines net). Comment-only; no code logic changed.
   Load-bearing WHYs preserved.
