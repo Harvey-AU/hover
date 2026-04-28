@@ -586,13 +586,18 @@ func (jm *JobManager) runWAFPreflight(ctx context.Context, job *Job, normalisedD
 
 	if err := jm.BlockJob(ctx, job.ID, det.Vendor, det.Reason); err != nil {
 		jobsLog.Error("Failed to block job after WAF pre-flight detection; falling back to failed status",
-			"error", err, "job_id", job.ID)
+			"error", err, "job_id", job.ID, "domain", normalisedDomain,
+			"vendor", det.Vendor, "reason", det.Reason)
 		// Fail-safe: returning true after a failed BlockJob would
 		// strand the job in 'pending' with no tasks forever, because
 		// the caller skips discovery on the strength of our return
 		// value alone. Transition the job to failed via a separate
 		// path so the customer sees a terminal state either way.
-		if failErr := jm.failJobWithMessage(ctx, job.ID, "WAF detected but block transition failed: "+err.Error()); failErr != nil {
+		// The customer-facing error_message stays stable; the raw
+		// underlying error is captured in the structured log above
+		// (with vendor/reason/domain context) for ops debugging.
+		const wafFallbackMsg = "WAF detected but block transition failed"
+		if failErr := jm.failJobWithMessage(ctx, job.ID, wafFallbackMsg); failErr != nil {
 			jobsLog.Error("Fallback failJob after BlockJob error also failed; allowing discovery to proceed",
 				"error", failErr, "job_id", job.ID)
 			return false
