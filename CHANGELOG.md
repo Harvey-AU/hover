@@ -31,10 +31,13 @@ On merge, CI will:
 ### Fixed
 
 - Review-app deploys no longer stack machines on repeated PR pushes. Added
-  `--ha=false` to all three `flyctl deploy` calls in
-  `.github/workflows/review-apps.yml` (API, analysis, worker) so each deploy
-  converges on one machine per process group instead of provisioning a fresh HA
-  pair on top of the previous run's machines.
+  `--ha=false` and a follow-up `flyctl scale count 1 --process-group …` to all
+  three `flyctl deploy` calls in `.github/workflows/review-apps.yml` (API,
+  analysis, worker). The Apr-27 build/release split changed the release shape to
+  `flyctl deploy --image registry.fly.io/<app>:<label>`, which provisions a new
+  machine instead of updating the existing one in place; worker and analysis
+  have no `[http_service]` to auto-stop the stragglers, so each push left the
+  previous machine running. The scale step reaps them after the new image is up.
 
 ## Full changelog history
 
