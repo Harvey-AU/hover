@@ -18,10 +18,14 @@ import (
 const blockJobDispatchTimeout = 30 * time.Second
 
 // defaultWAFCircuitBreakerThreshold is the consecutive-WAF-response
-// count that trips the breaker mid-job. Tuned conservatively: once we
-// see three responses in a row carrying recognised WAF fingerprints we
-// have very high confidence the domain has flipped to blocking us.
-const defaultWAFCircuitBreakerThreshold = 3
+// count that trips the breaker mid-job. Lowered from 3 to 2 after
+// kmart.com.au-class observations: by the time three tasks have
+// returned WAF fingerprints, the sitemap discovery loop has typically
+// inserted thousands of URLs that all need to be skipped. Two
+// consecutive WAF-flagged responses is still high-confidence (random
+// transient 403s rarely cluster) and trips ~33% earlier, capping the
+// orphan-task accumulation. Override via GNH_WAF_CIRCUIT_BREAKER_THRESHOLD.
+const defaultWAFCircuitBreakerThreshold = 2
 
 // WAFCircuitBreaker tracks per-job runs of consecutive WAF-flagged
 // responses and trips a callback once the threshold is reached. The

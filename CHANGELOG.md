@@ -58,6 +58,20 @@ On merge, CI will:
   parsing remaining batches instead of round-tripping to the DB just to be
   rejected.
 
+### Changed
+
+- WAF detector now recognises Akamai Bot Manager `_abck` and `bm_sz` cookies on
+  blocking status codes (403/202) as Akamai signals. Catches BM-fronted sites
+  that don't emit `Server: AkamaiGHost` or `akaalb_*` cookies (e.g.
+  kmart.com.au) and gives the mid-job circuit breaker `vendor=akamai`
+  attribution instead of falling through to `generic`. Cookies on a 200 response
+  are explicitly NOT treated as a block — many sites run BM in monitor mode
+  without ever blocking.
+- WAF mid-job circuit breaker default threshold lowered from 3 → 2 consecutive
+  WAF responses. Trips ~33% earlier, capping orphan-task accumulation when a
+  large sitemap is mid-discovery. Override via
+  `GNH_WAF_CIRCUIT_BREAKER_THRESHOLD`.
+
 ## Full changelog history
 
 ## [0.33.13] – 2026-04-28

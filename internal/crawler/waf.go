@@ -84,11 +84,34 @@ func DetectWAF(statusCode int, headers http.Header, bodySample []byte) WAFDetect
 
 	if blocking {
 		for _, c := range headers.Values("Set-Cookie") {
-			if strings.Contains(strings.ToLower(c), "akaalb_") {
+			cl := strings.ToLower(c)
+			if strings.Contains(cl, "akaalb_") {
 				return WAFDetection{
 					Blocked: true,
 					Vendor:  WAFVendorAkamai,
 					Reason:  "akaalb_ cookie on " + statusLabel(statusCode),
+				}
+			}
+			// _abck and bm_sz are Akamai Bot Manager cookies (sensor +
+			// session). They appear on every BM-fronted response, so by
+			// themselves they're not a block marker — many sites run BM
+			// in monitor mode without ever blocking. Combined with a
+			// blocking status code (403/202), they're unambiguous BM
+			// walls and give better attribution than the generic
+			// tiny-body fallback (kmart.com.au-class sites that don't
+			// emit Server: AkamaiGHost or akaalb_*).
+			if strings.Contains(cl, "_abck=") || strings.HasPrefix(cl, "_abck=") {
+				return WAFDetection{
+					Blocked: true,
+					Vendor:  WAFVendorAkamai,
+					Reason:  "_abck (Bot Manager session) cookie on " + statusLabel(statusCode),
+				}
+			}
+			if strings.Contains(cl, "bm_sz=") || strings.HasPrefix(cl, "bm_sz=") {
+				return WAFDetection{
+					Blocked: true,
+					Vendor:  WAFVendorAkamai,
+					Reason:  "bm_sz (Bot Manager sensor) cookie on " + statusLabel(statusCode),
 				}
 			}
 		}
