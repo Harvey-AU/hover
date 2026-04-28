@@ -26,7 +26,7 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased:minor]
+## [Unreleased]
 
 ### Added
 
