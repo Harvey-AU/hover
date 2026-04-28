@@ -472,15 +472,41 @@ func (db *DB) GetOrganisationIDByStripeCustomerID(ctx context.Context, customerI
 }
 
 // SetStripeSubscriptionID stores the Stripe subscription ID on an organisation.
+// Pass "" to clear the column (stored as NULL) — used when a subscription is
+// cancelled so a future Checkout can create a fresh subscription.
 func (db *DB) SetStripeSubscriptionID(ctx context.Context, organisationID, subscriptionID string) error {
+	var v sql.NullString
+	if subscriptionID != "" {
+		v = sql.NullString{String: subscriptionID, Valid: true}
+	}
 	_, err := db.client.ExecContext(ctx,
 		`UPDATE organisations SET stripe_subscription_id = $2, updated_at = NOW() WHERE id = $1`,
-		organisationID, subscriptionID,
+		organisationID, v,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set stripe subscription id: %w", err)
 	}
 	return nil
+}
+
+// GetStripeSubscriptionID returns the Stripe subscription ID for an organisation,
+// or "" if the org has no active subscription stored.
+func (db *DB) GetStripeSubscriptionID(ctx context.Context, organisationID string) (string, error) {
+	var id sql.NullString
+	err := db.client.QueryRowContext(ctx,
+		`SELECT stripe_subscription_id FROM organisations WHERE id = $1`,
+		organisationID,
+	).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("organisation not found")
+		}
+		return "", fmt.Errorf("failed to fetch stripe subscription id: %w", err)
+	}
+	if !id.Valid {
+		return "", nil
+	}
+	return id.String, nil
 }
 
 // GetPlanByStripePriceID returns the plan with the given Stripe Price ID.

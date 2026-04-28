@@ -215,6 +215,12 @@ func (h *Handler) handleSubscriptionDeleted(r *http.Request, event stripe.Event,
 		logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to revert organisation to free plan")
 		return fmt.Errorf("revert to free plan: %w", err)
 	}
+	// Clear the stored subscription ID so a future Checkout creates a fresh
+	// subscription rather than tripping the duplicate-subscription guard.
+	if err := h.DB.SetStripeSubscriptionID(r.Context(), orgID, ""); err != nil {
+		logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to clear Stripe subscription ID after cancellation")
+		return fmt.Errorf("clear stripe subscription id: %w", err)
+	}
 	logger.Info().Str("org_id", orgID).Msg("Organisation reverted to free plan — subscription cancelled")
 	return nil
 }

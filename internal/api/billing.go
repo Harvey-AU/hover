@@ -33,10 +33,27 @@ func (h *Handler) BillingCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require org admin role.
 	role, err := h.DB.GetOrganisationMemberRole(r.Context(), user.ID, orgID)
-	if err != nil || role != "admin" {
+	if err != nil {
+		log.Error().Err(err).Str("org_id", orgID).Str("user_id", user.ID).Msg("Failed to look up organisation member role")
+		InternalError(w, r, fmt.Errorf("failed to verify membership"))
+		return
+	}
+	if role != "admin" {
 		Forbidden(w, r, "Only organisation admins can manage billing")
+		return
+	}
+
+	// Stripe Checkout in subscription mode always creates a new subscription.
+	// Existing subscribers must use the BillingPortal to change plans, otherwise
+	// we end up with duplicate live subscriptions on the customer.
+	existingSubID, err := h.DB.GetStripeSubscriptionID(r.Context(), orgID)
+	if err != nil {
+		InternalError(w, r, fmt.Errorf("failed to check existing subscription: %w", err))
+		return
+	}
+	if existingSubID != "" {
+		Conflict(w, r, "Organisation already has an active subscription — use the billing portal to change plans")
 		return
 	}
 
@@ -91,7 +108,7 @@ func (h *Handler) BillingCheckout(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		customerID = cust.ID
-		log.Info().Str("customer_id", customerID).Str("org_id", orgID).Str("email", user.Email).Str("org_name", org.Name).Msg("Created Stripe customer")
+		log.Info().Str("customer_id", customerID).Str("org_id", orgID).Msg("Created Stripe customer")
 		if err := h.DB.SetStripeCustomerID(r.Context(), orgID, customerID); err != nil {
 			log.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe customer ID")
 			InternalError(w, r, fmt.Errorf("failed to store billing customer"))
@@ -145,9 +162,13 @@ func (h *Handler) BillingPortal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require org admin role.
 	role, err := h.DB.GetOrganisationMemberRole(r.Context(), user.ID, orgID)
-	if err != nil || role != "admin" {
+	if err != nil {
+		log.Error().Err(err).Str("org_id", orgID).Str("user_id", user.ID).Msg("Failed to look up organisation member role")
+		InternalError(w, r, fmt.Errorf("failed to verify membership"))
+		return
+	}
+	if role != "admin" {
 		Forbidden(w, r, "Only organisation admins can manage billing")
 		return
 	}

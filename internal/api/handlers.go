@@ -193,6 +193,7 @@ type DBClient interface {
 	GetStripeCustomerID(ctx context.Context, organisationID string) (string, error)
 	GetOrganisationIDByStripeCustomerID(ctx context.Context, customerID string) (string, error)
 	SetStripeSubscriptionID(ctx context.Context, organisationID, subscriptionID string) error
+	GetStripeSubscriptionID(ctx context.Context, organisationID string) (string, error)
 	GetPlanByStripePriceID(ctx context.Context, priceID string) (*db.Plan, error)
 	GetFreePlanID(ctx context.Context) (string, error)
 	// Webflow site settings methods
