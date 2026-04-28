@@ -33,6 +33,7 @@ type DbQueueProvider interface {
 type JobManagerInterface interface {
 	CreateJob(ctx context.Context, options *JobOptions) (*Job, error)
 	CancelJob(ctx context.Context, jobID string) error
+	BlockJob(ctx context.Context, jobID string, vendor, reason string) error
 	GetJobStatus(ctx context.Context, jobID string) (*Job, error)
 
 	GetJob(ctx context.Context, jobID string) (*Job, error)
@@ -283,14 +284,48 @@ func createJobObject(options *JobOptions, normalisedDomain string) *Job {
 
 func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalisedDomain string) (int, error) {
 	var domainID int
+	var cachedWAFBlocked bool
+	var cachedWAFVendor sql.NullString
+	var wafBlockedAt sql.NullTime
 
 	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		// Single round-trip: upsert the domain and read its WAF cache
+		// flags so we can decide synchronously whether to skip discovery.
 		err := tx.QueryRow(`
 			INSERT INTO domains(name) VALUES($1)
 			ON CONFLICT (name) DO UPDATE SET name=EXCLUDED.name
-			RETURNING id`, normalisedDomain).Scan(&domainID)
+			RETURNING id, waf_blocked, waf_vendor, waf_blocked_at`,
+			normalisedDomain).Scan(&domainID, &cachedWAFBlocked, &cachedWAFVendor, &wafBlockedAt)
 		if err != nil {
 			return fmt.Errorf("failed to get or create domain: %w", err)
+		}
+
+		// Cache hit (within the 24h freshness window) means the previous
+		// pre-flight or circuit breaker already verified this domain is
+		// blocked. Skip discovery and stamp the job in the same tx.
+		if cachedWAFBlocked && wafBlockedAt.Valid && time.Since(wafBlockedAt.Time) < wafCacheTTL {
+			job.Status = JobStatusBlocked
+			completedAt := time.Now().UTC()
+			job.CompletedAt = completedAt
+			vendor := cachedWAFVendor.String
+			job.ErrorMessage = buildWAFBlockMessage(vendor, "cached pre-flight verdict")
+
+			_, err = tx.Exec(
+				`INSERT INTO jobs (
+					id, domain_id, user_id, organisation_id, status, progress, total_tasks, completed_tasks, failed_tasks, skipped_tasks,
+					created_at, completed_at, concurrency, find_links, include_paths, exclude_paths,
+					required_workers, max_pages, allow_cross_subdomain_links,
+					found_tasks, sitemap_tasks, source_type, source_detail, source_info, scheduler_id, error_message
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
+				job.ID, domainID, job.UserID, job.OrganisationID, string(job.Status), job.Progress,
+				job.TotalTasks, job.CompletedTasks, job.FailedTasks, job.SkippedTasks,
+				job.CreatedAt, completedAt, job.Concurrency, job.FindLinks,
+				db.Serialise(job.IncludePaths), db.Serialise(job.ExcludePaths),
+				job.RequiredWorkers, job.MaxPages, job.AllowCrossSubdomainLinks,
+				job.FoundTasks, job.SitemapTasks, job.SourceType, job.SourceDetail, job.SourceInfo,
+				job.SchedulerID, job.ErrorMessage,
+			)
+			return err
 		}
 
 		_, err = tx.Exec(
@@ -317,6 +352,13 @@ func (jm *JobManager) setupJobDatabase(ctx context.Context, job *Job, normalised
 
 	return domainID, nil
 }
+
+// wafCacheTTL bounds how long the cached domains.waf_blocked verdict is
+// trusted before the next CreateJob re-probes. Akamai/Cloudflare
+// policies do change — a once-blocked domain can be allowlisted later
+// — so the cache must expire. 24h matches the rate at which site
+// owners typically respond to allowlist requests.
+const wafCacheTTL = 24 * time.Hour
 
 // Returns nil (no error) when the crawler is unavailable; callers treat
 // nil rules as "no restriction".
@@ -474,6 +516,11 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 			// Detached from request ctx so the long sitemap fetch survives the HTTP handler returning.
 			procCtx, procCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer procCancel()
+
+			if jm.runWAFPreflight(procCtx, job, normalisedDomain) {
+				return
+			}
+
 			jm.processSitemap(procCtx, jobID, normalisedDomain, options.IncludePaths, options.ExcludePaths)
 		}()
 		return nil
@@ -482,6 +529,11 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 	backgroundCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	go func() {
 		defer cancel()
+
+		if jm.runWAFPreflight(backgroundCtx, job, normalisedDomain) {
+			return
+		}
+
 		rootPath := "/"
 		_, err := jm.validateRootURLAccess(backgroundCtx, job, normalisedDomain, rootPath)
 		if err != nil {
@@ -496,6 +548,40 @@ func (jm *JobManager) setupJobURLDiscovery(ctx context.Context, job *Job, option
 	}()
 
 	return nil
+}
+
+// runWAFPreflight issues the live probe and, on a positive verdict,
+// transitions the job to JobStatusBlocked via BlockJob. Returns true
+// when the caller should stop (job is now terminal). A network /
+// timeout error from the probe is logged as a warning and returns
+// false — the mid-job circuit breaker is the safety net for those
+// cases, and a transient probe failure must not block legitimate jobs.
+func (jm *JobManager) runWAFPreflight(ctx context.Context, job *Job, normalisedDomain string) bool {
+	if jm.crawler == nil {
+		return false
+	}
+
+	det, err := jm.crawler.Probe(ctx, normalisedDomain)
+	if err != nil {
+		jobsLog.Warn("WAF pre-flight probe failed; continuing to discovery",
+			"error", err, "job_id", job.ID, "domain", normalisedDomain)
+		return false
+	}
+	if !det.Blocked {
+		return false
+	}
+
+	jobsLog.Info("WAF pre-flight detected block",
+		"job_id", job.ID,
+		"domain", normalisedDomain,
+		"vendor", det.Vendor,
+		"reason", det.Reason)
+
+	if err := jm.BlockJob(ctx, job.ID, det.Vendor, det.Reason); err != nil {
+		jobsLog.Error("Failed to block job after WAF pre-flight detection",
+			"error", err, "job_id", job.ID)
+	}
+	return true
 }
 
 func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job, error) {
@@ -534,7 +620,15 @@ func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job,
 		"use_sitemap", options.UseSitemap,
 		"find_links", options.FindLinks,
 		"max_pages", options.MaxPages,
+		"status", string(job.Status),
 	)
+
+	// Cached WAF verdict: setupJobDatabase already stamped the job
+	// blocked, so don't kick off discovery. The job is already terminal.
+	if job.Status == JobStatusBlocked {
+		span.SetTag("waf_cache_hit", "true")
+		return job, nil
+	}
 
 	if err := jm.setupJobURLDiscovery(ctx, job, options, domainID, normalisedDomain); err != nil {
 		span.SetTag("error", "true")
@@ -765,6 +859,122 @@ func (jm *JobManager) CancelJob(ctx context.Context, jobID string) error {
 	jobsLog.Debug("Cancelled job", "job_id", job.ID, "domain", job.Domain)
 
 	return nil
+}
+
+// BlockJob transitions a job to JobStatusBlocked when the WAF detector
+// (pre-flight probe or mid-job circuit breaker) recognises bot
+// protection on the domain. The shape mirrors CancelJob: tasks UPDATE
+// → jobs UPDATE → task_outbox DELETE, with the same ORDER BY id lock
+// order to keep the AFTER STATEMENT counter trigger from deadlocking
+// against worker batches. domains.waf_blocked is set in the same
+// transaction so a follow-up CreateJob short-circuits without
+// re-probing.
+func (jm *JobManager) BlockJob(ctx context.Context, jobID string, vendor, reason string) error {
+	span := sentry.StartSpan(ctx, "manager.block_job")
+	defer span.Finish()
+
+	span.SetTag("job_id", jobID)
+	span.SetTag("waf_vendor", vendor)
+
+	job, err := jm.GetJob(ctx, jobID)
+	if err != nil {
+		span.SetTag("error", "true")
+		span.SetData("error.message", err.Error())
+		return fmt.Errorf("failed to get job: %w", err)
+	}
+
+	// Already-blocked is a no-op so a circuit-breaker fire racing the
+	// pre-flight probe doesn't surface as a duplicate error.
+	if job.Status == JobStatusBlocked {
+		jobsLog.Debug("Block requested on already-blocked job", "job_id", job.ID)
+		return nil
+	}
+
+	if job.Status != JobStatusRunning && job.Status != JobStatusPending && job.Status != JobStatusPaused && job.Status != JobStatusInitialising {
+		return fmt.Errorf("job cannot be blocked: %s", job.Status)
+	}
+
+	job.Status = JobStatusBlocked
+	job.CompletedAt = time.Now().UTC()
+	errorMessage := buildWAFBlockMessage(vendor, reason)
+
+	err = jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			WITH picked AS (
+				SELECT id FROM tasks
+				 WHERE job_id = $1
+				   AND status IN ($3, $4)
+				 ORDER BY id
+				 FOR UPDATE
+			)
+			UPDATE tasks t
+			   SET status = $2
+			  FROM picked
+			 WHERE t.id = picked.id
+		`, job.ID, TaskStatusSkipped, TaskStatusPending, TaskStatusWaiting)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE jobs
+			SET status = $1, completed_at = $2, error_message = $3
+			WHERE id = $4
+		`, job.Status, job.CompletedAt, errorMessage, job.ID)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			DELETE FROM task_outbox WHERE job_id = $1
+		`, job.ID)
+		if err != nil {
+			return err
+		}
+
+		// Domain row last — nothing else takes a domain lock in this
+		// transaction so the lock graph stays acyclic vs other writers.
+		_, err = tx.ExecContext(ctx, `
+			UPDATE domains
+			   SET waf_blocked    = TRUE,
+			       waf_vendor     = $1,
+			       waf_blocked_at = NOW()
+			 WHERE id = (SELECT domain_id FROM jobs WHERE id = $2)
+		`, vendor, job.ID)
+		return err
+	})
+
+	if err != nil {
+		span.SetTag("error", "true")
+		span.SetData("error.message", err.Error())
+		jobsLog.Error("Failed to block job", "error", err, "job_id", job.ID)
+		return fmt.Errorf("failed to block job: %w", err)
+	}
+
+	jm.clearProcessedPages(job.ID)
+	jm.clearMilestoneState(job.ID)
+
+	if jm.OnJobTerminated != nil {
+		jm.OnJobTerminated(ctx, job.ID)
+	}
+
+	jobsLog.Info("Blocked job (WAF detected)",
+		"job_id", job.ID,
+		"domain", job.Domain,
+		"waf_vendor", vendor,
+		"reason", reason)
+
+	return nil
+}
+
+func buildWAFBlockMessage(vendor, reason string) string {
+	if vendor == "" {
+		vendor = "unknown"
+	}
+	if reason == "" {
+		return fmt.Sprintf("WAF blocked (%s) — site bot protection refused our crawler", vendor)
+	}
+	return fmt.Sprintf("WAF blocked (%s) — %s", vendor, reason)
 }
 
 func (jm *JobManager) GetJob(ctx context.Context, jobID string) (*Job, error) {
@@ -1025,16 +1235,18 @@ func (jm *JobManager) CalculateJobProgress(job *Job) float64 {
 
 func (jm *JobManager) ValidateStatusTransition(from, to JobStatus) error {
 	// Allow restart from terminal states.
-	if to == JobStatusRunning && (from == JobStatusCompleted || from == JobStatusCancelled || from == JobStatusFailed) {
+	if to == JobStatusRunning && (from == JobStatusCompleted || from == JobStatusCancelled || from == JobStatusFailed || from == JobStatusBlocked) {
 		return nil
 	}
 
 	validTransitions := map[JobStatus][]JobStatus{
-		JobStatusPending:   {JobStatusRunning, JobStatusCancelled},
-		JobStatusRunning:   {JobStatusCompleted, JobStatusFailed, JobStatusCancelled},
-		JobStatusCompleted: {JobStatusRunning, JobStatusArchived},
-		JobStatusFailed:    {JobStatusRunning, JobStatusArchived},
-		JobStatusCancelled: {JobStatusRunning, JobStatusArchived},
+		JobStatusPending:      {JobStatusRunning, JobStatusCancelled, JobStatusBlocked},
+		JobStatusInitialising: {JobStatusRunning, JobStatusCancelled, JobStatusBlocked, JobStatusFailed},
+		JobStatusRunning:      {JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusBlocked},
+		JobStatusCompleted:    {JobStatusRunning, JobStatusArchived},
+		JobStatusFailed:       {JobStatusRunning, JobStatusArchived},
+		JobStatusCancelled:    {JobStatusRunning, JobStatusArchived},
+		JobStatusBlocked:      {JobStatusRunning, JobStatusArchived},
 	}
 
 	allowed, exists := validTransitions[from]

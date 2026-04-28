@@ -26,9 +26,15 @@ On merge, CI will:
 4. Create a git tag and GitHub release
 5. Commit the updated changelog
 
-## [Unreleased]
+## [Unreleased:minor]
 
-_Add unreleased changes here._
+### Added
+
+- WAF detection on first contact (#365 row 1). Pre-flight probe + mid-job
+  circuit breaker recognise Cloudflare, Imperva, DataDome, and Akamai
+  fingerprints; jobs against blocked domains terminate with a new `blocked`
+  status instead of enqueueing thousands of doomed tasks. `domains.waf_blocked`
+  caches the verdict for 24 h. Customer-facing pill: amber "Blocked by site".
 
 ## Full changelog history
 
