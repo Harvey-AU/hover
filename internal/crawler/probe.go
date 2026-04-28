@@ -68,6 +68,10 @@ func Probe(ctx context.Context, domain string, userAgent string, transport http.
 	return DetectWAF(resp.StatusCode, resp.Header, body), nil
 }
 
+// normaliseProbeTarget produces a probeable URL for the given domain.
+// If the input already includes a scheme (case-insensitive "http://" or "https://"),
+// it preserves the original input (minus any trailing slashes) and ensures exactly
+// one trailing slash. Otherwise it prefixes "https://" and appends a trailing slash.
 func normaliseProbeTarget(domain string) string {
 	d := strings.TrimSpace(domain)
 	// Scheme detection is case-insensitive — "HTTPS://example.com"

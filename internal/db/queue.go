@@ -900,7 +900,8 @@ var terminalJobStatuses = []string{"completed", "failed", "cancelled", "archived
 // IsTerminalJobStatus reports whether the supplied status string is a
 // terminal job state past which task enqueueing should be a no-op.
 // Exposed for use in callers that hold a status they read separately
-// (e.g. the sitemap discovery loop).
+// IsTerminalJobStatus reports whether the provided job status is a terminal state.
+// It returns `true` if the status is one of "completed", "failed", "cancelled", "archived", or "blocked", `false` otherwise.
 func IsTerminalJobStatus(status string) bool {
 	for _, t := range terminalJobStatuses {
 		if status == t {
