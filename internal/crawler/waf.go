@@ -38,19 +38,9 @@ const (
 //   - Cloudflare: cf-mitigated header set on a non-200 response
 //   - Imperva: body contains _Incapsula_Resource
 //   - DataDome: Server header equals DataDome
-//   - Akamai: Server header AkamaiGHost OR akaalb_ cookie OR
+//   - Akamai: Server header AkamaiGHost OR akaalb_/_abck/bm_sz cookie OR
 //     Server-Timing ak_p marker, all on a blocking status
-// DetectWAF inspects an HTTP status, headers, and a response body sample and returns a WAFDetection describing a detected WAF/bot-protection verdict, or the zero value when no signal is found.
-// 
-// It treats a nil headers value as empty and considers status codes 403 and 202 as "blocking". Detection signals that produce a blocked verdict include:
-// - Cloudflare: non-empty `Cf-Mitigated` header on a blocking status.
-// - Imperva: `_Incapsula_Resource` marker present in the body sample.
-// - DataDome/Akamai via `Server` header values (e.g., `datadome`, `akamaighost` with blocking status).
-// - Akamai via cookie-based markers (`akaalb_`, `_abck=`, `bm_sz=`) when the response is blocking.
-// - Akamai via `Server-Timing` containing `ak_p;`.
-// - Generic fallback: blocking status with a non-empty body sample smaller than 500 bytes.
-// 
-// The returned WAFDetection has Blocked=true and populated Vendor and Reason when a matching signal is found; otherwise it returns the zero-value WAFDetection (not blocked).
+//   - Generic: tiny body (<500 bytes) on 403 or 202 with no other signal
 func DetectWAF(statusCode int, headers http.Header, bodySample []byte) WAFDetection {
 	if headers == nil {
 		headers = http.Header{}

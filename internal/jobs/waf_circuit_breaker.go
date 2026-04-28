@@ -113,18 +113,28 @@ func (b *WAFCircuitBreaker) Forget(jobID string) {
 	delete(b.tripped, jobID)
 }
 
-// Rearm clears only the single-fire tripped flag for a job, leaving
-// the consecutive-WAF counter at zero. Called when the dispatched
-// BlockJob couldn't land — without this, a transient DB error during
-// the trip would permanently disable the breaker for the job and
-// every subsequent WAF response would slip through unchecked.
-func (b *WAFCircuitBreaker) Rearm(jobID string) {
+// Rearm clears the single-fire tripped flag for a job AND seeds the
+// consecutive-WAF counter to threshold-1 (with the previous trip's
+// vendor preserved) so a single subsequent blocked outcome immediately
+// retrips. Called when the dispatched BlockJob couldn't land — at
+// that point we've already proven the domain is consistently walling
+// us; making the retry re-establish the full streak would waste N-1
+// blocked observations. The counter still resets on any non-blocked
+// response (Observe), so a site that recovers between attempts still
+// gets a clean slate.
+func (b *WAFCircuitBreaker) Rearm(jobID string, lastVendor crawler.WAFDetection) {
 	if b == nil || jobID == "" {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.tripped, jobID)
+	seed := b.threshold - 1
+	if seed < 0 {
+		seed = 0
+	}
+	b.counts[jobID] = seed
+	b.vendors[jobID] = lastVendor
 }
 
 // Threshold exposes the configured trip count for telemetry/logging.
@@ -177,8 +187,10 @@ func (b *WAFCircuitBreaker) MaybeTripFromOutcome(ctx context.Context, jm JobMana
 				"error", err, "job_id", jobID)
 			// Re-arm so the next WAF response for this job can trip
 			// again — without this a transient DB blip would silently
-			// permanently disable the breaker for the job.
-			b.Rearm(jobID)
+			// permanently disable the breaker for the job. The vendor
+			// from this trip is preserved so the retrip's BlockJob
+			// call carries accurate attribution.
+			b.Rearm(jobID, vendor)
 		}
 	}()
 }
