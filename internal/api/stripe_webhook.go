@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -14,6 +15,12 @@ import (
 
 // StripeWebhook handles incoming Stripe webhook events.
 // POST /webhooks/stripe — no auth, signature verified internally.
+//
+// Handlers return a non-nil error only for transient failures (DB or Stripe API
+// errors). Permanent failures — malformed payloads, missing required fields,
+// unknown plan IDs — are logged and swallowed so Stripe stops retrying. We
+// reply 5xx on transient errors so Stripe re-queues the event per its dunning
+// schedule.
 func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		MethodNotAllowed(w, r)
@@ -45,162 +52,171 @@ func (h *Handler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
 	logger := log.With().Str("stripe_event_id", event.ID).Str("stripe_event_type", string(event.Type)).Logger()
 	logger.Info().Msg("Received Stripe webhook event")
 
+	var handlerErr error
 	switch event.Type {
 	case "checkout.session.completed":
-		h.handleCheckoutSessionCompleted(r, event, logger)
+		handlerErr = h.handleCheckoutSessionCompleted(r, event, logger)
 	case "customer.subscription.updated":
-		h.handleSubscriptionUpdated(r, event, logger)
+		handlerErr = h.handleSubscriptionUpdated(r, event, logger)
 	case "customer.subscription.deleted":
-		h.handleSubscriptionDeleted(r, event, logger)
+		handlerErr = h.handleSubscriptionDeleted(r, event, logger)
 	case "invoice.payment_failed":
 		h.handleInvoicePaymentFailed(event, logger)
 	default:
 		logger.Debug().Msg("Unhandled Stripe event type — ignoring")
 	}
 
-	// Always return 200 to acknowledge receipt.
+	if handlerErr != nil {
+		logger.Error().Err(handlerErr).Msg("Stripe webhook handler reported transient failure — returning 5xx so Stripe retries")
+		http.Error(w, "transient processing failure", http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) handleCheckoutSessionCompleted(r *http.Request, event stripe.Event, logger zerolog.Logger) {
+func (h *Handler) handleCheckoutSessionCompleted(r *http.Request, event stripe.Event, logger zerolog.Logger) error {
 	var sess stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &sess); err != nil {
 		logger.Error().Err(err).Msg("Failed to unmarshal checkout.session.completed")
-		return
+		return nil
 	}
 
 	orgID := sess.ClientReferenceID
 	if orgID == "" && sess.Customer != nil {
-		// Fallback: look up org by customer ID.
 		id, err := h.DB.GetOrganisationIDByStripeCustomerID(r.Context(), sess.Customer.ID)
 		if err != nil {
 			logger.Error().Err(err).Str("customer_id", sess.Customer.ID).Msg("Cannot resolve organisation from Stripe customer")
-			return
+			return fmt.Errorf("resolve organisation: %w", err)
 		}
 		orgID = id
 	}
 	if orgID == "" {
 		logger.Error().Msg("checkout.session.completed: no organisation ID found — skipping")
-		return
+		return nil
 	}
 
-	// Persist customer ID if not already stored.
 	if sess.Customer != nil {
 		if err := h.DB.SetStripeCustomerID(r.Context(), orgID, sess.Customer.ID); err != nil {
 			logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe customer ID")
+			return fmt.Errorf("set stripe customer id: %w", err)
 		}
 	}
 
-	// Persist subscription ID and activate plan.
-	if sess.Subscription != nil {
-		subID := sess.Subscription.ID
-		if err := h.DB.SetStripeSubscriptionID(r.Context(), orgID, subID); err != nil {
-			logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe subscription ID")
-		}
-
-		// The subscription in checkout.session.completed is not expanded —
-		// fetch it directly to get the line items and price ID.
-		sub, err := stripesubscription.Get(subID, nil)
-		if err != nil {
-			logger.Error().Err(err).Str("subscription_id", subID).Msg("Failed to fetch subscription from Stripe")
-			return
-		}
-
-		if len(sub.Items.Data) == 0 {
-			logger.Error().Str("subscription_id", subID).Msg("Subscription has no line items — cannot activate plan")
-			return
-		}
-
-		if sub.Items.Data[0].Price == nil {
-			logger.Error().Str("subscription_id", subID).Msg("Subscription line item has no price — cannot activate plan")
-			return
-		}
-
-		priceID := sub.Items.Data[0].Price.ID
-		plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
-		if err != nil {
-			logger.Error().Err(err).Str("price_id", priceID).Msg("Cannot resolve plan from Stripe price")
-			return
-		}
-		if err := h.DB.SetOrganisationPlan(r.Context(), orgID, plan.ID); err != nil {
-			logger.Error().Err(err).Str("org_id", orgID).Str("plan_id", plan.ID).Msg("Failed to update organisation plan")
-			return
-		}
-		logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan activated via checkout")
+	if sess.Subscription == nil {
+		return nil
 	}
-}
-
-func (h *Handler) handleSubscriptionUpdated(r *http.Request, event stripe.Event, logger zerolog.Logger) {
-	var sub stripe.Subscription
-	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
-		logger.Error().Err(err).Msg("Failed to unmarshal customer.subscription.updated")
-		return
+	subID := sess.Subscription.ID
+	if err := h.DB.SetStripeSubscriptionID(r.Context(), orgID, subID); err != nil {
+		logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to store Stripe subscription ID")
+		return fmt.Errorf("set stripe subscription id: %w", err)
 	}
 
-	if sub.Customer == nil {
-		logger.Error().Msg("subscription.updated: missing customer — skipping")
-		return
-	}
-
-	orgID, err := h.DB.GetOrganisationIDByStripeCustomerID(r.Context(), sub.Customer.ID)
+	// The subscription in checkout.session.completed is not expanded —
+	// fetch it directly to get the line items and price ID.
+	sub, err := stripesubscription.Get(subID, nil)
 	if err != nil {
-		logger.Error().Err(err).Str("customer_id", sub.Customer.ID).Msg("Cannot resolve organisation")
-		return
+		logger.Error().Err(err).Str("subscription_id", subID).Msg("Failed to fetch subscription from Stripe")
+		return fmt.Errorf("fetch subscription: %w", err)
 	}
 
 	if len(sub.Items.Data) == 0 {
-		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no line items — skipping plan update")
-		return
+		logger.Error().Str("subscription_id", subID).Msg("Subscription has no line items — cannot activate plan")
+		return nil
 	}
 
 	if sub.Items.Data[0].Price == nil {
-		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no price on line item — skipping plan update")
-		return
+		logger.Error().Str("subscription_id", subID).Msg("Subscription line item has no price — cannot activate plan")
+		return nil
 	}
 
 	priceID := sub.Items.Data[0].Price.ID
 	plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
 	if err != nil {
 		logger.Error().Err(err).Str("price_id", priceID).Msg("Cannot resolve plan from Stripe price")
-		return
+		return fmt.Errorf("resolve plan: %w", err)
 	}
-
 	if err := h.DB.SetOrganisationPlan(r.Context(), orgID, plan.ID); err != nil {
 		logger.Error().Err(err).Str("org_id", orgID).Str("plan_id", plan.ID).Msg("Failed to update organisation plan")
-		return
+		return fmt.Errorf("set organisation plan: %w", err)
 	}
-	logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan updated via subscription change")
+	logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan activated via checkout")
+	return nil
 }
 
-func (h *Handler) handleSubscriptionDeleted(r *http.Request, event stripe.Event, logger zerolog.Logger) {
+func (h *Handler) handleSubscriptionUpdated(r *http.Request, event stripe.Event, logger zerolog.Logger) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
-		logger.Error().Err(err).Msg("Failed to unmarshal customer.subscription.deleted")
-		return
+		logger.Error().Err(err).Msg("Failed to unmarshal customer.subscription.updated")
+		return nil
 	}
 
 	if sub.Customer == nil {
-		logger.Error().Msg("subscription.deleted: missing customer — skipping")
-		return
+		logger.Error().Msg("subscription.updated: missing customer — skipping")
+		return nil
 	}
 
 	orgID, err := h.DB.GetOrganisationIDByStripeCustomerID(r.Context(), sub.Customer.ID)
 	if err != nil {
 		logger.Error().Err(err).Str("customer_id", sub.Customer.ID).Msg("Cannot resolve organisation")
-		return
+		return fmt.Errorf("resolve organisation: %w", err)
+	}
+
+	if len(sub.Items.Data) == 0 {
+		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no line items — skipping plan update")
+		return nil
+	}
+
+	if sub.Items.Data[0].Price == nil {
+		logger.Warn().Str("org_id", orgID).Msg("subscription.updated: no price on line item — skipping plan update")
+		return nil
+	}
+
+	priceID := sub.Items.Data[0].Price.ID
+	plan, err := h.DB.GetPlanByStripePriceID(r.Context(), priceID)
+	if err != nil {
+		logger.Error().Err(err).Str("price_id", priceID).Msg("Cannot resolve plan from Stripe price")
+		return fmt.Errorf("resolve plan: %w", err)
+	}
+
+	if err := h.DB.SetOrganisationPlan(r.Context(), orgID, plan.ID); err != nil {
+		logger.Error().Err(err).Str("org_id", orgID).Str("plan_id", plan.ID).Msg("Failed to update organisation plan")
+		return fmt.Errorf("set organisation plan: %w", err)
+	}
+	logger.Info().Str("org_id", orgID).Str("plan", plan.Name).Msg("Organisation plan updated via subscription change")
+	return nil
+}
+
+func (h *Handler) handleSubscriptionDeleted(r *http.Request, event stripe.Event, logger zerolog.Logger) error {
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		logger.Error().Err(err).Msg("Failed to unmarshal customer.subscription.deleted")
+		return nil
+	}
+
+	if sub.Customer == nil {
+		logger.Error().Msg("subscription.deleted: missing customer — skipping")
+		return nil
+	}
+
+	orgID, err := h.DB.GetOrganisationIDByStripeCustomerID(r.Context(), sub.Customer.ID)
+	if err != nil {
+		logger.Error().Err(err).Str("customer_id", sub.Customer.ID).Msg("Cannot resolve organisation")
+		return fmt.Errorf("resolve organisation: %w", err)
 	}
 
 	freePlanID, err := h.DB.GetFreePlanID(r.Context())
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to fetch free plan ID for subscription cancellation")
-		return
+		return fmt.Errorf("fetch free plan: %w", err)
 	}
 
 	if err := h.DB.SetOrganisationPlan(r.Context(), orgID, freePlanID); err != nil {
 		logger.Error().Err(err).Str("org_id", orgID).Msg("Failed to revert organisation to free plan")
-		return
+		return fmt.Errorf("revert to free plan: %w", err)
 	}
 	logger.Info().Str("org_id", orgID).Msg("Organisation reverted to free plan — subscription cancelled")
+	return nil
 }
 
 func (h *Handler) handleInvoicePaymentFailed(event stripe.Event, logger zerolog.Logger) {
