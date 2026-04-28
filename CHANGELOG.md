@@ -28,7 +28,13 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- Review-app deploys no longer stack machines on repeated PR pushes. Added
+  `--ha=false` to all three `flyctl deploy` calls in
+  `.github/workflows/review-apps.yml` (API, analysis, worker) so each deploy
+  converges on one machine per process group instead of provisioning a fresh HA
+  pair on top of the previous run's machines.
 
 ## Full changelog history
 
