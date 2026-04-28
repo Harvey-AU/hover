@@ -5,11 +5,33 @@
  * Surface-agnostic: all render/action functions accept a container element.
  */
 
-import { get, put } from "/app/lib/api-client.js";
+import { get, post, put } from "/app/lib/api-client.js";
 import { showToast as _showToast } from "/app/components/hover-toast.js";
 
 function toast(variant, message) {
   _showToast(message, { variant });
+}
+
+// ── Usage cache ────────────────────────────────────────────────────────────────
+
+let _cachedUsage = null;
+let _cachedUsageTs = 0;
+const USAGE_CACHE_TTL = 30_000;
+
+async function getUsage() {
+  const now = Date.now();
+  if (_cachedUsage && now - _cachedUsageTs < USAGE_CACHE_TTL) {
+    return _cachedUsage;
+  }
+  const response = await get("/v1/usage");
+  _cachedUsage = response;
+  _cachedUsageTs = now;
+  return response;
+}
+
+function invalidateUsageCache() {
+  _cachedUsage = null;
+  _cachedUsageTs = 0;
 }
 
 // ── Plans & Usage ──────────────────────────────────────────────────────────────
@@ -32,7 +54,7 @@ export async function loadPlansAndUsage(container, options = {}) {
 
   try {
     const [usageResponse, plansResponse] = await Promise.all([
-      get("/v1/usage"),
+      getUsage(),
       get("/v1/plans"),
     ]);
 
@@ -96,8 +118,15 @@ export async function loadPlansAndUsage(container, options = {}) {
           } else if (role !== "admin") {
             actionBtn.textContent = "Admin only";
             actionBtn.disabled = true;
+          } else if (plan.monthly_price_cents > 0) {
+            actionBtn.textContent = "Upgrade";
+            actionBtn.disabled = false;
+            actionBtn.addEventListener("click", () =>
+              startCheckout(plan.id, actionBtn)
+            );
           } else {
-            actionBtn.textContent = "Switch plan";
+            // Downgrading to free — direct plan update (no payment needed).
+            actionBtn.textContent = "Switch to Free";
             actionBtn.disabled = false;
             actionBtn.addEventListener("click", () =>
               switchPlan(plan.id, container, options)
@@ -120,6 +149,7 @@ async function switchPlan(planId, container, options = {}) {
 
   try {
     await put("/v1/organisations/plan", { plan_id: planId });
+    invalidateUsageCache();
     toast("success", "Plan updated");
     await loadPlansAndUsage(container, options);
     window.GNHQuota?.refresh();
@@ -127,6 +157,75 @@ async function switchPlan(planId, container, options = {}) {
     console.error("Failed to switch plan:", err);
     toast("error", "Failed to switch plan");
   }
+}
+
+async function startCheckout(planId, btn) {
+  if (!planId) return;
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+  }
+  try {
+    const response = await post("/v1/billing/checkout", { plan_id: planId });
+    if (response.url) {
+      window.location.href = response.url;
+    }
+  } catch (err) {
+    console.error("Failed to start checkout:", err);
+    toast("error", "Failed to open checkout — please try again");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Upgrade";
+    }
+  }
+}
+
+/**
+ * Initialise the billing section — fetch current billing state and wire
+ * up the "Manage billing" button. Reads has_stripe_customer from /v1/usage.
+ */
+export async function loadBillingSection() {
+  const btn = document.getElementById("manageBillingBtn");
+  const status = document.getElementById("billingStatus");
+  if (!btn) return;
+
+  let hasStripeCustomer = false;
+  try {
+    const usageResponse = await getUsage();
+    hasStripeCustomer = !!usageResponse?.usage?.has_stripe_customer;
+  } catch (err) {
+    console.error("Failed to fetch billing status:", err);
+  }
+
+  if (!hasStripeCustomer) {
+    // No subscription yet — keep button disabled.
+    return;
+  }
+
+  if (status) {
+    status.textContent =
+      "Manage your subscription, update payment methods, and view invoices.";
+  }
+  btn.disabled = false;
+  // Replace the button to avoid duplicate listeners on refresh.
+  const fresh = btn.cloneNode(true);
+  btn.replaceWith(fresh);
+  fresh.addEventListener("click", async () => {
+    fresh.disabled = true;
+    fresh.textContent = "Opening…";
+    try {
+      const response = await post("/v1/billing/portal", {});
+      if (response.url) {
+        window.location.href = response.url;
+      }
+    } catch (err) {
+      console.error("Failed to open billing portal:", err);
+      toast("error", "Failed to open billing portal — please try again");
+      fresh.disabled = false;
+      fresh.textContent = "Manage billing";
+    }
+  });
 }
 
 // ── Usage history ──────────────────────────────────────────────────────────────

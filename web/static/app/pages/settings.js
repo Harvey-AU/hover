@@ -23,6 +23,7 @@ import {
 import {
   loadPlansAndUsage,
   loadUsageHistory,
+  loadBillingSection,
 } from "/app/lib/settings/plans.js";
 import {
   loadSchedules,
@@ -243,6 +244,7 @@ async function refreshSections() {
       currentUserRole: teamState.currentUserRole,
     });
     await loadUsageHistory(c.plans);
+    await loadBillingSection();
     await loadSchedules(c.schedules);
     await loadSlackConnections();
     await loadWebflowConnections();
@@ -313,6 +315,7 @@ async function init() {
       currentUserRole: teamState.currentUserRole,
     });
     await loadUsageHistory(c.plans);
+    await loadBillingSection();
     await loadSchedules(c.schedules);
   } catch (err) {
     console.error("Failed to initialise settings sections:", err);
