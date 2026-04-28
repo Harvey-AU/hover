@@ -464,7 +464,8 @@ jobs:
           flyctl deploy \
             --image "$IMAGE" \
             --config .fly/review_apps.toml \
-            --app "$API_APP"
+            --app "$API_APP" \
+            --ha=false
 
   release-analysis:
     name: Release analysis review app
@@ -485,7 +486,8 @@ jobs:
           flyctl deploy \
             --image "$IMAGE" \
             --config .fly/review_apps.analysis.toml \
-            --app "$ANALYSIS_APP"
+            --app "$ANALYSIS_APP" \
+            --ha=false
 
   release-worker:
     name: Release worker review app
@@ -511,7 +513,8 @@ jobs:
           flyctl deploy \
             --image "$IMAGE" \
             --config .fly/review_apps.worker.toml \
-            --app "$WORKER_APP"
+            --app "$WORKER_APP" \
+            --ha=false
 
   # ───────── Comment on PR ─────────────────────────────────────────────
   # Single comment with the API URL — posted only after the API release
