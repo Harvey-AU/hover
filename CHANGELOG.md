@@ -33,6 +33,12 @@ On merge, CI will:
 - WAF pre-flight no longer strands jobs in `pending` if `BlockJob`'s DB write
   fails — a fallback transition writes `failed` with an explanatory message so
   the job always reaches a terminal state.
+- Customer-facing `jobs.error_message` for the WAF fallback path is now a stable
+  `"WAF detected but block transition failed"` string. The raw underlying error
+  (which could include DB driver text like
+  `pq: SSL is not enabled on the server`) is still logged via the structured ops
+  logger with vendor/reason/domain context, but no longer leaks into the
+  customer-visible field.
 - `JobStatusBlocked` now triggers the same per-job in-process state cleanup
   (`processedPages`, milestones) as the other terminal statuses; long-running
   workers no longer leak map entries for blocked jobs.
