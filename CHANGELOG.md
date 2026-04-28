@@ -39,6 +39,15 @@ On merge, CI will:
 - WAF probe scheme detection is now case-insensitive — `HTTPS://example.com` no
   longer double-prefixes to `https://HTTPS://...` and silently skips the
   verdict.
+- `BlockJob` now CAS-guards the terminal `UPDATE jobs` against a stale pre-read
+  status, so a freshly-completed/failed/cancelled job from a concurrent worker
+  is no longer overwritten with `blocked` (and the domain row no longer stamped
+  off a verdict that didn't actually land for that run). A lost race rolls the
+  whole transaction back and surfaces as nil success.
+- The WAF mid-job circuit breaker now dispatches `BlockJob` in a detached
+  goroutine with a 30 s timeout, so the stream worker hot path can't stall on
+  terminal-state DB lock contention. On `BlockJob` failure the breaker re-arms
+  for the job, so a transient DB blip no longer permanently disables it.
 
 ## Full changelog history
 

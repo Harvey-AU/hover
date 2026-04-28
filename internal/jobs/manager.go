@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -23,6 +24,12 @@ import (
 )
 
 var jobsLog = logging.Component("jobs")
+
+// errBlockJobRaceLost is the sentinel a BlockJob transaction returns
+// when its CAS guard finds the job already in a terminal status set by
+// a concurrent writer. It is not a real failure — callers up-stack
+// translate it to nil success.
+var errBlockJobRaceLost = errors.New("block_job: lost race to terminal transition")
 
 type DbQueueProvider interface {
 	Execute(ctx context.Context, fn func(*sql.Tx) error) error
@@ -944,13 +951,29 @@ func (jm *JobManager) BlockJob(ctx context.Context, jobID string, vendor, reason
 			return err
 		}
 
-		_, err = tx.ExecContext(ctx, `
+		// CAS guard: GetJob ran outside this tx, so another worker
+		// could have written a terminal state in between. Restrict the
+		// UPDATE to pre-terminal statuses and bail if zero rows match.
+		// Without this, a freshly-completed/failed/cancelled row would
+		// be silently overwritten with `blocked`, and worse, we'd
+		// stamp domains.waf_blocked off a verdict that didn't actually
+		// land for this run.
+		res, err := tx.ExecContext(ctx, `
 			UPDATE jobs
 			SET status = $1, completed_at = $2, error_message = $3
 			WHERE id = $4
-		`, job.Status, job.CompletedAt, errorMessage, job.ID)
+			  AND status IN ($5, $6, $7, $8)
+		`, job.Status, job.CompletedAt, errorMessage, job.ID,
+			JobStatusRunning, JobStatusPending, JobStatusPaused, JobStatusInitialising)
 		if err != nil {
 			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return errBlockJobRaceLost
 		}
 
 		_, err = tx.ExecContext(ctx, `
@@ -971,6 +994,16 @@ func (jm *JobManager) BlockJob(ctx context.Context, jobID string, vendor, reason
 		`, vendor, job.ID)
 		return err
 	})
+
+	// errBlockJobRaceLost is not a real failure — a concurrent writer
+	// reached terminal first. The whole transaction rolled back, so no
+	// stale state landed; report success-equivalent so callers don't
+	// surface a red error to the customer.
+	if errors.Is(err, errBlockJobRaceLost) {
+		jobsLog.Info("BlockJob lost race to another terminal transition; treating as no-op",
+			"job_id", job.ID, "domain", job.Domain)
+		return nil
+	}
 
 	if err != nil {
 		span.SetTag("error", "true")
