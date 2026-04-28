@@ -32,6 +32,16 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.13] – 2026-04-28
+
+### Added
+
+- WAF detection on first contact (#365 row 1). Pre-flight probe + mid-job
+  circuit breaker recognise Cloudflare, Imperva, DataDome, and Akamai
+  fingerprints; jobs against blocked domains terminate with a new `blocked`
+  status instead of enqueueing thousands of doomed tasks. `domains.waf_blocked`
+  caches the verdict for 24 h. Customer-facing pill: amber "Blocked by site".
+
 ## [0.33.12] – 2026-04-28
 
 ### Changed
