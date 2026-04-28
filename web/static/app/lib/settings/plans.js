@@ -29,6 +29,11 @@ async function getUsage() {
   return response;
 }
 
+function invalidateUsageCache() {
+  _cachedUsage = null;
+  _cachedUsageTs = 0;
+}
+
 // ── Plans & Usage ──────────────────────────────────────────────────────────────
 
 /**
@@ -144,6 +149,7 @@ async function switchPlan(planId, container, options = {}) {
 
   try {
     await put("/v1/organisations/plan", { plan_id: planId });
+    invalidateUsageCache();
     toast("success", "Plan updated");
     await loadPlansAndUsage(container, options);
     window.GNHQuota?.refresh();
