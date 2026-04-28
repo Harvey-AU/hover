@@ -21,7 +21,6 @@ import (
 	"github.com/Harvey-AU/hover/internal/jobs"
 	"github.com/Harvey-AU/hover/internal/logging"
 	"github.com/Harvey-AU/hover/internal/loops"
-	"github.com/rs/zerolog/log"
 	stripe "github.com/stripe/stripe-go/v82"
 )
 
