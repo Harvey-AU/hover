@@ -28,7 +28,17 @@ On merge, CI will:
 
 ## [Unreleased]
 
-_Add unreleased changes here._
+### Fixed
+
+- WAF pre-flight no longer strands jobs in `pending` if `BlockJob`'s DB write
+  fails — a fallback transition writes `failed` with an explanatory message so
+  the job always reaches a terminal state.
+- `JobStatusBlocked` now triggers the same per-job in-process state cleanup
+  (`processedPages`, milestones) as the other terminal statuses; long-running
+  workers no longer leak map entries for blocked jobs.
+- WAF probe scheme detection is now case-insensitive — `HTTPS://example.com` no
+  longer double-prefixes to `https://HTTPS://...` and silently skips the
+  verdict.
 
 ## Full changelog history
 

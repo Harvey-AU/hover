@@ -578,10 +578,38 @@ func (jm *JobManager) runWAFPreflight(ctx context.Context, job *Job, normalisedD
 		"reason", det.Reason)
 
 	if err := jm.BlockJob(ctx, job.ID, det.Vendor, det.Reason); err != nil {
-		jobsLog.Error("Failed to block job after WAF pre-flight detection",
+		jobsLog.Error("Failed to block job after WAF pre-flight detection; falling back to failed status",
 			"error", err, "job_id", job.ID)
+		// Fail-safe: returning true after a failed BlockJob would
+		// strand the job in 'pending' with no tasks forever, because
+		// the caller skips discovery on the strength of our return
+		// value alone. Transition the job to failed via a separate
+		// path so the customer sees a terminal state either way.
+		if failErr := jm.failJobWithMessage(ctx, job.ID, "WAF detected but block transition failed: "+err.Error()); failErr != nil {
+			jobsLog.Error("Fallback failJob after BlockJob error also failed; allowing discovery to proceed",
+				"error", failErr, "job_id", job.ID)
+			return false
+		}
 	}
 	return true
+}
+
+// failJobWithMessage transitions a job to JobStatusFailed with an
+// explanatory message. Used as the fallback path when a more specific
+// terminal transition (BlockJob) couldn't complete. The status guard
+// keeps a concurrent terminal write safe — we never overwrite a
+// completed/failed/cancelled/blocked row.
+func (jm *JobManager) failJobWithMessage(ctx context.Context, jobID, message string) error {
+	return jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE jobs
+			   SET status = $1, error_message = $2, completed_at = $3
+			 WHERE id = $4
+			   AND status IN ($5, $6, $7, $8)
+		`, JobStatusFailed, message, time.Now().UTC(), jobID,
+			JobStatusRunning, JobStatusPending, JobStatusPaused, JobStatusInitialising)
+		return err
+	})
 }
 
 func (jm *JobManager) CreateJob(ctx context.Context, options *JobOptions) (*Job, error) {
@@ -1302,7 +1330,7 @@ func (jm *JobManager) UpdateJobStatus(ctx context.Context, jobID string, status 
 
 	// Drop in-process state on terminal status so long-running workers don't accumulate per-job map entries.
 	switch status {
-	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived:
+	case JobStatusCompleted, JobStatusFailed, JobStatusCancelled, JobStatusArchived, JobStatusBlocked:
 		jm.clearProcessedPages(jobID)
 		jm.clearMilestoneState(jobID)
 	}

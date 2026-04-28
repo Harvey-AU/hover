@@ -70,7 +70,11 @@ func Probe(ctx context.Context, domain string, userAgent string, transport http.
 
 func normaliseProbeTarget(domain string) string {
 	d := strings.TrimSpace(domain)
-	if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
+	// Scheme detection is case-insensitive — "HTTPS://example.com"
+	// otherwise double-prefixes to "https://HTTPS://example.com/" and
+	// the request build fails, silently skipping the WAF verdict.
+	dl := strings.ToLower(d)
+	if strings.HasPrefix(dl, "http://") || strings.HasPrefix(dl, "https://") {
 		return strings.TrimSuffix(d, "/") + "/"
 	}
 	return "https://" + strings.TrimSuffix(d, "/") + "/"
