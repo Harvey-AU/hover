@@ -48,6 +48,15 @@ On merge, CI will:
   goroutine with a 30 s timeout, so the stream worker hot path can't stall on
   terminal-state DB lock contention. On `BlockJob` failure the breaker re-arms
   for the job, so a transient DB blip no longer permanently disables it.
+- `EnqueueURLs` now short-circuits under its existing `FOR UPDATE OF j` row lock
+  when the target job is in a terminal status (blocked, cancelled, failed,
+  completed, archived). Without this, sitemap discovery and link extraction kept
+  inserting orphan tasks for jobs that had already transitioned terminal
+  mid-flight — kmart.com.au-class jobs were accreting 32k+ pending rows after
+  the circuit breaker had already fired. The sitemap-discovery loop additionally
+  reads job status between batches as a cheap pre-flight, so terminal jobs stop
+  parsing remaining batches instead of round-tripping to the DB just to be
+  rejected.
 
 ## Full changelog history
 

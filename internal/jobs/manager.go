@@ -606,6 +606,27 @@ func (jm *JobManager) runWAFPreflight(ctx context.Context, job *Job, normalisedD
 	return true
 }
 
+// isJobInTerminalStatus reports whether a job's current row status is
+// one the discovery / link-extraction paths must stop adding tasks
+// for. Used between sitemap batches as a cheap pre-flight before each
+// EnqueueJobURLs round-trip; the DB-side guard in
+// dbQueue.EnqueueURLs is the race-free safety net.
+//
+// Read errors are treated as "not terminal" — a transient query
+// failure must not silently abort a healthy crawl.
+func (jm *JobManager) isJobInTerminalStatus(ctx context.Context, jobID string) bool {
+	var status string
+	err := jm.dbQueue.Execute(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = $1`, jobID).Scan(&status)
+	})
+	if err != nil {
+		jobsLog.Warn("Could not read job status during terminal-state check; continuing",
+			"error", err, "job_id", jobID)
+		return false
+	}
+	return db.IsTerminalJobStatus(status)
+}
+
 // failJobWithMessage transitions a job to JobStatusFailed with an
 // explanatory message. Used as the fallback path when a more specific
 // terminal transition (BlockJob) couldn't complete. The status guard
@@ -1512,6 +1533,21 @@ func (jm *JobManager) processSitemap(ctx context.Context, jobID, domain string, 
 			end := min(i+batchSize, len(urls))
 			batch := urls[i:end]
 			batchNum := (i / batchSize) + 1
+
+			// Cheap status read between batches: a concurrent BlockJob
+			// (pre-flight or circuit breaker) or CancelJob may have
+			// flipped the job terminal mid-discovery. The DB guard in
+			// dbQueue.EnqueueURLs is the load-bearing safety net, but
+			// stopping here saves the per-batch sitemap parsing + DB
+			// round-trip that would otherwise be wasted work for every
+			// remaining batch (kmart.com.au-class jobs have hundreds).
+			if jm.isJobInTerminalStatus(ctx, jobID) {
+				jobsLog.Info("Sitemap discovery aborting: job reached terminal status mid-loop",
+					"job_id", jobID, "batch_number", batchNum,
+					"batches_remaining", totalBatches-batchNum+1,
+					"urls_remaining", len(urls)-i)
+				return
+			}
 
 			select {
 			case jm.sitemapSem <- struct{}{}:
