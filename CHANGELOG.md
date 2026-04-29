@@ -32,6 +32,58 @@ _Add unreleased changes here._
 
 ## Full changelog history
 
+## [0.33.14] – 2026-04-29
+
+### Fixed
+
+- WAF pre-flight no longer strands jobs in `pending` if `BlockJob`'s DB write
+  fails — a fallback transition writes `failed` with an explanatory message so
+  the job always reaches a terminal state.
+- Customer-facing `jobs.error_message` for the WAF fallback path is now a stable
+  `"WAF detected but block transition failed"` string. The raw underlying error
+  (which could include DB driver text like
+  `pq: SSL is not enabled on the server`) is still logged via the structured ops
+  logger with vendor/reason/domain context, but no longer leaks into the
+  customer-visible field.
+- `JobStatusBlocked` now triggers the same per-job in-process state cleanup
+  (`processedPages`, milestones) as the other terminal statuses; long-running
+  workers no longer leak map entries for blocked jobs.
+- WAF probe scheme detection is now case-insensitive — `HTTPS://example.com` no
+  longer double-prefixes to `https://HTTPS://...` and silently skips the
+  verdict.
+- `BlockJob` now CAS-guards the terminal `UPDATE jobs` against a stale pre-read
+  status, so a freshly-completed/failed/cancelled job from a concurrent worker
+  is no longer overwritten with `blocked` (and the domain row no longer stamped
+  off a verdict that didn't actually land for that run). A lost race rolls the
+  whole transaction back and surfaces as nil success.
+- The WAF mid-job circuit breaker now dispatches `BlockJob` in a detached
+  goroutine with a 30 s timeout, so the stream worker hot path can't stall on
+  terminal-state DB lock contention. On `BlockJob` failure the breaker re-arms
+  for the job, so a transient DB blip no longer permanently disables it.
+- `EnqueueURLs` now short-circuits under its existing `FOR UPDATE OF j` row lock
+  when the target job is in a terminal status (blocked, cancelled, failed,
+  completed, archived). Without this, sitemap discovery and link extraction kept
+  inserting orphan tasks for jobs that had already transitioned terminal
+  mid-flight — kmart.com.au-class jobs were accreting 32k+ pending rows after
+  the circuit breaker had already fired. The sitemap-discovery loop additionally
+  reads job status between batches as a cheap pre-flight, so terminal jobs stop
+  parsing remaining batches instead of round-tripping to the DB just to be
+  rejected.
+
+### Changed
+
+- WAF detector now recognises Akamai Bot Manager `_abck` and `bm_sz` cookies on
+  blocking status codes (403/202) as Akamai signals. Catches BM-fronted sites
+  that don't emit `Server: AkamaiGHost` or `akaalb_*` cookies (e.g.
+  kmart.com.au) and gives the mid-job circuit breaker `vendor=akamai`
+  attribution instead of falling through to `generic`. Cookies on a 200 response
+  are explicitly NOT treated as a block — many sites run BM in monitor mode
+  without ever blocking.
+- WAF mid-job circuit breaker default threshold lowered from 3 → 2 consecutive
+  WAF responses. Trips ~33% earlier, capping orphan-task accumulation when a
+  large sitemap is mid-discovery. Override via
+  `GNH_WAF_CIRCUIT_BREAKER_THRESHOLD`.
+
 ## [0.33.13] – 2026-04-28
 
 ### Added
